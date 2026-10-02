@@ -10,8 +10,10 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from ..checks import site_key
 from ..workfs import WorkDir
-from .model import Issue, PageResult, QARun
+from .model import SITE_STOPPED, Issue, PageResult, QARun
+from .polite import BIG_SITE_NOTE, ROBOTS_FOLLOWED, ROBOTS_NOTE
 from .urls import slug
 
 TOP = 10  # issues listed in the summary
@@ -66,6 +68,8 @@ def summary(run: QARun, paths: ReportPaths) -> str:
     if run.stopped == "max_pages":
         first += f" (stopped at max_pages: {run.more_found} more pages found)" if run.more_found else \
             " (stopped at max_pages)"
+    elif run.stopped == SITE_STOPPED:
+        first += " (stopped early)"
     elif run.stopped:
         first += f" (stopped: {run.stopped})"
     counts = _severities(run.issues)
@@ -79,7 +83,58 @@ def summary(run: QARun, paths: ReportPaths) -> str:
     shots = sum(len(page.sizes) for page in run.pages)
     lines.append(f"report: {paths.html} (on this Mac: {paths.folder_host}/report.html)")
     lines.append(f"csv: {paths.csv} · screenshots: {paths.shots} ({shots})")
+    lines += _notes(run)
     return "\n".join(lines)
+
+
+def _notes(run: QARun) -> list[str]:
+    """After the usual lines: robots.txt unless simply followed, where QA stopped early, what it didn't check."""
+    lines = []
+    if run.robots and run.robots != ROBOTS_FOLLOWED:
+        lines.append(run.robots)
+    host = urlsplit(run.site).hostname or ""
+    why = run.stopped_hosts.get(host)
+    if why:
+        lines.append(f"stopped early: {host} {why}, so QA stopped after {_count(len(run.pages), 'page')}")
+    parts = _not_checked(run.unchecked)
+    if parts:
+        lines.append("not checked: " + ", ".join(parts))
+    return lines
+
+
+def _not_checked(unchecked: list[tuple[str, str]]) -> list[str]:
+    big = [url for url, why in unchecked if why == BIG_SITE_NOTE]
+    robots = [url for url, why in unchecked if why == ROBOTS_NOTE]
+    refused = [why.removeprefix("not checked: ") for _, why in unchecked
+               if why.startswith("not checked: ") and " refused (" in why]
+    parts = []
+    if big:
+        sites = list(dict.fromkeys(site_key(url) for url in big))
+        more = "…" if len(sites) > 2 else ""
+        parts.append(f"{_count(len(big), 'link')} to big sites ({', '.join(sites[:2])}{more})")
+    if robots:
+        parts.append(f"{_count(len(robots), 'page')} robots.txt asks crawlers to skip")
+    if refused:
+        hosts = dict.fromkeys(text.replace(" refused (", ": ").rstrip(")") for text in refused)
+        parts.append(f"{_count(len(refused), 'link')} on hosts that refused ({', '.join(hosts)})")
+    return parts
+
+
+def _reason(why: str) -> str:
+    if why.startswith("not checked: "):
+        return why.removeprefix("not checked: ")
+    return f"the site turned the check away, or the browser blocked it ({why})"
+
+
+def _grouped(unchecked: list[tuple[str, str]]) -> str:
+    """The "Not checked" list, grouped by reason."""
+    groups: dict[str, list[str]] = {}
+    for url, why in unchecked:
+        groups.setdefault(_reason(why), []).append(url)
+    if not groups:
+        return '<ul class="plain"><li class="none">None.</li></ul>'
+    return "".join(f"<h3>{_e(reason)}</h3><ul class=\"plain\">{''.join(f'<li>{_link(url)}</li>' for url in urls)}</ul>"
+                   for reason, urls in groups.items())
 
 
 def _count(number: int, word: str) -> str:
@@ -167,10 +222,11 @@ def _page_card(number: int, page, issues: list[Issue], shots: dict[tuple[int, st
 def _html(run: QARun, shots: dict[tuple[int, str], str]) -> str:
     counts = _severities(run.issues)
     when = time.strftime("%Y-%m-%d %H:%M", time.localtime(run.started))
-    stopped = f" · stopped early ({_e(run.stopped)})" if run.stopped else ""
+    stopped = " · stopped early" if run.stopped == SITE_STOPPED else \
+        f" · stopped early ({_e(run.stopped)})" if run.stopped else ""
+    notes = "".join(f'<p class="meta">{_e(line)}</p>' for line in _notes(run))
     rows = "".join(_issue_row(issue) for issue in run.issues) or \
         '<tr><td colspan="4" class="none">No issues found.</td></tr>'
-    unchecked = "".join(f"<li>{_link(url)} <span class=\"pages\">({_e(why)})</span></li>" for url, why in run.unchecked)
     skipped = "".join(f"<li>{_link(url)}</li>" for url in run.not_followed)
     cards = "".join(_page_card(number, page, run.issues, shots) for number, page in enumerate(run.pages, 1))
     chips = "".join(f'<div class="chip"><b>{value}</b>{_e(label)}</div>' for label, value in (
@@ -219,12 +275,13 @@ ul.plain {{ margin: 0; padding-left: 18px; }}
 <main>
 <h1>Website QA report</h1>
 <p class="meta">{_link(run.start_url)} · {_e(when)} · {_e(run.browser)} · {len(run.pages)} pages in {run.seconds:.0f} s{stopped}</p>
+{notes}
 <div class="chips">{chips}</div>
 <h2>Issues, most important first</h2>
 <table><thead><tr><th>Severity</th><th>Problem</th><th>Details</th><th>Where</th></tr></thead><tbody>{rows}</tbody></table>
-<h2>Links that couldn't be checked</h2>
-<p class="pages">These sites turned the automated check away, or the browser blocked it. Open them by hand if they matter.</p>
-<ul class="plain">{unchecked or '<li class="none">None.</li>'}</ul>
+<h2>Not checked</h2>
+<p class="pages">Big sites QA leaves alone, pages robots.txt asks crawlers to skip, hosts that refused, and sites that turned the check away. Open them by hand if they matter.</p>
+{_grouped(run.unchecked)}
 <h2>Links not followed</h2>
 <p class="pages">These look like actions (log out, delete, add to cart…), so the check never opened them.</p>
 <ul class="plain">{skipped or '<li class="none">None.</li>'}</ul>

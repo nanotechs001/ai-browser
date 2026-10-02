@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+SITE_STOPPED = "host stopped"  # QARun.stopped when the site under QA refused (429, 403 or a bot check)
 HTML_TYPES = {"text/html", "application/xhtml+xml", ""}  # no content type: browsers sniff, usually a page
 
 
@@ -81,4 +82,6 @@ class QARun:
     unchecked: list[tuple[str, str]]  # links that couldn't be judged: (url, why)
     not_followed: list[str]  # action links left alone (log out, delete...)
     more_found: int  # pages found but not checked
-    stopped: str = ""  # "max_pages", "time budget" or ""
+    stopped: str = ""  # "max_pages", "time budget", SITE_STOPPED or ""
+    stopped_hosts: dict[str, str] = field(default_factory=dict)  # host -> why QA stopped asking it
+    robots: str = ""  # how robots.txt was used: followed, ignored at the user's request, or the site closed

@@ -1,4 +1,5 @@
-"""Run a whole-site QA: crawl same-site pages in a few tabs of their own, check every link, write the report."""
+"""Run a whole-site QA politely: crawl same-site pages in a tab of their own, one request at a time per site, check
+every link, write the report. robots.txt is followed, a host that refuses is left alone, big sites are never asked."""
 
 from __future__ import annotations
 
@@ -16,18 +17,22 @@ from ..browser import Browser, BrowserError, url_problem
 from ..workfs import WorkDir
 from .checker import LinkChecker
 from .issues import link_issue, link_verdict, merge
-from .model import Issue, LinkResult, PageResult, QARun
+from .model import SITE_STOPPED, Issue, LinkResult, PageResult, QARun
 from .page import PageVisitor, page_issues
-from .polite import HOST_DELAY, HostGate
+from .polite import (BIG_SITE_NOTE, COOL_DOWN, HOST_DELAY, ROBOTS_NOTE, HostGate, HostStopped, Robots, big_site,
+                     cool_reason, short_reason)
 from .report import folder_for, save_shots, summary, write_report
 from .urls import action_link, is_file, normalize, origin
 
-WORKERS = 2  # tabs visiting pages at the same time
+WORKERS = 1  # one page tab: a second one on the same site would only wait for the gate
 MAX_PAGES = 200
-CRAWL_BUDGET = 180.0  # seconds for visiting pages...
+CRAWL_BUDGET = 300.0  # seconds for visiting pages (about 6 s a page at the polite pace)...
 LINK_BUDGET = 60.0  # ...then for checking the links not visited
+ROBOTS_LIMIT = 500_000  # bytes of robots.txt read
+IGNORED_ROBOTS = "robots.txt: ignored at the user's request"
 
 Progress = Callable[[int, int, str], Awaitable[None]]
+HostStoppedHook = Callable[[str, float, str], None]  # (host, until, why): the Engine's cool-down
 
 
 @dataclass
@@ -116,27 +121,72 @@ class Frontier:
         return self._per_path[key]
 
 
+class _Rules:
+    """What QA may request: never a big site, and only what each origin's robots.txt allows of its own pages."""
+
+    def __init__(self, checker: LinkChecker, ignore: bool):
+        self.checker = checker
+        self.ignore = ignore
+        self.robots: dict[str, Robots] = {}
+
+    async def read(self, site: str) -> Robots | None:
+        """robots.txt of an origin, fetched once through the gate (None when the user said the site is theirs)."""
+        if self.ignore:
+            return None
+        if site not in self.robots:
+            result, text = await self.checker.fetch_text(site + "/robots.txt", ROBOTS_LIMIT)
+            robots = self.robots[site] = Robots.from_reply(result.status, text, result.challenge)
+            if robots.crawl_delay:
+                self.checker.gate.set_delay(urlsplit(site).hostname or "", robots.crawl_delay)
+        return self.robots[site]
+
+    def skip(self, url: str, internal: bool) -> str | None:
+        """Why a link is never requested, or None."""
+        if big_site(urlsplit(url).hostname or ""):
+            return BIG_SITE_NOTE
+        robots = self.robots.get(origin(url))
+        if internal and robots is not None and not robots.allowed(url):
+            return ROBOTS_NOTE
+        return None
+
+    def note(self, site: str) -> str:
+        if self.ignore:
+            return IGNORED_ROBOTS
+        robots = self.robots.get(site)
+        return robots.note if robots is not None else ""
+
+
 async def run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int = 30, progress: Progress | None = None,
                  on_tabs: Callable[[], None] | None = None, crawl_budget: float = CRAWL_BUDGET,
-                 link_budget: float = LINK_BUDGET, delay: float = HOST_DELAY) -> str:
-    """Check a whole site in the session's browser, write the report and return its summary."""
+                 link_budget: float = LINK_BUDGET, delay: float = HOST_DELAY, ignore_robots: bool = False,
+                 on_host_stopped: HostStoppedHook | None = None) -> str:
+    """Check a whole site in the session's browser, politely, write the report and return its summary.
+    `ignore_robots` only when the user says the site is theirs; `on_host_stopped(host, until, why)` hears of every
+    host that refused, for the Engine's cool-down."""
     with browser.acting():  # pages QA opens may open popups: those are QA's to follow and close
-        return await _run_qa(browser, work, url, max_pages, progress, on_tabs, crawl_budget, link_budget, delay)
+        return await _run_qa(browser, work, url, max_pages, progress, on_tabs, crawl_budget, link_budget, delay,
+                             ignore_robots, on_host_stopped)
 
 
 async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, progress: Progress | None,
-                  on_tabs: Callable[[], None] | None, crawl_budget: float, link_budget: float, delay: float) -> str:
+                  on_tabs: Callable[[], None] | None, crawl_budget: float, link_budget: float, delay: float,
+                  ignore_robots: bool, on_host_stopped: HostStoppedHook | None) -> str:
     problem = url_problem(url, browser.mode)
     if problem:
         raise BrowserError(f"{url}: {problem}")
     start = normalize(url)
     if start is None:
         raise BrowserError(f"{url}: qa needs a full http(s) address")
+    start_host = urlsplit(start).hostname or ""
+    if big_site(start_host):
+        raise BrowserError(f"{url}: {start_host} is a big site, and qa never crawls one (they refuse or rate-limit "
+                           "automated checks); open single pages with open")
     max_pages = max(1, min(MAX_PAGES, int(max_pages)))
     started, clock = time.time(), time.monotonic()
     before = set(browser.owned)
     visitors: list[PageVisitor] = []
     checks: _Checks | None = None
+    gate = HostGate(delay=delay)  # one gate per run: every request QA makes takes its host's turn
 
     def tabs_changed() -> None:  # keeps the session registry current, so a crash can't strand our tabs
         if on_tabs is not None:
@@ -149,13 +199,25 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
                 await progress(done, max_pages, f"checked {done} of up to {max_pages} pages")
 
     try:
-        home = await browser.open_worker()  # opens the start page, then stays there to check links
+        home = await browser.open_worker()  # reads robots.txt, opens the start page, then stays there to check links
         tabs_changed()
-        visitors.append(PageVisitor(browser, home))
-        first = await visitors[0].visit(start)
+        checker = LinkChecker(browser.cdp, home, gate)
+        rules = _Rules(checker, ignore_robots)
+        robots = await rules.read(origin(start))
+        if robots is not None and not robots.allowed(start):
+            why = robots.note if robots.closed else "robots.txt asks crawlers not to visit this page"
+            return (f"qa {url} — nothing checked: {why}. If the site is the user's own (a staging site, say) and they "
+                    "say so, run qa again with ignore_robots=true.")
+        visitors.append(PageVisitor(browser, home, gate))
+        try:
+            first = await visitors[0].visit(start)
+        except HostStopped as stopped:
+            return f"qa {url} — nothing checked: {stopped.host} {stopped.why}"
         if first.error:
             raise BrowserError(f"could not open {url}: {first.error}")
         site = origin(normalize(first.final_url) or start)
+        if site != origin(start):  # redirected to another origin: its own robots.txt, before any other page of it
+            await rules.read(site)
         folder = folder_for(site, started)
         save_shots(work, folder, 1, first)
         frontier = Frontier(site)
@@ -167,22 +229,23 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
         for href, text in first.links:
             frontier.add(href, first.final_url, text)
         await report(1)
-        checker = LinkChecker(browser.cdp, home, HostGate(delay=delay))  # one gate per run
-        checks = _Checks(checker)
-        workers = [PageVisitor(browser, await browser.open_worker()) for _ in range(WORKERS)]
+        checks = _Checks(checker, rules)
+        workers = [PageVisitor(browser, await browser.open_worker(), gate) for _ in range(WORKERS)]
         visitors += workers
         tabs_changed()
+        site_host = urlsplit(site).hostname or ""
         stopped = await _crawl(frontier, checker, checks, workers, pages, chains, max_pages, clock + crawl_budget,
-                               report, lambda page, number: save_shots(work, folder, number, page))
+                               report, lambda page, number: save_shots(work, folder, number, page), rules, site_host)
         await checks.finish(frontier.links.values(), time.monotonic() + link_budget)
         issues, unchecked = list(chains), []
         for page in pages:
             issues += page_issues(page, site)
+        late = "not checked: QA stopped early" if stopped == SITE_STOPPED else "not checked: time limit"
         for link in frontier.links.values():
             if link.visited:
                 continue
             if link.result is None:
-                unchecked.append((link.url, "not checked: time limit"))
+                unchecked.append((link.url, late))
                 continue
             issue = link_issue(link.result, link.internal, link.referrers)
             if issue is not None:
@@ -191,7 +254,7 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
                 unchecked.append((link.url, _unchecked(link.result)))
         run = QARun(start, site, "your own browser" if browser.mode == "chrome" else "sandbox", started,
                     round(time.monotonic() - clock, 1), pages, merge(issues), unchecked, list(frontier.action),
-                    frontier.pending(), stopped)
+                    frontier.pending(), stopped, stopped_hosts=dict(gate.stops), robots=rules.note(site))
         return summary(run, write_report(work, run))
     finally:
         with anyio.CancelScope(shield=True):  # even when the call is cancelled, every QA tab must close
@@ -207,6 +270,7 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
                     await browser.close_tab(tab)
             browser._opened = [tab for tab in browser._opened if tab.key in before]
             tabs_changed()
+            _tell_stopped(gate, on_host_stopped)
 
 
 def _unchecked(result: LinkResult) -> str:
@@ -219,16 +283,33 @@ def _unchecked(result: LinkResult) -> str:
     return str(result.status or error or "no answer")
 
 
+def _tell_stopped(gate: HostGate, hook: HostStoppedHook | None) -> None:
+    """Every host that refused, for the Engine's cool-down: until the pause it asked for, or COOL_DOWN."""
+    if hook is None:
+        return
+    now = time.time()
+    for host, why in gate.stops.items():
+        wait = gate.waits.get(host)
+        with contextlib.suppress(Exception):
+            hook(host, now + (wait if wait is not None else COOL_DOWN), cool_reason(why, wait))
+
+
 class _Checks:
     """Link checks running in the background while pages are visited, so a run doesn't end with a long wait."""
 
-    def __init__(self, checker: LinkChecker):
+    def __init__(self, checker: LinkChecker, rules: _Rules):
         self.checker = checker
+        self.rules = rules
         self.tasks: dict[str, asyncio.Future] = {}
 
     def start(self, link: Link) -> None:
-        if link.result is None and not link.visited and link.url not in self.tasks:
-            self.tasks[link.url] = asyncio.ensure_future(self._check(link))
+        if link.result is not None or link.visited or link.url in self.tasks:
+            return
+        note = self.rules.skip(link.url, link.internal)
+        if note is not None:  # a big site, or robots.txt: never requested
+            link.result = LinkResult(link.url, None, note)
+            return
+        self.tasks[link.url] = asyncio.ensure_future(self._check(link))
 
     async def _check(self, link: Link) -> None:
         result = await self.checker.check(link.url, link.internal)
@@ -262,13 +343,14 @@ def _check_unvisited(frontier: Frontier, checks: _Checks, capacity: int, busy: s
 
 async def _crawl(frontier: Frontier, checker: LinkChecker, checks: _Checks, workers: list[PageVisitor],
                  pages: list[PageResult], chains: list[Issue], max_pages: int, deadline: float, report,
-                 saved) -> str:
-    """Visit queued pages with the workers until none are left, max_pages is reached or time runs out."""
+                 saved, rules: _Rules, site_host: str) -> str:
+    """Visit queued pages with the workers until none are left, max_pages is reached, time runs out or the site
+    refused."""
     idle = list(workers)
     running: dict[asyncio.Future, tuple[str, PageVisitor]] = {}
     try:
         return await _visit_all(frontier, checker, checks, idle, running, pages, chains, max_pages, deadline, report,
-                                saved)
+                                saved, rules, site_host)
     finally:  # cancelled, or done: no visit may go on in the background
         for task in running:
             task.cancel()
@@ -277,14 +359,16 @@ async def _crawl(frontier: Frontier, checker: LinkChecker, checks: _Checks, work
 
 
 async def _visit_all(frontier, checker, checks, idle, running, pages, chains, max_pages, deadline, report,
-                     saved) -> str:
+                     saved, rules, site_host) -> str:
+    gate = checker.gate
     while True:
-        while idle and len(pages) + len(running) < max_pages and time.monotonic() < deadline:
+        while idle and len(pages) + len(running) < max_pages and time.monotonic() < deadline \
+                and gate.stopped(site_host) is None:
             url = frontier.pop()
             if url is None:
                 break
             visitor = idle.pop()
-            running[asyncio.ensure_future(_process(url, visitor, frontier, checker))] = (url, visitor)
+            running[asyncio.ensure_future(_process(url, visitor, frontier, checker, rules))] = (url, visitor)
         _check_unvisited(frontier, checks, max_pages - len(pages) - len(running),
                          {url for url, _ in running.values()})
         if not running:
@@ -309,15 +393,23 @@ async def _visit_all(frontier, checker, checks, idle, running, pages, chains, ma
             for href, text in page.links:
                 frontier.add(href, final, text)
             await report(len(pages))
+    if gate.stopped(site_host) is not None:
+        return SITE_STOPPED
     if not frontier.pending():
         return ""
     return "max_pages" if len(pages) >= max_pages else "time budget"
 
 
-async def _process(url: str, visitor: PageVisitor, frontier: Frontier,
-                   checker: LinkChecker) -> tuple[str, PageResult | None]:
-    """Check the URL first; open it only when it is an HTML page (never a file or a download)."""
+async def _process(url: str, visitor: PageVisitor, frontier: Frontier, checker: LinkChecker,
+                   rules: _Rules) -> tuple[str, PageResult | None]:
+    """Check the URL first; open it only when it is an HTML page (never a file or a download), and never when
+    robots.txt excludes it."""
     link = frontier.links.get(url)
+    note = rules.skip(url, True)
+    if note is not None:
+        if link is not None and link.result is None:
+            link.result = LinkResult(url, None, note)
+        return url, None
     try:
         result = link.result if link is not None and link.result is not None else await checker.check(url, True)
         if link is not None:
@@ -325,7 +417,13 @@ async def _process(url: str, visitor: PageVisitor, frontier: Frontier,
         if link_verdict(result) != "ok" or not result.page:
             return url, None
         frontier.mark(url)
-        return url, await visitor.visit(url)
+        try:
+            return url, await visitor.visit(url)
+        except HostStopped as stopped:  # the site refused something else meanwhile: this page wasn't visited
+            if link is not None:
+                link.visited = False
+                link.result = LinkResult(url, None, f"stopped: {stopped.host} refused ({short_reason(stopped.why)})")
+            return url, None
     except Exception as exc:  # one page must not end the whole run
         return url, PageResult(url, error=f"{type(exc).__name__}: {exc}")
 

@@ -1,0 +1,3 @@
+# The test server's robots.txt, which QA reads first: one folder is off-limits to crawlers.
+User-agent: *
+Disallow: /qa-robots/private/

@@ -9,12 +9,14 @@ import json
 import re
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ..browser import Browser, JSError, Tab, _arg_text, _forget, _jpeg_size
 from ..cdp import CDPError
 from ..config import SHOT_MAX_WIDTH, SIZES
 from .issues import lower
 from .model import Issue, PageResult, SizeResult
+from .polite import HostGate, retry_after, stop_reason
 from .urls import origin
 
 PROBE_JS = Path(__file__).with_name("probe.js").read_text()
@@ -36,13 +38,16 @@ _SOURCE = re.compile(r"^(https?://.+?)(?::\d+)?$")  # a URL with an optional :li
 
 
 class PageVisitor:
-    """Visits pages one after another in one tab, collecting what each page reports while it loads."""
+    """Visits pages one after another in one tab, collecting what each page reports while it loads. Each visit holds
+    its host's turn at the gate, from the navigation until the visit ends."""
 
-    def __init__(self, browser: Browser, tab: Tab):
+    def __init__(self, browser: Browser, tab: Tab, gate: HostGate | None = None):
         self.browser = browser
         self.cdp = browser.cdp
         self.tab = tab
+        self.gate = gate if gate is not None else HostGate()
         self._page: PageResult | None = None
+        self._document: dict[str, str] = {}  # the page's own response headers, lower case (retry-after, cf-mitigated)
         self._open: dict[str, float] = {}  # request id -> when it started
         self._requests: dict[str, tuple[str, str, str]] = {}  # request id -> (url, resource type, frame id)
         self._activity = 0.0
@@ -67,10 +72,17 @@ class PageVisitor:
     # ---- one page --------------------------------------------------------------------------------------
 
     async def visit(self, url: str) -> PageResult:
+        """Load and check one page. Raises HostStopped, sending nothing, when QA stopped on its host."""
+        host = (urlsplit(url).hostname or "").lower()
+        async with self.gate.turn(host):
+            return await self._visit(url, host)
+
+    async def _visit(self, url: str, host: str) -> PageResult:
         started = time.monotonic()
         page = PageResult(url)
         self._open.clear()
         self._requests.clear()
+        self._document = {}
         self._activity = time.monotonic()
         self._page = page
         navigated = False
@@ -88,6 +100,9 @@ class PageVisitor:
             finally:
                 _forget(loaded)
             await self._quiet(QUIET_WAIT)
+            if self._refused(page, host, url):  # 429, 403 or a bot check header: the page is left as it is
+                page.final_url = await self._eval("location.href")
+                return page
             await self._probe("wake()", await_promise=True)
             await self._quiet(QUIET_AFTER_WAKE)
             page.final_url = await self._eval("location.href")
@@ -113,6 +128,16 @@ class PageVisitor:
         shot, thumb, width, height = await self._shots()
         return SizeResult(name, bool(layout.get("scrolls")), int(layout.get("overflow") or 0),
                           [str(item) for item in layout.get("offenders") or []], shot, thumb, width, height)
+
+    def _refused(self, page: PageResult, host: str, url: str) -> bool:
+        """The page itself answered 429 or 403, or with a bot check header: its host is stopped (with the pause it
+        asked for), and the page isn't woken, scrolled or photographed."""
+        challenge = self._document.get("cf-mitigated", "").strip().lower() == "challenge"
+        if not challenge and page.status not in (403, 429):
+            return False
+        wait = retry_after(self._document.get("retry-after"), time.time())
+        self.gate.stop(host, stop_reason(page.status, urlsplit(url).path or "/", wait, challenge=challenge), wait)
+        return True
 
     async def _emulate(self, name: str) -> None:
         width, height, mobile = SIZES[name]
@@ -198,6 +223,7 @@ class PageVisitor:
         status = int(response.get("status") or 0)
         if kind == "Document" and params.get("frameId") == self.tab.frame:
             self._page.status = status
+            self._document = {str(key).lower(): str(value) for key, value in (response.get("headers") or {}).items()}
         elif status >= 400:
             self._page.failed.append((response.get("url", ""), kind, str(status)))
 
@@ -273,8 +299,8 @@ def page_issues(page: PageResult, site: str) -> list[Issue]:
     if page.error:
         add("high", "page didn't load", f"{page.url} ({page.error})")
         return issues
-    if page.status and page.status >= 400:  # the start page is opened without a check first
-        add("high", "broken page", f"{page.url} ({page.status})")
+    if page.status and page.status >= 400 and page.status not in (403, 429):  # the start page has no check first;
+        add("high", "broken page", f"{page.url} ({page.status})")  # a refusal stops QA there (the summary says so)
     if page.note:
         add("low", "check incomplete", page.note)
     for url in page.downloads:

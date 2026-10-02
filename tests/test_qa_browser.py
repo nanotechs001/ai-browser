@@ -37,11 +37,12 @@ async def test_link_checker_reports_status_files_and_errors(chrome_browser):
 @CHROME
 async def test_visit_finds_planted_page_problems(chrome_browser):
     from ai_browser.qa.page import PageVisitor, page_issues
+    from ai_browser.qa.polite import HostGate
 
     browser, base, _ = chrome_browser
     site = base.rstrip("/")
     tab = await browser.open_worker()
-    visitor = PageVisitor(browser, tab)
+    visitor = PageVisitor(browser, tab, HostGate(delay=0.05))
     try:
         contact = await visitor.visit(base + "qa/contact.html")
         kinds = {(i.severity, i.kind) for i in page_issues(contact, site)}
@@ -71,10 +72,11 @@ async def test_visit_finds_planted_page_problems(chrome_browser):
 @CHROME
 async def test_visit_stays_quick_on_heavy_noisy_and_dialog_pages(chrome_browser):
     from ai_browser.qa.page import PageVisitor
+    from ai_browser.qa.polite import HostGate
 
     browser, base, _ = chrome_browser
     tab = await browser.open_worker()
-    visitor = PageVisitor(browser, tab)
+    visitor = PageVisitor(browser, tab, HostGate(delay=0.05))
     try:
         for page, limit in (("heavy.html", 6), ("qa/pending.html", 10), ("qa/greeting.html", 6)):
             started = time.monotonic()
@@ -148,7 +150,7 @@ async def test_qa_run_finds_exactly_the_planted_problems(chrome_browser, monkeyp
     opened = {page.final_url for page in run.pages}
     assert base + "qa/files/brochure.zip" not in opened and base + "qa/attachment" not in opened
     assert base + "qa/logout.html" not in opened and len(run.pages) == 6
-    assert progress == list(range(1, 7)) and took < 20
+    assert progress == list(range(1, 7)) and took < 30  # one page tab now
     assert browser.current is working and set(browser.owned) == before
     assert text.splitlines()[1].startswith("issues: 3 high · 3 medium · 1 low")
     assert saved_before_report == [6]  # every page's screenshots were on disk before the report was written
@@ -307,3 +309,155 @@ async def test_fetch_text_reads_a_capped_body_through_the_gate(chrome_browser):
     await browser.open(base + "qa/index.html")
     result, text = await gated_checker(browser).fetch_text(base + "qa/about.html", 60)
     assert result.status == 200 and text.lower().startswith("<!doctype html>") and len(text.encode()) <= 60
+
+
+from ai_browser.qa.polite import BIG_SITE_NOTE  # noqa: E402
+
+
+def capture(monkeypatch):
+    """(run module, dict that gets the QARun the report was written from)."""
+    from ai_browser.qa import run as run_module
+
+    captured, real = {}, run_module.write_report
+
+    def keep(work, run):
+        captured["run"] = run
+        return real(work, run)
+
+    monkeypatch.setattr(run_module, "write_report", keep)
+    return run_module, captured
+
+
+def record_fetches(monkeypatch) -> list[str]:
+    """Every URL QA's link checks ask for."""
+    from ai_browser.qa.checker import LinkChecker
+
+    asked, real = [], LinkChecker._fetch
+
+    async def fetch(self, url, credentials):
+        asked.append(url)
+        return await real(self, url, credentials)
+
+    monkeypatch.setattr(LinkChecker, "_fetch", fetch)
+    return asked
+
+
+def report_html(browser, text):
+    path = next(line for line in text.splitlines() if line.startswith("report: ")).split()[1]
+    return browser.work.to_host(path).read_text(encoding="utf-8")
+
+
+@CHROME
+async def test_qa_follows_robots_txt_unless_the_user_says_the_site_is_theirs(chrome_browser, monkeypatch):
+    run_module, captured = capture(monkeypatch)
+    asked = record_fetches(monkeypatch)
+    browser, base, _ = chrome_browser
+    private = base + "qa-robots/private/x.html"
+    text = await run_module.run_qa(browser, browser.work, base + "qa-robots/index.html", delay=0.05)
+    run = captured["run"]
+    assert (private, "not checked: robots.txt") in run.unchecked and private not in asked
+    assert private not in {page.url for page in run.pages} and base + "qa-robots/public.html" in \
+        {page.url for page in run.pages}
+    assert "not checked: 1 page robots.txt asks crawlers to skip" in text
+    text = await run_module.run_qa(browser, browser.work, base + "qa-robots/index.html", delay=0.05,
+                                   ignore_robots=True)
+    assert private in {page.url for page in captured["run"].pages}
+    assert "robots.txt: ignored at the user's request" in text
+    assert "robots.txt: ignored at the user&#x27;s request" in report_html(browser, text)
+
+
+@CHROME
+async def test_a_429_stops_the_crawl_and_says_how_long_to_wait(chrome_browser, monkeypatch):
+    run_module, captured = capture(monkeypatch)
+    browser, base, _ = chrome_browser
+    stops = []
+    text = await run_module.run_qa(browser, browser.work, base + "qa2/busy.html", delay=0.05,
+                                   on_host_stopped=lambda host, until, why: stops.append(
+                                       (host, round(until - time.time()), why)))
+    run = captured["run"]
+    assert (base + "qa/about.html", "not checked: localhost refused (429)") in run.unchecked
+    assert text.splitlines()[0].endswith("(stopped early)")
+    assert ("stopped early: localhost answered 429 Too Many Requests on /qa2/busy (it asked for a 2-minute pause), "
+            "so QA stopped after 1 page") in text
+    assert "not checked: 1 link on hosts that refused (localhost: 429)" in text
+    assert stops == [("localhost", 120, "429, it asked for 2 minutes")]
+    assert "<h3>localhost refused (429)</h3>" in report_html(browser, text)
+
+
+@CHROME
+async def test_a_429_from_another_site_stops_only_that_host(chrome_browser, monkeypatch):
+    run_module, captured = capture(monkeypatch)
+    browser, base, _ = chrome_browser
+    text = await run_module.run_qa(browser, browser.work, base + "qa2/partner.html", delay=0.05)
+    run = captured["run"]
+    assert base + "qa/about.html" in {page.url for page in run.pages}  # the crawl of the site went on
+    assert run.stopped_hosts["127.0.0.1"].startswith("answered 429") and "localhost" not in run.stopped_hosts
+    assert "stopped early" not in text and run.stopped != "host stopped"
+
+
+@CHROME
+async def test_a_short_pause_is_waited_out_and_big_sites_are_never_asked(chrome_browser, monkeypatch):
+    run_module, captured = capture(monkeypatch)
+    asked = record_fetches(monkeypatch)
+    browser, base, _ = chrome_browser
+    text = await run_module.run_qa(browser, browser.work, base + "qa2/wait.html", delay=0.05)
+    run = captured["run"]
+    assert base + "qa2/later" in {page.url for page in run.pages}
+    assert ("https://www.google.com/maps", BIG_SITE_NOTE) in run.unchecked
+    assert not any("google.com" in url for url in asked)
+    assert "not checked: 1 link to big sites (google.com)" in text
+
+
+@CHROME
+async def test_no_two_requests_to_one_host_overlap(chrome_browser, monkeypatch):
+    import contextlib
+
+    from ai_browser.qa import run as run_module
+    from ai_browser.qa.page import PageVisitor
+    from ai_browser.qa.polite import HostGate
+
+    spans, navigations = [], []
+
+    class Recording(HostGate):
+        @contextlib.asynccontextmanager
+        async def turn(self, host):
+            async with super().turn(host):
+                began = time.monotonic()
+                try:
+                    yield
+                finally:
+                    spans.append((host, began, time.monotonic()))
+
+    real_send = PageVisitor._send
+
+    async def send(self, method, params=None, timeout=30):
+        if method == "Page.navigate":  # a page visit's own request
+            navigations.append(time.monotonic())
+        return await real_send(self, method, params, timeout)
+
+    monkeypatch.setattr(run_module, "HostGate", Recording)
+    monkeypatch.setattr(PageVisitor, "_send", send)
+    browser, base, _ = chrome_browser
+    await run_module.run_qa(browser, browser.work, base + "qa/index.html", max_pages=3, delay=0.05)
+    for host in {host for host, _, _ in spans}:
+        mine = sorted((began, ended) for name, began, ended in spans if name == host)
+        assert all(later[0] >= earlier[1] for earlier, later in zip(mine, mine[1:])), host
+    local = sorted((began, ended) for name, began, ended in spans if name == "localhost")
+    assert len(navigations) >= 3 and local[0][1] <= navigations[0]  # robots.txt is read before the start page
+    assert all(any(began <= at <= ended for began, ended in local) for at in navigations)  # each visit holds a turn
+
+
+async def test_qa_never_crawls_a_big_site():
+    import contextlib
+
+    from ai_browser.browser import BrowserError
+    from ai_browser.qa import run_qa
+
+    class Stub:
+        mode, owned = "sandbox", {}
+
+        def acting(self):
+            return contextlib.nullcontext()
+
+    with pytest.raises(BrowserError, match="www.youtube.com is a big site"):
+        await run_qa(Stub(), None, "https://www.youtube.com/@someone")
