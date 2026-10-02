@@ -3,7 +3,7 @@
   "name": "AI Browser Watcher",
   "version": "0.1.0",
   "description": "Tells the AI Browser Brain about new messages in the sites you pick. It never sends anything.",
-  "permissions": ["scripting", "storage", "notifications", "tabs", "alarms"],
+  "permissions": ["scripting", "storage", "notifications", "tabs", "alarms", "tabGroups"],
   "host_permissions": ["https://mail.google.com/*", "https://app.slack.com/*", "https://app.asana.com/*",
                        "http://127.0.0.1/*", "http://localhost/*"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
