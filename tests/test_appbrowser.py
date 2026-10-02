@@ -176,3 +176,51 @@ def test_the_docs_say_ai_browser_is_visible_as_automated():
     assert flat("plans/2026-10-02-ai-home.md").count(CORRECTED) == 1
     assert ("the user's own browser is chosen before a task, for their logins; it is never a way around a block. A "
             "bot check is handed to the user in every mode.") in flat("specs/2026-10-02-own-chrome-mode-design.md")
+
+
+def test_the_windows_launch_uses_popen_with_the_same_flags(tmp_path, monkeypatch):
+    import subprocess
+
+    import ai_browser.appbrowser as appbrowser
+    from ai_browser import platforms
+
+    calls = []
+
+    def recorder(args, **options):
+        calls.append((args, options))
+        raise OSError("no such program")
+
+    monkeypatch.setattr(platforms, "WINDOWS", True)  # only the launch path changes: Popen is a recorder
+    monkeypatch.setattr(appbrowser, "chrome_binary", lambda: "C:/chrome/chrome.exe")
+    monkeypatch.setattr(appbrowser.subprocess, "Popen", recorder)
+    urls = ["https://example.com/"]
+    with pytest.raises(appbrowser.AppBrowserError, match="AI Browser could not start: no such program"):
+        appbrowser.launch_app_browser(tmp_path / "profile", tmp_path / "extension", urls=urls)
+    [(args, options)] = calls
+    assert args == appbrowser.chrome_args("C:/chrome/chrome.exe", tmp_path / "profile", False, False, urls)
+    assert options == {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+
+
+def test_the_pipe_install_is_refused_on_windows(tmp_path, monkeypatch):
+    import ai_browser.appbrowser as appbrowser
+    from ai_browser import platforms
+
+    calls = []
+    monkeypatch.setattr(platforms, "WINDOWS", True)
+    monkeypatch.setattr(appbrowser, "chrome_binary", lambda: "C:/chrome/chrome.exe")
+    monkeypatch.setattr(appbrowser.subprocess, "Popen", lambda *args, **options: calls.append(args))
+    with pytest.raises(appbrowser.AppBrowserError, match="needs macOS or Linux; on Windows, load it once with Load "
+                                                         "unpacked"):
+        appbrowser.launch_app_browser(tmp_path / "profile", tmp_path / "extension", pipe_install=True)
+    assert calls == [] and not (tmp_path / "profile").exists()  # nothing was started
+
+
+def test_already_open_says_how_to_quit_on_each_computer(monkeypatch):
+    import sys
+
+    from ai_browser.appbrowser import ALREADY_OPEN, _quit_hint
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert "(⌘Q in its window)" in ALREADY_OPEN.format("/p", _quit_hint())
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert "(close its window)" in ALREADY_OPEN.format("C:\\p", _quit_hint())

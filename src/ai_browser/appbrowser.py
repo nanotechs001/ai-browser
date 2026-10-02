@@ -13,11 +13,9 @@ Chrome quits when that pipe closes. The engine connects separately, through the 
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
-import select
 import shutil
 import signal
 import subprocess
@@ -28,12 +26,18 @@ from pathlib import Path
 
 from websockets.sync.client import connect
 
+from . import platforms
 from .chrome import ChromeError, chrome_binary, find_ws_url
 
 EXTENSION_SOURCE = Path(__file__).with_name("app") / "extension"
 START_TIMEOUT = 20  # seconds for Chrome to start and open its debugging port
-ALREADY_OPEN = ("AI Browser is already open (profile {}), maybe from an earlier run: quit it (⌘Q in its window), then "
-                "start again")
+ALREADY_OPEN = "AI Browser is already open (profile {}), maybe from an earlier run: quit it ({}), then start again"
+PIPE_ON_WINDOWS = ("installing the extension over the DevTools pipe needs macOS or Linux; on Windows, load it once "
+                   "with Load unpacked")
+
+
+def _quit_hint() -> str:
+    return platforms.shortcut("⌘Q in its window", "close its window")
 
 
 class AppBrowserError(RuntimeError):
@@ -96,6 +100,8 @@ class _Pipe:
         self._id = 0
 
     def call(self, method: str, params: dict, timeout: float = START_TIMEOUT) -> dict:
+        import select  # POSIX only, like the pipe itself
+
         self._id += 1
         os.write(self._out, json.dumps({"id": self._id, "method": method, "params": params}).encode() + b"\0")
         deadline = time.monotonic() + timeout
@@ -173,7 +179,7 @@ class _Process:
 
 @dataclass
 class AppBrowser:
-    process: _Process
+    process: _Process | subprocess.Popen
     ws_url: str
     extension_id: str
     profile: Path
@@ -203,35 +209,22 @@ class AppBrowser:
                 self.process.wait(timeout=10)
 
 
-def launch_app_browser(profile: Path, extension_dir: Path, headless: bool = False, pipe_install: bool | None = None,
-                       urls=()) -> AppBrowser:
-    """Start AI Browser on its own profile, opening `urls`; refuses a profile already in use. Headed, it is a normal
-    Chrome and the extension is whatever the user installed; headless (or pipe_install=True) installs it for the run."""
-    binary = chrome_binary()
-    if binary is None:
-        raise AppBrowserError("Google Chrome is not installed: install it from google.com/chrome, then try again")
-    profile = Path(profile)
-    pipe = headless if pipe_install is None else pipe_install
-    with contextlib.suppress(ChromeError):
-        find_ws_url(profile)
-        raise AppBrowserError(ALREADY_OPEN.format(profile))
-    profile.mkdir(parents=True, exist_ok=True)
-    (profile / "DevToolsActivePort").unlink(missing_ok=True)  # a stale one from a crash would mislead the wait
-    installed = pipe or extension_installed(profile, extension_dir)
+def _spawn_posix(binary: str, args: list[str], pipe: bool) -> tuple[_Process, _Pipe | None]:
+    """posix_spawn. With the pipe, Chrome reads commands on fd 3 and writes answers on fd 4."""
+    import fcntl  # POSIX only
+
     actions = [(os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0), (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)]
     ours: list[int] = []  # our ends of the pipe
+    theirs: list[int] = []  # Chrome's ends, closed here once it has started
     if pipe:
         to_read, to_write = os.pipe()  # Chrome reads commands on fd 3...
         from_read, from_write = os.pipe()  # ...and writes answers on fd 4
         # Chrome's ends go above 9 first, so moving one onto 3 or 4 in the child can never overwrite the other.
-        commands, answers = (fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 10) for fd in (to_read, from_write))
+        theirs = [fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 10) for fd in (to_read, from_write)]
         for fd in (to_read, from_write):
             os.close(fd)
-        actions = [(os.POSIX_SPAWN_DUP2, commands, 3), (os.POSIX_SPAWN_DUP2, answers, 4), *actions]
+        actions = [(os.POSIX_SPAWN_DUP2, theirs[0], 3), (os.POSIX_SPAWN_DUP2, theirs[1], 4), *actions]
         ours = [to_write, from_read]
-    urls = list(urls)
-    first, later = (urls[:1], urls[1:]) if headless else (urls, [])  # headless Chrome takes one start page only
-    args = chrome_args(binary, profile, headless, pipe, first)
     try:
         process = _Process(os.posix_spawn(binary, args, os.environ, file_actions=actions,
                                           setsigdef=(signal.SIGPIPE, signal.SIGXFSZ)))
@@ -240,10 +233,44 @@ def launch_app_browser(profile: Path, extension_dir: Path, headless: bool = Fals
             os.close(fd)
         raise AppBrowserError(f"AI Browser could not start: {exc}") from None
     finally:
-        if pipe:
-            for fd in (commands, answers):
-                os.close(fd)
-    channel = _Pipe(*ours) if pipe else None
+        for fd in theirs:
+            os.close(fd)
+    return process, (_Pipe(*ours) if pipe else None)
+
+
+def _spawn_windows(args: list[str]) -> subprocess.Popen:
+    """Windows has no posix_spawn, and the headed launch needs no extra descriptors: a plain Popen, the same flags."""
+    try:
+        return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        raise AppBrowserError(f"AI Browser could not start: {exc}") from None
+
+
+def launch_app_browser(profile: Path, extension_dir: Path, headless: bool = False, pipe_install: bool | None = None,
+                       urls=()) -> AppBrowser:
+    """Start AI Browser on its own profile, opening `urls`; refuses a profile already in use. Headed, it is a normal
+    Chrome and the extension is whatever the user installed; headless (or pipe_install=True) installs it for the run
+    (macOS and Linux only: Windows loads it once with Load unpacked)."""
+    binary = chrome_binary()
+    if binary is None:
+        raise AppBrowserError("Google Chrome is not installed: install it from google.com/chrome, then try again")
+    profile = Path(profile)
+    pipe = headless if pipe_install is None else pipe_install
+    if pipe and platforms.WINDOWS:
+        raise AppBrowserError(PIPE_ON_WINDOWS)
+    with contextlib.suppress(ChromeError):
+        find_ws_url(profile)
+        raise AppBrowserError(ALREADY_OPEN.format(profile, _quit_hint()))
+    profile.mkdir(parents=True, exist_ok=True)
+    platforms.unlink(profile / "DevToolsActivePort", missing_ok=True)  # a stale one from a crash would mislead the wait
+    installed = pipe or extension_installed(profile, extension_dir)
+    urls = list(urls)
+    first, later = (urls[:1], urls[1:]) if headless else (urls, [])  # headless Chrome takes one start page only
+    args = chrome_args(binary, profile, headless, pipe, first)
+    if platforms.WINDOWS:
+        process, channel = _spawn_windows(args), None
+    else:
+        process, channel = _spawn_posix(binary, args, pipe)
     try:
         extension_id = (channel.call("Extensions.loadUnpacked", {"path": str(extension_dir)})["id"] if channel
                         else extension_id_for(extension_dir))
@@ -256,7 +283,7 @@ def launch_app_browser(profile: Path, extension_dir: Path, headless: bool = Fals
             process.terminate()
             process.wait(timeout=10)
         if exited_at_once:  # another Chrome holds this profile and took over the launch
-            raise AppBrowserError(ALREADY_OPEN.format(profile)) from None
+            raise AppBrowserError(ALREADY_OPEN.format(profile, _quit_hint())) from None
         raise AppBrowserError(f"AI Browser could not start: {exc}") from None
     if channel is not None:
         channel.drain()
