@@ -15,7 +15,9 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+from .. import platforms
 from ..skills import _frontmatter
+from ..syncdir import write_atomic
 from .oneshot import ask_claude
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
@@ -160,8 +162,9 @@ class SkillWriter:
         self.skills_dir.mkdir(parents=True, exist_ok=True)
         folder.mkdir()  # FileExistsError: never over an existing skill
         path = folder / "SKILL.md"
-        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w") as handle:
-            handle.write(text.strip() + "\n")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | platforms.O_BINARY, 0o644)
+        with os.fdopen(fd, "wb") as handle:  # bytes: Python's text mode would end each line with \r\n on Windows
+            handle.write((text.strip() + "\n").encode("utf-8"))
         os.chmod(path, 0o644)
         self._saved(name)
         return path
@@ -182,11 +185,7 @@ class SkillWriter:
         path = self.skills_dir / name / "SKILL.md"
         if not path.is_file():
             raise ValueError(f"There is no skill named {json.dumps(name)} to update")
-        temp = path.with_name(f".SKILL.md.{os.getpid()}.tmp")
-        with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644), "w") as handle:
-            handle.write(text.strip() + "\n")
-        os.chmod(temp, 0o644)
-        os.replace(temp, path)
+        write_atomic(path, (text.strip() + "\n").encode("utf-8"), 0o644)
         self._saved(name)
         return path
 

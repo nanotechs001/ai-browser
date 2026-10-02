@@ -15,6 +15,8 @@ import re
 import shutil
 from pathlib import Path
 
+from ..syncdir import write_atomic
+
 CONNECTOR = "claude_ai_"  # how Claude Code names a claude.ai connector's tools: mcp__claude_ai_<Name>__<tool>
 PROBE_PROMPT = "Reply with just ok."
 
@@ -186,8 +188,4 @@ class ToolsConfig:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {"enabled": sorted(self._enabled), "always": sorted(self._always), "known": self._known,
                 "connectors": [{"name": name, "status": status} for name, status in self._connectors.items()]}
-        temp = self.path.with_name(f".tools.json.{os.getpid()}.tmp")
-        with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
-            json.dump(data, handle)
-        os.chmod(temp, 0o600)
-        os.replace(temp, self.path)
+        write_atomic(self.path, json.dumps(data).encode("utf-8"), 0o600)

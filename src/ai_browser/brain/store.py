@@ -13,6 +13,8 @@ import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
+from ..syncdir import write_atomic
+
 SEEN_LIMIT = 5000  # ids remembered so nothing is sorted twice (the oldest are forgotten first)
 NEW_FOR = 24 * 3600  # a "new" item stays this long unless the user marks it Done; skips are counted this long
 BUILT_IN = (("gmail", "Gmail", "https://mail.google.com/*"), ("slack", "Slack", "https://app.slack.com/*"),
@@ -241,10 +243,4 @@ class BrainStore:
                                    "watcher_seen": self.watcher_seen, "watcher_prompted": self.watcher_prompted})
 
     def _write(self, name: str, data: dict) -> None:
-        self.folder.mkdir(parents=True, exist_ok=True)
-        path = self.folder / name
-        temp = path.with_name(f".{name}.{os.getpid()}.tmp")
-        with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
-            json.dump(data, handle)
-        os.chmod(temp, 0o600)
-        os.replace(temp, path)
+        write_atomic(self.folder / name, json.dumps(data).encode("utf-8"), 0o600)

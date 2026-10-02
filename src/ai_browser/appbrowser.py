@@ -17,7 +17,6 @@ import hashlib
 import json
 import ntpath
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -30,6 +29,7 @@ from websockets.sync.client import connect
 
 from . import platforms
 from .chrome import ChromeError, chrome_binary, find_ws_url
+from .syncdir import sync_folder, write_atomic
 
 EXTENSION_SOURCE = Path(__file__).with_name("app") / "extension"
 START_TIMEOUT = 20  # seconds for Chrome to start and open its debugging port
@@ -52,14 +52,16 @@ def app_profile(home: Path) -> Path:
 
 
 def prepare_extension(home: Path, server_url: str, token: str) -> Path:
-    """Copy the side panel to home/app/extension (a fixed path keeps its ID) with the server's address and token."""
+    """The side panel at home/app/extension (a fixed path keeps its ID), with the server's address and token. The
+    folder is updated in place: on Windows a removal fails while anything holds a file open (a Defender scan, an
+    AI Browser left from an earlier run)."""
     folder = Path(home) / "app" / "extension"
-    if folder.exists():
-        shutil.rmtree(folder)
-    shutil.copytree(EXTENSION_SOURCE, folder)
-    config = os.open(folder / "config.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # holds the token
-    with os.fdopen(config, "w") as handle:
-        json.dump({"server": server_url, "token": token}, handle)
+    files = {path.relative_to(EXTENSION_SOURCE).as_posix(): path.read_bytes()
+             for path in sorted(EXTENSION_SOURCE.rglob("*"))
+             if path.is_file() and not path.name.startswith(".") and "__pycache__" not in path.parts}
+    sync_folder(folder, files, keep={"config.json"})
+    write_atomic(folder / "config.json", json.dumps({"server": server_url, "token": token}).encode("utf-8"),
+                 0o600)  # holds the token
     return folder
 
 

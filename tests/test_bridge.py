@@ -261,3 +261,18 @@ async def test_agents_in_brave_get_the_brave_prompt(fake_claude, tmp_path):
     argv = json.loads(log.read_text().splitlines()[0])
     assert argv[argv.index("--append-system-prompt") + 1] == PANEL_PROMPT
     await plain.close()
+
+
+async def test_the_agents_mcp_server_gets_utf8_as_a_backstop(fake_claude, tmp_path):
+    from pathlib import Path
+
+    from ai_browser.app.bridge import ClaudeBridge
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    bridge = ClaudeBridge(tmp_path / "home", claude=str(runner))
+    [event async for event in bridge.send("hi")]
+    await bridge.close()
+    argv = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
+    config = json.loads(Path(argv[argv.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
+    assert config["mcpServers"]["ai-browser"]["env"]["PYTHONUTF8"] == "1"

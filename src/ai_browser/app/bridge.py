@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ..brain.tools import ToolsConfig, server_of
+from ..syncdir import write_atomic
 
 DENIED = "The user said no"
 SWITCHED_OFF = "That tool's server isn't switched on in AI Browser (AI Home → Tools)"
@@ -288,7 +289,7 @@ class ClaudeBridge:
     def _mcp_config(self) -> Path:
         folder = self.folder
         folder.mkdir(parents=True, exist_ok=True)
-        env = {"AIB_HOME": str(self.home), "AIB_BROWSER": "app", **self.env}
+        env = {"AIB_HOME": str(self.home), "PYTHONUTF8": "1", "AIB_BROWSER": "app", **self.env}
         servers = {"ai-browser": {"command": sys.executable, "args": ["-m", "ai_browser.cli", "mcp"], "env": env}}
         for name in sorted(self._allowed_servers()):  # the user's own servers, switched on in AI Home's Tools
             definition = self.tools.definition(name)
@@ -296,9 +297,7 @@ class ClaudeBridge:
                 servers[name] = definition
         config = {"mcpServers": servers}
         path = folder / "mcp.json"
-        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
-            json.dump(config, handle, indent=1)  # its env carries the agent token
-        os.chmod(path, 0o600)
+        write_atomic(path, json.dumps(config, indent=1).encode("utf-8"), 0o600)  # its env carries the agent token
         return path
 
     def _command(self) -> list[str]:

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
 import re
 import time
 from collections.abc import Callable
@@ -18,6 +17,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import yaml
+
+from ..syncdir import write_atomic
 
 TRIGGERS = {"manual", "message", "schedule"}
 MODELS = {"opus", "sonnet", "haiku"}
@@ -218,11 +219,7 @@ class WorkflowStore:
         text = f"---\n{yaml.safe_dump(front, sort_keys=False, allow_unicode=True)}---\n{workflow.instructions}\n"
         self.folder.mkdir(parents=True, exist_ok=True)
         path = self.path_of(slug)
-        temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
-            handle.write(text)
-        os.chmod(temp, 0o600)
-        os.replace(temp, path)
+        write_atomic(path, text.encode("utf-8"), 0o600)
         return workflow
 
     def delete(self, slug: str) -> None:

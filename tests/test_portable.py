@@ -109,3 +109,8 @@ def test_every_module_imports_on_a_windows_like_python():
     result = subprocess.run([sys.executable, "-c", LIKE_WINDOWS], input=names, capture_output=True,
                             encoding="utf-8", timeout=180)
     assert result.returncode == 0 and not result.stdout.strip(), result.stdout + result.stderr[-2000:]
+
+
+def test_the_mcp_example_sets_utf8_for_the_server():
+    example = json.loads((ROOT / ".mcp.json.example").read_text(encoding="utf-8"))
+    assert example["mcpServers"]["ai-browser"]["env"]["PYTHONUTF8"] == "1"

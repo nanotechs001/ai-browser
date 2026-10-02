@@ -28,6 +28,7 @@ from ..chrome import inspect_address, own_browser_dir
 from ..hearing.engine import WhisperEngine
 from ..hearing.model import ModelStore
 from ..hearing.service import HearingService
+from ..syncdir import write_atomic
 from .agents import AgentManager
 from .bravelink import BraveLink
 from .server import AppServer, reveal_in_finder
@@ -91,11 +92,7 @@ def write_link(home: Path, url: str, token: str) -> Path:
     path = Path(home) / "app" / "link.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     data = json.dumps({"events": f"{url}/agent-events", "session_token": token, "pid": os.getpid()}).encode("utf-8")
-    temp = path.with_name(f".link.{os.getpid()}.tmp")
-    with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as handle:
-        handle.write(data)
-    os.chmod(temp, 0o600)
-    os.replace(temp, path)
+    write_atomic(path, data, 0o600)  # holds the session token
     return path
 
 
@@ -243,7 +240,7 @@ async def _run(home: Path, model: str, headless: bool, claude: str | None, ready
             ticker.cancel()
         if link_file is not None:
             with contextlib.suppress(OSError):
-                link_file.unlink()
+                platforms.unlink(link_file, missing_ok=True)
         if brave is not None:
             await brave.close()  # the agents' tabs and groups stay in Brave: nothing they left for the user is lost
         await server.stop()  # every agent's Claude Code process ends too

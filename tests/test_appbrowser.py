@@ -279,3 +279,21 @@ def test_the_install_check_ignores_case_on_windows(tmp_path):
         key = extension_id_for(folder, system=system)  # the right key for that system: only the path differs
         prefs.write_text(json.dumps({"extensions": {"settings": {key: {"path": recorded}}}}), encoding="utf-8")
         assert extension_installed(tmp_path / system, folder, system=system) is installed
+
+
+def test_prepare_extension_updates_the_folder_in_place(tmp_path):
+    import os
+
+    from ai_browser.appbrowser import prepare_extension
+
+    folder = prepare_extension(tmp_path, "http://127.0.0.1:8792", "one")
+    manifest = (folder / "manifest.json").stat()
+    (folder / "stale.js").write_bytes(b"old")
+    prepare_extension(tmp_path, "http://127.0.0.1:8793", "two")
+    again = (folder / "manifest.json").stat()
+    assert (again.st_ino, again.st_mtime_ns) == (manifest.st_ino, manifest.st_mtime_ns)  # never removed and copied
+    assert not (folder / "stale.js").exists()
+    assert json.loads((folder / "config.json").read_text(encoding="utf-8")) == {"server": "http://127.0.0.1:8793",
+                                                                                "token": "two"}
+    if os.name != "nt":
+        assert (folder / "config.json").stat().st_mode & 0o777 == 0o600

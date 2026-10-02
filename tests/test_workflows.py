@@ -268,3 +268,18 @@ async def test_ai_and_a_workflow_name_in_the_address_bar(home):
         await asyncio.sleep(0.1)
     content = user_messages(stack["log"])[0]["message"]["content"]
     assert content.startswith("Open the site, fix the footer") and content.rstrip().endswith("The user adds: the header")
+
+
+def test_workflows_and_skills_keep_arrows_emoji_and_cjk(tmp_path):
+    from ai_browser.brain.skillwriter import SkillWriter
+    from ai_browser.brain.workflows import WorkflowStore
+
+    store = WorkflowStore(tmp_path)
+    saved = store.save({"name": "Morning → report 🚀", "instructions": "Check 日本語 mail\nthen tell me"})
+    raw = (tmp_path / "workflows" / f"{saved.slug}.md").read_bytes()
+    assert b"\r\n" not in raw and "→".encode("utf-8") in raw
+    assert store.get(saved.slug).name == "Morning → report 🚀"
+    skills = SkillWriter(tmp_path / "skills")
+    text = "---\nname: notes\ndescription: Takes notes → fast 🚀\n---\nWrite 日本語 notes.\n"
+    path = skills.save(text)
+    assert path.read_bytes() == text.encode("utf-8")

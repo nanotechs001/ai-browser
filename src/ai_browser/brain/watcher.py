@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
+
+from ..syncdir import sync_folder, write_atomic
 
 APP = Path(__file__).resolve().parent.parent / "app"
 WATCHER_SOURCE = APP / "watcher"
@@ -29,35 +30,15 @@ def _sources() -> dict[str, bytes]:
     return files
 
 
-def _write(path: Path, data: bytes, mode: int = 0o644) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode), "wb") as handle:
-        handle.write(data)
-    os.chmod(temp, mode)
-    os.replace(temp, path)
-
-
 def prepare_watcher(home: Path, server_url: str, token: str) -> tuple[Path, str]:
     """The watcher folder, current, with this run's address and token; returns (folder, build)."""
     folder = Path(home) / "app" / "watcher"
     files = _sources()
     digest = hashlib.sha256()
     for name, data in files.items():
-        digest.update(name.encode() + b"\0" + data + b"\0")
+        digest.update(name.encode("utf-8") + b"\0" + data + b"\0")
     build = digest.hexdigest()[:12]
-    files["build.js"] = f'export const BUILD = "{build}";\n'.encode()
-    for name, data in files.items():
-        path = folder / name
-        try:
-            if path.read_bytes() == data:
-                continue
-        except OSError:
-            pass
-        _write(path, data)
-    keep = set(files) | {"config.json"}
-    for path in list(folder.rglob("*")):
-        if path.is_file() and path.relative_to(folder).as_posix() not in keep:
-            path.unlink()
-    _write(folder / "config.json", json.dumps({"server": server_url, "token": token}).encode(), 0o600)
+    files["build.js"] = f'export const BUILD = "{build}";\n'.encode("utf-8")
+    sync_folder(folder, files, keep={"config.json"})
+    write_atomic(folder / "config.json", json.dumps({"server": server_url, "token": token}).encode("utf-8"), 0o600)
     return folder, build

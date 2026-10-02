@@ -3,7 +3,7 @@
     "ai-browser": {
       "command": "uv",
       "args": ["run", "--directory", "<path-to-this-folder>", "ai-browser", "mcp"],
-      "env": {}
+      "env": {"PYTHONUTF8": "1"}
     }
   }
 }
