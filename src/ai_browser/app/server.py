@@ -13,6 +13,7 @@ import hmac
 import html
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -30,6 +31,7 @@ from ..brain.service import BrainService
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
+from ..checks import KINDS
 from ..config import load_config, project_root
 from ..live import _bind, _QuietServer, _serve
 from ..skills import Catalog
@@ -46,6 +48,9 @@ BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_se
 TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"}
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
 SKILL_MESSAGES = {"skill_draft", "skill_save"}
+CHECK_MESSAGES = {"check_continue", "check_skip"}  # a bot check's buttons; the watcher may Continue, never Skip
+CHECK_SITE = re.compile(r"[a-z0-9.-]{1,253}")  # a host name, nothing else
+CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{1,64}")  # an engine's live view
 WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "schedule", "run", "tools", "skills",
                    "model")
 WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabled")
@@ -73,6 +78,13 @@ def _tab(value) -> dict:
     if not isinstance(value, dict):
         return {}
     return {key: value[key][:2000] for key in ("url", "title") if isinstance(value.get(key), str)}
+
+
+def _valid_check(report: dict) -> bool:
+    """A check report the app may show: a kind from our own table, a plain host name, our own live-view link."""
+    site, live = report.get("site"), report.get("live")
+    return (report.get("check") in KINDS and isinstance(site, str) and CHECK_SITE.fullmatch(site) is not None
+            and (live is None or (isinstance(live, str) and CHECK_LIVE.fullmatch(live) is not None)))
 
 
 class AppServer:
@@ -219,7 +231,14 @@ class AppServer:
         except ValueError:
             return Response(status_code=400)
         if isinstance(report, dict) and all(isinstance(report.get(key), str) for key in ("agent", "kind", "target")):
-            self.agents.tab_event(report["agent"], report["kind"], report["target"], bool(report.get("adopted")))
+            if report["kind"] == "check":  # a bot check: only values from our own table and plain host names
+                if _valid_check(report):
+                    self.agents.check_event(report["agent"], report)
+            elif report["kind"] == "check_cleared":
+                if report.get("how") in ("solved", "closed"):
+                    self.agents.check_cleared(report["agent"], report["target"], report["how"])
+            else:
+                self.agents.tab_event(report["agent"], report["kind"], report["target"], bool(report.get("adopted")))
         return Response(status_code=204)
 
     # ---- sockets ----------------------------------------------------------------------------------------------
@@ -287,7 +306,7 @@ class AppServer:
             if message.get("type") == "agent_closed":
                 self._thumbs.pop(str(message.get("id")), None)
             self._send_all(message)
-            if message.get("type") == "permission_request":
+            if message.get("type") in ("permission_request", "check_request"):
                 self._to_watcher(message)  # a Brave notification too
 
     def _job(self, coroutine) -> None:
@@ -320,6 +339,11 @@ class AppServer:
                 self._job(self._skill_draft(queue, message))  # a Claude call: the socket goes on meanwhile
             elif self.skill_writer is not None:
                 self._skill_save(queue, message)
+        elif kind in CHECK_MESSAGES:  # only a click in one of our pages (or the watcher's Continue) answers a check
+            if kind == "check_continue":
+                await agents.continue_check(agent_id)
+            elif self._origin_of.get(ws) not in self._watcher_origins:
+                await agents.skip_check(agent_id)
         elif kind == "hello":
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())

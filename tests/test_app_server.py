@@ -418,3 +418,82 @@ async def test_no_picture_is_sent_for_an_agent_closed_meanwhile(fake_claude, tmp
             assert "agent_closed" in kinds and "thumb" not in kinds[kinds.index("agent_closed"):]
     finally:
         await server.stop()
+
+
+CHECK_REPORT = {"kind": "check", "target": "T1", "adopted": False, "check": "google", "site": "www.google.com"}
+
+
+async def wait_for(predicate, seconds=10):
+    for _ in range(int(seconds * 20)):
+        if predicate():
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("it never happened")
+
+
+def told(log) -> list[str]:
+    """What the agents' Claude Code processes were sent as user messages."""
+    lines = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+    return [line["message"]["content"] for line in lines if isinstance(line, dict) and line.get("type") == "user"]
+
+
+async def test_check_reports_are_checked_then_reach_pages_and_the_watcher(fake_claude, tmp_path):
+    from ai_browser.checks import KINDS
+
+    server, url, _ = await with_brain(fake_claude, tmp_path, EVENTS)
+    try:
+        agent = await server.agents.create("Flights to Manila")
+        good = {**CHECK_REPORT, "agent": agent.id}
+        headers = {"X-AIB-Agent-Token": server.agent_token}
+        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
+            await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
+            await until(watcher, lambda message: message["type"] == "watch_list")
+            async with httpx.AsyncClient() as client:
+                for bad in ({**good, "check": "dragon"}, {**good, "site": "www.google.com <b>"}, {**good, "site": "a b"},
+                            {**good, "site": "www.google.com\n"}, {**good, "live": "http://evil.example/live?token=x"},
+                            {**good, "live": "http://127.0.0.1:80@evil.example/live?token=x"}):  # Review Focus 2
+                    response = await client.post(url + "/agent-events", json=bad, headers=headers)
+                    assert response.status_code == 204 and agent.check is None, bad
+                await client.post(url + "/agent-events", json=good, headers=headers)
+                request = (await until(watcher, lambda message: message["type"] == "check_request"))[-1]
+                assert request == {"type": "check_request", "agent": agent.id, "name": "Flights to Manila",
+                                   "site": "www.google.com", "what": KINDS["google"], "target": "T1", "live": None}
+                assert agent.state == "needs_you" and agent.check["check"] == "google"
+                cleared = {"agent": agent.id, "kind": "check_cleared", "target": "T1", "adopted": False,
+                           "how": "solved"}
+                await client.post(url + "/agent-events", json=cleared, headers=headers)
+                assert agent.check is None
+    finally:
+        await server.stop()
+
+
+async def test_check_buttons_come_from_our_pages_and_the_watcher_only_continues(fake_claude, tmp_path):
+    from ai_browser.app.agents import CONTINUE_TEXT, SKIP_TEXT
+
+    _, log, _ = fake_claude
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    server.allow_origin(WATCHER, watcher=True)
+    closed = []
+
+    async def close_tabs(targets):
+        closed.append(list(targets))
+
+    agents = server.agents
+    agents.close_tabs = close_tabs
+    try:
+        first, second = await agents.create("one"), await agents.create("two")
+        for agent in (first, second):
+            agents.tab_event(agent.id, "tab_opened", f"T{agent.id}")
+            agents.check_event(agent.id, {**CHECK_REPORT, "target": f"T{agent.id}"})
+        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
+            await watcher.send(json.dumps({"type": "check_skip", "id": first.id}))  # the watcher never closes a tab
+            await watcher.send(json.dumps({"type": "check_continue", "id": second.id}))
+            await wait_for(lambda: second.check is None)
+        assert first.check is not None and closed == []
+        async with connect(socket_url(server, url), origin=ORIGIN) as page:
+            await page.send(json.dumps({"type": "check_skip", "id": first.id}))
+            await wait_for(lambda: first.check is None)
+        assert closed == [[f"T{first.id}"]]
+        await wait_for(lambda: SKIP_TEXT in told(log) and CONTINUE_TEXT in told(log))
+    finally:
+        await server.stop()
