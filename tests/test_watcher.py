@@ -374,3 +374,35 @@ async def test_notifications_say_what_started_and_added_sites_watch_their_page(w
     patterns = await js("import('./sites.js').then(({watchPattern}) => [watchPattern("
                         "'https://shop.example.com/admin/orders?status=new'), watchPattern('https://shop.example.com/')])")
     assert patterns == ["https://shop.example.com/admin/orders*", "https://shop.example.com/*"]
+
+
+@CHROME
+async def test_a_bot_check_gets_one_notification_with_show_me_and_continue(watcher):
+    watcher.brain.send_watcher({"type": "check_request", "agent": "a1", "name": "Flights to Manila",
+                                "site": "www.google.com", "what": "a check", "target": "T1", "live": None})
+    noted = ("chrome.storage.session.get('notes').then(({notes = {}}) => Object.values(notes).some("
+             "note => note.check && note.check.agent === 'a1' && note.check.target === 'T1'))")
+    assert await until(watcher.worker_js, noted)
+    assert await until(watcher.worker_js, "chrome.notifications.getAll().then(all => Object.keys(all).length === 1)")
+    _, js = await open_page(watcher.cdp, f"chrome-extension://{watcher.app.extension_id}/brain.html")
+
+    async def notify(code):
+        return await js(f"import('./notify.js').then((m) => {code})")
+
+    made = await notify("m.checkNotification({agent: 'a1', name: 'Flights to Manila', site: 'www.google.com', "
+                        "target: 'T1', live: null})")
+    assert made["options"]["title"] == "Flights to Manila: a bot check on www.google.com"
+    assert made["options"]["message"] == "Solve it in the tab, then press Continue."
+    assert [button["title"] for button in made["options"]["buttons"]] == ["Show me", "Continue"]
+    note = json.dumps(made["note"])
+    assert await notify(f"m.checkAction({note}, 1)") == {"send": {"type": "check_continue", "id": "a1"}}
+    assert await notify(f"m.checkAction({note}, 0)") == {"send": {"type": "watch", "target": "T1"}}
+    live = await notify("m.checkNotification({agent: 'a1', target: 'Q1', "
+                        "live: 'http://127.0.0.1:8770/live?token=abc'})")
+    assert await notify(f"m.checkAction({json.dumps(live['note'])}, 0)") == \
+        {"open": "http://127.0.0.1:8770/live?token=abc"}
+    forged = await notify("m.checkNotification({agent: 'a1', target: 'Q1', "
+                          "live: 'http://127.0.0.1:80@evil.example/live?token=x'})")  # Review Focus 2
+    assert forged["note"]["check"]["live"] == ""
+    assert await notify(f"m.checkAction({json.dumps(forged['note'])}, 0)") == \
+        {"send": {"type": "watch", "target": "Q1"}}

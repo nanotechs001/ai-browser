@@ -4,7 +4,7 @@
 // user approved into that thread's reply box. It never sends anything.
 import { BUILD } from "./build.js";
 import { connect } from "./link.js";
-import { notificationFor } from "./notify.js";
+import { checkAction, checkNotification, notificationFor } from "./notify.js";
 
 const BRAIN = chrome.runtime.getURL("brain.html");
 const READERS = new Set(["gmail", "slack", "asana"]); // added sites use the region reader
@@ -70,6 +70,7 @@ async function handle(message) {
     await syncing;
   } else if (message.type === "notify") await notify(message);
   else if (message.type === "permission_request") await askPermission(message);
+  else if (message.type === "check_request") await askCheck(message);
   else if (message.type === "open_thread") await openThread(message);
   else if (message.type === "fill_reply") await fillReply(message);
 }
@@ -272,6 +273,21 @@ async function askPermission(request) {
   });
 }
 
+// An agent stopped at a bot check: one notification, with Show me and Continue. Solving it is the user's, in the tab.
+async function askCheck(request) {
+  const id = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const { options, note } = checkNotification(request);
+  await keepNote(id, note);
+  await chrome.notifications.create(id, { type: "basic", iconUrl: "icon.png", priority: 2, requireInteraction: true,
+                                          ...options });
+}
+
+async function doCheck(note, index) {
+  const action = checkAction(note, index);
+  if (action.open) await chrome.tabs.create({ url: action.open });
+  else link.send(action.send);
+}
+
 async function noteOf(id) {
   const { notes = {} } = await chrome.storage.session.get("notes");
   return notes[id] || {};
@@ -292,6 +308,7 @@ async function openBrain(itemId) {
 chrome.notifications.onButtonClicked.addListener(async (id, index) => {
   const note = await noteOf(id);
   chrome.notifications.clear(id);
+  if (note.check) return doCheck(note, index);
   if (note.permission) {
     if (index === 1) link.send({ type: "permission", ...note.permission, answer: "deny" });
     else await openBrain();
@@ -308,6 +325,7 @@ chrome.notifications.onButtonClicked.addListener(async (id, index) => {
 chrome.notifications.onClicked.addListener(async (id) => {
   const note = await noteOf(id);
   chrome.notifications.clear(id);
+  if (note.check) return doCheck(note, 0);
   await openBrain(note.item?.id);
 });
 

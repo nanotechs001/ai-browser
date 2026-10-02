@@ -24,3 +24,26 @@ export function notificationFor(items) {
                       buttons: [{ title: "Open the Brain" }] },
            note: {} };
 }
+
+const LIVE = /^http:\/\/127\.0\.0\.1:\d{1,5}\/live\?token=[A-Za-z0-9_-]{1,64}$/; // an engine's live view, nothing else
+
+// An agent stopped at a bot check: the notification says who and where (plain text), and its buttons can only bring
+// the tab forward (or open the live view that shows it) and tell the agent to carry on. Nothing here closes a tab.
+export function checkNotification(request) {
+  const live = LIVE.test(String(request.live || "")) ? String(request.live) : "";
+  return {
+    options: { title: `${request.name || "An agent"}: a bot check on ${request.site || "a site"}`.slice(0, 120),
+               message: "Solve it in the tab, then press Continue.",
+               buttons: [{ title: "Show me" }, { title: "Continue" }] },
+    note: { check: { agent: String(request.agent || ""), target: String(request.target || ""), live } },
+  };
+}
+
+// What a click on the notification does: Continue (button 1) tells the agent; Show me (button 0, or the notification
+// itself) opens the live view when there is one, else asks the app to bring the agent's tab forward.
+export function checkAction(note, index) {
+  const check = note.check || {};
+  if (index === 1) return { send: { type: "check_continue", id: check.agent } };
+  if (check.live) return { open: check.live };
+  return { send: { type: "watch", target: check.target } };
+}
