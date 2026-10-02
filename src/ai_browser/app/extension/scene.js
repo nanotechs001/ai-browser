@@ -1,8 +1,11 @@
 // Mission Control's room, drawn with CSS 3D: a floor tilted away from the user, the Brain's stage in the middle, and
 // one station per agent around it. Stations and the stage are billboards: they stand upright and face the user (their
 // own turn undoes the room's). Stations are built once and then updated in place, so a click is never lost to a
-// rebuild; text is set with textContent, and a monitor only ever shows the app's own JPEG pictures.
+// rebuild; text is set with textContent, and a monitor only ever shows the app's own JPEG pictures. Each station is a
+// little desk: the monitor, a chibi worker (chibi.js) posed by the agent's state, and the desk's nameplate and ticker.
 "use strict";
+
+import { createWorker, ensureDefs } from "./chibi.js";
 
 export const COLORS = { grey: "#8a8f98", blue: "#4c8df6", red: "#ef6a5f", yellow: "#f6c344", green: "#3fb26b",
                         pink: "#ea5aa8", purple: "#b57bf7", cyan: "#2bb3bd", orange: "#fb9f4e" };
@@ -13,6 +16,8 @@ const START = { tilt: 58, spin: 0, scale: 1 };
 const TILT = [35, 70];
 const SCALE = [0.6, 1.6];
 const JPEG = /^[A-Za-z0-9+/]+={0,2}$/;
+export const CARD = { w: 200, h: 156 }; // a station's card, in CSS pixels (mission.css uses the same numbers)
+const SPARKS = 6; // arrivals in flight at once: any more arrive without a spark
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -29,7 +34,7 @@ function shortly(value) {
   return String(Math.round(value * 100) / 100);
 }
 
-const SEAT = 240; // room pixels between two stations side by side (a card is 176 wide: they never overlap)
+const SEAT = 240; // room pixels between two stations side by side (a card is 200 wide: they never overlap)
 const ROW = 340; // between two rows, front to back: more than a card's height on screen
 const BACK = 440; // the rows behind are farther apart: far away, a card looks shorter but the Brain needs the room
 
@@ -85,7 +90,7 @@ function tickerOf(agent, state) {
   return agent.last_action || agent.status || STATES[state] || state;
 }
 
-export function createScene(root, { onSelect = () => {} } = {}) {
+export function createScene(root, { onSelect = () => {}, onCamera = () => {} } = {}) {
   const viewport = el("div", "viewport");
   const room = el("div", "room");
   const floor = el("div", "floor");
@@ -94,6 +99,7 @@ export function createScene(root, { onSelect = () => {} } = {}) {
   room.append(floor, ring, stage);
   viewport.append(room);
   root.replaceChildren(viewport);
+  ensureDefs(document);
   place(ring, CENTER);
   place(stage, CENTER);
   const stations = new Map(); // agent id -> {node, shadow, parts, jpeg}
@@ -101,6 +107,7 @@ export function createScene(root, { onSelect = () => {} } = {}) {
   const created = new Map(); // agent id -> when it was created: the oldest gets the first place
   let order = []; // agent ids, oldest first
   let extent = { dx: 600, near: 920, far: CENTER.y }; // how far the stations reach: the room is fitted to them
+  let started = false; // the first apply() runs before the Brain exists: onCamera only after it
 
   function fits(scale, height) { // with this zoom, the nearest station stands above the task bar, the farthest
     const tilt = (START.tilt * Math.PI) / 180; // card and the Brain below the top bar (the room's perspective)
@@ -109,14 +116,14 @@ export function createScene(root, { onSelect = () => {} } = {}) {
       const depth = (y - 700) * scale;
       return 0.2 * height + ((middle + depth * Math.cos(tilt)) * 1800) / (1800 - depth * Math.sin(tilt));
     };
-    return screen(extent.near) <= height - 100 && screen(extent.far) >= 64 + 180 * scale
+    return screen(extent.near) <= height - 100 && screen(extent.far) >= 64 + (CARD.h + 24) * scale
       && screen(CENTER.y) >= 64 + 400 * scale;
   }
 
   function fit() { // the room fills the window it is in, with every station in view
     const width = viewport.clientWidth || innerWidth;
     const height = viewport.clientHeight || innerHeight;
-    let scale = Math.max(0.35, Math.min(1.15, (width * 0.94) / (2 * extent.dx + 240), height / 880));
+    let scale = Math.max(0.35, Math.min(1.15, (width * 0.94) / (2 * extent.dx + CARD.w + 64), height / 880));
     while (scale > 0.35 && !fits(scale, height)) scale -= 0.02;
     return scale;
   }
@@ -129,6 +136,7 @@ export function createScene(root, { onSelect = () => {} } = {}) {
     room.dataset.tilt = shortly(camera.tilt);
     room.dataset.spin = shortly(camera.spin);
     room.dataset.scale = shortly(camera.scale);
+    if (started) onCamera(); // turn, zoom, reset, resize and layout: the Brain re-aims its alert
   }
 
   function layout() {
@@ -151,15 +159,16 @@ export function createScene(root, { onSelect = () => {} } = {}) {
     node.type = "button";
     node.dataset.id = id;
     const parts = { card: el("div", "card"), monitor: el("div", "monitor"), shot: el("img", "shot"),
-                    scan: el("div", "scan"), head: el("div", "head"), robot: el("span", "robot"),
+                    scan: el("div", "scan"), boot: el("div", "boot"), stand: el("div", "stand"),
+                    worker: createWorker(id), desk: el("div", "desk"), plate: el("div", "plate"),
                     nameplate: el("span", "nameplate"), light: el("span", "light"), ticker: el("div", "ticker"),
                     badge: el("span", "badge", "needs you") };
     parts.shot.alt = "";
     parts.shot.hidden = true;
-    parts.robot.append(el("span", "eye"), el("span", "eye"), el("span", "arm"));
-    parts.monitor.append(parts.shot, parts.scan);
-    parts.head.append(parts.robot, parts.nameplate, parts.light);
-    parts.card.append(parts.monitor, parts.head, parts.ticker);
+    parts.monitor.append(parts.shot, parts.scan, parts.boot);
+    parts.plate.append(parts.nameplate, parts.light);
+    parts.desk.append(parts.plate, parts.ticker);
+    parts.card.append(parts.monitor, parts.stand, parts.worker, parts.desk);
     node.append(parts.card, parts.badge);
     node.addEventListener("click", () => onSelect(id));
     const shadow = el("div", "shadow placing");
@@ -183,10 +192,32 @@ export function createScene(root, { onSelect = () => {} } = {}) {
     if (node.getAttribute("aria-label") !== label) node.setAttribute("aria-label", label);
   }
 
-  function upsert(agent) {
+  function arrive(station) { // a new agent's short scene: the spark flies from the Brain, the desk plays .spawning
+    const { node } = station;
+    node.classList.add("spawning");
+    setTimeout(() => node.classList.remove("spawning"), 2000); // a timer: animationend never fires without animations
+    if (room.querySelectorAll(".spark").length >= SPARKS) return;
+    const spark = el("div", "spark billboard");
+    spark.style.setProperty("--c", node.style.getPropertyValue("--c"));
+    place(spark, CENTER);
+    room.append(spark);
+    const dx = Number(node.dataset.x) - CENTER.x;
+    const dy = Number(node.dataset.y) - CENTER.y;
+    const frames = [];
+    for (let step = 0; step <= 8; step += 1) { // an arc over the floor, in the room's own pixels
+      const f = step / 8;
+      frames.push({ translate: `${f * dx}px ${f * dy}px ${200 - 140 * f + 440 * f * (1 - f)}px` });
+    }
+    const flight = spark.animate(frames, { duration: 700, easing: "linear" });
+    flight.onfinish = () => spark.remove();
+    flight.oncancel = () => spark.remove();
+  }
+
+  function upsert(agent, { fresh = false } = {}) { // fresh: created while the page is open, so its arrival plays
     if (!agent?.id) return;
     let station = stations.get(agent.id);
-    if (!station) {
+    const added = !station;
+    if (added) {
       station = build(agent.id);
       stations.set(agent.id, station);
       created.set(agent.id, Number(agent.created) || Infinity);
@@ -195,6 +226,19 @@ export function createScene(root, { onSelect = () => {} } = {}) {
       layout();
     }
     fill(station, agent);
+    if (added && fresh && !matchMedia("(prefers-reduced-motion: reduce)").matches) arrive(station);
+  }
+
+  function directionTo(id) { // from the Brain to a station, in the viewer's frame: dx to the right, dz to the user
+    const station = stations.get(id);
+    if (!station) return null;
+    const x = Number(station.node.dataset.x) - CENTER.x;
+    const y = Number(station.node.dataset.y) - CENTER.y;
+    const spin = (camera.spin * Math.PI) / 180;
+    const dx = x * Math.cos(spin) - y * Math.sin(spin);
+    const dz = x * Math.sin(spin) + y * Math.cos(spin);
+    const length = Math.hypot(dx, dz);
+    return length ? { dx: dx / length, dz: dz / length } : null;
   }
 
   function remove(id) {
@@ -236,5 +280,6 @@ export function createScene(root, { onSelect = () => {} } = {}) {
 
   addEventListener("resize", apply);
   apply();
-  return { upsert, remove, thumb, turn, zoom, reset, camera, stage, viewport };
+  started = true;
+  return { upsert, remove, thumb, turn, zoom, reset, directionTo, camera, stage, viewport };
 }
