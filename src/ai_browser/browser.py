@@ -168,7 +168,11 @@ class Browser:
         self.owned: dict[str, Tab] = {}
         self.current: Tab | None = None
         self._seq = 0
-        self._risky = risky_regex(cfg.risky_words).pattern
+        # In the user's own browser a download lands in their Downloads folder: it is ⚠, and asks first
+        self._risky = risky_regex(cfg.risky_words + (["download"] if mode == "chrome" else [])).pattern
+        self._downloads = mode == "chrome"  # links that say they download (a[download]) are ⚠ too
+        self._stopped: list[str] = []  # downloads stopped since the caller last heard (file names)
+        self._cancels: set[asyncio.Future] = set()
         self._tab_listeners: list[Callable[[Tab], None]] = []
         self._allow_dialogs = False  # True only while running steps the user confirmed
         self._adopting: set[asyncio.Future] = set()
@@ -195,6 +199,8 @@ class Browser:
         cdp.on("Network.loadingFailed", self._on_failed)
         cdp.on("Runtime.executionContextDestroyed", self._on_context_destroyed)
         cdp.on("Runtime.executionContextsCleared", self._on_contexts_cleared)
+        if mode == "chrome":
+            cdp.on("Page.downloadWillBegin", self._on_download)
 
     # ---- tabs and navigation tracking ---------------------------------------------------------
 
@@ -339,6 +345,31 @@ class Browser:
             text = text if len(text) <= 300 else text[:299] + "…"
             lines.append(f"{kind:<15} {text}" + (f"  ({where})" if where else ""))
         return "\n".join(lines)
+
+    # ---- downloads in the user's own browser: asked first, else cancelled ------------------
+
+    def _on_download(self, params: dict, session: str | None) -> None:
+        """A download started in one of our tabs. Outside a step the user confirmed it is cancelled at once: in the
+        user's own browser it would land in their Downloads folder (Decision 15). The agent hears of it when it was
+        its working tab (or a tab its step just opened); a page Website QA visits notes its own downloads."""
+        tab = self._tab_for(session)
+        if tab is None or self._allow_dialogs or not params.get("guid"):
+            return
+        if tab is self.current or tab in self._opened:
+            self._stopped.append(params.get("suggestedFilename") or params.get("url") or "a file")
+        cancel = asyncio.ensure_future(self._cancel_download(params["guid"]))
+        self._cancels.add(cancel)
+        cancel.add_done_callback(self._cancels.discard)
+
+    async def _cancel_download(self, guid: str) -> None:
+        with contextlib.suppress(CDPError):
+            await self.cdp.send("Browser.cancelDownload", {"guid": guid})
+
+    def _download_notes(self) -> list[str]:
+        notes = [f"⛔ a download of {name} was stopped: ask the user, then repeat with confirmed=true"
+                 for name in self._stopped]
+        self._stopped.clear()
+        return notes
 
     async def start(self) -> None:
         if self.mode == "sandbox":  # a real Chrome (yours, or AI Browser) keeps the user's Downloads folder
@@ -694,7 +725,7 @@ class Browser:
         """The reader's page state, plus `check` (a bot check, or None) and `boxes` (checkbox frames, each also
         marked `box` among the frames), decided here from its signals."""
         opts = {"find": find, "maxRows": MAX_ROWS, "textLimit": TEXT_LIMIT, "nameLimit": NAME_LIMIT,
-                "risky": self._risky}
+                "risky": self._risky, "downloads": self._downloads}
         state = await self._reader(f"observe({json.dumps(opts)})")
         signals = state.get("signals") or {}
         state["check"] = detect(state.get("url", ""), signals)
@@ -722,7 +753,7 @@ class Browser:
         if state["check"] is not None:  # nothing to click, no text, no picture: the user's to solve
             return "\n".join(dialogs + [await self._handoff(state["check"])])
         skipped = self.skipped_site(state.get("url", ""))
-        return "\n".join(dialogs + [skipped if skipped is not None else render_page(state)])
+        return "\n".join(self._download_notes() + dialogs + [skipped if skipped is not None else render_page(state)])
 
     async def open(self, url: str, new_tab: bool = False) -> str:
         if new_tab or self.current is None:
@@ -1057,7 +1088,7 @@ class Browser:
             except (BrowserError, CDPError) as exc:
                 if attempt == 1:
                     lines.append(f"(the page is still changing, so it could not be read: {exc}; call observe)")
-                    return "\n".join(lines)
+                    return "\n".join(lines + self._download_notes())
                 await asyncio.sleep(0.5)
         if state["check"] is not None:
             return "\n".join(lines + [await self._handoff(state["check"])])
@@ -1068,7 +1099,7 @@ class Browser:
             page = render_diff(diff_rows(before["rows"], state["rows"]), state, old_text=before.get("text"))
         else:
             page = render_page(state)
-        return "\n".join(lines + [page])
+        return "\n".join(lines + self._download_notes() + [page])
 
     @contextlib.contextmanager
     def acting(self):
@@ -1155,8 +1186,8 @@ class Browser:
         return True
 
     async def _target(self, element: str, kind: str, confirmed: bool) -> dict:
-        result = await self._reader(
-            f"target({json.dumps(element)}, {json.dumps(kind)}, {json.dumps(self._risky)})")
+        result = await self._reader(f"target({json.dumps(element)}, {json.dumps(kind)}, "
+                                    f"{json.dumps(self._risky)}, {json.dumps(self._downloads)})")
         if not result.get("ok"):
             reason = result.get("reason", "unavailable")
             if reason in {"disabled", "not editable", "not a file input"}:

@@ -22,6 +22,8 @@
   const sigs = new Map();
   let next = 1;
   let riskyRe = null;
+  let downloadsRisky = false; // the user's own browser: a link that downloads is ⚠ too
+  const downloadLink = (el) => el.tagName === "A" && el.hasAttribute("download");
   let nameLimit = 80;
 
   const idOf = (el) => {
@@ -176,7 +178,9 @@
       row.options = options.slice(0, 8);
       if (options.length > 8) row.more = options.length - 8;
     }
-    if (riskyRe && CLICKABLE.has(role) && riskyRe.test(name)) row.risky = true;
+    if (CLICKABLE.has(role) && ((riskyRe && riskyRe.test(name)) || (downloadsRisky && downloadLink(el)))) {
+      row.risky = true;
+    }
     return row;
   };
 
@@ -522,6 +526,7 @@
 
     observe(opts) {
       riskyRe = opts.risky ? new RegExp(opts.risky, "i") : null;
+      downloadsRisky = !!opts.downloads;
       nameLimit = opts.nameLimit || 80;
       for (const [n, el] of nodes) if (!el.isConnected) { nodes.delete(n); sigs.delete("e" + n); }
       const { rows, frames, above, below } = collect(opts);
@@ -553,14 +558,15 @@
     },
 
     // Re-check a row before input. kind: click|dblclick|hover|type|append|select|drag|drop|upload.
-    target(id, kind, risky) {
+    target(id, kind, risky, downloads) {
       const el = byId(id);
       if (!el || !el.isConnected) return { ok: false, reason: "gone" };
       const role = roleOf(el) || "clickable";
       const name = clip(nameOf(el), nameLimit);
       const sig = sigs.get(id);
       if (sig !== undefined && sig !== sigOf(el, role, name)) return { ok: false, reason: "changed" };
-      const isRisky = !!(risky && CLICKABLE.has(role) && new RegExp(risky, "i").test(name));
+      const isRisky = !!(CLICKABLE.has(role) &&
+        ((risky && new RegExp(risky, "i").test(name)) || (downloads && downloadLink(el))));
       if (kind === "upload") {
         if (el.tagName !== "INPUT" || el.type !== "file") return { ok: false, reason: "not a file input" };
         return { ok: true, x: 0, y: 0, role, name, risky: false };

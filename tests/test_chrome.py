@@ -665,3 +665,61 @@ async def test_a_handed_tab_is_listed_taken_on_and_given_back(own_browser):  # R
         assert user in await chrome_pages(cdp)  # let go of, never closed
     finally:
         cdp.send = send
+
+
+def test_download_is_a_risky_word_only_in_the_users_browser(tmp_path):
+    import re
+
+    from ai_browser.browser import Browser
+    from ai_browser.config import Config
+    from ai_browser.workfs import WorkDir
+
+    class NoCDP:
+        def on(self, method, handler):
+            pass
+
+    work = WorkDir(tmp_path / "work", "t")
+    assert re.search(Browser(NoCDP(), work, Config(), mode="chrome")._risky, "Download report", re.IGNORECASE)
+    for mode in ("sandbox", "app"):  # unchanged there
+        assert not re.search(Browser(NoCDP(), work, Config(), mode=mode)._risky, "Download report", re.IGNORECASE)
+
+
+@CHROME
+async def test_downloads_need_the_users_ok_in_their_own_browser(own_browser, tmp_path):
+    from ai_browser.steps import parse_steps
+
+    make, base, cdp = own_browser
+    downloads = tmp_path / "downloads"  # never the real Downloads folder, even if the cancel failed
+    await cdp.send("Browser.setDownloadBehavior", {"behavior": "allow", "downloadPath": str(downloads),
+                                                   "eventsEnabled": True})
+    browser = await make()
+    page = await browser.open(base + "downloads.html")
+    rows = {name: line for line in page.splitlines()
+            for name in ("Download report", "Save a copy", "Get the installer") if f'"{name}"' in line}
+    ids = {name: line.split()[0] for name, line in rows.items()}
+    # a link's row ends `"name" → address ⚠`: the mark comes last, after the address
+    assert rows["Download report"].endswith(" ⚠") and rows["Save a copy"].endswith(" ⚠")
+    assert not rows["Get the installer"].endswith("⚠")
+    for name in ("Download report", "Save a copy"):
+        assert (await browser.act(parse_steps([f"click {ids[name]}"]))).startswith(f"⛔ blocked click {ids[name]}")
+    assert await browser._eval("document.getElementById('log').textContent") == ""
+    out = await browser.act(parse_steps([f"click {ids['Get the installer']}"]))  # says nothing of a download
+    if "was stopped" not in out:  # the browser may announce the download after the step's own read
+        await asyncio.sleep(1)
+        out = await browser.observe()
+    assert "⛔ a download of setup.dmg was stopped: ask the user, then repeat with confirmed=true" in out
+    await asyncio.sleep(3.5)  # longer than the whole file takes to arrive
+    assert not downloads.exists() or not list(downloads.iterdir())
+
+
+@CHROME
+async def test_a_download_qa_meets_is_not_the_agents(own_browser, tmp_path):
+    from ai_browser.qa import run_qa
+
+    make, base, cdp = own_browser
+    await cdp.send("Browser.setDownloadBehavior", {"behavior": "allow", "downloadPath": str(tmp_path / "downloads"),
+                                                   "eventsEnabled": True})
+    browser = await make()
+    await browser.open(base + "form.html")
+    await run_qa(browser, browser.work, base + "qa/autodownload.html", 1, delay=0.05)  # it starts a download itself
+    assert "was stopped" not in await browser.observe()  # QA's report says it; the agent wasn't the one downloading
