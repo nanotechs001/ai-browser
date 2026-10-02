@@ -367,3 +367,20 @@ async def test_a_tab_hidden_for_a_while_keeps_every_point(stack):
     for _ in range(4):
         await asyncio.sleep(1)
         assert await js("document.querySelector('.stage').dataset.points") == "8000"
+
+
+NO_WEBGL = ("const real = HTMLCanvasElement.prototype.getContext;"
+            "HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {"
+            "  return /webgl/.test(kind) ? null : real.call(this, kind, ...rest); };")
+
+
+@CHROME
+async def test_without_webgl_the_orb_is_a_dotted_brain(stack):
+    js = await open_with(stack, NO_WEBGL)
+    stage = "document.querySelector('.stage')"
+    assert await until(js, f"{stage}.dataset.mode === 'css'")
+    assert await js("getComputedStyle(document.querySelector('.stage .orb')).display") != "none"
+    mask = await js("(() => { const style = getComputedStyle(document.querySelector('.stage .orb'), '::before');"
+                    " return style.maskImage || style.webkitMaskImage; })()")
+    assert mask and mask != "none"
+    assert await js(f"{stage}.dataset.points") is None

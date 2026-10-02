@@ -53,20 +53,32 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .billboard { position: absolute; transform-style: preserve-3d; transform-origin: 50% 100%;
              transform: translate(-50%, -100%) rotateZ(calc(-1 * var(--spin))) rotateX(calc(-1 * var(--tilt))); }
 
-/* ---- the Brain's stage: the blob (WebGL, or a CSS orb), what it is doing, and its speech bubble ------------------- */
+/* ---- the Brain's stage: the particle brain (WebGL, or the dotted brain in CSS), what it does, its speech bubble -- */
 .stage { width: 300px; display: flex; flex-direction: column; align-items: center; }
 .brain { width: 300px; height: 300px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer;
          display: grid; place-items: center; }
 .brain:hover:not(:disabled) { background: none; }
 .brain:focus-visible { outline-offset: -30px; }
 .brain canvas { width: 300px; height: 300px; display: block; }
-.orb { --a: #79a0ff; --b: #4a55d8; --glow: rgba(110, 130, 255, 0.55); width: 190px; height: 190px; border-radius: 50%;
-       background: radial-gradient(circle at 36% 30%, rgba(255, 255, 255, 0.7), transparent 28%),
-                   radial-gradient(circle at 50% 55%, var(--a), var(--b) 62%, transparent 72%);
-       box-shadow: 0 0 60px var(--glow), 0 0 120px var(--glow); animation: breathe 4.2s ease-in-out infinite; }
-.stage[data-state="thinking"] .orb { --a: #8fd0ff; --b: #4d5cff; animation: swirl 1.1s ease-in-out infinite; }
+/* The dotted brain (no WebGL, a lost context, or the points not ready yet): dots in the state's colours on ::before,
+   cut by a mask to a side view of a brain, front to the left (the cerebrum, the cerebellum low at the back, the stem).
+   The glow is the orb's own background: a mask on the orb itself would cut its glow too. */
+.orb { --a: #79a0ff; --b: #4a55d8; --glow: rgba(110, 130, 255, 0.55); position: relative; width: 240px;
+       height: 180px; background: radial-gradient(closest-side, var(--glow), transparent);
+       animation: breathe 4.2s ease-in-out infinite; }
+.orb::before { content: ""; position: absolute; inset: 0;
+  background: linear-gradient(168deg, transparent 0 63%, rgba(11, 12, 19, 0.45) 63% 65.5%, transparent 65.5%),
+              radial-gradient(circle, var(--a) 0 1.3px, transparent 1.8px) 0 0 / 6px 6px,
+              radial-gradient(circle, var(--b) 0 1.3px, transparent 1.8px) 3px 3px / 6px 6px;
+  -webkit-mask: radial-gradient(ellipse 42% 36% at 44% 42%, #000 97%, transparent 100%) 0 0 / 100% 100% no-repeat,
+                radial-gradient(ellipse 17% 13% at 75% 68%, #000 97%, transparent 100%) 0 0 / 100% 100% no-repeat,
+                linear-gradient(#000, #000) 62% 92% / 7% 22% no-repeat;
+  mask: radial-gradient(ellipse 42% 36% at 44% 42%, #000 97%, transparent 100%) 0 0 / 100% 100% no-repeat,
+        radial-gradient(ellipse 17% 13% at 75% 68%, #000 97%, transparent 100%) 0 0 / 100% 100% no-repeat,
+        linear-gradient(#000, #000) 62% 92% / 7% 22% no-repeat; }
+.stage[data-state="thinking"] .orb { --a: #8fd0ff; --b: #4d5cff; animation: rock 1.1s ease-in-out infinite; }
 .stage[data-state="alert"] .orb { --a: #ffc08a; --b: #e0603c; --glow: rgba(240, 130, 80, 0.55);
-                                  animation: breathe 1.8s ease-in-out infinite; }
+                                  animation: beat 1.1s linear infinite; }
 .stage[data-state="speaking"] .orb { --a: #8ff5d2; --b: #2fb38f; --glow: rgba(80, 230, 180, 0.5);
                                      animation: talk 0.5s ease-in-out infinite; }
 .brain-label { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: -24px; min-height: 40px;
@@ -196,8 +208,9 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
 @keyframes rise { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
 @keyframes breathe { 0%, 100% { transform: scale(0.96); } 50% { transform: scale(1.04); } }
-@keyframes swirl { 0% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.06) rotate(180deg); }
-                   100% { transform: scale(1) rotate(360deg); } }
+@keyframes rock { 0%, 100% { transform: rotate(-4deg) scale(1); } 50% { transform: rotate(4deg) scale(1.04); } }
+@keyframes beat { 0%, 14%, 20%, 34%, 100% { transform: scale(1); } 6% { transform: scale(1.06); }
+                  26% { transform: scale(1.03); } }
 @keyframes talk { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
 @keyframes wave { 0%, 100% { transform: rotate(18deg); } 50% { transform: rotate(-8deg); } }
 
