@@ -476,6 +476,31 @@
     },
   };
 
+  // Bot-check signals: a few facts about the top page, for the rules in checks.py (Python decides). Nothing inside a
+  // check frame is read: only its address, its size and whether it shows.
+  const CHECK_FRAME = /\/recaptcha\/(?:api2|enterprise)\/|hcaptcha\.com|challenges\.cloudflare\.com|\/cdn-cgi\/challenge-platform\//i;
+  const CHECK_IDS = ["px-captcha", "challenge-form", "challenge-stage", "challenge-running"];
+  const readSignals = () => {
+    const text = document.body ? squash(document.body.innerText) : "";
+    let status = 0;
+    try {
+      const entry = performance.getEntriesByType("navigation")[0];
+      status = (entry && entry.responseStatus) || 0;
+    } catch (e) {
+      status = 0;
+    }
+    const frames = [];
+    for (const frame of document.querySelectorAll("iframe,frame")) {
+      const src = String(frame.src || "");
+      if (!CHECK_FRAME.test(src) || frames.length >= 20) continue;
+      const r = frame.getBoundingClientRect();
+      frames.push({ src: src.slice(0, 2000), w: Math.round(r.width), h: Math.round(r.height),
+        onScreen: r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth, visible: visible(frame) });
+    }
+    return { url: location.href, title: String(document.title || "").slice(0, 200), text: text.slice(0, 2000),
+      textLength: text.length, status, ids: CHECK_IDS.filter((id) => document.getElementById(id)), frames };
+  };
+
   const docId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2);
 
   const api = {
@@ -483,6 +508,10 @@
 
     count() {
       return document.querySelectorAll(SELECTOR).length;
+    },
+
+    signals() {
+      return readSignals();
     },
 
     // True when a freshly opened page has something to read: controls, real text, or nothing at all (blank).
@@ -519,6 +548,7 @@
         text: visibleText(opts.textLimit || 1500, find),
         doc: docId,
         find: opts.find || null,
+        signals: readSignals(),
       };
     },
 

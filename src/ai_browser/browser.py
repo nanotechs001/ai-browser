@@ -17,9 +17,10 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .cdp import CDP, CDPError
+from .checks import Check, box_frames, detect
 from .config import JS_LIMIT, MAX_ROWS, NAME_LIMIT, SHOT_MAX_HEIGHT, SHOT_MAX_WIDTH, SIZES, TEXT_LIMIT, Config
 from .keys import key_event
-from .render import diff_rows, render_diff, render_page, risky_regex
+from .render import diff_rows, render_check, render_diff, render_page, risky_regex
 from .steps import ID_OPS, Step
 from .workfs import WorkDir
 
@@ -38,6 +39,8 @@ NO_TAB = ("no tab to work in yet: open a page (open url), or adopt one of the us
           "switch uN)")
 _MISSING = "__aib_missing__"
 _UNDEFINED = object()
+CF_WAIT = 8.0  # seconds Cloudflare's own "Just a moment…" page gets to finish by itself; nothing is sent meanwhile
+CF_POLL = 0.5
 
 
 class BrowserError(RuntimeError):
@@ -164,6 +167,11 @@ class Browser:
         self._opened: list[Tab] = []
         self._stepping = 0  # act steps running now
         self._lost: str | None = None  # key of the tab in use when something outside this session closed it
+        self._check_hook: Callable[[Tab, Check], Awaitable[str]] | None = None  # the Engine's hold (on_check)
+        # Set by the Engine: the refusal for an address on a site the user skipped after a bot check, or None...
+        self.skipped_site: Callable[[str], str | None] = lambda url: None
+        # ...and, while the session is held at a bot check, the waiting text (act then runs no step).
+        self.waiting: Callable[[], str | None] = lambda: None
         cdp.on("Page.javascriptDialogOpening", self._on_dialog)
         cdp.on("Target.targetCreated", self._on_target_created)
         cdp.on("Target.targetDestroyed", self._on_target_destroyed)
@@ -614,17 +622,38 @@ class Browser:
     # ---- reading ------------------------------------------------------------------------------
 
     async def state(self, find: str | None = None) -> dict:
+        """The reader's page state, plus `check` (a bot check, or None) and `boxes` (checkbox frames, each also
+        marked `box` among the frames), decided here from its signals."""
         opts = {"find": find, "maxRows": MAX_ROWS, "textLimit": TEXT_LIMIT, "nameLimit": NAME_LIMIT,
                 "risky": self._risky}
         state = await self._reader(f"observe({json.dumps(opts)})")
+        signals = state.get("signals") or {}
+        state["check"] = detect(state.get("url", ""), signals)
+        state["boxes"] = box_frames(signals)
+        boxed = {box.get("src") for box in state["boxes"]}
+        for frame in state.get("frames") or []:
+            if frame.get("url") in boxed:
+                frame["box"] = True
         if find is None and self.current:
             self.current.last = state
         return state
 
+    async def _settled_state(self, find: str | None = None) -> dict:
+        """The state; on Cloudflare's own check, read again once it moved on by itself (CF_WAIT at most)."""
+        state = await self.state(find)
+        check = state["check"]
+        if check is not None and check.kind == "cloudflare" and await self._cloudflare_wait(self.current) is not None:
+            await self._ready()
+            state = await self.state(find)
+        return state
+
     async def observe(self, find: str | None = None) -> str:
-        page = render_page(await self.state(find))
-        dialogs = [self._dialog_text(*dialog) for dialog in self._new_dialogs()]
-        return "\n".join([f"(page {text})" for text in dialogs] + [page])
+        state = await self._settled_state(find)
+        dialogs = [f"(page {self._dialog_text(*dialog)})" for dialog in self._new_dialogs()]
+        if state["check"] is not None:  # nothing to click, no text, no picture: the user's to solve
+            return "\n".join(dialogs + [await self._handoff(state["check"])])
+        skipped = self.skipped_site(state.get("url", ""))
+        return "\n".join(dialogs + [skipped if skipped is not None else render_page(state)])
 
     async def open(self, url: str, new_tab: bool = False) -> str:
         if new_tab or self.current is None:
@@ -632,6 +661,78 @@ class Browser:
         else:
             await self._navigate(url)
         return await self.observe()
+
+    # ---- bot checks: seen, handed to the user, never touched ------------------------------------
+
+    def on_check(self, callback: Callable[[Tab, Check], Awaitable[str]]) -> None:
+        """The Engine's hook: a read found a bot check in this tab; it holds the session and returns the hand-off."""
+        self._check_hook = callback
+
+    async def check_now(self, tab: Tab | None = None) -> Check | None:
+        """The bot check the tab's page is, or None: the signals only, never anything inside a check frame."""
+        return (await self._check_tab(tab or self.current))[1]
+
+    async def _check_tab(self, tab: Tab | None) -> tuple[str, Check | None]:
+        """(address, bot check or None) of the tab's page; Cloudflare's own check gets CF_WAIT to move on."""
+        signals = await self._reader_in(tab, "signals()") or {}
+        url = str(signals.get("url") or "")
+        found = detect(url, signals)
+        if found is not None and found.kind == "cloudflare":
+            moved = await self._cloudflare_wait(tab)
+            if moved is not None:
+                return moved
+        return url, found
+
+    async def _cloudflare_wait(self, tab: Tab | None) -> tuple[str, Check | None] | None:
+        """Watch Cloudflare's own check for up to CF_WAIT, touching nothing: (address, check) once the page moved on,
+        or None while it is still there."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + CF_WAIT
+        while loop.time() < deadline:
+            await asyncio.sleep(CF_POLL)
+            try:
+                signals = await self._reader_in(tab, "signals()") or {}
+            except (BrowserError, CDPError):
+                continue  # the page is moving on: read it again
+            url = str(signals.get("url") or "")
+            found = detect(url, signals)
+            if found is None or found.kind != "cloudflare":
+                return url, found
+        return None
+
+    async def bring_to_front(self, tab: Tab) -> None:
+        """The tab becomes the working one (the live view follows) and comes to the front, whatever `front` says."""
+        await self._switch(tab)
+        with contextlib.suppress(CDPError):
+            await self.cdp.send("Target.activateTarget", {"targetId": tab.target})
+
+    async def _handoff(self, check: Check) -> str:
+        """The working tab is a bot check: the Engine holds the session; without it, the tab comes forward."""
+        tab = self.current
+        if self._check_hook is not None:
+            return await self._check_hook(tab, check)
+        await self.bring_to_front(tab)
+        return render_check(check, tab.key)
+
+    async def _landed(self, opened: bool = False) -> str | None:
+        """After a step that loaded a page or opened a tab: the hand-off or the skipped text that ends the batch. A tab
+        the step just opened may still show its first blank page: it gets CONTENT_WAIT to load what it was opened for,
+        so a check in a popup ends the batch before the next step runs."""
+        if self.current is None:
+            return None
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (CONTENT_WAIT if opened else 0)
+        while True:
+            try:
+                url, check = await self._check_tab(self.current)
+            except (BrowserError, CDPError):
+                url, check = "", None  # still changing: the read after the steps looks again
+            if check is not None or url not in ("", "about:blank") or loop.time() >= deadline:
+                break
+            await asyncio.sleep(0.1)
+        if check is not None:
+            return await self._handoff(check)
+        return self.skipped_site(url) if url else None
 
     # ---- screenshots ----------------------------------------------------------------------------
 
@@ -817,16 +918,21 @@ class Browser:
     # ---- acting -------------------------------------------------------------------------------
 
     async def act(self, steps: list[Step], confirmed: bool = False) -> str:
+        waiting = self.waiting()
+        if waiting is not None:  # the session is held at a bot check: no step runs
+            return waiting
         if self.current is None:
             raise BrowserError("no open tab")
         before = self.current.last or await self.state()
         lines: list[str] = [self._dialog_text(*dialog) for dialog in self._new_dialogs()]
-        navigated = False
+        navigated, ended = False, None
         self._allow_dialogs = confirmed
         try:
-            navigated = await self._run_steps(steps, confirmed, lines)
+            navigated, ended = await self._run_steps(steps, confirmed, lines)
         finally:
             self._allow_dialogs = False
+        if ended is not None:  # the batch landed on a bot check or a skipped site: that is the whole answer
+            return "\n".join(lines + [ended])
         # The steps already ran: their results must reach the caller even if the page is mid-change.
         state = None
         for attempt in range(2):
@@ -834,13 +940,18 @@ class Browser:
                 lines.append((await self.ensure_tab()).strip())
                 navigated = True
             try:
-                state = await self.state()
+                state = await self._settled_state()
                 break
             except (BrowserError, CDPError) as exc:
                 if attempt == 1:
                     lines.append(f"(the page is still changing, so it could not be read: {exc}; call observe)")
                     return "\n".join(lines)
                 await asyncio.sleep(0.5)
+        if state["check"] is not None:
+            return "\n".join(lines + [await self._handoff(state["check"])])
+        skipped = self.skipped_site(state.get("url", ""))
+        if skipped is not None:
+            return "\n".join(lines + [skipped])
         if not navigated and state["doc"] == before.get("doc"):
             page = render_diff(diff_rows(before["rows"], state["rows"]), state, old_text=before.get("text"))
         else:
@@ -856,12 +967,14 @@ class Browser:
         finally:
             self._stepping -= 1
 
-    async def _run_steps(self, steps: list[Step], confirmed: bool, lines: list[str]) -> bool:
-        """Run steps until one fails; append a result line per step; True if the page navigated."""
+    async def _run_steps(self, steps: list[Step], confirmed: bool, lines: list[str]) -> tuple[bool, str | None]:
+        """Run steps until one fails, or one lands on a bot check or a skipped site; append a line per step.
+        Returns (whether the page navigated, the text that ended the batch or None)."""
         with self.acting():
             return await self._run_steps_counted(steps, confirmed, lines)
 
-    async def _run_steps_counted(self, steps: list[Step], confirmed: bool, lines: list[str]) -> bool:
+    async def _run_steps_counted(self, steps: list[Step], confirmed: bool,
+                                 lines: list[str]) -> tuple[bool, str | None]:
         navigated = False
         for index, step in enumerate(steps):
             remaining = steps[index:]
@@ -898,14 +1011,22 @@ class Browser:
                 notes.append(opened)
                 navigated = True
             lines.append(f"✓ {step.raw} {ms} ms" + (f" ({'; '.join(notes)})" if notes else ""))
-            if opened:
-                continue
-            try:
-                if step.op in NAV_OPS or await self._finish_navigation(loads):
-                    navigated = True
-            except (BrowserError, CDPError):
-                navigated = True  # still loading; the read after the steps retries
-        return navigated
+            landed = bool(opened)
+            if not opened:
+                try:
+                    if step.op in NAV_OPS or await self._finish_navigation(loads):
+                        navigated = landed = True
+                except (BrowserError, CDPError):
+                    navigated = landed = True  # still loading: look for a check now; the read after the steps retries
+            if landed:  # a new page or tab: a bot check or a skipped site ends the batch here
+                ended = await self._landed(opened=bool(opened))
+                if ended is not None:
+                    rest = len(steps) - index - 1
+                    if rest:
+                        lines.append(f"– skipped {rest} step{'' if rest == 1 else 's'} (the batch stopped here: "
+                                     "see below)")
+                    return navigated, ended
+        return navigated, None
 
     async def _finish_navigation(self, loads_before: int) -> bool:
         """If the last step started a page load, wait for it; True when the page changed."""

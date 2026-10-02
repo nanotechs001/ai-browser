@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Contact us (test page)</title></head>
+<body>
+<h1>Contact us</h1>
+<form onsubmit="return false">
+  <p><label>Your name <input name="name"></label></p>
+  <div id="box"></div>
+  <button type="submit">Send message</button>
+</form>
+<script>
+  // A checkbox frame from the other test origin, the size of a real "I'm not a robot" box: a form field the user
+  // ticks, never a reason to stop.
+  const box = document.createElement("iframe");
+  box.src = `http://127.0.0.1:${location.port}/checks/recaptcha/api2/anchor?k=test&size=normal`;
+  box.title = "robot box";
+  box.style.cssText = "width:304px;height:78px;border:0";
+  document.getElementById("box").append(box);
+</script>
+</body>
+</html>

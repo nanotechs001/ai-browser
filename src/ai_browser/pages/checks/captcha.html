@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>One more step (test page)</title></head>
+<body>
+<h1>One more step</h1>
+<p>This local test page shows a picture-check frame from another test site, sized like a real one. The frame holds only
+a line of text: ai-browser's tests open the page to check that the agent stops and the user gets the tab, and that
+nothing inside the frame is ever read.</p>
+<div id="slot"></div>
+<script>
+  // From the other test origin (127.0.0.1 on the same port), so the frame is cross-site, as real ones are.
+  const frame = document.createElement("iframe");
+  frame.src = `http://127.0.0.1:${location.port}/checks/recaptcha/api2/bframe?hl=en`;
+  frame.title = "picture check";
+  frame.style.cssText = "width:400px;height:580px;border:0";
+  document.getElementById("slot").append(frame);
+</script>
+</body>
+</html>

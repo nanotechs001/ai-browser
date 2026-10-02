@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>How sites check for bots (test article)</title></head>
+<body>
+<h1>How sites check for bots</h1>
+<div id="body"></div>
+<iframe id="v3" style="display:none"></iframe>
+<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+<script>
+  // A long article that only mentions the words block pages use, with an invisible reCAPTCHA v3 frame and a site's
+  // background check script: none of it is a bot check, so the page reads normally.
+  const words = "Sites sometimes answer with a page that says they saw unusual traffic from your network, or that " +
+    "something seems suspicious, or they show Just a moment while they look at the browser. This article only " +
+    "talks about those pages; it is not one of them.";
+  for (let i = 0; i < 30; i++) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = `${i + 1}. ${words}`;
+    document.getElementById("body").append(paragraph);
+  }
+  document.getElementById("v3").src =
+    `http://127.0.0.1:${location.port}/checks/recaptcha/api2/anchor?k=test&size=invisible`;
+</script>
+</body>
+</html>
