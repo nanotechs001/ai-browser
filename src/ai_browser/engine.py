@@ -12,13 +12,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import config
-from .agentlink import AgentLink
+from .agentlink import GROUPS_TTL, AgentLink
 from .browser import Browser, BrowserError, Tab
 from .cdp import CDP, CDPError
 from .appbrowser import app_profile
 from .checks import Check, CheckGate
 from .chrome import ChromeError, browser_name, find_ws_url, own_browser_dir
 from .config import READ_LIMIT, SHELL_LIMIT, load_config, project_root
+from .grouping import Placer
 from .live import LiveView
 from .qa import run_qa
 from .sandbox import SandboxInfo, Sandboxes
@@ -114,6 +115,8 @@ class Engine:
         self._shell_logs = 0
         self._link: AgentLink | None = None  # in AI Browser, an agent reports its tabs to the app
         self._adopted_start = False  # the user's tab this agent was started in (AIB_APP_ADOPT) is taken on once
+        self._placer: Placer | None = None  # in the user's own browser: where our tabs go (a group, or a window)
+        self._agent_id = ""  # AIB_APP_AGENT: this engine serves an agent of ai-browser app
         self.gate = CheckGate()  # the bot-check hold and the skipped sites: they outlast any browser this session uses
         self._notes: list[str] = []  # a hold that ended between calls (the user closed the tab): the next call says so
 
@@ -172,8 +175,9 @@ class Engine:
         await self._attach_live()
 
     async def _start_chrome(self, mode: str = "chrome") -> None:
-        """Connect to the user's own running Chrome (they allowed remote debugging and click Allow), or in app mode
-        to AI Browser, the agent's own Chrome started by `ai-browser app`."""
+        """Connect to the user's own running browser (Brave or Chrome: its remote-debugging switch is on and the user
+        clicks Allow), or in app mode to AI Browser, the agent's own Chrome started by `ai-browser app`."""
+        agent = self._agent_id = os.environ.get("AIB_APP_AGENT", "")
         if mode == "app":
             try:
                 ws_url = await asyncio.to_thread(find_ws_url, self._app_profile(), 2)
@@ -183,8 +187,7 @@ class Engine:
             try:
                 ws_url = await asyncio.to_thread(find_ws_url, own_browser_dir(), 2)
             except ChromeError as exc:
-                ask = ASK_AGENT if os.environ.get("AIB_APP_AGENT") else ASK_SESSION
-                raise ChromeError(f"{exc}. {ask}") from None
+                raise ChromeError(f"{exc}. {ASK_AGENT if agent else ASK_SESSION}") from None
         name = self._browser_name() if mode == "chrome" else "Chrome"
         try:
             cdp = await CDP.connect(ws_url, open_timeout=CHROME_ALLOW_WAIT)
@@ -193,20 +196,31 @@ class Engine:
                               "\"Allow remote debugging?\", click Allow, then try again") from None
         work_host = self.home / "sandboxes" / "chrome" / "work"  # shared with the shell container of both modes
         work = WorkDir(work_host, self.task_id)
-        agent = os.environ.get("AIB_APP_AGENT", "") if mode == "app" else ""
-        adopt = os.environ.get("AIB_APP_ADOPT", "") if mode == "app" else ""
+        adopt = os.environ.get("AIB_APP_ADOPT", "") if agent else ""
+        if agent and os.environ.get("AIB_APP_EVENTS"):  # an agent of ai-browser app reports its tabs to the app
+            self._link = self._link or AgentLink(os.environ["AIB_APP_EVENTS"],
+                                                 os.environ.get("AIB_APP_AGENT_TOKEN", ""), agent)
+        self._placer = None
+        if mode == "chrome":  # where our tabs go: the app's tab groups (through its watcher), or windows of their own
+            rediscover = None if agent else (lambda: AgentLink.discover(self.home, self.task_id))
+            self._placer = Placer(self._link if agent else rediscover(), rediscover=rediscover)
         try:
-            # An agent started from AI Home works in background tabs; one started in the user's tab works in front.
-            browser = Browser(cdp, work, self.cfg, mode=mode,
-                              hidden_extension=os.environ.get("AIB_APP_EXTENSION", "") if mode == "app" else "",
-                              front=bool(adopt) or not agent)
+            if mode == "app":
+                # An agent started from AI Home works in background tabs; one started in the user's tab in front.
+                browser = Browser(cdp, work, self.cfg, mode="app",
+                                  hidden_extension=os.environ.get("AIB_APP_EXTENSION", ""),
+                                  front=bool(adopt) or not agent)
+            else:  # the user's own browser: background tabs only, each placed by the placer
+                browser = Browser(cdp, work, self.cfg, mode="chrome", placer=self._placer, keep_tabs=bool(agent),
+                                  handed=self._handed if agent else None)
             self._wire(browser)
-            if agent and os.environ.get("AIB_APP_EVENTS"):
-                link = self._link = self._link or AgentLink(os.environ["AIB_APP_EVENTS"],
-                                                             os.environ.get("AIB_APP_AGENT_TOKEN", ""), agent)
-                browser.on_tab_event(lambda kind, tab: link.report(f"tab_{kind}", tab.target, tab.adopted))
-                browser.on_tab_change(lambda tab: link.report("working_tab", tab.target, tab.adopted))
+            browser.on_tab_event(lambda kind, tab: self._report(f"tab_{kind}", tab))
+            browser.on_tab_change(lambda tab: self._report("working_tab", tab))
             await browser.start()
+            session = self._placer.link if self._placer is not None and not agent else None
+            if session is not None:  # a Claude Code session joins the running app: its tabs show in AI Home
+                with contextlib.suppress(Exception):
+                    await session.hello()
             if adopt and not self._adopted_start:  # once: the tab the user started this agent in
                 self._adopted_start = True
                 with contextlib.suppress(BrowserError, CDPError):
@@ -216,11 +230,43 @@ class Engine:
             raise
         self.info = SandboxInfo(f"aib-{mode}", mode, "", work_host, False, False, chrome=True)
         self.work, self.cdp, self.browser = work, cdp, browser
-        if mode != "app":  # in AI Browser the app, not the next session, cleans up after a session
+        if mode == "chrome" and not agent:  # an app agent's tabs are the app's to clean up, not the next session's
             await self._close_orphans()
             self._register()
         if mode == "chrome":  # AI Browser is in plain sight: no live view needed
             await self._attach_live()
+
+    def _report(self, kind: str, tab) -> None:
+        """Tell the app about one of this session's tabs (an agent's link, or a Claude Code session's)."""
+        link = self._link or (self._placer.link if self._placer is not None else None)
+        if link is not None:
+            link.report(kind, tab.target, tab.adopted)
+
+    async def _handed(self) -> list[dict]:
+        """The tabs the user handed this agent in AI Home (Hand over)."""
+        return (await self._link.status())["handed"] if self._link is not None else []
+
+    async def _placement(self) -> str:
+        """Where this session's tabs go in the user's own browser: the status line's last part."""
+        if self._placer is None or self.browser is None or self.browser.mode != "chrome":
+            return ""
+        link = self._placer.link
+        if link is None:
+            return "its tabs open in their own window: ai-browser app isn't running"
+        if not (await link.status(GROUPS_TTL))["groups"]:
+            return f"its tabs open in their own window: the watcher isn't connected in your {self._browser_name()}"
+        return "tab group 'Claude Code'" if link.agent.startswith("cc-") else "a tab group named after this task"
+
+    async def _taken_back(self) -> str:
+        """First in every call: let go of handed tabs the user took back. A held tab among them ends the hold as
+        closed (Decision 4): the site is skipped, and the hold never outlives the hand-over."""
+        if self.browser is None or self.cdp is None or self.cdp.closed or self.browser.handed is None:
+            return ""
+        held, note = self.gate.held, ""
+        if held is not None and held.where == "session" and held.adopted:
+            if held.target not in {item["target"] for item in await self.browser._handed_now()}:
+                note = self._release("closed")  # wave 1's sync release: the site is skipped
+        return note + await self.browser.let_go_of_taken_back()
 
     def _app_profile(self) -> Path:
         return Path(os.environ.get("AIB_APP_PROFILE") or app_profile(self.home)).expanduser()
@@ -251,7 +297,8 @@ class Engine:
         return self.home / "sandboxes" / self.info.profile / "sessions"
 
     def _register(self) -> None:
-        if self.info is None or self.info.fresh or self.browser is None or self.browser.mode == "app":
+        if self.info is None or self.info.fresh or self.browser is None or self.browser.mode == "app" or \
+                self._agent_id:
             return
         try:
             folder = self._sessions_dir()
@@ -295,6 +342,12 @@ class Engine:
         if self._link is not None:
             await self._link.flush()
             self._link = None
+        session = self._placer.link if self._placer is not None and not self._agent_id else None
+        if session is not None:  # a Claude Code session leaves the app's list
+            await session.flush()
+            with contextlib.suppress(Exception):
+                await session.bye()
+        self._placer = None
         if self.cdp is not None:
             await self.cdp.close()
         if stop_container and self.info is not None:
@@ -333,7 +386,7 @@ class Engine:
         """Run a browser tool. `refuse()` (by default the gate's refusal for the tool) is asked first, before _ready()
         starts or reconnects anything: a refused call touches nothing."""
         async def work():
-            notes = self._take_notes()
+            notes = await self._taken_back() + self._take_notes()  # first: a taken-back held tab ends the hold
             refused = refuse() if refuse is not None else self.gate.refusal(tool)
             if refused is not None:
                 return notes + refused
@@ -484,7 +537,7 @@ class Engine:
                     await self._start(profile, fresh)
                 else:
                     await self._start_chrome(kind)
-            return self._status_text()
+            return self._status_text(await self._placement())
         return await self._run("sandbox_start", {"profile": profile, "fresh": fresh, "chrome": chrome}, work)
 
     async def sandbox_stop(self) -> ToolResult:
@@ -498,8 +551,12 @@ class Engine:
             self._wanted = None  # the next browser call starts the default again
             if self.info.chrome:
                 where = "AI Browser" if self.info.profile == "app" else f"your {self._browser_name()}"
+                kept = self.browser.keep_tabs
                 await self._teardown(stop_container=False)  # the shell stays up for other sessions of this home
                 self.info = None
+                if kept:
+                    return (f"let go of this session's tabs (AI Home closes them with the agent) and disconnected "
+                            f"from {where}")
                 return f"closed this session's tabs and disconnected from {where}"
             await self._teardown(stop_container=True)
             self.info = None
@@ -511,7 +568,8 @@ class Engine:
         async def work():
             if self.info is None or self.browser is None:
                 return "no sandbox running yet; browser tools start the default one automatically"
-            return self._status_text() + "\ntabs:\n" + self._mark_held(await self.browser.tabs("list"))
+            return self._status_text(await self._placement()) + "\ntabs:\n" + \
+                self._mark_held(await self.browser.tabs("list"))
         return await self._run("sandbox_status", {}, work)
 
     # ---- browser tools --------------------------------------------------------------------------------

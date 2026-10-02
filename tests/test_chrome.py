@@ -723,3 +723,90 @@ async def test_a_download_qa_meets_is_not_the_agents(own_browser, tmp_path):
     await browser.open(base + "form.html")
     await run_qa(browser, browser.work, base + "qa/autodownload.html", 1, delay=0.05)  # it starts a download itself
     assert "was stopped" not in await browser.observe()  # QA's report says it; the agent wasn't the one downloading
+
+
+# ---- the engine in the user's browser: the link, the placer, kept tabs, handed tabs ---------------------------
+
+
+@CHROME
+async def test_only_its_own_tabs_reach_the_session(chrome_engine):
+    engine, base, folder = chrome_engine
+    cdp = await CDP.connect(find_ws_url(folder, timeout=20))
+    try:
+        secret = (await cdp.send("Target.createTarget", {
+            "url": "data:text/html,<title>SECRET-7f3a</title><p>SECRET-7f3a</p>"}))["targetId"]
+        await engine.sandbox_start(chrome=True)
+        attached = []
+        send = engine.cdp.send
+
+        async def spy(method, params=None, session_id=None, timeout=30):
+            if method == "Target.attachToTarget":
+                attached.append(params["targetId"])
+            return await send(method, params, session_id=session_id, timeout=timeout)
+
+        engine.cdp.send = spy
+        texts = [(await engine.open(base + "form.html")).text, (await engine.tabs("list")).text,
+                 (await engine.sandbox_status()).text, (await engine.observe()).text,
+                 (await engine.tabs("switch", "u1")).text, (await engine.tabs("switch", "h1")).text]
+        assert texts[4].startswith("error: no tab u1") and texts[5].startswith("error: no tab h1")
+        assert not any("SECRET-7f3a" in text for text in texts)
+        assert "SECRET-7f3a" not in (engine.log.dir / "log.jsonl").read_text(encoding="utf-8")
+        assert attached and secret not in attached  # our own tab was attached to, never the user's
+    finally:
+        await cdp.close()
+
+
+@CHROME
+async def test_sandbox_start_chrome_opens_no_tab(chrome_engine):
+    engine, base, folder = chrome_engine
+    cdp = await CDP.connect(find_ws_url(folder, timeout=20))
+    try:
+        before = await chrome_pages(cdp)
+        text = (await engine.sandbox_start(chrome=True)).text
+        assert ("your Chrome · only tabs this session opens, and tabs the user hands it · its tabs open in their own "
+                "window: ai-browser app isn't running") in text
+        assert await chrome_pages(cdp) == before
+        await engine.open(base + "form.html")
+        assert len(await chrome_pages(cdp) - before) == 1
+    finally:
+        await cdp.close()
+
+
+@CHROME
+async def test_an_app_agents_tabs_stay_when_its_engine_ends(chrome_engine, monkeypatch):
+    engine, base, folder = chrome_engine
+    monkeypatch.setenv("AIB_APP_AGENT", "a1")  # an agent of ai-browser app (no app to report to in this test)
+    await engine.sandbox_start(chrome=True)
+    await engine.open(base + "form.html")
+    target = engine.browser.current.target
+    assert not (engine.home / "sandboxes" / "chrome" / "sessions").exists()  # the app cleans up, not the next session
+    await engine.close()
+    cdp = await CDP.connect(find_ws_url(folder, timeout=20))
+    try:
+        assert target in await chrome_pages(cdp)
+    finally:
+        await cdp.close()
+
+
+@CHROME
+async def test_a_session_joins_the_running_app_and_says_goodbye(chrome_engine):
+    from test_grouping import App
+
+    engine, base, _ = chrome_engine
+    app = App({"/agent-status": {"groups": True, "handed": []}, "/agent-claim": {"grouped": True, "tab": 7}})
+    try:
+        (engine.home / "app").mkdir(parents=True)
+        (engine.home / "app" / "link.json").write_text(json.dumps({
+            "events": app.url + "/agent-events", "session_token": "sess", "pid": os.getpid()}), encoding="utf-8")
+        assert "tab group 'Claude Code'" in (await engine.sandbox_start(chrome=True)).text
+        await engine.open(base + "form.html")
+        agent = f"cc-{engine.task_id}"
+        sent = [(method, path.split("?")[0], body) for method, path, body, _ in app.requests]
+        assert ("POST", "/agent-hello", {"agent": agent, "pid": os.getpid()}) in sent
+        claim = next(body for _, path, body in sent if path == "/agent-claim")
+        assert claim["agent"] == agent and len(claim["marker"]) == 16
+        assert {token for *_, token in app.requests} == {"sess"}  # the session token, never an agent's
+        await engine.close()
+        assert ("POST", "/agent-bye", {"agent": agent}) in [(m, p, b) for m, p, b, _ in app.requests]
+    finally:
+        app.stop()
