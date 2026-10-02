@@ -1,0 +1,233 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>brain probe</title>
+<style>
+  html, body { margin: 0; background: #0b0c13; }
+  .grid { display: flex; flex-wrap: wrap; gap: 0; }
+  canvas { width: 300px; height: 300px; display: block; }
+  .cell { position: relative; }
+  .cell span { position: absolute; left: 8px; top: 6px; color: #a3a6c2; font: 12px sans-serif; }
+</style></head>
+<body>
+<div class="grid" id="grid"></div>
+<script>window.addEventListener("error", e => { window.extra = String(e.message); window.ready = true; });</script>
+<script type="module">
+// ---- a procedural brain-shaped point cloud (prototype for the plan, not project code) -------------------------------
+function rng(seed) { // mulberry32: deterministic
+  let s = seed >>> 0;
+  return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function hash(x, y, z) {
+  let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(z, 1440670441);
+  h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16; return (h >>> 0) / 4294967296;
+}
+function noise(x, y, z) {
+  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  const fx = x - ix, fy = y - iy, fz = z - iz;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), w = fz * fz * (3 - 2 * fz);
+  const l = (a, b, t) => a + (b - a) * t;
+  return l(l(l(hash(ix, iy, iz), hash(ix + 1, iy, iz), u), l(hash(ix, iy + 1, iz), hash(ix + 1, iy + 1, iz), u), v),
+           l(l(hash(ix, iy, iz + 1), hash(ix + 1, iy, iz + 1), u), l(hash(ix, iy + 1, iz + 1), hash(ix + 1, iy + 1, iz + 1), u), v), w);
+}
+function ridge(x, y, z) { // 1 on a gyrus' crest, 0 in a sulcus
+  let v = 0, a = 0.65, f = 1;
+  for (let i = 0; i < 2; i++) { v += a * (1 - Math.abs(2 * noise(x * f + 11.3 * i, y * f, z * f) - 1)); f *= 2.3; a *= 0.35; }
+  return v / 0.8775;
+}
+function direction(random) {
+  const z = random() * 2 - 1, t = random() * Math.PI * 2, r = Math.sqrt(1 - z * z);
+  return [r * Math.cos(t), z, r * Math.sin(t)]; // x, y(up), z(front)
+}
+export function brainPoints(count = 6000, seed = 7) {
+  const random = rng(seed);
+  const out = []; // x, y, z, kind (0 cortex, 1 cerebellum, 2 stem, 3 core), fold (0..1), phase
+  const want = { cortex: Math.round(count * 0.80), cerebellum: Math.round(count * 0.11), stem: Math.round(count * 0.05) };
+  want.core = count - want.cortex - want.cerebellum - want.stem;
+  let guard = 0;
+  while (out.length / 6 < want.cortex && guard++ < count * 40) {
+    const h = random() < 0.5 ? -1 : 1;
+    const [dx, dy, dz] = direction(random);
+    let x = dx * 0.42, y = dy * 0.47, z = dz * 0.70;
+    if (x * h < 0) x *= 0.30;                             // the flat inner face: the fissure between the hemispheres
+    if (y < -0.12) y = -0.12 + (y + 0.12) * 0.55;          // a flatter underside
+    if (dz < -0.35) { x *= 0.92; y *= 0.94; }               // the occipital lobe narrows at the back
+    const temporal = Math.exp(-((z - 0.10) ** 2) / 0.05 - ((y + 0.20) ** 2) / 0.02) * Math.max(0, Math.abs(dx));
+    y -= 0.10 * temporal; x += h * 0.05 * temporal;         // the temporal lobe hangs down at the side
+    x += h * 0.17; y += 0.06;
+    const lateral = Math.abs(dx) > 0.45 && z > -0.2 && z < 0.34 && Math.abs(y - (-0.07 + (0.34 - z) * 0.30)) < 0.025;
+    const central = y > 0.05 && Math.abs(z - (0.02 + (y - 0.05) * 0.25)) < 0.018 && x * h > 0.05; // the central sulcus
+    if (lateral || central) continue;
+    const fold = ridge(x * 9.5 + 3, y * 9.5, z * 9.5);
+    if (random() > 0.04 + 0.96 * fold ** 6) continue;      // particles crowd on the gyri: the folds show
+    const n = Math.hypot(x - h * 0.17, y - 0.06, z) || 1;
+    const dent = 0.03 * (fold - 0.6);                       // and the sulci sink in
+    out.push(x + ((x - h * 0.17) / n) * dent, y + ((y - 0.06) / n) * dent, z + (z / n) * dent, 0, fold, random());
+  }
+  guard = 0;
+  while (out.length / 6 < want.cortex + want.cerebellum && guard++ < count * 40) {
+    const h = random() < 0.5 ? -1 : 1;
+    const [dx, dy, dz] = direction(random);
+    const x = h * 0.13 + dx * 0.20, y = -0.30 + dy * 0.14, z = -0.42 + dz * 0.19;
+    if (dx * h < -0.3) continue;
+    const folia = 0.5 + 0.5 * Math.sin((y + 0.3) * 120 + dz * 4);  // the cerebellum's fine horizontal folds
+    if (random() > 0.1 + 0.9 * folia ** 2) continue;
+    out.push(x, y, z, 1, folia, random());
+  }
+  while (out.length / 6 < want.cortex + want.cerebellum + want.stem) {
+    const t = random(), a = random() * Math.PI * 2;
+    const r = 0.075 - 0.02 * t + 0.035 * Math.exp(-((t - 0.25) ** 2) / 0.01); // tapering, with the pons' bulge
+    const cx = 0, cy = -0.18 - 0.62 * t, cz = -0.10 - 0.12 * t;
+    out.push(cx + r * Math.cos(a), cy, cz + r * Math.sin(a), 2, 0.6, random());
+  }
+  while (out.length / 6 < count) {
+    const [dx, dy, dz] = direction(random); const r = Math.cbrt(random()) * 0.32;
+    out.push(dx * r * 0.9, 0.04 + dy * r * 0.7, dz * r * 1.3, 3, 0.3, random());
+  }
+  for (let i = out.length / 6 - 1; i > 0; i--) { // shuffled: any first N points are an even sample (level of detail)
+    const j = Math.floor(random() * (i + 1));
+    for (let k = 0; k < 6; k++) { const s = out[i * 6 + k]; out[i * 6 + k] = out[j * 6 + k]; out[j * 6 + k] = s; }
+  }
+  return new Float32Array(out);
+}
+export function synapses(points, max = 900, seed = 3) { // edges between near neighbours, for travelling pulses
+  const random = rng(seed); const count = points.length / 6; const picks = [];
+  for (let i = 0; i < count && picks.length < 450; i++) if (points[i * 6 + 3] === 0 && random() < 0.12) picks.push(i);
+  const edges = [];
+  for (const a of picks) {
+    let best = [];
+    for (const b of picks) {
+      if (a === b) continue;
+      const d = Math.hypot(points[a * 6] - points[b * 6], points[a * 6 + 1] - points[b * 6 + 1], points[a * 6 + 2] - points[b * 6 + 2]);
+      if (d > 0.06 && d < 0.22) best.push([d, b]);
+    }
+    best.sort((p, q) => p[0] - q[0]);
+    for (const [, b] of best.slice(0, 2)) if (edges.length / 2 < max) edges.push(a, b);
+  }
+  return edges;
+}
+
+const VERT = `
+attribute vec3 a_pos; attribute vec3 a_info; // kind, fold, phase
+uniform float u_time; uniform vec4 u_mix; uniform float u_yaw; uniform float u_dpr; uniform float u_size;
+varying vec3 v_color; varying float v_alpha;
+vec3 rotate(vec3 p) {
+  float c = cos(u_yaw), s = sin(u_yaw); p = vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+  float cp = cos(0.22), sp = sin(0.22); return vec3(p.x, cp * p.y - sp * p.z, sp * p.y + cp * p.z);
+}
+void main() {
+  float speed = dot(u_mix, vec4(0.25, 1.0, 0.6, 0.8));
+  float phase = a_info.z * 6.2831;
+  vec3 p = a_pos;
+  vec3 drift = vec3(sin(u_time * 0.7 * speed + phase), cos(u_time * 0.5 * speed + phase * 1.7), sin(u_time * 0.6 * speed + phase * 2.3));
+  p += drift * 0.008 * (0.5 + speed);
+  float breathe = 1.0 + 0.015 * sin(u_time * 1.3) * u_mix.x + 0.03 * max(0.0, sin(u_time * 5.2)) * u_mix.z;
+  p *= breathe;
+  vec3 q = rotate(p);
+  float persp = 2.6 / (2.6 - q.z);
+  gl_Position = vec4(q.xy * persp * 1.05, 0.0, 1.0);
+  float rate = dot(u_mix, vec4(0.35, 2.2, 1.2, 1.6));
+  float flash = pow(max(0.0, sin(u_time * rate + phase * 37.0)), 60.0);
+  float wave = u_mix.y * exp(-pow(a_pos.z - sin(u_time * 1.6) * 0.7, 2.0) / 0.01);
+  vec3 c1 = (mat4(vec4(0.30, 0.45, 1.00, 0.0), vec4(0.30, 0.85, 1.00, 0.0), vec4(1.00, 0.55, 0.30, 0.0), vec4(0.30, 0.95, 0.75, 0.0)) * u_mix).rgb;
+  vec3 c2 = (mat4(vec4(0.70, 0.50, 1.00, 0.0), vec4(0.65, 0.50, 1.00, 0.0), vec4(1.00, 0.30, 0.25, 0.0), vec4(0.55, 1.00, 0.90, 0.0)) * u_mix).rgb;
+  vec3 base = mix(c2, c1, a_info.y);
+  if (a_info.x > 2.5) base = mix(base, vec3(1.0), 0.3);
+  float depth = 0.45 + 0.55 * smoothstep(-0.8, 0.8, q.z);
+  v_color = base * depth + vec3(1.0, 0.95, 0.9) * (flash + wave) * 1.2;
+  v_alpha = (a_info.x > 2.5 ? 0.35 : 0.85) * depth;
+  gl_PointSize = u_size * u_dpr * persp * (1.0 + 1.6 * flash + wave);
+}`;
+const FRAG = `
+precision mediump float; varying vec3 v_color; varying float v_alpha;
+void main() { vec2 d = gl_PointCoord - 0.5; float a = smoothstep(0.5, 0.05, length(d)) * v_alpha; gl_FragColor = vec4(v_color * a, a); }`;
+const LVERT = `
+attribute vec3 a_a; attribute vec3 a_b; attribute float a_t; attribute float a_phase;
+uniform float u_time; uniform vec4 u_mix; uniform float u_yaw; uniform float u_dpr; uniform float u_pulse;
+varying vec3 v_color; varying float v_alpha;
+vec3 rotate(vec3 p) {
+  float c = cos(u_yaw), s = sin(u_yaw); p = vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+  float cp = cos(0.22), sp = sin(0.22); return vec3(p.x, cp * p.y - sp * p.z, sp * p.y + cp * p.z);
+}
+void main() {
+  float speed = dot(u_mix, vec4(0.25, 1.4, 0.9, 1.0));
+  float t = u_pulse > 0.5 ? fract(u_time * speed * 0.6 + a_phase) : a_t;
+  vec3 mid = (a_a + a_b) * 0.5; mid += normalize(mid) * 0.04;          // the path bows out along the surface
+  vec3 p = mix(mix(a_a, mid, t), mix(mid, a_b, t), t);
+  vec3 q = rotate(p); float persp = 2.6 / (2.6 - q.z);
+  gl_Position = vec4(q.xy * persp * 1.05, 0.0, 1.0);
+  vec3 c = (mat4(vec4(0.55, 0.75, 1.0, 0.0), vec4(0.6, 1.0, 1.0, 0.0), vec4(1.0, 0.8, 0.5, 0.0), vec4(0.7, 1.0, 0.9, 0.0)) * u_mix).rgb;
+  float active = step(fract(a_phase * 7.0), dot(u_mix, vec4(0.25, 0.85, 0.6, 0.5)));
+  v_color = c; v_alpha = (u_pulse > 0.5 ? 1.0 * active : 0.10) * (0.5 + 0.5 * smoothstep(-0.8, 0.8, q.z));
+  gl_PointSize = 4.0 * u_dpr * persp;
+}`;
+const LFRAG = `
+precision mediump float; varying vec3 v_color; varying float v_alpha; uniform highp float u_pulse;
+void main() { float a = v_alpha; if (u_pulse > 0.5) a *= smoothstep(0.5, 0.0, length(gl_PointCoord - 0.5)); gl_FragColor = vec4(v_color * a, a); }`;
+
+function program(gl, vs, fs) {
+  const make = (kind, src) => { const s = gl.createShader(kind); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+  const p = gl.createProgram(); gl.attachShader(p, make(gl.VERTEX_SHADER, vs)); gl.attachShader(p, make(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p;
+}
+
+const STATES = { idle: [1, 0, 0, 0], thinking: [0, 1, 0, 0], alert: [0, 0, 1, 0], speaking: [0, 0, 0, 1] };
+const params = new URLSearchParams(location.search);
+const COUNT = Number(params.get("count") || 6000);
+const t0 = performance.now();
+const points = brainPoints(COUNT);
+const edges = synapses(points);
+window.genMs = performance.now() - t0;
+window.stats = { points: points.length / 6, edges: edges.length / 2 };
+
+function make(stateName, yaw) {
+  const cell = document.createElement("div"); cell.className = "cell";
+  const canvas = document.createElement("canvas"); const label = document.createElement("span");
+  label.textContent = `${stateName} yaw ${yaw}`; cell.append(canvas, label); document.getElementById("grid").append(cell);
+  const dpr = 2; canvas.width = canvas.height = 600;
+  const gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: true });
+  const pp = program(gl, VERT, FRAG); const lp = program(gl, LVERT, LFRAG);
+  const pbuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pbuf); gl.bufferData(gl.ARRAY_BUFFER, points, gl.STATIC_DRAW);
+  // lines: 2 vertices per edge (a_t 0 and 1) for the faint web; pulses: one point per edge
+  const line = []; const pulse = [];
+  for (let i = 0; i < edges.length; i += 2) {
+    const a = edges[i] * 6, b = edges[i + 1] * 6, ph = ((i * 0.618) % 1);
+    const A = [points[a], points[a + 1], points[a + 2]], B = [points[b], points[b + 1], points[b + 2]];
+    line.push(...A, ...B, 0, ph, ...A, ...B, 1, ph); pulse.push(...A, ...B, 0, ph);
+  }
+  const lbuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, lbuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(line), gl.STATIC_DRAW);
+  const qbuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, qbuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pulse), gl.STATIC_DRAW);
+  return { gl, pp, lp, pbuf, lbuf, qbuf, nl: line.length / 8, nq: pulse.length / 8, mix: STATES[stateName], yaw, dpr, canvas };
+}
+function draw(s, time) {
+  const { gl } = s; gl.viewport(0, 0, s.canvas.width, s.canvas.height); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  const yaw = s.yaw * Math.PI / 180;
+  // the faint web, then the pulses
+  for (const [buf, n, pulse, mode] of [[s.lbuf, s.nl, 0, gl.LINES], [s.qbuf, s.nq, 1, gl.POINTS]]) {
+    gl.useProgram(s.lp); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    const at = (name, size, off) => { const l = gl.getAttribLocation(s.lp, name); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, size, gl.FLOAT, false, 32, off * 4); };
+    at("a_a", 3, 0); at("a_b", 3, 3); at("a_t", 1, 6); at("a_phase", 1, 7);
+    gl.uniform1f(gl.getUniformLocation(s.lp, "u_time"), time); gl.uniform4fv(gl.getUniformLocation(s.lp, "u_mix"), s.mix);
+    gl.uniform1f(gl.getUniformLocation(s.lp, "u_yaw"), yaw); gl.uniform1f(gl.getUniformLocation(s.lp, "u_dpr"), s.dpr);
+    gl.uniform1f(gl.getUniformLocation(s.lp, "u_pulse"), pulse); gl.drawArrays(mode, 0, n);
+  }
+  gl.useProgram(s.pp); gl.bindBuffer(gl.ARRAY_BUFFER, s.pbuf);
+  for (const [name, size, off] of [["a_pos", 3, 0], ["a_info", 3, 3]]) { const l = gl.getAttribLocation(s.pp, name); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, size, gl.FLOAT, false, 24, off * 4); }
+  gl.uniform1f(gl.getUniformLocation(s.pp, "u_time"), time); gl.uniform4fv(gl.getUniformLocation(s.pp, "u_mix"), s.mix);
+  gl.uniform1f(gl.getUniformLocation(s.pp, "u_yaw"), yaw); gl.uniform1f(gl.getUniformLocation(s.pp, "u_dpr"), s.dpr);
+  gl.uniform1f(gl.getUniformLocation(s.pp, "u_size"), Number(params.get("size") || 1.5));
+  gl.drawArrays(gl.POINTS, 0, points.length / 6);
+}
+const cells = [make("idle", 60), make("idle", 0), make("idle", 90), make("thinking", 40), make("alert", 60), make("speaking", 60)];
+const T = Number(params.get("t") || 2.3);
+for (const c of cells) draw(c, T);
+// timing: 300 frames of one cell
+const s = cells[0]; const t1 = performance.now();
+for (let i = 0; i < 120; i++) { draw(s, i / 30); s.gl.finish(); }
+window.drawMs = (performance.now() - t1) / 120;
+for (const c of cells) draw(c, T);
+{ const g = cells[0].gl; const e = g.getExtension('WEBGL_debug_renderer_info'); window.webglInfo = e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER); }
+window.ready = true;
+</script>
+</body></html>
