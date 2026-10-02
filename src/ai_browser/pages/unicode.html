@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Unicode test 😀</title></head>
+<body>
+<script>
+// Emoji placed exactly where names (80), values (200) and visible text (1,500) get clipped.
+const name = "a".repeat(78) + "😀" + "b".repeat(10);
+document.write(`<button>${name}</button>`);
+document.write(`<input aria-label="Long value" value="${"c".repeat(198)}😀${"d".repeat(10)}">`);
+document.write(`<p>${"e".repeat(1498)}😀${"f".repeat(20)}</p>`);
+</script>
+</body>
+</html>

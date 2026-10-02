@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inbox - Asana</title>
+<style>body { font: 14px sans-serif; }</style>
+</head>
+<body>
+<!-- A stand-in for Asana's inbox: entries with their author, the task link and the text. -->
+<div class="InboxFeed">
+  <div class="InboxFeedItem" data-testid="inbox-item">
+    <span class="InboxFeedItem-author">Ana</span>
+    <a class="InboxFeedItem-task" href="https://app.asana.com/1/111/project/222/task/333">Fix the footer</a>
+    <span class="InboxFeedItem-time">5 minutes ago</span>
+    <div class="InboxFeedItem-body">Ana assigned this task to you: the footer links are broken on the homepage.</div>
+  </div>
+</div>
+<script>
+  let minutes = 5;
+  function tick() { minutes += 1; document.querySelector(".InboxFeedItem-time").textContent = `${minutes} minutes ago`; }
+  if (location.search.includes("elsewhere")) document.querySelector(".InboxFeed").remove();
+</script>
+</body>
+</html>

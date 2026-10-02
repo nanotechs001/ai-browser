@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.superpowers/
+dist/
+# personal: each machine makes its own (see .mcp.json.example)
+.mcp.json
+.claude/
+.DS_Store
+.env*
+*.log
+node_modules/

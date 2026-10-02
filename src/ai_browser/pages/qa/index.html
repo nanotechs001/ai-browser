@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>QA test home</title>
+<style>
+body { font-family: sans-serif; margin: 0 auto; max-width: 960px; padding: 16px; }
+nav a { margin-right: 12px; }
+img { max-width: 100%; height: auto; }
+
+</style>
+</head>
+<body>
+<nav>
+  <a href="about.html">About</a>
+  <a href="products.html">Products</a>
+  <a href="contact.html">Contact</a>
+  <a href="team.html">Team</a>
+  <a href="blog">Blog</a>
+  <a href="logout.html">Log out</a>
+</nav>
+<h1>Welcome</h1>
+<p>The QA tests plant one problem of each kind on these pages.</p>
+<ul>
+  <li><a href="missing.html">Old offers</a></li>
+  <li><a href="files/brochure.zip">Brochure (zip)</a></li>
+  <li><a href="attachment">Terms (download)</a></li>
+  <li><a href="elsewhere">Our shop</a></li>
+</ul>
+<p id="partners"></p>
+<script>
+  // The same server reached as 127.0.0.1 is a different origin: it stands in for other websites.
+  const other = `http://127.0.0.1:${location.port}`;
+  document.getElementById("partners").innerHTML =
+    `<a href="${other}/qa/missing.html">Partner site</a> · <a href="${other}/qa/forbidden">Members area</a>`;
+</script>
+</body>
+</html>

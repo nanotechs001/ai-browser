@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Home</title>
+<link rel="stylesheet" href="home.css">
+<link rel="stylesheet" href="brainui.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
+    <h1>AI Home</h1><span id="counts" class="muted"></span></div>
+  <span id="hint" class="muted" role="status"></span>
+  <button id="mission" class="ghost" title="Your agents at work in a 3D room, and the Brain that talks back">Mission
+    Control</button>
+</header>
+<main>
+  <section class="card new-task" aria-label="New task">
+    <textarea id="task" rows="2" placeholder="What should an agent do? For example: QA my-site.com, 20 pages"></textarea>
+    <div class="row">
+      <details id="skills-menu"><summary>Skills <span id="picked-count" class="muted"></span></summary>
+        <div id="skills-pick" class="pick"></div></details>
+      <select id="task-model" aria-label="Model">
+        <option value="sonnet">Sonnet · balanced</option>
+        <option value="opus">Opus · best</option>
+        <option value="haiku">Haiku · fastest</option>
+      </select>
+      <span class="muted grow">Or type <kbd>ai</kbd> and a space in the address bar</span>
+      <button id="start" class="primary">Start</button>
+    </div>
+  </section>
+  <div class="columns">
+    <section aria-label="Agents">
+      <section aria-label="Brain">
+        <h2>Brain <span class="muted">· new messages, and the ones that need you</span></h2>
+        <div id="brain"></div>
+      </section>
+      <h2>Agents</h2>
+      <div id="agents" class="list"><p class="empty">No agents yet. Start a task above, or open the chat beside any
+        page.</p></div>
+    </section>
+    <aside>
+      <section aria-label="Tabs">
+        <h2>Tabs</h2>
+        <div id="tabs" class="list"></div>
+      </section>
+      <section id="skills" aria-label="Skills">
+        <h2>Skills <span class="count muted"></span></h2>
+        <input id="skill-search" type="search" placeholder="Search skills" aria-label="Search skills">
+        <div id="skill-list" class="list"></div>
+      </section>
+      <details id="train-section" class="section">
+        <summary>Train a new agent <span class="muted">· the Brain writes a skill</span></summary>
+        <div id="train"></div>
+      </details>
+      <details id="workflows-section" class="section">
+        <summary>Workflows <span class="muted">· your own recipes</span></summary>
+        <div id="workflows"></div>
+      </details>
+      <details id="tools-section" class="section">
+        <summary>Tools <span class="muted">· your MCP servers</span></summary>
+        <div id="tools"></div>
+      </details>
+    </aside>
+  </div>
+</main>
+<section id="chat" class="drawer" hidden aria-label="Conversation">
+  <header><span id="chat-dot" class="dot"></span><strong id="chat-name"></strong>
+    <button id="chat-skill" class="ghost" title="The Brain drafts a skill from this chat, for you to read and save">Save
+      as skill</button>
+    <button id="chat-stop" class="ghost">Stop</button><button id="chat-close" class="ghost" aria-label="Close">✕</button></header>
+  <div id="chat-messages" class="messages"></div>
+  <div class="composer"><textarea id="chat-input" rows="1" placeholder="Message this agent"></textarea>
+    <button id="chat-send" class="primary">Send</button></div>
+</section>
+<script type="module" src="home.js"></script>
+</body>
+</html>

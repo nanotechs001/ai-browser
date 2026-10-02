@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Errors test</title></head>
+<body>
+<h1>Errors</h1>
+<img src="/missing.png" alt="missing">
+<script>
+console.error("boom error");
+console.warn("careful now");
+setTimeout(() => { throw new Error("uncaught kaboom"); }, 0);
+</script>
+</body>
+</html>

@@ -1,0 +1,207 @@
+/* Mission Control: a dark control room (always dark, like a real one). The names AI Home's styles use (--card, --line,
+   --accent…) are defined here too, for the Brain's inbox and the permission card in the drawer. */
+:root {
+  --bg: #0b0c13; --card: #1c1e2c; --soft: #262938; --text: #e8e9f2; --muted: #a3a6c2; --line: rgba(140, 150, 220, 0.22);
+  --accent: #d97757; --accent-fg: #1f1e1d; --ok: #6cc58c; --fail: #f2867c; --wait: #e2c26b; --done: #9aa0b4;
+  --panel: rgba(20, 22, 34, 0.9); --glow: rgba(110, 130, 255, 0.35);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: radial-gradient(ellipse at 50% 35%, #1a1c2c 0%, var(--bg) 65%); color: var(--text);
+       font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+h1 { font-size: 17px; font-weight: 600; margin: 0; }
+button, select, textarea, input { font: inherit; color: inherit; }
+button, .button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 4px 12px;
+                  cursor: pointer; text-decoration: none; display: inline-block; }
+button:hover:not(:disabled), .button:hover { background: var(--soft); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+button.ghost, .button.ghost { background: transparent; border-color: transparent; }
+select { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 4px 8px; }
+kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+[hidden] { display: none !important; }
+.muted { color: var(--muted); font-size: 13px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.chip { font-size: 12px; border-radius: 999px; padding: 1px 8px; background: var(--soft); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; flex: none; }
+.dot[data-state="connected"] { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.dot[data-state="disconnected"] { background: var(--fail); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- the room ------------------------------------------------------------------------------------------------- */
+.scene { position: fixed; inset: 0; }
+.viewport { position: absolute; inset: 0; perspective: 1800px; perspective-origin: 50% 20%; overflow: hidden;
+            cursor: grab; touch-action: none; }
+.viewport.dragging { cursor: grabbing; }
+.room { position: absolute; left: 50%; top: 58%; width: 2000px; height: 1400px; margin: -700px 0 0 -1000px;
+        transform-style: preserve-3d; --tilt: 58deg; --spin: 0deg; }
+.floor { position: absolute; inset: -300px; border-radius: 50%; pointer-events: none;
+         background:
+           radial-gradient(circle at 50% 42%, rgba(120, 140, 255, 0.22), transparent 20%),
+           repeating-linear-gradient(0deg, rgba(140, 150, 220, 0.10) 0 1px, transparent 1px 80px),
+           repeating-linear-gradient(90deg, rgba(140, 150, 220, 0.10) 0 1px, transparent 1px 80px);
+         -webkit-mask-image: radial-gradient(ellipse at 50% 45%, #000 30%, transparent 68%);
+         mask-image: radial-gradient(ellipse at 50% 45%, #000 30%, transparent 68%); }
+.ring { position: absolute; width: 360px; height: 360px; margin: -180px 0 0 -180px; border-radius: 50%;
+        pointer-events: none; border: 2px solid rgba(130, 150, 255, 0.45);
+        box-shadow: 0 0 40px var(--glow), inset 0 0 40px rgba(110, 130, 255, 0.25); }
+.shadow { position: absolute; width: 220px; height: 90px; margin: -45px 0 0 -110px; border-radius: 50%;
+          pointer-events: none; background: radial-gradient(closest-side, rgba(0, 0, 0, 0.55), transparent);
+          transition: left 0.6s ease, top 0.6s ease; }
+.billboard { position: absolute; transform-style: preserve-3d; transform-origin: 50% 100%;
+             transform: translate(-50%, -100%) rotateZ(calc(-1 * var(--spin))) rotateX(calc(-1 * var(--tilt))); }
+
+/* ---- the Brain's stage: the blob (WebGL, or a CSS orb), what it is doing, and its speech bubble ------------------- */
+.stage { width: 300px; display: flex; flex-direction: column; align-items: center; }
+.brain { width: 300px; height: 300px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer;
+         display: grid; place-items: center; }
+.brain:hover:not(:disabled) { background: none; }
+.brain:focus-visible { outline-offset: -30px; }
+.brain canvas { width: 300px; height: 300px; display: block; }
+.orb { --a: #79a0ff; --b: #4a55d8; --glow: rgba(110, 130, 255, 0.55); width: 190px; height: 190px; border-radius: 50%;
+       background: radial-gradient(circle at 36% 30%, rgba(255, 255, 255, 0.7), transparent 28%),
+                   radial-gradient(circle at 50% 55%, var(--a), var(--b) 62%, transparent 72%);
+       box-shadow: 0 0 60px var(--glow), 0 0 120px var(--glow); animation: breathe 4.2s ease-in-out infinite; }
+.stage[data-state="thinking"] .orb { --a: #8fd0ff; --b: #4d5cff; animation: swirl 1.1s ease-in-out infinite; }
+.stage[data-state="alert"] .orb { --a: #ffc08a; --b: #e0603c; --glow: rgba(240, 130, 80, 0.55);
+                                  animation: breathe 1.8s ease-in-out infinite; }
+.stage[data-state="speaking"] .orb { --a: #8ff5d2; --b: #2fb38f; --glow: rgba(80, 230, 180, 0.5);
+                                     animation: talk 0.5s ease-in-out infinite; }
+.brain-label { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: -24px; min-height: 40px;
+               text-align: center; pointer-events: none; }
+.brain-label .count { font-weight: 700; color: var(--accent); font-size: 15px; text-shadow: 0 0 12px rgba(0, 0, 0, 0.8); }
+.brain-label .what { color: var(--muted); font-size: 13px; text-shadow: 0 0 10px rgba(0, 0, 0, 0.9); }
+.bubble { position: absolute; left: 50%; bottom: calc(100% - 26px); transform: translateX(-50%); width: max-content;
+          cursor: pointer; animation: rise 0.25s ease-out;
+          max-width: 380px; background: rgba(240, 241, 250, 0.96); color: #1b1c27; border-radius: 16px; padding: 9px 14px;
+          font-size: 14px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); text-align: left; }
+.bubble::after { content: ""; position: absolute; left: 50%; bottom: -8px; margin-left: -8px; border: 8px solid transparent;
+                 border-bottom: 0; border-top-color: rgba(240, 241, 250, 0.96); }
+.drawer-brain { display: flex; flex-direction: column; gap: 8px; }
+
+/* ---- a station ---------------------------------------------------------------------------------------------------- */
+.station { width: 176px; border: 0; background: none; color: inherit; padding: 0; cursor: pointer; font: inherit;
+           transition: left 0.6s ease, top 0.6s ease, opacity 0.3s ease; }
+.station:hover:not(:disabled) { background: none; }
+.station.arriving, .station.leaving { opacity: 0; }
+.station.placing { transition: opacity 0.3s ease; }
+.shadow.placing { transition: none; }
+.station.leaving { pointer-events: none; }
+.station .card { background: linear-gradient(180deg, rgba(38, 42, 64, 0.94), rgba(22, 24, 38, 0.94));
+                 border: 1px solid rgba(140, 150, 220, 0.25); border-radius: 14px; padding: 10px;
+                 box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45); transition: border-color 0.3s, box-shadow 0.3s; }
+.station:hover .card, .station.selected .card { border-color: rgba(160, 175, 255, 0.6); }
+.station:focus-visible { outline: none; }
+.station:focus-visible .card { outline: 2px solid var(--accent); outline-offset: 2px; }
+.monitor { height: 92px; border-radius: 8px; overflow: hidden; position: relative; border: 1px solid rgba(255, 255, 255, 0.08);
+           background: linear-gradient(135deg, color-mix(in srgb, var(--c, #4c8df6) 35%, #1a1e33), #1a1e33); }
+.monitor .shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.monitor .scan { position: absolute; left: 0; right: 0; top: 0; height: 30%; opacity: 0; transform: translateY(-100%);
+                 background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.14), transparent); }
+.station[data-state="working"] .scan { opacity: 1; animation: scan 2.6s linear infinite; }
+.head { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.robot { width: 26px; height: 26px; border-radius: 50%; position: relative; flex: none;
+         background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.55), transparent 40%), var(--c, #4c8df6);
+         box-shadow: 0 0 12px var(--c, #4c8df6); }
+.robot .eye { position: absolute; top: 9px; width: 4px; height: 6px; border-radius: 2px; background: #10121c; }
+.robot .eye:first-child { left: 7px; }
+.robot .eye:nth-child(2) { right: 7px; }
+.robot .arm { position: absolute; right: -3px; bottom: 14px; width: 5px; height: 15px; border-radius: 3px;
+              background: var(--c, #4c8df6); display: none; transform-origin: 50% 100%; transform: rotate(18deg); }
+.robot .arm::after { content: ""; position: absolute; top: -4px; left: -2px; width: 9px; height: 9px; border-radius: 50%;
+                     background: var(--c, #4c8df6); }
+.station[data-state="working"] .robot { animation: bob 0.9s ease-in-out infinite; }
+.station[data-state="needs_you"] .robot .arm { display: block; animation: wave 1.2s ease-in-out infinite; }
+.nameplate { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+             text-align: left; }
+.light { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--done); }
+.station[data-state="working"] .light { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.station[data-state="waiting"] .light { background: var(--wait); box-shadow: 0 0 8px var(--wait); }
+.station[data-state="needs_you"] .light { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.station[data-state="failed"] .light { background: var(--fail); box-shadow: 0 0 8px var(--fail); }
+.station[data-state="stopped"] .light { background: #5d6070; }
+.station[data-state="your_turn"] .light { background: none; color: var(--ok); width: auto; height: auto;
+                                          font-size: 12px; line-height: 1; }
+.station[data-state="your_turn"] .light::before { content: "✓"; }
+.station[data-state="stopped"] .card, .station[data-state="your_turn"] .card { opacity: 0.82; }
+.ticker { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); margin-top: 4px; text-align: left;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.station[data-state="failed"] .ticker { color: var(--fail); }
+.badge { position: absolute; top: -12px; right: -8px; background: var(--accent); color: var(--accent-fg); font-size: 11px;
+         font-weight: 700; border-radius: 999px; padding: 2px 8px; display: none; }
+.station[data-state="needs_you"] .badge { display: block; animation: pulse 1.4s ease-in-out infinite; }
+.station[data-state="needs_you"] .card { border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.4), 0 0 30px rgba(217, 119, 87, 0.4), 0 18px 40px rgba(0, 0, 0, 0.45); }
+
+/* ---- the heads-up display ---------------------------------------------------------------------------------------- */
+.hud { position: fixed; z-index: 2; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(10px);
+         box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4); }
+.top { left: 0; right: 0; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+       padding: 12px 20px; background: linear-gradient(180deg, rgba(11, 12, 19, 0.85), transparent); flex-wrap: wrap; }
+.brand, .tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.list-panel { top: 60px; right: 20px; width: 300px; max-height: calc(100vh - 160px); overflow: auto; padding: 8px;
+              display: flex; flex-direction: column; gap: 4px; }
+.list-panel button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent;
+                     border-color: transparent; }
+.list-panel button .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-panel .empty { margin: 6px 8px; }
+.drawer { top: 60px; right: 20px; bottom: 96px; width: min(440px, calc(100vw - 40px)); display: flex;
+          flex-direction: column; overflow: hidden; }
+.drawer > header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.drawer > header strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#drawer-body { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.task-bar { left: 50%; bottom: 18px; transform: translateX(-50%); width: min(720px, calc(100vw - 32px)); display: flex;
+            align-items: flex-end; gap: 8px; padding: 8px 10px; }
+.task-bar textarea { flex: 1; border: none; outline: none; resize: none; background: transparent; font-size: 15px;
+                     field-sizing: content; max-height: 140px; min-height: 26px; padding: 3px 4px; }
+.help { left: 50%; bottom: 76px; transform: translateX(-50%); margin: 0; color: var(--muted); font-size: 12px;
+        white-space: nowrap; opacity: 0.8; pointer-events: none; }
+@media (max-width: 720px), (max-height: 560px) { .help { display: none; } }
+
+/* ---- the drawer's agent: its chat, as in AI Home ---------------------------------------------------------------- */
+#drawer-body .status { font: 12px ui-monospace, Menlo, monospace; }
+#drawer-body .buttons { margin-top: 0; }
+.chip.needs_you { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.chip.working { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.chip.failed { background: color-mix(in srgb, var(--fail) 18%, transparent); color: var(--fail); }
+.permission-slot:empty { display: none; }
+.messages { flex: 1; min-height: 120px; overflow: auto; display: flex; flex-direction: column; gap: 8px;
+            border-top: 1px solid var(--line); padding-top: 10px; }
+.messages .empty { color: var(--muted); font-size: 13px; margin: 0; }
+.msg { border-radius: 12px; padding: 8px 12px; white-space: pre-wrap; word-break: break-word; }
+.msg.user { align-self: flex-end; background: var(--soft); max-width: 85%; }
+.msg.user.queued { opacity: 0.7; border: 1px dashed var(--line); }
+.msg.claude { padding: 2px 0; }
+.msg.error { color: var(--fail); background: color-mix(in srgb, var(--fail) 10%, transparent); }
+.meta { font-size: 12px; color: var(--muted); }
+.action { font-size: 13px; border-left: 3px solid var(--line); padding: 2px 0 2px 8px; }
+.action.ok { border-color: var(--ok); }
+.action.fail { border-color: var(--fail); }
+.action .icon { margin-right: 6px; }
+.action .name { font-weight: 600; margin-right: 6px; }
+.action .summary, .action .ms { color: var(--muted); }
+.action .ms { margin-left: 6px; font-size: 12px; }
+.action pre { margin: 4px 0 0; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap; color: var(--muted); }
+.composer { display: flex; gap: 8px; align-items: flex-end; }
+.composer textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px;
+                     background: var(--bg); field-sizing: content; max-height: 140px; }
+.task-bar .note { position: absolute; left: 14px; top: -24px; }
+
+@keyframes scan { from { transform: translateY(-100%); } to { transform: translateY(334%); } }
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+@keyframes rise { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
+@keyframes breathe { 0%, 100% { transform: scale(0.96); } 50% { transform: scale(1.04); } }
+@keyframes swirl { 0% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.06) rotate(180deg); }
+                   100% { transform: scale(1) rotate(360deg); } }
+@keyframes talk { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+@keyframes wave { 0%, 100% { transform: rotate(18deg); } 50% { transform: rotate(-8deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; }
+  .station, .shadow { transition-duration: 0.01s !important; }
+}

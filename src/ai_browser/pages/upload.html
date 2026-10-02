@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Upload test</title>
+<style>.btn { display: inline-block; padding: 8px 12px; border: 1px solid #333; cursor: pointer; }</style>
+</head>
+<body>
+<label for="file" class="btn">Choose image</label>
+<input type="file" id="file" hidden onchange="document.getElementById('names').textContent = [...this.files].map((f) => f.name).join(',')">
+<p>Selected: <span id="names">none</span></p>
+</body>
+</html>

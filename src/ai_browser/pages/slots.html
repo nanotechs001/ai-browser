@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Slots and secrets test</title></head>
+<body>
+<x-btn id="save">Save changes</x-btn>
+<p id="out"></p>
+<label>Card number <input id="card" autocomplete="cc-number"></label>
+<label>Code <input id="otp" autocomplete="one-time-code"></label>
+<label>Shown password <input id="shown" type="text" name="password"></label>
+<label>City <input id="city" value="Paris"></label>
+<script>
+customElements.define("x-btn", class extends HTMLElement {
+  connectedCallback() {
+    const root = this.attachShadow({ mode: "open" });
+    root.innerHTML = '<button part="b" style="padding:8px 16px"><slot></slot></button>';
+    root.querySelector("button").onclick = () => { document.getElementById("out").textContent = "Saved via slot"; };
+  }
+});
+</script>
+</body>
+</html>

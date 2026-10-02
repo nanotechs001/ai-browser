@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Big data test</title></head>
+<body>
+<table id="big"><tr><th>Row</th><th>Formula-looking</th></tr></table>
+<div id="links"></div>
+<script>
+const table = document.getElementById("big");
+for (let i = 1; i <= 700; i++) table.insertAdjacentHTML("beforeend", `<tr><td>${i}</td><td>=SUM(A${i})</td></tr>`);
+const links = document.getElementById("links");
+for (let i = 1; i <= 1200; i++) links.insertAdjacentHTML("beforeend", `<a href="/item/${i}">Item ${i}</a> `);
+</script>
+</body>
+</html>

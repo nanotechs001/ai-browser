@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Autocomplete test</title></head>
+<body>
+<label for="city">City</label>
+<input id="city" role="combobox" aria-autocomplete="list" aria-controls="cities" aria-expanded="false">
+<ul id="cities" role="listbox" hidden></ul>
+<p id="picked"></p>
+<script>
+const CITIES = ["London", "Lisbon", "Los Angeles", "Paris"];
+const input = document.getElementById("city");
+const list = document.getElementById("cities");
+input.addEventListener("input", () => {
+  setTimeout(() => {  // suggestions arrive a little later, like a server round trip
+    const query = input.value.toLowerCase();
+    list.innerHTML = "";
+    for (const city of CITIES.filter((c) => query && c.toLowerCase().startsWith(query))) {
+      const option = document.createElement("li");
+      option.setAttribute("role", "option");
+      option.textContent = city;
+      option.onclick = () => { input.value = city; list.hidden = true; document.getElementById("picked").textContent = "Picked " + city; };
+      list.appendChild(option);
+    }
+    list.hidden = !list.children.length;
+    input.setAttribute("aria-expanded", String(!list.hidden));
+  }, 100);
+});
+</script>
+</body>
+</html>

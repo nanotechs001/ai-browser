@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Drag test</title>
+<style>
+  li { padding: 10px; margin: 4px; border: 1px solid #888; width: 120px; list-style: none; user-select: none; }
+  ul { padding: 0; display: inline-block; vertical-align: top; margin-right: 60px; }
+</style>
+</head>
+<body>
+<ul id="h5">
+  <li draggable="true">A1</li><li draggable="true">A2</li><li draggable="true">A3</li>
+</ul>
+<ul id="js">
+  <li tabindex="0">B1</li><li tabindex="0">B2</li><li tabindex="0">B3</li>
+</ul>
+<p>HTML5 order: <span id="order-h5">A1,A2,A3</span></p>
+<p>Mouse order: <span id="order-js">B1,B2,B3</span></p>
+<script>
+const show = () => {
+  document.getElementById("order-h5").textContent = [...document.querySelectorAll("#h5 li")].map((li) => li.textContent).join(",");
+  document.getElementById("order-js").textContent = [...document.querySelectorAll("#js li")].map((li) => li.textContent).join(",");
+};
+
+// HTML5 drag and drop: dropping an item onto another moves it before the target.
+let dragged = null;
+for (const li of document.querySelectorAll("#h5 li")) {
+  li.addEventListener("dragstart", (event) => { dragged = li; event.dataTransfer.setData("text/plain", li.textContent); });
+  li.addEventListener("dragover", (event) => event.preventDefault());
+  li.addEventListener("drop", (event) => {
+    event.preventDefault();
+    if (dragged && dragged !== li) li.parentNode.insertBefore(dragged, li);
+    show();
+  });
+}
+
+// Mouse-event dragging, as sortable libraries do it.
+let held = null;
+for (const li of document.querySelectorAll("#js li")) {
+  li.addEventListener("mousedown", () => { held = li; });
+}
+document.addEventListener("mouseup", (event) => {
+  const target = document.elementFromPoint(event.clientX, event.clientY);
+  const over = target && target.closest("#js li");
+  if (held && over && over !== held) over.parentNode.insertBefore(held, over);
+  held = null;
+  show();
+});
+</script>
+</body>
+</html>

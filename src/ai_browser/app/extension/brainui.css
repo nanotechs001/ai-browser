@@ -1,0 +1,35 @@
+/* The Brain's inbox (brainui.js), in AI Home and on the watcher's Brain page. Colours come from the page's own
+   variables (--card, --line, --muted, --accent…). */
+.brain-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+.brain-watcher { color: var(--wait); }
+.brain-watcher a { color: inherit; }
+.brain-item { display: flex; flex-direction: column; gap: 4px; }
+.brain-item .brain-line { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.brain-item .chip { font-size: 12px; border-radius: 999px; padding: 1px 8px; background: var(--soft); white-space: nowrap; }
+.brain-item .kind[data-kind="needs_reply"] { background: color-mix(in srgb, var(--accent) 18%, transparent);
+                                             color: var(--accent); }
+.brain-item .sender { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30%; }
+.brain-item .subject { color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; }
+.brain-item .summary { font-size: 14px; }
+.brain-item .why, .brain-item .note { font-size: 13px; }
+.brain-item .agent { font-size: 13px; text-align: left; background: var(--soft); border: none; border-radius: 8px;
+                     padding: 4px 8px; }
+.brain-draft textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+                        background: var(--bg); color: var(--text); resize: vertical; font: inherit; }
+.brain-draft .row, .brain-actions, .brain-say { display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+                                                 margin-top: 4px; }
+.brain-say input { flex: 1; min-width: 160px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
+                   background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+.brain-item button { font-size: 13px; padding: 2px 10px; }
+.brain-more { margin-top: 6px; font-size: 13px; }
+/* A tool request waiting for the user (permission.js): on AI Home's agent rows, in the chat panel, on the Brain page. */
+.permission { border-color: var(--accent); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.permission-head { font-weight: 600; font-size: 14px; }
+.permission-tool { display: flex; gap: 8px; align-items: center; }
+.permission .chip { font-size: 12px; border-radius: 999px; padding: 1px 8px; background: var(--soft); }
+.permission-input { margin: 0; max-height: 220px; overflow: auto; background: var(--soft); border-radius: 8px;
+                    padding: 8px 10px; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap;
+                    word-break: break-word; }
+.permission-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.permission button { font-size: 13px; padding: 2px 10px; }

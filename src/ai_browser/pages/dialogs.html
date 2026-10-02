@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Dialogs test</title></head>
+<body>
+<button onclick="alert('Hello alert'); out.textContent = 'after alert'">Alert me</button>
+<button onclick="out.textContent = confirm('Really clear the list?') ? 'confirmed' : 'cancelled'">Clear list</button>
+<button onclick="out.textContent = 'prompt: ' + prompt('Your name?', 'Ada')">Ask name</button>
+<button onclick="window.onbeforeunload = (e) => { e.preventDefault(); e.returnValue = ''; }; out.textContent = 'dirty'">Make changes</button>
+<p id="out">idle</p>
+</body>
+</html>

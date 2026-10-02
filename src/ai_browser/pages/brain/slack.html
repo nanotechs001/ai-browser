@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>general (Channel) - Acme - Slack</title>
+<style>body { font: 14px sans-serif; } .p-channel_sidebar__channel--unread { font-weight: bold; }</style>
+</head>
+<body>
+<!-- A stand-in for Slack's web client: the sidebar entries, unread and mention badges, the open conversation and the
+     composer, with the attributes the watcher's reader looks for. The open conversation is in the address
+     (/client/<team>/<channel>, here after the #). -->
+<nav class="p-channel_sidebar">
+  <div class="p-channel_sidebar__channel" data-qa-channel-sidebar-channel-id="C1"
+       data-qa-channel-sidebar-channel-type="channel"><span class="p-channel_sidebar__name">general</span></div>
+  <div class="p-channel_sidebar__channel p-channel_sidebar__channel--unread" data-qa-channel-sidebar-channel-id="C3"
+       data-qa-channel-sidebar-channel-type="channel"><span class="p-channel_sidebar__name">random</span></div>
+  <div class="p-channel_sidebar__channel p-channel_sidebar__channel--unread" data-qa-channel-sidebar-channel-id="C2"
+       data-qa-channel-sidebar-channel-type="channel"><span class="p-channel_sidebar__name">web-team</span><span
+       class="p-channel_sidebar__badge">1</span></div>
+  <div class="p-channel_sidebar__channel p-channel_sidebar__channel--unread" data-qa-channel-sidebar-channel-id="D1"
+       data-qa-channel-sidebar-channel-type="im"><span class="p-channel_sidebar__name">Ana</span></div>
+</nav>
+<main id="messages">
+  <div data-qa="message_container"><button data-message-sender="U_BEN">Ben</button>
+    <div data-qa="message-text">Morning all</div></div>
+</main>
+<div data-qa="message_input"><div id="composer" contenteditable="true" role="textbox"></div></div>
+<script>
+  localStorage.setItem("localConfig_v2", JSON.stringify({teams: {T1: {user_id: "U_ME"}}}));
+  function entry(channel) { return document.querySelector(`[data-qa-channel-sidebar-channel-id="${channel}"]`); }
+  function markRead(channel) {
+    entry(channel).classList.remove("p-channel_sidebar__channel--unread");
+    entry(channel).querySelector(".p-channel_sidebar__badge")?.remove();
+  }
+  function newUnread(channel) { entry(channel).classList.add("p-channel_sidebar__channel--unread"); }
+</script>
+</body>
+</html>

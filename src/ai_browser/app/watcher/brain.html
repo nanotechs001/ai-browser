@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Brain</title>
+<link rel="stylesheet" href="brain.css">
+<link rel="stylesheet" href="brainui.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
+    <h1>The Brain</h1></div>
+  <label class="pause"><input id="pause" type="checkbox"> Pause watching</label>
+</header>
+<main>
+  <section id="permissions-section" aria-label="Agents waiting for you" hidden>
+    <h2>Agents waiting for your answer</h2>
+    <div id="permissions" class="list"></div>
+  </section>
+  <section aria-label="Inbox">
+    <h2>Needs you, and new</h2>
+    <div id="brain"></div>
+  </section>
+  <section aria-label="Watch list">
+    <h2>What the Brain watches <span class="muted">(only tabs you have open; it never sends anything)</span></h2>
+    <div id="watch" class="list"></div>
+    <div class="card add">
+      <input id="add-url" type="url" placeholder="Add a site: https://…" aria-label="The site to add">
+      <button id="add">Add, then pick the part to watch</button>
+      <span id="add-note" class="muted" role="status"></span>
+    </div>
+  </section>
+  <section aria-label="How I write">
+    <h2>How I write <span class="muted">(for drafts)</span></h2>
+    <div class="card">
+      <textarea id="style" rows="3" placeholder="For example: short and friendly, no emoji, sign as Kurl"></textarea>
+      <div class="row"><button id="save-style">Save</button><span id="style-note" class="muted"></span></div>
+    </div>
+  </section>
+</main>
+<script type="module" src="brain.js"></script>
+</body>
+</html>

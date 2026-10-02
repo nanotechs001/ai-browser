@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "AI Browser",
+  "version": "0.2.0",
+  "description": "AI Home and the Claude chat for AI Browser: several agents at once, each in its own tabs.",
+  "side_panel": {"default_path": "panel.html"},
+  "chrome_url_overrides": {"newtab": "home.html"},
+  "omnibox": {"keyword": "ai"},
+  "permissions": ["sidePanel", "tabs", "storage", "tabGroups", "debugger"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {"service_worker": "worker.js", "type": "module"},
+  "action": {"default_title": "AI Browser"},
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {"default": "Ctrl+Shift+Y", "mac": "Command+Shift+Y"},
+      "description": "Open the AI Browser chat"
+    }
+  }
+}

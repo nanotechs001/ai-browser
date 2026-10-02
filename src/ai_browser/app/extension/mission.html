@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission Control</title>
+<link rel="stylesheet" href="brainui.css">
+<link rel="stylesheet" href="mission.css">
+</head>
+<body>
+<div id="scene" class="scene" aria-label="The room: each agent at its station, the Brain in the middle"></div>
+<header class="hud top">
+  <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
+    <h1>Mission Control</h1><span id="counts" class="muted"></span></div>
+  <div class="tools">
+    <label class="switch" title="Updates spoken aloud, with a voice that runs on this Mac only">
+      <input id="voice" type="checkbox"> Voice</label>
+    <span id="voice-note" class="muted" role="status"></span>
+    <button id="list-button" class="ghost" aria-expanded="false" aria-controls="list">List</button>
+    <a id="home-link" class="button ghost" href="home.html">AI Home</a>
+  </div>
+</header>
+<nav id="list" class="hud panel list-panel" hidden aria-label="Agents"></nav>
+<aside id="drawer" class="hud panel drawer" hidden aria-label="Details">
+  <header><span id="drawer-dot" class="dot"></span><strong id="drawer-title"></strong>
+    <button id="drawer-close" class="ghost" aria-label="Close">✕</button></header>
+  <div id="drawer-body"></div>
+</aside>
+<section id="task-bar" class="hud panel task-bar" aria-label="Give an agent a task">
+  <textarea id="task" rows="1" placeholder="Give an agent a task, for example: QA my-site.com, 20 pages"></textarea>
+  <select id="task-model" aria-label="Model">
+    <option value="sonnet">Sonnet · balanced</option>
+    <option value="opus">Opus · best</option>
+    <option value="haiku">Haiku · fastest</option>
+  </select>
+  <button id="start" class="primary">Start</button>
+  <span id="task-note" class="muted note" role="status"></span>
+</section>
+<p id="help" class="hud help">Drag to turn · scroll to zoom · double-click to reset · <kbd>←</kbd> <kbd>→</kbd>
+  <kbd>↑</kbd> <kbd>↓</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd></p>
+<script type="module" src="mission.js"></script>
+</body>
+</html>

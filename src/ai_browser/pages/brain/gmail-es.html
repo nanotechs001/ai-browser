@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Gmail</title>
+<style>body { font: 14px sans-serif; } tr.zE { font-weight: bold; } #box { min-height: 60px; border: 1px solid #ccc; }</style>
+</head>
+<body>
+<div id="list"><table><tbody id="rows"></tbody></table></div>
+<div id="thread" hidden>
+  <h2 class="hP"></h2>
+  <div id="messages"></div>
+  <span id="reply" class="ams bkH" role="link"></span>
+  <div id="compose" hidden>
+    <div id="box" contenteditable="true" role="textbox"></div>
+    <div id="send" class="T-I J-J5-Ji aoO" role="button"></div>
+  </div>
+</div>
+<script>
+  window.SAMPLE = {
+    title: "Recibidos (2) - me@example.com - Gmail", me: "yo", reply: "Responder", send: "Enviar",
+    signature: "-- Kurl, Web team", threads: [
+      {id: "t1", from: "María", email: "maria@client.example", subject: "Fecha de lanzamiento",
+       snippet: "¿Podemos mover el lanzamiento al lunes?"},
+      {id: "t2", from: "Tienda", email: "news@shop.example", subject: "Tu recibo", snippet: "Gracias por tu pedido"},
+    ],
+  };
+</script>
+<script src="gmail-sample.js"></script>
+</body>
+</html>

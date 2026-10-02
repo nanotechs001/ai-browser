@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ai-browser": {
+      "command": "uv",
+      "args": ["run", "--directory", "<path-to-this-folder>", "ai-browser", "mcp"],
+      "env": {
+        "AIB_CHROME_DIR": "<your browser's profile folder, for example ~/Library/Application Support/BraveSoftware/Brave-Browser>"
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>SPA test</title></head>
+<body>
+<h1>Loading…</h1>
+<div id="app"></div>
+<script>
+setTimeout(() => {
+  document.querySelector("h1").textContent = "App";
+  document.getElementById("app").innerHTML = "<button>Loaded button</button>";
+}, 800);
+</script>
+</body>
+</html>

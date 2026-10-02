@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Covered test</title>
+<style>#overlay { position: fixed; left: 0; top: 0; width: 600px; height: 300px; background: rgba(0, 0, 0, .4); }</style>
+</head>
+<body>
+<button id="under" onclick="this.textContent = 'Clicked under'">Hidden behind overlay</button>
+<div id="overlay"></div>
+<div style="margin-top: 400px"><button id="free" onclick="this.textContent = 'Free clicked'">Free button</button></div>
+</body>
+</html>

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Menu test</title>
+<style>
+  .sub { display: none; }
+  nav:hover .sub { display: block; }
+  #dbl { display: inline-block; padding: 8px; border: 1px solid #999; margin-top: 200px; }
+</style>
+</head>
+<body>
+<nav>
+  <button id="products">Products</button>
+  <ul class="sub"><li><a href="#alpha">Alpha</a></li><li><a href="#beta">Beta</a></li></ul>
+</nav>
+<div id="dbl" tabindex="0" ondblclick="this.textContent = 'Double clicked'">Double me</div>
+</body>
+</html>

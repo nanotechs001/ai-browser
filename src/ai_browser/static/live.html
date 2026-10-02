@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ai-browser live view</title>
+<style>
+  :root { --bg: #f4f4f2; --bar: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --ok: #2f7d32; --warn: #a15c00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151515; --bar: #1f1f1f; --text: #ececea; --muted: #9a9a95; --ok: #7fc782; --warn: #e3a64f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+         font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; padding: 10px 16px;
+           background: var(--bar); border-bottom: 1px solid rgba(127, 127, 127, .25); }
+  #status { color: var(--warn); }
+  #status.live { color: var(--ok); }
+  .hint { color: var(--muted); }
+  main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 12px; }
+  #screen { max-width: 100%; max-height: 100%; background: #fff; border-radius: 6px; cursor: default;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, .25); outline: none; }
+  #screen:focus { box-shadow: 0 0 0 3px #4a8fe7; }
+</style>
+</head>
+<body>
+<header>
+  <strong>ai-browser live view</strong>
+  <span id="status">connecting…</span>
+  <span class="hint">Click the page to take over. Typing here goes only to the sandbox browser and is never logged.</span>
+</header>
+<main><img id="screen" tabindex="0" alt="The sandbox browser"></main>
+<script>
+const token = new URLSearchParams(location.search).get("token");
+const screen = document.getElementById("screen");
+const status = document.getElementById("status");
+let frameWidth = 1440, frameHeight = 900, socket = null;
+
+function connect() {
+  socket = new WebSocket(`ws://${location.host}/live/ws?token=${encodeURIComponent(token)}`);
+  socket.onopen = () => { status.textContent = "live"; status.className = "live"; };
+  socket.onclose = () => { status.textContent = "disconnected, retrying…"; status.className = ""; setTimeout(connect, 1000); };
+  socket.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    if (message.t !== "frame") return;
+    frameWidth = message.w || frameWidth;
+    frameHeight = message.h || frameHeight;
+    screen.src = "data:image/jpeg;base64," + message.data;
+  };
+}
+connect();
+
+const send = (message) => { if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); };
+const point = (event) => {
+  const box = screen.getBoundingClientRect();
+  return { x: (event.clientX - box.left) * frameWidth / box.width, y: (event.clientY - box.top) * frameHeight / box.height };
+};
+const modifiers = (event) => (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
+const button = (event) => ["left", "middle", "right"][event.button] || "left";
+
+screen.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+  screen.focus();
+  send({ t: "mouse", e: "down", ...point(event), b: button(event), c: event.detail || 1, mod: modifiers(event) });
+});
+screen.addEventListener("mouseup", (event) => {
+  event.preventDefault();
+  send({ t: "mouse", e: "up", ...point(event), b: button(event), c: event.detail || 1, mod: modifiers(event) });
+});
+let lastMove = 0;
+screen.addEventListener("mousemove", (event) => {
+  const now = Date.now();
+  if (now - lastMove < 30) return;
+  lastMove = now;
+  send({ t: "mouse", e: "move", ...point(event), buttons: event.buttons, mod: modifiers(event) });
+});
+screen.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  send({ t: "wheel", ...point(event), dx: event.deltaX, dy: event.deltaY });
+}, { passive: false });
+screen.addEventListener("contextmenu", (event) => event.preventDefault());
+screen.addEventListener("dragstart", (event) => event.preventDefault());
+screen.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "v") return;  // handled by paste
+  event.preventDefault();
+  const text = event.key === "Enter" ? "\r" : (event.key.length === 1 && !event.ctrlKey && !event.metaKey ? event.key : "");
+  send({ t: "key", e: "down", key: event.key, code: event.code, kc: event.keyCode, mod: modifiers(event), text });
+});
+screen.addEventListener("keyup", (event) => {
+  event.preventDefault();
+  send({ t: "key", e: "up", key: event.key, code: event.code, kc: event.keyCode, mod: modifiers(event) });
+});
+document.addEventListener("paste", (event) => {
+  const text = event.clipboardData.getData("text");
+  if (text && document.activeElement === screen) {
+    event.preventDefault();
+    send({ t: "text", text });
+  }
+});
+</script>
+</body>
+</html>

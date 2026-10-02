@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orders</title>
+<style>body { font: 14px sans-serif; } td, th { padding: 4px 10px; }</style>
+</head>
+<body>
+<!-- A site the user adds: they pick the orders table, and new rows are what the watcher reports. -->
+<h1>Orders</h1>
+<table id="orders">
+  <thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Placed</th></tr></thead>
+  <tbody><tr><td>#1001</td><td>Ana</td><td>$40</td><td class="ago">just now</td></tr></tbody>
+</table>
+<h2>Notes</h2>
+<ul id="notes"><li>Restock the blue mugs</li><li>Call the courier about Friday</li></ul>
+<script>
+  let minutes = 0;
+  function addOrder(id, name, total) {
+    const tr = document.createElement("tr");
+    for (const value of [id, name, total, "just now"]) {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.append(td);
+    }
+    tr.lastChild.className = "ago";
+    document.querySelector("#orders tbody").prepend(tr);
+  }
+  function tickTimes() {
+    minutes += 1;
+    for (const cell of document.querySelectorAll(".ago")) cell.textContent = `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  }
+</script>
+</body>
+</html>

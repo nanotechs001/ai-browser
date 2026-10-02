@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Shadow test</title></head>
+<body>
+<h1>Shadow</h1>
+<x-widget></x-widget>
+<script>
+customElements.define("x-widget", class extends HTMLElement {
+  connectedCallback() {
+    const root = this.attachShadow({ mode: "open" });
+    root.innerHTML = '<label>Shadow input <input id="si"></label> <button id="sb">Shadow button</button><p id="out"></p>';
+    root.getElementById("sb").onclick = () => { root.getElementById("out").textContent = "Shadow clicked"; };
+  }
+});
+</script>
+</body>
+</html>
