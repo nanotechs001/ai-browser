@@ -307,3 +307,25 @@ async def test_twenty_agents_share_one_webgl_context(stack):
     assert await until(js, "document.querySelectorAll('.station').length === 20")
     await asyncio.sleep(1)
     assert await js("window.gl.contexts") == 1
+
+
+@CHROME
+async def test_with_reduced_motion_the_brain_is_still(stack):
+    js = await brain_page(stack)
+    await reduce_motion(stack, js)
+    await asyncio.sleep(1.5)
+    before = await js("window.gl.cloud")
+    await asyncio.sleep(1)
+    assert await js("window.gl.cloud") == before  # still: nothing is drawn
+    stack["brain"].broadcast({"type": "brain_activity", "busy": True, "what": "Sorting 2 new messages from Gmail"})
+    assert await until(js, "document.querySelector('.stage').dataset.state === 'thinking'")
+    assert await until(js, f"window.gl.cloud > {before}")  # a change of state: a short colour fade
+    await asyncio.sleep(2)
+    settled = await js("window.gl.cloud")
+    await asyncio.sleep(1)
+    assert await js("window.gl.cloud") == settled  # still again
+    assert await js("window.gl.last.u_mix") == [0, 1, 0, 0]  # landed exactly on the state
+    stack["brain"].broadcast({"type": "brain_activity", "busy": True, "what": "Drafting a reply to Maria"})
+    assert await until(js, "document.getElementById('brain-what').textContent === 'Drafting a reply to Maria'")
+    await asyncio.sleep(1)
+    assert await js("window.gl.cloud") == settled  # news in the same state isn't a change: nothing is drawn

@@ -21,6 +21,7 @@ const SWAY = (30 * Math.PI) / 180;
 const PITCH = 0.22; // the user looks down onto it a little
 const STILL = { yaw: YAW, pitch: PITCH, scale: 1, bright: 0, motion: 0 }; // reduced motion: no drift, sway or beat
 const BEAT_S = 1.1; // alert: a double heartbeat this often
+const FADE_S = 0.7; // reduced motion: a change of state, or a new agent's flash, is a straight fade this long
 const CLOUD = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_bright", "u_flow",
                "u_flash", "u_wave", "u_size", "u_word"];
 const LINKS = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_travel", "u_pulse",
@@ -165,7 +166,7 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
     if (was !== state) stage.dataset.state = state; // the CSS orb (and the tests) follow this
     target.fill(0);
     target[STATES.indexOf(state)] = 1;
-    wake();
+    if (was !== state) wake(); // a still Brain is drawn again only for a change (in motion it never stops)
   }
 
   function setCount(value) {
@@ -261,11 +262,14 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
              scale: (1 + 0.015 * Math.sin(clock.breath)) * (1 + beat), bright: (0.25 * beat) / 0.035, motion: 1 };
   }
 
-  function ease(step, still) { // the weights move toward the state: eased as before, slower when still
+  function ease(step, still) { // the weights move toward the state: eased, or a straight line that lands when still
     let changing = false;
+    const move = step / FADE_S;
     for (let index = 0; index < 4; index += 1) {
-      mix[index] += (target[index] - mix[index]) * Math.min(1, step * (still ? 1.5 : 3));
-      if (Math.abs(target[index] - mix[index]) > 0.003) changing = true;
+      const gap = target[index] - mix[index];
+      if (still) mix[index] = Math.abs(gap) <= move ? target[index] : mix[index] + Math.sign(gap) * move;
+      else mix[index] += gap * Math.min(1, step * 3);
+      if (mix[index] !== target[index]) changing = true;
     }
     return changing;
   }
