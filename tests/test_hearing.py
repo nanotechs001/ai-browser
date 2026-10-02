@@ -2,9 +2,12 @@
 loads Whisper: the model is a tiny pinned stand-in served locally (fake_engine.TINY), and the engine is a fake."""
 
 import asyncio
+import base64
 import importlib.util
+import math
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import time
@@ -249,3 +252,162 @@ async def test_download_is_offered_only_for_a_missing_or_broken_model(tmp_path):
     missing, engine2, store2, _ = hearing_for(tmp_path / "other", present=False, available=False)
     missing.start_download()
     assert missing.status()["state"] == "no_engine" and store2.fetch.urls == []
+
+
+# ---- turns ---------------------------------------------------------------------------------------------------------
+
+def tone(seconds, freq=440.0, level=0.4):
+    """16 kHz mono 16-bit little-endian samples of a sine: what the page sends."""
+    count = int(16_000 * seconds)
+    return struct.pack(f"<{count}h", *(round(level * 32767 * math.sin(2 * math.pi * freq * n / 16_000))
+                                       for n in range(count)))
+
+
+def chunks(pcm, size=8_000):
+    """The page's chunks: 250 ms each, as base64."""
+    return [base64.b64encode(pcm[start:start + size]).decode() for start in range(0, len(pcm), size)]
+
+
+async def spoken(hearing, key, turn, pcm):
+    assert hearing.begin(key, turn) == ""
+    for seq, piece in enumerate(chunks(pcm)):
+        assert hearing.add(key, turn, seq, piece) == ""
+    return await hearing.finish(key, turn)
+
+
+async def test_a_turn_gives_the_engines_words_from_the_chunks_in_order(tmp_path):
+    hearing, engine, store, _ = hearing_for(tmp_path, answers=["what is fix the footer doing"])
+    pcm = tone(1.0)
+    assert await spoken(hearing, "socket-1", "u1", pcm) == ("what is fix the footer doing", "")
+    assert engine.heard == [pcm] and engine.loads == [store.folder]
+    assert hearing._turns == {}
+
+
+async def test_refused_chunks_give_plain_errors_and_never_reach_the_engine(tmp_path):
+    hearing, engine, store, _ = hearing_for(tmp_path)
+    hearing.max_seconds = 1
+    quarter = chunks(tone(0.25))[0]
+    cases = [
+        ([(0, quarter), (1, quarter), (2, quarter), (3, quarter), (4, quarter)], "That was longer than 1 second"),
+        ([(0, "not base64!")], "A piece of the audio was damaged"),
+        ([(0, base64.b64encode(b"\x01\x02\x03").decode())], "A piece of the audio was damaged"),  # an odd byte count
+        ([(0, quarter), (2, quarter)], "The audio arrived out of order"),
+        ([(0, "A" * 65_540)], "A piece of the audio was too big"),
+    ]
+    for number, (pieces, error) in enumerate(cases):
+        turn = f"u{number}"
+        assert hearing.begin("socket", turn) == ""
+        answers = [hearing.add("socket", turn, seq, piece) for seq, piece in pieces]
+        assert answers[-1] == error and all(answer == "" for answer in answers[:-1]), (number, answers)
+        assert await hearing.finish("socket", turn) == ("", "That turn isn't open")  # the refusal dropped it
+    assert hearing.add("socket", "nobody", 0, quarter) == "That turn isn't open"
+    assert engine.heard == []
+
+
+async def test_silence_and_slips_are_not_transcribed(tmp_path):
+    hearing, engine, store, _ = hearing_for(tmp_path)
+    assert await spoken(hearing, "s", "u1", tone(0.2)) == ("", "I didn't hear anything")  # under 0.3 s
+    assert await spoken(hearing, "s", "u2", bytes(32_000)) == ("", "I didn't hear anything")  # a second of silence
+    assert await spoken(hearing, "s", "u3", tone(1.0, level=0.002)) == ("", "I didn't hear anything")  # near silence
+    assert engine.heard == []
+    engine.speech_seconds = 0.0  # the voice detector found no speech in it
+    assert await spoken(hearing, "s", "u4", tone(1.0)) == ("", "I didn't hear anything")
+    assert len(engine.heard) == 1
+
+
+async def test_dropped_turns_leave_no_audio_behind(tmp_path):
+    hearing, engine, store, _ = hearing_for(tmp_path)
+    piece = chunks(tone(0.25))[0]
+    for end in ("begin again", "cancel", "drop"):
+        assert hearing.begin("s", "u1") == "" and hearing.add("s", "u1", 0, piece) == ""
+        kept = hearing._turns["s"].audio
+        assert len(kept) == 8_000
+        if end == "begin again":
+            assert hearing.begin("s", "u2") == ""  # one turn per socket: the first is dropped
+        elif end == "cancel":
+            hearing.cancel("s", "u1")
+        else:
+            hearing.drop("s")  # the socket closed
+        assert kept == bytearray(), end
+        hearing.drop("s")
+    assert engine.heard == [] and hearing._turns == {}
+
+
+async def test_a_turn_left_open_is_dropped(tmp_path, monkeypatch):
+    import ai_browser.hearing.service as service
+
+    monkeypatch.setattr(service, "OPEN_GRACE", 0.1)
+    hearing, engine, store, _ = hearing_for(tmp_path)
+    hearing.max_seconds = 0  # so the turn may stay open 0.1 s
+    assert hearing.begin("s", "u1") == ""
+    assert await eventually(lambda: "s" not in hearing._turns, 2)
+
+
+async def test_an_engine_error_is_plain_and_carries_no_audio(tmp_path):
+    hearing, engine, store, _ = hearing_for(tmp_path)
+    pcm = tone(1.0)
+    engine.error = RuntimeError(f"bad input {pcm[:40]!r}")
+    assert await spoken(hearing, "s", "u1", pcm) == ("", "Couldn't turn the speech into text (RuntimeError)")
+
+
+async def test_two_sockets_are_transcribed_one_after_the_other(tmp_path):
+    hearing, engine, store, _ = hearing_for(tmp_path, answers=["one", "two"], delay=0.3)
+    results = await asyncio.gather(spoken(hearing, "a", "u1", tone(1.0)), spoken(hearing, "b", "u2", tone(1.0)))
+    assert sorted(text for text, _ in results) == ["one", "two"] and not engine.overlapped
+    assert len(engine.loads) == 1  # loaded once, for both
+
+
+async def test_a_turn_writes_nothing_to_disk(tmp_path):
+    hearing, engine, store, _ = hearing_for(tmp_path)
+
+    def files():
+        return sorted((str(path), path.stat().st_size, path.stat().st_mtime_ns) for path in tmp_path.rglob("*"))
+
+    before = files()
+    assert await spoken(hearing, "s", "u1", tone(1.0)) == ("hello", "")
+    assert files() == before
+
+
+async def test_the_model_loads_once_at_the_first_turn_and_a_failed_load_offers_download(tmp_path):
+    hearing, engine, store, statuses = hearing_for(tmp_path)
+    hearing.status()
+    assert engine.loads == []  # a status never loads it
+    assert hearing.begin("s", "u1") == ""  # the first turn starts loading it, while the user speaks
+    assert await eventually(lambda: hearing.status()["loaded"])
+    assert statuses[-1]["loaded"] is True  # the pages learn it: no more "the first time takes longer"
+    await spoken(hearing, "s", "u2", tone(1.0))
+    assert len(engine.loads) == 1
+    broken, engine2, store2, _ = hearing_for(tmp_path / "other", load_error=RuntimeError("model.bin is damaged"))
+    text, error = await spoken(broken, "s", "u1", tone(1.0))
+    assert (text, error) == ("", "The speech model couldn't load: model.bin is damaged")
+    assert broken.status()["state"] == "failed" and broken.status()["reason"] == error
+    assert broken.begin("s", "u2") == error  # refused until a new Download
+    engine2.load_error = None
+    broken.start_download()
+    assert broken.status()["state"] == "downloading"  # the click clears the failure
+    assert await eventually(lambda: broken.status()["state"] == "ready")
+    assert await spoken(broken, "s", "u3", tone(1.0)) == ("hello", "")
+    assert len(engine2.loads) == 2  # the new files load again
+
+
+async def test_nothing_touches_the_network_until_the_download_click(tmp_path):
+    hearing, engine, store, _ = hearing_for(tmp_path)
+    hearing.status()
+    await spoken(hearing, "s", "u1", tone(1.0))
+    assert store.fetch.urls == []
+    store.folder.rename(tmp_path / "moved")
+    assert hearing.status()["state"] == "no_model" and store.fetch.urls == []
+    hearing.start_download()
+    assert await eventually(lambda: hearing.status()["state"] == "ready")
+    assert len(store.fetch.urls) == 2
+
+
+async def test_a_turn_needs_talking_to_be_ready_and_a_valid_id(tmp_path):
+    hearing, engine, store, _ = hearing_for(tmp_path, present=False)
+    assert hearing.begin("s", "u1") == "The speech model isn't on this computer yet"
+    install(store)
+    assert hearing.begin("s", "bad id!") == "That turn has no valid id"
+    assert hearing.begin("s", "x" * 41) == "That turn has no valid id"
+    engine.installed = False
+    assert "uv sync --extra voice" in hearing.begin("s", "u1")
+    assert hearing._turns == {}
