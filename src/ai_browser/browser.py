@@ -75,6 +75,7 @@ class Tab:
     dialogs: list = field(default_factory=list)  # (kind, message, accepted), answered automatically
     reported: int = 0  # dialogs already shown to the caller
     adopted: bool = False  # a tab the user opened (AI Browser): left open when the session ends
+    handed: bool = False  # a tab the user handed this agent in AI Home: let go of when they take it back
     world: int | None = None  # the reader's isolated-world context in the current document (dropped on navigation)
 
 
@@ -146,7 +147,7 @@ def url_problem(url: str, mode: str) -> str | None:
 
 class Browser:
     def __init__(self, cdp: CDP, work: WorkDir, cfg: Config, mode: str = "sandbox", hidden_extension: str = "",
-                 front: bool = True, placer=None, keep_tabs: bool = False):
+                 front: bool = True, placer=None, keep_tabs: bool = False, handed=None):
         self.cdp = cdp
         self.work = work
         self.cfg = cfg
@@ -159,6 +160,8 @@ class Browser:
         self.front = front
         self.placer = placer  # grouping.Placer in the user's own browser: where each new tab of ours goes
         self.keep_tabs = keep_tabs  # an agent of ai-browser app: its tabs outlive this process (the app closes them)
+        self.handed = handed  # async () -> the tabs the user handed this agent ([{"target", "title", "url"}])
+        self._handed_keys: dict[str, str] = {}  # listing key (h1...) -> target id, until taken on
         self._placing: set[asyncio.Future] = set()  # reports of tabs our pages opened, waiting for their address
         self._tab_events: list[Callable[[str, Tab], None]] = []  # ("opened" | "closed", tab)
         self._others: dict[str, str] = {}  # AI Browser tabs the user opened, by listing key (u1...) -> target id
@@ -527,10 +530,43 @@ class Browser:
         return tab
 
     async def adopt(self, target: str) -> Tab:
-        """Work in one of the user's tabs: it stays theirs (released, never closed, by this session)."""
+        """Work in one of the user's tabs: it stays theirs (released, never closed, by this session). In the user's
+        own browser only a tab they handed over in AI Home can be taken on."""
+        if self.mode == "chrome" and target not in {item["target"] for item in await self._handed_now()}:
+            raise BrowserError("that tab isn't a tab the user handed you: only tabs you open, and tabs the user hands "
+                               "you in AI Home (tabs list shows them as h1…), can be used")
         tab = await self._setup_tab(target, adopted=True)
+        tab.handed = self.mode == "chrome"
         await self._switch(tab)
         return tab
+
+    async def _handed_now(self) -> list[dict]:
+        """The tabs the user handed this agent, as the app lists them now (none without the app)."""
+        if self.handed is None:
+            return []
+        try:
+            return [item for item in await self.handed() if isinstance(item.get("target"), str)]
+        except Exception:  # the app is gone: nothing more is handed
+            return []
+
+    async def let_go_of_taken_back(self) -> str:
+        """Let go of handed tabs the user took back (AI Home's Take back): detached, never closed. Returns the notes;
+        the session carries on in its newest own tab."""
+        mine = [tab for tab in self.owned.values() if tab.handed]
+        if not mine:
+            return ""
+        still = {item["target"] for item in await self._handed_now()}
+        notes = []
+        for tab in mine:
+            if tab.target not in still:
+                await self.close_tab(tab)
+                notes.append(f"(the user took back tab {tab.key})\n")
+        if notes and self.current is None:
+            self._lost = None
+            fallback = self._fallback()
+            if fallback is not None:
+                await self._switch(fallback)
+        return "".join(notes)
 
     async def _switch(self, tab: Tab) -> None:
         self.current = tab
@@ -923,12 +959,18 @@ class Browser:
         if action == "new":
             await self._new_tab(url)
             return await self.observe()
+        if action == "switch" and tab and tab.startswith("h") and tab not in self._handed_keys and self.handed:
+            await self._tab_list()  # h keys come from the list: read it now
+        if action == "switch" and tab in self._handed_keys:  # a tab the user handed this agent: take it on
+            await self.adopt(self._handed_keys.pop(tab))
+            return await self.observe()
         if action == "switch" and tab in self._others:  # a tab the user opened in AI Browser: adopt it
             await self.adopt(self._others.pop(tab))
             return await self.observe()
         if action in {"switch", "close"}:
             if tab not in self.owned:
-                raise BrowserError(f"no tab {tab}; open tabs: {', '.join([*self.owned, *self._others]) or 'none'}")
+                raise BrowserError(f"no tab {tab}; open tabs: "
+                                   f"{', '.join([*self.owned, *self._others, *self._handed_keys]) or 'none'}")
             if action == "switch":
                 await self._switch(self.owned[tab])
                 return await self.observe()
@@ -953,7 +995,20 @@ class Browser:
         for key, tab in self.owned.items():
             info = targets.get(tab.target, {})
             mark = "*" if tab is self.current else " "
-            lines.append(f"{mark} {key}  {json.dumps(info.get('title', ''), ensure_ascii=False)}  {info.get('url', '')}")
+            handed = "  (handed by the user)" if tab.handed else ""
+            lines.append(f"{mark} {key}  {json.dumps(info.get('title', ''), ensure_ascii=False)}  "
+                         f"{info.get('url', '')}{handed}")
+        if self.mode == "chrome" and self.handed is not None:  # tabs the user handed this agent, until taken on
+            self._handed_keys = {}
+            ours = {tab.target for tab in self.owned.values()}
+            for item in await self._handed_now():
+                info = targets.get(item["target"])
+                if info is None or item["target"] in ours:
+                    continue  # closed meanwhile, or already worked in
+                key = f"h{len(self._handed_keys) + 1}"
+                self._handed_keys[key] = item["target"]
+                lines.append(f"  {key}  {json.dumps(info.get('title', ''), ensure_ascii=False)}  "
+                             f"{info.get('url', '')}  (handed to you by the user)")
         if self.mode == "app":  # AI Browser is the agent's: the user's tabs there may be used too (tabs switch u1)
             self._others = {}
             ours = {tab.target for tab in self.owned.values()}

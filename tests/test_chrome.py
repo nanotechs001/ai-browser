@@ -616,3 +616,52 @@ async def test_a_throwaway_chrome_answers(throwaway_chrome):
         assert "Chrome" in (await cdp.send("Browser.getVersion"))["product"]
     finally:
         await cdp.close()
+
+
+@CHROME
+async def test_a_handed_tab_is_listed_taken_on_and_given_back(own_browser):  # Review Focus 3
+    from ai_browser.browser import BrowserError
+
+    make, base, cdp = own_browser
+    handed: list[dict] = []
+
+    async def handed_tabs():
+        return list(handed)
+
+    user = (await cdp.send("Target.createTarget", {"url": base + "privacy.html"}))["targetId"]
+    gone = (await cdp.send("Target.createTarget", {"url": base + "form.html"}))["targetId"]
+    for _ in range(50):  # until the user's page shows its title (the listing below reads it)
+        infos = (await cdp.send("Target.getTargets"))["targetInfos"]
+        if any(info["targetId"] == user and info.get("title") == "Privacy" for info in infos):
+            break
+        await asyncio.sleep(0.1)
+    browser = await make(handed=handed_tabs)
+    with pytest.raises(BrowserError, match="isn't a tab the user handed you"):
+        await browser.adopt(user)  # never a tab of the user's that wasn't handed over
+    handed[:] = [{"target": user, "title": "Privacy", "url": base + "privacy.html"},
+                 {"target": gone, "title": "Form", "url": base + "form.html"}]
+    await cdp.send("Target.closeTarget", {"targetId": gone})  # the user closes one before the agent looks
+    await asyncio.sleep(0.3)
+    attached = []
+    send = cdp.send
+
+    async def spy(method, params=None, session_id=None, timeout=30):
+        if method == "Target.attachToTarget":
+            attached.append(params["targetId"])
+        return await send(method, params, session_id=session_id, timeout=timeout)
+
+    cdp.send = spy
+    try:
+        assert (await browser.tabs("list")).splitlines() == [
+            f'  h1  "Privacy"  {base}privacy.html  (handed to you by the user)']
+        with pytest.raises(BrowserError, match="no tab h2"):
+            await browser.tabs("switch", "h2")  # the closed one is not offered, and nothing attaches to it
+        assert 'page  "Privacy"' in await browser.tabs("switch", "h1")
+        assert browser.current.adopted and browser.current.handed and attached == [user]
+        assert (await browser.tabs("list")).endswith("(handed by the user)")
+        handed.clear()  # AI Home's Take back
+        assert await browser.let_go_of_taken_back() == "(the user took back tab t1)\n"
+        assert browser.current is None and not browser.owned
+        assert user in await chrome_pages(cdp)  # let go of, never closed
+    finally:
+        cdp.send = send
