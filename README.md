@@ -51,10 +51,13 @@ uv run ai-browser app            # add --model haiku for the fastest replies, or
 ```
 
 AI Browser is a Google Chrome with a profile of its own (`~/.ai-browser/browser/`), with its own logins and
-extensions, apart from your everyday browser. Agents drive it through Chrome's debugging port, and with that port open
-Chrome tells sites it is an automated browser (`navigator.webdriver`). Most sites don't mind, but some (airlines,
-ticketing, some Google pages) answer with a bot check: use your everyday browser for those, and AI Browser never tries
-to get around them.
+extensions, apart from your everyday browser. Agents drive it through Chrome's debugging port, and that port alone puts
+Chrome in automation mode: every page reads `navigator.webdriver` as true (measured with Chrome 154). Sites can see
+that AI Browser is automated, and Google refuses to sign in there ("This browser or app may not be secure"). Nothing
+hides this. For Google and your other logins, use your own browser, where you are signed in yourself, chosen before the
+task ([Use your own Chrome](#use-your-own-chrome-like-claude-in-chrome-but-faster)); nothing switches browsers on its
+own after a block. When a site answers with a bot check, the agent stops and hands it to you
+([Bot checks](#bot-checks)).
 
 **First start (once).** AI Browser opens a setup page and `chrome://extensions`, and a Finder window shows the
 extension folder:
@@ -244,10 +247,38 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
   0 resets. With Reduce Motion on (System Settings → Accessibility → Display), the room stands still and the blob
   changes slowly.
 
+## What sites can see
+
+| Mode | What sites can see |
+|---|---|
+| Sandbox | Headless Chromium in Docker. Its user agent says `HeadlessChrome`, the clock is UTC, there is no GPU, and the profile is often new. |
+| AI Browser | Google Chrome on its own profile; `navigator.webdriver` is true. |
+| Your everyday Brave | Your own browser, logins and history, with Brave's remote-debugging switch on. Pages read `navigator.webdriver` false (measured with Brave on a Chromium 152 base). That is Brave's own behaviour, not something ai-browser sets, and sites can still notice automation in other ways. |
+
+Nothing is faked in any mode.
+
+## Bot checks
+
+When a site asks "are you a robot?" (Google's "unusual traffic" page, a CAPTCHA picture check, Cloudflare's "verify
+you are human", a "Press & Hold" check, an Akamai block page), the agent stops and hands it to you:
+- the tab comes to the front (in the sandbox, the agent gives you the live-view link);
+- nothing else runs until you've dealt with it: no reload, no retry, no other tab, browser, profile or tool;
+- in AI Browser the agent shows **needs you** on AI Home, in the chat panel and in Mission Control, with **Show me**,
+  **Continue** and **Skip this site**, and a Brave notification when the watcher is connected.
+
+Solve it in the tab yourself, then click **Continue** (in Claude Code, tell the agent it's done). If you'd rather not,
+**Skip this site** (or tell the agent "skip it") closes that tab, and the site is off-limits for the rest of the task.
+An "I'm not a robot" box inside a form is yours to tick: the agent fills in the rest and asks you.
+
+Checks are never solved or dodged: no solver services, no faked browser, no switching browsers or profiles after a
+block. If Google keeps asking in Brave, Brave's fingerprinting protection is a known cause (Brave issue #55197).
+Turning it off for google.com is your own privacy choice, and ai-browser never changes it.
+
 ## Use your own Chrome (like Claude in Chrome, but faster)
 
-Some sites (airlines, banks, ticketing) block the sandbox's headless browser. For those, or when you want
-your existing logins, ai-browser can drive **your own Chrome** with the same fast tools:
+When a task needs your own logins (Google, your shop's admin…), ai-browser can drive **your own Chrome** with the same
+fast tools. You choose it before the task, for your logins; it is never a way around a site that blocked the sandbox
+(a bot check is handed to you in every mode, see [Bot checks](#bot-checks)):
 
 1. Once: in Chrome, open `chrome://inspect/#remote-debugging` and tick **Allow remote debugging for this
    browser instance**.
@@ -312,13 +343,18 @@ e9   button   "Submit order" ⚠
 ## Website QA
 
 Ask Claude to *"QA client-site.com"*. It calls `qa(url, max_pages=30)`, which:
-- visits same-site pages in tabs of its own, two at a time. It never clicks, types or submits, and skips links
+- visits same-site pages in a tab of its own, one at a time. It never clicks, types or submits, and skips links
   such as log out, delete or add to cart;
 - checks each page on desktop, tablet and mobile. It reports sideways scrolling, naming the elements that stick
   out, along with script and console errors, failed or blocked requests, broken images and insecure `http://`
   content;
-- checks every link once (internal ones with your logins, external ones without), politely: a few requests per site
-  at a time. Sites that refuse automated checks are listed as "couldn't check", not as broken;
+- checks every link once (internal ones with your logins, external ones without), politely: one request at a time
+  per site, with a short pause, following robots.txt and Retry-After. A site that answers 429, 403 or a bot check
+  isn't asked again in that run, and links to big sites such as Google aren't checked: they are listed under "Not
+  checked", not as broken. `qa(url, ignore_robots=true)` only for a site you say is yours (staging sites often ask
+  every crawler to stay out);
+- takes about three minutes for 30 pages, and stops visiting pages after five; the summary says where it stopped and
+  why;
 - writes `qa/<site>-<time>/report.html` (one shareable file with screenshots), `issues.csv` and full-page shots.
 
 The skill `ai-browser:website-qa` (in `skills/`) tells Claude how to verify each finding before reporting it, and how
@@ -336,7 +372,7 @@ From `uv run ai-browser bench` (medians, local test pages, MacBook):
 | one type step | 51 ms | 150 ms |
 | open a local page | 13 ms | 500 ms |
 | viewport screenshot | 49 ms | 300 ms |
-| Website QA: books.toscrape.com, 30 pages × 3 sizes + 450 links | 55 s | 120 s |
+| Website QA, 30 pages × 3 sizes (one request at a time per site, 1 s apart) | about 3 min | 5 min limit |
 
 ## Commands
 
@@ -364,6 +400,11 @@ uv run ai-browser build              # rebuild the image
 - To view a file the shell made, open it in the sandbox browser as `file:///work/<task>/…`. That browser opens no
   other local files, and your own Chrome opens none (use `read_file` there).
 - Host-side file tools never follow symbolic links in the work folder, so the shell can't point them at your files.
+- The shell refuses a command that sends a browser's user agent (`curl -A "Mozilla/…"`), runs curl or wget in
+  parallel (`xargs -P`), or names a site you skipped after a bot check: it keeps curl's own user agent, one URL at a
+  time.
+- The page reader runs in a JavaScript world of its own: a page can't replace it or change what it reads, where a
+  click lands, whether ⚠ applies, or which file input gets an upload.
 - Both containers run as normal users with no capabilities and capped memory and CPU.
 - Chromium runs with `--no-sandbox` inside its container, so the container is the isolation boundary.
 - Live view: what you type there isn't logged. Password, card-number and one-time-code fields are always masked in what Claude reads.
@@ -373,7 +414,8 @@ uv run ai-browser build              # rebuild the image
 
 - Frames from other sites (cross-origin iframes) are listed but not read.
 - Pressing Enter in a form isn't ⚠-gated; only clicks on risky buttons and page dialogs are.
-- Headless Chromium can trigger more bot checks on some sites, and mobile screenshots keep the desktop user agent.
+- Headless Chromium can trigger more bot checks on some sites (each one is handed to you: see
+  [Bot checks](#bot-checks)), and mobile screenshots keep the desktop user agent.
 - One browser lane per Claude session (calls are serialized).
 
 ## Development
