@@ -223,16 +223,23 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
 ## Mission Control (your agents at work, in 3D)
 
 **Mission Control**, in AI Home's header, opens a dark control room:
-- **Stations:** every agent works at its own station, a little robot at a desk.
+- **Stations:** every agent works at its own little desk, where a chibi office worker in a tie of the agent's colour
+  sits beside the monitor. The art is drawn in code on this computer: nothing is downloaded.
   - Its monitor shows the tab it works in (the same pictures as AI Home), and the ticker its last action
     ("click e14 · 38 ms").
-  - The light shows its state: green working, amber waiting in line, ✓ done, red failed.
-  - A station that **needs you** (a tool waiting for your permission) glows, and its robot raises a hand.
+  - The light shows its state: green working, amber waiting in line, ✓ done, red failed. The worker shows it too: he
+    types while the agent works, checks his watch while it waits, gives a thumbs up when it is done, slumps on the
+    desk when it failed, and dozes when it was stopped.
+  - A station that **needs you** (a tool waiting for your permission) glows, and its worker turns to you and waves.
+  - A new agent arrives with a short scene: the Brain flares, a spark flies to its desk, the monitor switches on, and
+    the worker pops up and waves.
   - Click a station, or pick it from **List**: the drawer shows its state, **Watch**, **Stop**, **Close**, its
     permission card (**Allow once**, **Always allow**, **Deny**) and its chat.
-- **The Brain** floats in the middle as a glowing blob:
-  - it breathes while idle, swirls while it sorts messages or writes a draft, glows warm while something needs you
-    (the count shows under it), and pulses when it speaks;
+- **The Brain** floats in the middle as a brain of glowing points, turning slowly:
+  - it drifts while idle, sends a wave of light across itself while it sorts messages or writes a draft, and beats
+    like a heart, in amber, while something needs you, its signals gathering on the side of the agent that waits (the
+    count shows under it); each word it speaks sends a ring of light across it;
+  - without WebGL it is a dotted brain in the same colours, and on a slower computer it draws fewer points;
   - click it for its inbox (Draft reply, Approve, Hand to agent…).
 - **Talking back:** the Brain's updates show in a speech bubble, one at a time: a new message that needs your reply, a
   draft that is ready, an agent that is done, failed, or waits for a permission. More than three at once become one
@@ -241,8 +248,8 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
   anywhere. It is off by default and remembered. Without such a voice, it says so and stays off.
 - **The task bar** at the bottom starts an agent, like AI Home's box.
 - **Moving around:** drag to turn the room, scroll to zoom, double-click to reset. Keys: ← → turn, ↑ ↓ tilt, + − zoom,
-  0 resets. With Reduce Motion on (System Settings → Accessibility → Display), the room stands still and the blob
-  changes slowly.
+  0 resets. With Reduce Motion on (System Settings → Accessibility → Display), the room, the workers and the Brain
+  stand still: a change is a short colour fade, and a new agent's desk simply appears.
 
 ## Use your own Chrome (like Claude in Chrome, but faster)
 

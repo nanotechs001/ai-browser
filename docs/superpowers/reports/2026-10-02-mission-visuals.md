@@ -53,6 +53,15 @@ Screenshots (`AIB_SHOTS`), compared with `docs/superpowers/prototypes/mission-vi
 | reduced | the same room, still | yes |
 | dotted | the dotted brain silhouette, front to the left | yes |
 
+## The full suite and the bench
+
+| Run | Result |
+|---|---|
+| `uv run pytest -q -p no:randomly` | 616 passed, 2 skipped in 625.18s (the 2 skips: `test_the_budget` without `AIB_PERF`, `test_screenshots_for_the_eye` without `AIB_SHOTS`; Docker was running, so the Docker tests ran) |
+| `uv run ai-browser bench` | all PASS (medians of 15 runs, against the budget): observe 1 / 100 ms, observe heavy page 10 / 300 ms, click step 50 / 150 ms, type step 50 / 150 ms, open local page 10 / 500 ms, screenshot 50 / 300 ms. Run with `AIB_HOME` set to a scratch folder, so the bench's throwaway sandbox left nothing in `~/.ai-browser` |
+
+Both ran while another branch was being built on this machine (load average 6-11).
+
 ## On Windows
 
 Not measured here. The Windows spec's manual laptop check runs `PERF_ROOM` (kept in `tests/test_mission_visuals.py`)
