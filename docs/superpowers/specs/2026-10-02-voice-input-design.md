@@ -142,9 +142,9 @@ The first press checks the app's `hearing_status` and shows one card. The mic do
     on this PC."
 - **No model:**
   - "To understand speech on this computer, AI Browser needs the English speech model: Whisper base.en, 148 MB, from
-    Hugging Face. It's saved in <folder>. Nothing you say is ever sent anywhere." The folder is
-    `hearing_status.folder` (`~/.ai-browser/models/faster-whisper-base.en` by default), so it is right on Windows and
-    with `$AIB_HOME` too.
+    Hugging Face. It's saved in <folder>. Your voice never leaves this computer; your words go to Claude, like
+    typed text." The folder is `hearing_status.folder` (`~/.ai-browser/models/faster-whisper-base.en` by default),
+    so it is right on Windows and with `$AIB_HOME` too.
   - Buttons: **Download 148 MB** and **Not now**.
   - About the size: the user approved "about 142 MB", which is whisper.cpp's figure in MiB. The faster-whisper files
     add up to 147,769,510 bytes, which is 141 MiB or 148 MB. The card shows the real total, computed from the pinned
@@ -168,7 +168,8 @@ It shows when the status is ready and `navigator.permissions.query({name: "micro
 - on a Mac only (`hearing_status.platform` is `mac`): "macOS may also ask once whether <Browser> may use the
   microphone: choose **Allow** (or **OK**)." On Windows the line is "If nothing happens, Windows may be blocking the
   microphone: Settings → Privacy & security → Microphone → let desktop apps use it.";
-- "The mic is on only while you hold Space or the mic button.";
+- "The mic is on only while you hold Space or the mic button, or from a click on the mic button until you click it
+  again.";
 - **Continue** calls `getUserMedia` from that click. Once it is allowed, the page stops the tracks at once (nothing is
   recorded) and says "Ready: hold Space to talk".
 - **Not now** closes the card.

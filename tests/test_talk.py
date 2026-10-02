@@ -552,7 +552,9 @@ async def test_the_model_downloads_only_on_the_click(stack):
     assert await js("import(chrome.runtime.getURL('talk.js')).then((talk) => talk.megabytes(147769510))") == "148 MB"
     await tap(stack, js, SPACE, " ")
     assert await until(js, f"{CARD}.includes('Whisper tiny.en, 2 MB, from Hugging Face')")
-    assert str(store.folder) in await js(CARD) and "Nothing you say is ever sent anywhere." in await js(CARD)
+    card = await js(CARD)
+    assert str(store.folder) in card and "Nothing you say is ever sent anywhere." not in card  # the words go to Claude
+    assert "Your voice never leaves this computer; your words go to Claude, like typed text." in card
     assert await js("document.querySelector('#talk-card .download').textContent") == "Download 2 MB"
     await asyncio.sleep(0.5)
     assert store.fetch.urls == [] and await js("window.micOpen") == 0  # nothing is fetched before the click
@@ -573,7 +575,8 @@ async def test_first_use_explains_the_browsers_question_first(stack):
     text = await js(CARD)
     assert "Choose Allow while visiting the site (or Allow), not Allow this time" in text
     assert "macOS may also ask once whether Google Chrome may use the microphone" in text
-    assert "The mic is on only while you hold Space or the mic button." in text
+    assert "The mic is on only while you hold Space or the mic button, or from a click on the mic button until you " \
+        "click it again." in text  # click-to-talk keeps it on too (up to the cap)
     assert await js("window.micOpen") == 0 and await js(f"{PANEL}.dataset.state") == "explain"
     await js("document.querySelector('#talk-card .continue').click(); true")
     assert await until(js, f"{NOTICE} === 'Ready: hold Space to talk'")

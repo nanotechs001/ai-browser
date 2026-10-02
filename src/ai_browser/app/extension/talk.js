@@ -155,8 +155,8 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
       }
     } else { // no_model
       box.append(el("p", "", `To understand speech on this computer, AI Browser needs the English speech model: `
-                    + `${current.model}, ${size}, from Hugging Face. It's saved in ${current.folder}. Nothing you `
-                    + "say is ever sent anywhere."),
+                    + `${current.model}, ${size}, from Hugging Face. It's saved in ${current.folder}. Your voice `
+                    + "never leaves this computer; your words go to Claude, like typed text."),
                  row(button(`Download ${size}`, "primary download", download), button("Not now", "ghost", later)));
     }
     return box;
@@ -204,7 +204,8 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
       box.append(el("p", "", "If nothing happens, Windows may be blocking the microphone: Settings → Privacy & "
                     + "security → Microphone → let desktop apps use it."));
     }
-    box.append(el("p", "muted", "The mic is on only while you hold Space or the mic button."),
+    box.append(el("p", "muted", "The mic is on only while you hold Space or the mic button, or from a click on the "
+                  + "mic button until you click it again."),
                row(button("Continue", "primary continue", allow), button("Not now", "ghost", () => {
                  closeCard();
                  setState("idle");
