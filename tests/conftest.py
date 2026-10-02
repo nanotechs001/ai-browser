@@ -106,3 +106,22 @@ def fake_claude(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_SCRIPT", str(script))
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
     return runner, log, script
+
+
+@pytest.fixture
+async def chrome_engine(throwaway_chrome, tmp_path, monkeypatch):
+    """(Engine on the throwaway Chrome once sandbox_start(chrome=true) is called, the test pages' base URL, the
+    Chrome's profile folder)."""
+    from ai_browser import testpages
+    from ai_browser.engine import Engine
+    from ai_browser.skills import Catalog
+
+    monkeypatch.setenv("AIB_CHROME_DIR", str(throwaway_chrome))
+    base, _, stop_pages = testpages.serve_host()
+    # never the real "default" profile: a slip back to the sandbox must not leave containers tied to this temp home
+    engine = Engine(home=tmp_path / "home", default_profile="pytest-chrome", catalog=Catalog([], set()))
+    yield engine, base, throwaway_chrome
+    await engine.close()
+    stop_pages()
+    if engine.sandboxes is not None:  # the shell container this temp home started (Docker tests)
+        engine.sandboxes.stop(engine.sandboxes.chrome_shell())

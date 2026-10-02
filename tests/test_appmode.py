@@ -364,3 +364,33 @@ def test_the_engine_needs_no_development_packages():
     code = "import sys; sys.modules['httpx'] = None; import ai_browser.engine, ai_browser.server"  # httpx is dev-only
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr[-500:]
+
+
+@CHROME
+async def test_a_bot_check_comes_forward_and_is_reported_to_the_app(app_engine, receiver, monkeypatch):
+    from ai_browser.cdp import CDP
+
+    engine, base, _ = app_engine
+    url, events = receiver
+    as_agent(monkeypatch, url)  # a background agent: its tabs never take the focus by themselves...
+    activated, original = [], CDP.send
+
+    async def spy(self, method, params=None, *args, **kwargs):
+        if method == "Target.activateTarget":
+            activated.append((params or {}).get("targetId"))
+        return await original(self, method, params, *args, **kwargs)
+
+    monkeypatch.setattr(CDP, "send", spy)
+    text = (await engine.open(base + "checks/unusual.html")).text
+    tab = engine.browser.current
+    assert text.startswith(f"⛔ bot check in tab {tab.key}") and tab.target in activated  # ...except a bot check
+    await engine.cdp.send("Page.navigate", {"url": base + "checks/counter.html"}, session_id=tab.session)
+    for _ in range(50):
+        if "is gone" in (await engine.observe()).text:
+            break
+        await asyncio.sleep(0.1)
+    await engine._link.flush()
+    checks = [event for event in events if event["kind"] in ("check", "check_cleared")]
+    assert checks[0] == {"agent": "a1", "kind": "check", "target": tab.target, "adopted": False, "check": "traffic",
+                         "site": "localhost", "token": "tok"}
+    assert (checks[-1]["kind"], checks[-1]["how"], checks[-1]["target"]) == ("check_cleared", "solved", tab.target)

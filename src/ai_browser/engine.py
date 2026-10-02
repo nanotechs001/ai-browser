@@ -13,14 +13,16 @@ from pathlib import Path
 
 from . import config
 from .agentlink import AgentLink
-from .browser import Browser, BrowserError
+from .browser import Browser, BrowserError, Tab
 from .cdp import CDP, CDPError
 from .appbrowser import app_profile
+from .checks import Check, CheckGate
 from .chrome import ChromeError, default_chrome_dir, find_ws_url
 from .config import READ_LIMIT, SHELL_LIMIT, load_config, project_root
 from .live import LiveView
 from .qa import run_qa
 from .sandbox import SandboxInfo, Sandboxes
+from .shellguard import shell_problem
 from .skills import Catalog
 from .steps import parse_steps
 from .tasklog import TaskLog, new_task_id
@@ -64,6 +66,10 @@ def _clean(text: str) -> str:
 
 def _outcome(text: str) -> str:
     lines = text.splitlines()
+    if any(line.startswith("⛔ bot check") for line in lines):
+        return "check"
+    if any(line.startswith("⏸ waiting for the user") for line in lines):
+        return "waiting"
     if any(line.startswith("⛔") for line in lines):
         return "blocked"
     if any(line.startswith("✗") for line in lines):
@@ -96,6 +102,8 @@ class Engine:
         self._shell_logs = 0
         self._link: AgentLink | None = None  # in AI Browser, an agent reports its tabs to the app
         self._adopted_start = False  # the user's tab this agent was started in (AIB_APP_ADOPT) is taken on once
+        self.gate = CheckGate()  # the bot-check hold and the skipped sites: they outlast any browser this session uses
+        self._notes: list[str] = []  # a hold that ended between calls (the user closed the tab): the next call says so
 
     @property
     def catalog(self) -> Catalog:
@@ -137,6 +145,7 @@ class Engine:
         try:
             cdp = await CDP.connect(await asyncio.to_thread(self.sandboxes.ws_url, info))
             browser = Browser(cdp, work, self.cfg)
+            self._wire(browser)
             await browser.start()
         except BaseException:  # keep no half-started state: the next call starts cleanly
             if cdp is not None:
@@ -174,6 +183,7 @@ class Engine:
             browser = Browser(cdp, work, self.cfg, mode=mode,
                               hidden_extension=os.environ.get("AIB_APP_EXTENSION", "") if mode == "app" else "",
                               front=bool(adopt) or not agent)
+            self._wire(browser)
             if agent and os.environ.get("AIB_APP_EVENTS"):
                 link = self._link = self._link or AgentLink(os.environ["AIB_APP_EVENTS"],
                                                              os.environ.get("AIB_APP_AGENT_TOKEN", ""), agent)
@@ -275,9 +285,9 @@ class Engine:
             if kind in RECONNECTED:
                 connected_before = self.info is not None and self.info.chrome and self.info.profile == kind
                 await self._start_chrome(kind)
-                return RECONNECTED[kind] if connected_before else ""
+                return (RECONNECTED[kind] if connected_before else "") + await self._held_after_reconnect()
             await self._start(profile, fresh)
-            return ""
+            return await self._held_after_reconnect()  # a hold from a browser that is gone ends here
         if self.cdp.closed and self.info.chrome:  # the user's Chrome (or AI Browser) was closed or restarted
             kind = self.browser.mode
             stale = [tab.target for tab in self.browser.owned.values() if not tab.adopted]
@@ -286,26 +296,116 @@ class Engine:
             for target in stale:  # still open when only the connection dropped
                 with contextlib.suppress(CDPError):
                     await self.cdp.send("Target.closeTarget", {"targetId": target})
-            return RECONNECTED[kind]
+            return RECONNECTED[kind] + await self._held_after_reconnect()
         if self.cdp.closed:  # Chromium or its container died
             profile, fresh = self.info.profile, self.info.fresh
             await self._teardown(stop_container=fresh)  # a throwaway pair is replaced whole (no stray shell)
             await self._start(self.default_profile if fresh else profile, fresh)
-            return "(sandbox restarted: the browser had stopped, so earlier pages and element ids are gone)\n"
+            return ("(sandbox restarted: the browser had stopped, so earlier pages and element ids are gone)\n"
+                    + await self._held_after_reconnect())
         return await self.browser.ensure_tab()  # the user, its window or the page may have closed our tab
 
-    async def _with_browser(self, tool: str, args: dict, action) -> ToolResult:
+    async def _with_browser(self, tool: str, args: dict, action, refuse=None) -> ToolResult:
+        """Run a browser tool. `refuse()` (by default the gate's refusal for the tool) is asked first, before _ready()
+        starts or reconnects anything: a refused call touches nothing."""
         async def work():
-            note = await self._ready()
+            notes = self._take_notes()
+            refused = refuse() if refuse is not None else self.gate.refusal(tool)
+            if refused is not None:
+                return notes + refused
             try:
-                result = await action(self.browser)
-            finally:
-                self._register()  # tabs may have been opened or closed
+                note = await self._ready()
+                try:
+                    result = await action(self.browser)
+                finally:
+                    self._register()  # tabs may have been opened or closed
+            except BaseException:
+                self._notes.insert(0, notes)  # not lost: the next call says it
+                raise
+            notes += note + self._take_notes()
             if isinstance(result, ToolResult):
-                result.text = note + result.text
+                result.text = notes + result.text
                 return result
-            return note + result
+            return notes + result
         return await self._run(tool, args, work)
+
+    # ---- bot checks: the session holds until the user deals with one ------------------------------------
+
+    def _wire(self, browser: Browser) -> None:
+        """Every Browser this session uses hands a check to the same hold and skips the same sites."""
+        browser.on_check(self._on_check)
+        browser.skipped_site = self.gate.skipped_for
+        browser.waiting = lambda: self.gate.waiting() if self.gate.held is not None else None
+        browser.on_tab_event(self._on_tab_event)
+
+    async def _on_check(self, tab: Tab, check: Check) -> str:
+        """A bot check in this session's browser: hold the session, bring its tab forward (even for an agent working
+        in the background), tell the app; returns the hand-off (with the live-view link in the sandbox)."""
+        self.gate.hold(tab.key, tab.target, check, tab.adopted)
+        if self.browser is not None:
+            with contextlib.suppress(BrowserError, CDPError):
+                await self.browser.bring_to_front(tab)
+        if self._link is not None:
+            self._link.report("check", tab.target, tab.adopted, check=check.kind, site=check.site)
+        sandbox = self.info is not None and not self.info.chrome
+        live = self.live.url if sandbox and self.live is not None else None
+        return self.gate.handoff(check, tab.key, live)
+
+    def _release(self, how: str) -> str:
+        """The hold ends: "solved" (a read found the check gone) or "closed" (its tab went, so its site is skipped).
+        Returns the note for the result."""
+        held = self.gate.held
+        if held is None:
+            return ""
+        if how == "solved":
+            self.gate.solved()
+            note = f"(the bot check in tab {held.tab_key} is gone: carrying on)\n"
+        else:
+            site = self.gate.closed()
+            note = f"(the tab with the bot check was closed, so {site} is off-limits for the rest of this task)\n"
+        if self._link is not None:
+            self._link.report("check_cleared", held.target, held.adopted, how=how)
+        return note
+
+    def _on_tab_event(self, kind: str, tab: Tab) -> None:
+        held = self.gate.held
+        if kind == "closed" and held is not None and held.where == "session" and held.target == tab.target:
+            self._notes.append(self._release("closed"))
+
+    async def _held_after_reconnect(self) -> str:
+        """After a reconnect our held tab was closed with the old connection (or the browser restarted), so its site is
+        skipped; the user's own (adopted) tab is taken on again if it is still open."""
+        held = self.gate.held
+        if held is None or held.where != "session":
+            return ""
+        if held.adopted:
+            with contextlib.suppress(BrowserError, CDPError):
+                infos = (await self.cdp.send("Target.getTargets"))["targetInfos"]
+                if any(info.get("targetId") == held.target for info in infos):
+                    tab = await self.browser.adopt(held.target)
+                    self.gate.hold(tab.key, tab.target, held.check, True)
+                    return ""
+        return self._release("closed")
+
+    def _take_notes(self) -> str:
+        notes, self._notes = "".join(self._notes), []
+        return notes
+
+    def _mark_held(self, listing: str) -> str:
+        """`tabs list` marks the held tab."""
+        held = self.gate.held
+        if held is None:
+            return listing
+        return "\n".join(f"{line}  (bot check: waiting for the user)" if line[2:].startswith(f"{held.tab_key}  ")
+                         else line for line in listing.splitlines())
+
+    def _act_refusal(self, steps) -> str | None:
+        """While held no step runs; otherwise a goto to a skipped site is refused before anything runs."""
+        refused = self.gate.refusal("act")
+        for step in steps:
+            if refused is None and step.op == "goto":
+                refused = self.gate.refusal("act", url=step.value)
+        return refused
 
     def _status_text(self) -> str:
         info = self.info
@@ -327,6 +427,9 @@ class Engine:
 
     async def sandbox_start(self, profile: str = "default", fresh: bool = False, chrome: bool = False) -> ToolResult:
         async def work():
+            refused = self.gate.refusal("sandbox_start")  # no other browser or profile while a bot check waits
+            if refused is not None:
+                return refused
             # In AI Browser (AIB_BROWSER=app) a plain sandbox_start() keeps using it.
             kind = "chrome" if chrome else "app" if self.default_app and not fresh and profile == "default" \
                 else "sandbox"
@@ -347,6 +450,9 @@ class Engine:
 
     async def sandbox_stop(self) -> ToolResult:
         async def work():
+            refused = self.gate.refusal("sandbox_stop")
+            if refused is not None:
+                return refused
             if self.info is None or self.browser is None:
                 return "no sandbox is running in this session"
             name, profile, fresh = self.info.name, self.info.profile, self.info.fresh
@@ -366,17 +472,32 @@ class Engine:
         async def work():
             if self.info is None or self.browser is None:
                 return "no sandbox running yet; browser tools start the default one automatically"
-            return self._status_text() + "\ntabs:\n" + await self.browser.tabs("list")
+            return self._status_text() + "\ntabs:\n" + self._mark_held(await self.browser.tabs("list"))
         return await self._run("sandbox_status", {}, work)
 
     # ---- browser tools --------------------------------------------------------------------------------
 
     async def open(self, url: str, new_tab: bool = False) -> ToolResult:
         return await self._with_browser("open", {"url": url, "new_tab": new_tab},
-                                        lambda browser: browser.open(url, new_tab))
+                                        lambda browser: browser.open(url, new_tab),
+                                        lambda: self.gate.refusal("open", url=url))
 
     async def observe(self, find: str | None = None) -> ToolResult:
-        return await self._with_browser("observe", {"find": find}, lambda browser: browser.observe(find))
+        async def action(browser: Browser) -> str:
+            held = self.gate.held
+            if held is None or held.where != "session":  # (a hold in QA's own browser: the everyday-Brave spec)
+                return await browser.observe(find)
+            tab = next((tab for tab in browser.owned.values() if tab.target == held.target), None)
+            if tab is None:  # its tab went without a word (it can't be read any more): as closed, the site is skipped
+                note = self._release("closed")
+                return note + (await browser.observe(find) if browser.current is not None else "")
+            check = await browser.check_now(tab)  # the user may have dealt with it: read the held tab again
+            if check is None:
+                if browser.current is not tab:
+                    await browser._switch(tab)  # carry on in that tab; only a check still there calls bring_to_front
+                return self._release("solved") + await browser.observe(find)
+            return await self._on_check(tab, check)  # still there: handed over again, the tab in front again
+        return await self._with_browser("observe", {"find": find}, action)
 
     async def act(self, steps: list[str], confirmed: bool = False) -> ToolResult:
         args = {"steps": steps, "confirmed": confirmed}
@@ -384,7 +505,8 @@ class Engine:
             parsed = parse_steps(steps)  # report grammar mistakes before touching the sandbox
         except ValueError as exc:
             return await self._run("act", args, lambda: _raise(exc))
-        return await self._with_browser("act", args, lambda browser: browser.act(parsed, confirmed))
+        return await self._with_browser("act", args, lambda browser: browser.act(parsed, confirmed),
+                                        lambda: self._act_refusal(parsed))
 
     async def screenshot(self, size: str = "desktop", full_page: bool = False,
                          element: str | None = None) -> ToolResult:
@@ -399,8 +521,11 @@ class Engine:
                                         action)
 
     async def tabs(self, action: str = "list", tab: str | None = None, url: str | None = None) -> ToolResult:
-        return await self._with_browser("tabs", {"action": action, "tab": tab, "url": url},
-                                        lambda browser: browser.tabs(action, tab, url))
+        async def run(browser: Browser) -> str:
+            text = await browser.tabs(action, tab, url)
+            return self._mark_held(text) if action == "list" else text
+        return await self._with_browser("tabs", {"action": action, "tab": tab, "url": url}, run,
+                                        lambda: self.gate.refusal("tabs", action=action, tab=tab, url=url))
 
     async def page_log(self) -> ToolResult:
         return await self._with_browser("page_log", {}, lambda browser: browser.page_log())
@@ -415,7 +540,8 @@ class Engine:
         """Website QA of a whole site in this session's browser; returns the summary (the report is in the work folder)."""
         async def action(browser):
             return await run_qa(browser, self.work, url, max_pages, progress=progress, on_tabs=self._register)
-        return await self._with_browser("qa", {"url": url, "max_pages": max_pages}, action)
+        return await self._with_browser("qa", {"url": url, "max_pages": max_pages}, action,
+                                        lambda: self.gate.refusal("qa", url=url))
 
     # ---- shell and files --------------------------------------------------------------------------------
 
@@ -436,7 +562,10 @@ class Engine:
                           f"\n… [truncated: {len(output) - SHELL_LIMIT} more chars; full output saved to {path}]")
             status = f"timed out after {timeout}s" if result.timed_out else f"exit {result.code}"
             return f"{output.rstrip()}\n[{status}]"
-        return await self._with_browser("shell", {"command": command, "timeout": timeout}, action)
+        def refuse() -> str | None:
+            problem = shell_problem(command, self.gate.skipped)
+            return self.gate.refusal("shell") or (f"⛔ {problem}" if problem else None)
+        return await self._with_browser("shell", {"command": command, "timeout": timeout}, action, refuse)
 
     async def read_file(self, path: str) -> ToolResult:
         async def action(_browser):

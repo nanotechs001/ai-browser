@@ -20,9 +20,10 @@ class AgentLink:
         self._queue: asyncio.Queue[dict] = asyncio.Queue()
         self._sender: asyncio.Task | None = None
 
-    def report(self, kind: str, target: str, adopted: bool = False) -> None:
-        """kind: tab_opened, tab_closed or working_tab."""
-        self._queue.put_nowait({"agent": self.agent, "kind": kind, "target": target, "adopted": adopted})
+    def report(self, kind: str, target: str, adopted: bool = False, **extra) -> None:
+        """kind: tab_opened, tab_closed or working_tab; or a bot check: check (with check and site) and
+        check_cleared (with how). The app checks every value it is sent."""
+        self._queue.put_nowait({"agent": self.agent, "kind": kind, "target": target, "adopted": adopted, **extra})
         if self._sender is None or self._sender.done():
             self._sender = asyncio.ensure_future(self._send())
 

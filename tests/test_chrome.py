@@ -223,23 +223,6 @@ async def test_a_tab_that_fails_to_set_up_is_closed_again(chrome_browser, monkey
 # ---- the engine in the user's own Chrome ---------------------------------------------------------------------
 
 
-@pytest.fixture
-async def chrome_engine(throwaway_chrome, tmp_path, monkeypatch):
-    from ai_browser import testpages
-    from ai_browser.engine import Engine
-    from ai_browser.skills import Catalog
-
-    monkeypatch.setenv("AIB_CHROME_DIR", str(throwaway_chrome))
-    base, _, stop_pages = testpages.serve_host()
-    # never the real "default" profile: a slip back to the sandbox must not leave containers tied to this temp home
-    engine = Engine(home=tmp_path / "home", default_profile="pytest-chrome", catalog=Catalog([], set()))
-    yield engine, base, throwaway_chrome
-    await engine.close()
-    stop_pages()
-    if engine.sandboxes is not None:  # the shell container this temp home started (Docker tests)
-        engine.sandboxes.stop(engine.sandboxes.chrome_shell())
-
-
 async def wait_closed(engine) -> None:
     for _ in range(50):
         if engine.cdp.closed:
