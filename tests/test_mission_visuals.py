@@ -664,3 +664,59 @@ async def test_the_alert_moves_to_the_next_agent_still_waiting(stack, tmp_path):
     await js(f"{card}.querySelector('.deny').click(); true")
     assert await until(js, f"{station('a1')}.dataset.state !== 'needs_you'")
     assert await until(js, near("u_focus", [0.30, 0.95], 0.1))  # a2, still waiting, on the right
+
+
+# ---- the arrival -----------------------------------------------------------------------------------------------------
+
+@CHROME
+async def test_agents_already_there_simply_appear(stack):
+    stack["script"].write_text(json.dumps(WORKING))
+    for name in ("one", "two", "three"):
+        await stack["server"].agents.create(name)
+    js = await brain_page(stack)
+    assert await until(js, "document.querySelectorAll('.station').length === 3")
+    await asyncio.sleep(1.5)
+    assert await js("[window.spawned, window.sparks, window.gl.max.u_burst]") == [[], 0, 0]
+    await stack["server"].agents.create("four")  # created while the page is open: only this one arrives
+    assert await until(js, "window.spawned.length === 1")
+    assert await js("window.spawned") == ["a4"]
+
+
+@CHROME
+async def test_a_new_agent_arrives_with_a_spark(stack):
+    js = await brain_page(stack)
+    stack["script"].write_text(json.dumps(WORKING))
+    await stack["server"].agents.create("Fix the footer")
+    assert await until(js, "window.spawned.includes('a1')")
+    assert await until(js, "window.sparks === 1 && window.sparksGone === 1", 3)
+    assert await until(js, f"!{station('a1')}.classList.contains('spawning')", 3)
+    assert await js("window.gl.max.u_burst") > 0.5
+    assert await js("window.errors") == []
+
+
+@CHROME
+async def test_with_reduced_motion_a_new_agent_simply_appears(stack):
+    js = await brain_page(stack)
+    await reduce_motion(stack, js)
+    await asyncio.sleep(0.5)
+    await stack["server"].agents.create("Fix the footer")
+    assert await until(js, f"{station('a1')} !== null")
+    assert await until(js, "window.gl.max.u_burst > 0.5")  # the Brain's colour flash
+    await asyncio.sleep(0.5)
+    assert await js("[window.spawned, window.sparks]") == [[], 0]
+
+
+@CHROME
+async def test_many_new_agents_at_once_fly_at_most_six_sparks(stack):
+    js = await brain_page(stack)
+    stack["script"].write_text(json.dumps(WORKING))
+    for number in range(8):
+        await stack["server"].agents.create(f"Task number {number}")
+    await stack["server"].agents.close("a2")  # closed while it arrives
+    assert await until(js, "document.querySelectorAll('.station:not(.leaving)').length === 7")
+    assert await until(js, "window.sparks > 0 && window.sparksGone === window.sparks", 4)
+    assert await js("window.sparksMost") <= 6
+    assert len(await js("window.spawned")) >= 7  # every new desk played its arrival, with or without a spark
+    assert await until(js, "document.querySelectorAll('.spawning').length === 0", 3)
+    assert await js("window.errors") == []
+    assert await until(js, f"getComputedStyle({station('a1', '.worker .arm-l')}).opacity === '1'")

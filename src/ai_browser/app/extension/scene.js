@@ -17,6 +17,7 @@ const TILT = [35, 70];
 const SCALE = [0.6, 1.6];
 const JPEG = /^[A-Za-z0-9+/]+={0,2}$/;
 export const CARD = { w: 200, h: 156 }; // a station's card, in CSS pixels (mission.css uses the same numbers)
+const SPARKS = 6; // arrivals in flight at once: any more arrive without a spark
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -190,10 +191,32 @@ export function createScene(root, { onSelect = () => {}, onCamera = () => {} } =
     if (node.getAttribute("aria-label") !== label) node.setAttribute("aria-label", label);
   }
 
-  function upsert(agent) {
+  function arrive(station) { // a new agent's short scene: the spark flies from the Brain, the desk plays .spawning
+    const { node } = station;
+    node.classList.add("spawning");
+    setTimeout(() => node.classList.remove("spawning"), 2000); // a timer: animationend never fires without animations
+    if (room.querySelectorAll(".spark").length >= SPARKS) return;
+    const spark = el("div", "spark billboard");
+    spark.style.setProperty("--c", node.style.getPropertyValue("--c"));
+    place(spark, CENTER);
+    room.append(spark);
+    const dx = Number(node.dataset.x) - CENTER.x;
+    const dy = Number(node.dataset.y) - CENTER.y;
+    const frames = [];
+    for (let step = 0; step <= 8; step += 1) { // an arc over the floor, in the room's own pixels
+      const f = step / 8;
+      frames.push({ translate: `${f * dx}px ${f * dy}px ${200 - 140 * f + 440 * f * (1 - f)}px` });
+    }
+    const flight = spark.animate(frames, { duration: 700, easing: "linear" });
+    flight.onfinish = () => spark.remove();
+    flight.oncancel = () => spark.remove();
+  }
+
+  function upsert(agent, { fresh = false } = {}) { // fresh: created while the page is open, so its arrival plays
     if (!agent?.id) return;
     let station = stations.get(agent.id);
-    if (!station) {
+    const added = !station;
+    if (added) {
       station = build(agent.id);
       stations.set(agent.id, station);
       created.set(agent.id, Number(agent.created) || Infinity);
@@ -202,6 +225,7 @@ export function createScene(root, { onSelect = () => {}, onCamera = () => {} } =
       layout();
     }
     fill(station, agent);
+    if (added && fresh && !matchMedia("(prefers-reduced-motion: reduce)").matches) arrive(station);
   }
 
   function directionTo(id) { // from the Brain to a station, in the viewer's frame: dx to the right, dz to the user

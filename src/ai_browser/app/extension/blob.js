@@ -26,6 +26,7 @@ const LOW = 2500; // adaptive detail: never fewer points than this
 const SLOW_MS = 45; // drawn frames further apart than this, on average over 2 s, halve the points
 const GAP_MS = 250; // a longer gap (a hidden tab, a still Brain) isn't a slow machine: the window starts again
 const FOCUS_MS = 500; // focus(): the alert's aim moves to its new side in a straight line this long
+const BURST_S = 0.8; // a new agent: the Brain's flare fades this long (FADE_S with reduced motion)
 const CLOUD = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_bright", "u_flow",
                "u_flash", "u_wave", "u_size", "u_word"];
 const LINKS = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_travel", "u_pulse",
@@ -164,7 +165,7 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
   let frame = 0;
   let last = 0;
   let shown = false; // the canvas has replaced the orb
-  const api = { mode: "css", setState, focus, destroy };
+  const api = { mode: "css", setState, burst, focus, destroy };
 
   function setState(state) {
     if (!STATES.includes(state)) return;
@@ -173,6 +174,13 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
     target.fill(0);
     target[STATES.indexOf(state)] = 1;
     if (was !== state) wake(); // a still Brain is drawn again only for a change (in motion it never stops)
+  }
+
+  function burst(direction) { // a new agent: the Brain flares and fires toward its desk ({dx, dz} or null)
+    if (!gl) return;
+    effects.burst = 1;
+    effects.burstDir = direction ? [direction.dx, direction.dz] : [0, 0];
+    wake();
   }
 
   function focus(direction) { // alert: the signals gather on the side facing this direction ({dx, dz}), or evenly
@@ -286,7 +294,8 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
     return changing;
   }
 
-  function settle(now) { // the effects move on, frame by frame
+  function settle(now, step, still) { // the effects move on, frame by frame
+    effects.burst = Math.max(0, effects.burst - step / (still ? FADE_S : BURST_S));
     const k = Math.min(1, Math.max(0, (now - aim.at) / FOCUS_MS));
     effects.focus = [aim.from[0] + (aim.to[0] - aim.from[0]) * k, aim.from[1] + (aim.to[1] - aim.from[1]) * k];
   }
@@ -328,7 +337,7 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
     measure(now);
     const still = reduced.matches;
     const changing = ease(step, still);
-    settle(now);
+    settle(now, step, still);
     const view = still ? STILL : advance(step);
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 0);
@@ -372,7 +381,7 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
       canvas.hidden = false;
       orb.hidden = true;
     }
-    if (!still || changing) frame = requestAnimationFrame(draw); // still: drawn only while it changes
+    if (!still || changing || effects.burst > 0) frame = requestAnimationFrame(draw); // still: only while it changes
   }
 
   function wake() {

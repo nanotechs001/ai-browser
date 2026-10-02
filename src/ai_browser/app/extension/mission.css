@@ -201,6 +201,20 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .station[data-state="stopped"] .worker :is(.body, .head, .face, .blink) { animation: mc-doze 4s ease-in-out infinite; }
 .station[data-state="stopped"] .worker .part { filter: saturate(0.4) brightness(0.8); }
 
+/* ---- a new agent's arrival: scene.js adds .spawning for 2 s (never with Reduce Motion on) and flies a .spark ----- */
+.monitor .boot { position: absolute; inset: 0; opacity: 0; pointer-events: none; transform: scale(0, 0.03);
+                 background: linear-gradient(180deg, transparent, rgba(200, 225, 255, 0.95) 50%, transparent); }
+.station.spawning .monitor .boot { animation: mc-boot 0.3s linear 0.7s both; }
+.station.spawning .worker .part:is(.body, .head, .face, .blink, .sweat) {
+  animation: mc-pop 0.45s ease-out 0.85s backwards; }
+.station.spawning .worker .part.arm-l { animation: mc-arm-in 1.25s linear; }
+.station.spawning .worker .part.arm-r { animation: mc-arm-r-in 1.9s linear; }
+.station.spawning .worker .part.arm-up { animation: mc-hello 1.9s linear; }
+.station.spawning .worker .part:is(.arm-thumb, .sparkle) { animation: mc-hidden 1.9s linear; }
+.spark { width: 18px; height: 18px; border-radius: 50%; pointer-events: none;
+         background: radial-gradient(circle, #ffffff 0 18%, var(--c, #4c8df6) 45%, transparent 72%);
+         box-shadow: 0 0 14px var(--c, #4c8df6), 0 0 28px var(--c, #4c8df6); }
+
 /* ---- the heads-up display ---------------------------------------------------------------------------------------- */
 .hud { position: fixed; z-index: 2; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(10px);
@@ -276,6 +290,14 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
                         100% { opacity: 0; transform: scale(1.3) rotate(90deg); } }
 @keyframes mc-sweat { from { translate: 0 0; } to { translate: 0 4px; } }
 @keyframes mc-doze { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(0.8px) scale(1.01); } }
+@keyframes mc-boot { 0% { opacity: 1; transform: scale(0, 0.03); } 45% { opacity: 1; transform: scale(1, 0.03); }
+                     80% { opacity: 0.8; transform: scale(1, 1); } 100% { opacity: 0; transform: scale(1, 1); } }
+@keyframes mc-pop { 0% { transform: translateY(80px); } 70% { transform: translateY(-4px); } 100% { transform: none; } }
+@keyframes mc-arm-in { 0%, 92% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes mc-arm-r-in { 0%, 60.5% { opacity: 0; } 65.8%, 68.4% { opacity: 1; } 68.5%, 100% { opacity: 0; } }
+@keyframes mc-hello { 0%, 68.4% { opacity: 0; transform: rotate(0deg); } 68.5% { opacity: 1; transform: rotate(0deg); }
+                      84% { transform: rotate(16deg); } 100% { opacity: 1; transform: rotate(0deg); } }
+@keyframes mc-hidden { from, to { opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; }

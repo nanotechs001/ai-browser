@@ -132,7 +132,9 @@ function update(agent) {
   const before = agents.get(agent.id);
   if (before && agentsKnown) told(before, agent);
   agents.set(agent.id, agent);
-  scene.upsert(agent);
+  const fresh = agentsKnown && !before; // created while this page is open: its arrival plays
+  scene.upsert(agent, { fresh });
+  if (fresh) blob.burst(scene.directionTo(agent.id));
   listRow(agent);
   if (drawer.id === agent.id) fillDrawer(agent);
   renderCounts();
