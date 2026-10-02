@@ -216,7 +216,7 @@ def record_timeline(monkeypatch) -> tuple[list[tuple[float, str]], list[tuple[fl
 async def test_other_sites_links_are_checked_while_pages_are_visited(chrome_browser, monkeypatch):
     run_module, captured = capture(monkeypatch)
     fetches, navigations = record_timeline(monkeypatch)
-    browser, base, other = chrome_browser
+    browser, base, _ = chrome_browser
     await run_module.run_qa(browser, browser.work, base + "qa/index.html", delay=0.05)
     run = captured["run"]
     assert any(i.kind == "broken link (external)" for i in run.issues)
