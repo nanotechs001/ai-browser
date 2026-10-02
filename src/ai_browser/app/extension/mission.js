@@ -22,7 +22,7 @@ let pending = null; // the new_task request waiting for its "created": one Start
 let pendingTimer = null;
 let storedModel = false;
 
-const scene = createScene($("scene"), { onSelect: select });
+const scene = createScene($("scene"), { onSelect: select, onCamera: aimBrain });
 const brainButton = el("button", "brain");
 brainButton.id = "brain";
 brainButton.type = "button";
@@ -153,13 +153,20 @@ function forget(id) {
 
 // ---- the Brain ---------------------------------------------------------------------------------------------------
 
-function renderBrain() { // the blob swirls while the Brain works, glows while something needs the user
+function renderBrain() { // the Brain thinks while it works, beats while something needs the user
   const needs = [...brainItems.values()].filter((item) => item.kind === "needs_reply").length;
   const agentsNeed = [...agents.values()].some((agent) => stateOf(agent) === "needs_you");
   const state = speaking ? "speaking" : brainState.busy ? "thinking" : needs || agentsNeed ? "alert" : "idle";
   blob.setState(state);
   setText(brainCount, needs ? `${needs} ${needs === 1 ? "needs" : "need"} you` : "");
   setText(brainWhat, brainState.busy ? brainState.what : "");
+  aimBrain();
+}
+
+function aimBrain() { // the alert's signals gather on the side facing the oldest agent that needs the user
+  const waiting = [...agents.values()].filter((agent) => stateOf(agent) === "needs_you")
+    .sort((one, two) => (Number(one.created) || Infinity) - (Number(two.created) || Infinity))[0];
+  blob.focus(waiting ? scene.directionTo(waiting.id) : null);
 }
 
 function showList(on) {

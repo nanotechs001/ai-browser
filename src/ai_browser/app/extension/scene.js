@@ -88,7 +88,7 @@ function tickerOf(agent, state) {
   return agent.last_action || agent.status || STATES[state] || state;
 }
 
-export function createScene(root, { onSelect = () => {} } = {}) {
+export function createScene(root, { onSelect = () => {}, onCamera = () => {} } = {}) {
   const viewport = el("div", "viewport");
   const room = el("div", "room");
   const floor = el("div", "floor");
@@ -105,6 +105,7 @@ export function createScene(root, { onSelect = () => {} } = {}) {
   const created = new Map(); // agent id -> when it was created: the oldest gets the first place
   let order = []; // agent ids, oldest first
   let extent = { dx: 600, near: 920, far: CENTER.y }; // how far the stations reach: the room is fitted to them
+  let started = false; // the first apply() runs before the Brain exists: onCamera only after it
 
   function fits(scale, height) { // with this zoom, the nearest station stands above the task bar, the farthest
     const tilt = (START.tilt * Math.PI) / 180; // card and the Brain below the top bar (the room's perspective)
@@ -133,6 +134,7 @@ export function createScene(root, { onSelect = () => {} } = {}) {
     room.dataset.tilt = shortly(camera.tilt);
     room.dataset.spin = shortly(camera.spin);
     room.dataset.scale = shortly(camera.scale);
+    if (started) onCamera(); // turn, zoom, reset, resize and layout: the Brain re-aims its alert
   }
 
   function layout() {
@@ -202,6 +204,18 @@ export function createScene(root, { onSelect = () => {} } = {}) {
     fill(station, agent);
   }
 
+  function directionTo(id) { // from the Brain to a station, in the viewer's frame: dx to the right, dz to the user
+    const station = stations.get(id);
+    if (!station) return null;
+    const x = Number(station.node.dataset.x) - CENTER.x;
+    const y = Number(station.node.dataset.y) - CENTER.y;
+    const spin = (camera.spin * Math.PI) / 180;
+    const dx = x * Math.cos(spin) - y * Math.sin(spin);
+    const dz = x * Math.sin(spin) + y * Math.cos(spin);
+    const length = Math.hypot(dx, dz);
+    return length ? { dx: dx / length, dz: dz / length } : null;
+  }
+
   function remove(id) {
     const station = stations.get(id);
     if (!station) return;
@@ -241,5 +255,6 @@ export function createScene(root, { onSelect = () => {} } = {}) {
 
   addEventListener("resize", apply);
   apply();
-  return { upsert, remove, thumb, turn, zoom, reset, camera, stage, viewport };
+  started = true;
+  return { upsert, remove, thumb, turn, zoom, reset, directionTo, camera, stage, viewport };
 }

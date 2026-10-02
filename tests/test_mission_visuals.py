@@ -6,7 +6,7 @@ import asyncio
 import json
 
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
-from test_mission import CHROME, WORKING, needs_reply, open_mission, open_with, station
+from test_mission import CHROME, WORKING, key, needs_reply, open_mission, open_with, station
 
 
 async def shape(stack, body):
@@ -620,3 +620,47 @@ async def test_perf_room_adds_twenty_working_stand_ins(stack):
                     " === 'working' && node.querySelectorAll('.worker').length === 1)")
     assert await js("document.querySelectorAll('#scene .station').length") == 1  # the page's own room is as it was
     assert len(stack["server"].agents.agents) == 1  # nothing was sent
+
+
+# ---- the alert aims at the agent that needs the user -----------------------------------------------------------------
+
+@CHROME
+async def test_the_alert_aims_at_the_agent_that_needs_the_user(stack, tmp_path):
+    from test_ai_home_phase2 import ask_for_clickup
+
+    ask_for_clickup(stack, tmp_path)
+    agents = stack["server"].agents
+    await agents.create("make a ClickUp task")
+    await wait_for_permissions(agents, ["a1"])
+    js = await brain_page(stack)
+    assert await until(js, f"{station('a1')}?.dataset.state === 'needs_you'")
+    assert await until(js, near("u_focus", [0, 1], 0.1))  # straight in front of the Brain
+    for _ in range(12):  # the room turns half a turn: the station is now behind the Brain
+        await js(key("ArrowLeft"))
+    assert await until(js, near("u_focus", [0, -1], 0.1))
+    await js(f"{station('a1')}.click(); true")
+    card = "document.querySelector('#drawer:not([hidden]) .permission')"
+    assert await until(js, f"{card} !== null")
+    await js(f"{card}.querySelector('.allow-once').click(); true")
+    assert await until(js, f"{station('a1')}.dataset.state !== 'needs_you'")
+    assert await until(js, near("u_focus", [0, 0], 0.05))  # nothing needs the user: an even heartbeat
+
+
+@CHROME
+async def test_the_alert_moves_to_the_next_agent_still_waiting(stack, tmp_path):
+    from test_ai_home_phase2 import ask_for_clickup
+
+    ask_for_clickup(stack, tmp_path)
+    agents = stack["server"].agents
+    await agents.create("make a ClickUp task")
+    await agents.create("make another ClickUp task")
+    await wait_for_permissions(agents, ["a1", "a2"])
+    js = await brain_page(stack)
+    assert await until(js, "document.querySelectorAll('.station[data-state=\"needs_you\"]').length === 2")
+    assert await until(js, near("u_focus", [-0.30, 0.95], 0.1))  # the oldest, a1, on the left of the first row
+    await js(f"{station('a1')}.click(); true")
+    card = "document.querySelector('#drawer:not([hidden]) .permission')"
+    assert await until(js, f"{card} !== null")
+    await js(f"{card}.querySelector('.deny').click(); true")
+    assert await until(js, f"{station('a1')}.dataset.state !== 'needs_you'")
+    assert await until(js, near("u_focus", [0.30, 0.95], 0.1))  # a2, still waiting, on the right
