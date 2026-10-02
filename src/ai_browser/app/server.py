@@ -230,6 +230,12 @@ class AppServer:
             report = await request.json()
         except ValueError:
             return Response(status_code=400)
+        if isinstance(report, dict):
+            self._agent_report(report)
+        return Response(status_code=204)
+
+    def _agent_report(self, report: dict) -> None:
+        """An engine's report, read and authenticated: wave 1's check reports, then the tab report."""
         if isinstance(report, dict) and all(isinstance(report.get(key), str) for key in ("agent", "kind", "target")):
             if report["kind"] == "check":  # a bot check: only values from our own table and plain host names
                 if _valid_check(report):
@@ -239,7 +245,6 @@ class AppServer:
                     self.agents.check_cleared(report["agent"], report["target"], report["how"])
             else:
                 self.agents.tab_event(report["agent"], report["kind"], report["target"], bool(report.get("adopted")))
-        return Response(status_code=204)
 
     # ---- sockets ----------------------------------------------------------------------------------------------
 

@@ -339,16 +339,23 @@ class Engine:
         browser.on_tab_event(self._on_tab_event)
 
     async def _on_check(self, tab: Tab, check: Check) -> str:
-        """A bot check in this session's browser: hold the session, bring its tab forward (even for an agent working
-        in the background), tell the app; returns the hand-off (with the live-view link in the sandbox)."""
-        self.gate.hold(tab.key, tab.target, check, tab.adopted)
-        if self.browser is not None:
+        """A bot check in this session's browser (wave 1's hook, set by _wire)."""
+        return await self._hold(self.browser, tab, check)
+
+    async def _hold(self, browser, tab: Tab, check: Check, where: str = "session") -> str:
+        """A bot check in `tab` of `browser`: hold the session, bring its tab forward (even for an agent working in
+        the background), tell the app; returns the hand-off. `where` is "session" (this session's browser) or "qa"
+        (QA's own sandbox browser). The live-view link is given in the sandbox and for a hold in QA's sandbox, where
+        the user can't see the tab otherwise."""
+        self.gate.hold(tab.key, tab.target, check, tab.adopted, where=where)
+        if browser is not None:
             with contextlib.suppress(BrowserError, CDPError):
-                await self.browser.bring_to_front(tab)
+                await browser.bring_to_front(tab)
+        sandbox = where == "qa" or (self.info is not None and not self.info.chrome)
+        live = self.live.url if sandbox and self.live is not None and self.live.url else None
         if self._link is not None:
-            self._link.report("check", tab.target, tab.adopted, check=check.kind, site=check.site)
-        sandbox = self.info is not None and not self.info.chrome
-        live = self.live.url if sandbox and self.live is not None else None
+            self._link.report("check", tab.target, tab.adopted, check=check.kind, site=check.site,
+                              **({"live": live} if where == "qa" and live else {}))
         return self.gate.handoff(check, tab.key, live)
 
     def _release(self, how: str) -> str:
