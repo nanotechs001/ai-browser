@@ -249,10 +249,46 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
   summary. Only names and the Brain's one-line summaries are used, never a message's text.
 - **Voice** (top bar): the updates are also spoken, only with a voice that runs on this Mac, so nothing is sent
   anywhere. It is off by default and remembered. Without such a voice, it says so and stays off.
-- **The task bar** at the bottom starts an agent, like AI Home's box.
+- **The task bar** at the bottom starts an agent, like AI Home's box. The mic button beside **Start** talks to the
+  Brain (see "Talking to the Brain", below).
 - **Moving around:** drag to turn the room, scroll to zoom, double-click to reset. Keys: ← → turn, ↑ ↓ tilt, + − zoom,
   0 resets. With Reduce Motion on (System Settings → Accessibility → Display), the room, the workers and the Brain
   stand still: a change is a short colour fade, and a new agent's desk simply appears.
+
+## Talking to the Brain (push-to-talk, speech to text on this computer)
+
+In Mission Control, hold **Space** (while no text box or button has focus) and talk to the Brain, then let go. Or
+hold the **mic button** beside Start, or click it once to start and again to stop. **Esc** throws the turn away, and a
+turn stops by itself at 30 seconds. The **Ask the Brain** box does the same, typed.
+- **Your voice stays on this computer.** The microphone is open only while you talk: no wake word, nothing in the
+  background. The sound goes to `ai-browser app` over 127.0.0.1, and Whisper (faster-whisper, `base.en`, on the CPU)
+  turns it into text there. The sound is kept in memory for that turn only, never saved or logged, and no cloud speech
+  service is used, not even as a fallback.
+- **Your words go to Claude**, like typed text: the Brain answers about your agents and your inbox in one or two
+  sentences, in its bubble and the talk panel, and aloud when Voice is on.
+- **It only proposes.** Asked for work, it offers to **start an agent** with your own words as its task, or to **draft
+  a reply** to an inbox item. Nothing happens until you press **Start** (or **Draft it**) or say "yes". Voice never
+  approves or sends a draft, answers a permission card or a bot check, confirms a ⚠ action, marks items Done, pauses
+  watching, or changes a setting: those stay clicks. Words that sound like a password or a code are never sent: log in
+  yourself, in the site's own tab.
+- **Setup, once:**
+  1. In this folder, run `uv sync --extra voice`, then restart `ai-browser app`. It installs faster-whisper and the
+     Python packages it needs, from PyPI. Sync with `uv sync --extra voice` (or `--all-extras`) from then on: a plain
+     `uv sync` removes the extra again (`uv run` keeps it).
+  2. The first time you hold Space, Mission Control offers the English speech model: **Download 148 MB** (Whisper
+     base.en from Hugging Face, pinned to one revision and checked before use), saved in
+     `~/.ai-browser/models/faster-whisper-base.en` (or under `$AIB_HOME`). Nothing else is downloaded, and only when
+     you click.
+  3. AI Browser then asks to use the microphone: choose **Allow while visiting the site**, not **Allow this time**.
+     macOS may also ask once whether Google Chrome may use the microphone.
+- **Speed:** a 5-second question becomes text in about 1.5 s on an Apple silicon Mac (an estimate, until it is
+  measured here). The first turn after the app starts takes a few seconds longer while the model loads.
+- **Windows:** the same on 64-bit Windows. On Windows on Arm the extra can't install (CTranslate2 has no wheel there),
+  so Mission Control stays at its setup card; use Voice Access instead, as that card suggests.
+- **No setup at all:** macOS Dictation types into any text box in AI Browser (the task bar, an agent's message box,
+  Tell the Brain): press the Microphone key, use Edit → Start Dictation, or the shortcut in System Settings → Keyboard
+  → Dictation. On Apple silicon it runs on the Mac for supported languages, and that settings page shows whether it
+  does. On Windows, Voice Access (Windows 11) runs on the PC, while Win+H voice typing sends audio to Microsoft.
 
 ## What sites can see
 

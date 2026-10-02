@@ -823,3 +823,13 @@ async def test_without_webgl_the_dotted_brain_listens(stack):
     assert await js(f"{dots}.getPropertyValue('--a').trim()") == "#fff2fa"  # white
     assert await js(f"{dots}.getPropertyValue('--b').trim()") == "#f28cd9"  # rose
     await key_up(stack, js, SPACE)
+
+
+def test_the_readme_says_how_to_talk_and_the_zero_setup_way():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "## Talking to the Brain" in text
+    section = " ".join(text.split("## Talking to the Brain", 1)[1].split("\n## ", 1)[0].split())
+    for words in ("hold **Space**", "`uv sync --extra voice`", "a plain `uv sync` removes the extra again",
+                  "**Download 148 MB**", "Allow while visiting the site", "never saved or logged", "no cloud speech",
+                  "Dictation", "Voice Access", "Win+H", "Windows on Arm"):
+        assert words in section, words
