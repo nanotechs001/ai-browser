@@ -33,9 +33,12 @@ from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
 from ..config import load_config, project_root
+from ..engine import _alive
+from ..grouping import MARKER
 from ..live import _bind, _QuietServer, _serve
 from ..skills import Catalog
 from .agents import Agent, AgentManager
+from .groups import GroupKeeper
 
 APP_PORTS = range(8792, 8812)
 MODELS = {"opus", "sonnet", "haiku"}
@@ -43,7 +46,8 @@ REFUSED = 4403  # WebSocket close code for a wrong token or origin
 PING_EVERY = 20  # seconds: a message now and then keeps the extension's service worker, and its socket, alive
 THUMB_EVERY = 2  # seconds between two thumbnails of one agent's tab
 TEXT_LIMIT = 20_000  # characters of a task or a message
-WATCHER_MESSAGES = {"items", "replied", "thread", "filled", "reader_status"}  # only Brave's watcher sends these
+# only Brave's watcher sends these
+WATCHER_MESSAGES = {"items", "replied", "thread", "filled", "reader_status", "watcher_caps", "tab_grouped"}
 BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "pause", "style"}
 TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"}
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
@@ -56,6 +60,9 @@ WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "s
 WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabled")
 SETUP_PAGE = Path(__file__).with_name("setup.html")
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
+SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (cc-<task id>)
+SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
+YOU = {"kind": "you"}
 
 
 def reveal_in_finder(path: str) -> None:
@@ -120,6 +127,12 @@ class AppServer:
         self.ports = ports
         self.token = secrets.token_urlsafe(24)  # AI Home, the panel and the worker (in the extension's config.json)
         self.agent_token = secrets.token_urlsafe(24)  # the agents' engines (in each agent's mcp.json)
+        self.session_token = secrets.token_urlsafe(24)  # Claude Code sessions (in <home>/app/link.json, mode 0600)
+        self.groups = GroupKeeper(self._to_watcher, on_change=self._browser_changed)  # tab groups, through the watcher
+        self.brave = None  # BraveLink in brave mode (attach_brave): the user's Brave
+        self.sessions: dict[str, dict] = {}  # Claude Code sessions browsing in Brave while the app runs
+        self._thread_urls: dict[str, str] = {}  # open_thread request -> its address (the Brain's group in AI Home)
+        self._sweeper: asyncio.Task | None = None
         self.url: str | None = None
         self.extension_seen = False  # the extension has connected: the one-time setup is done
         self.setup_key = secrets.token_urlsafe(16)  # only the setup page has it: other sites can't open Finder
@@ -156,8 +169,13 @@ class AppServer:
                                 Route("/setup/status", self._setup_status),
                                 Route("/setup/reveal", self._setup_reveal, methods=["POST"]),
                                 Route("/agent-events", self._agent_events, methods=["POST"]),
+                                Route("/agent-claim", self._agent_claim, methods=["POST"]),
+                                Route("/agent-status", self._agent_status),
+                                Route("/agent-hello", self._agent_hello, methods=["POST"]),
+                                Route("/agent-bye", self._agent_bye, methods=["POST"]),
                                 WebSocketRoute("/ws", self._socket)])
         self._fanout = asyncio.create_task(self._forward())
+        self._sweeper = asyncio.create_task(self._sweep_sessions())
         if self.brain is not None:
             await self.brain.start()
         for port in self.ports:
@@ -181,7 +199,7 @@ class AppServer:
         if self.brain is not None:
             await self.brain.stop()
         await self.agents.close_all()  # every agent's Claude Code process ends with the app
-        for task in [self._fanout, *self._jobs, *(state["task"] for state in self._thumbs.values())]:
+        for task in [self._fanout, self._sweeper, *self._jobs, *(state["task"] for state in self._thumbs.values())]:
             if task is not None:
                 task.cancel()
         self.agents.unsubscribe(self._feed)
@@ -223,16 +241,211 @@ class AppServer:
         return JSONResponse({"installed": self.extension_seen, "watcher": seen})
 
     async def _agent_events(self, request: Request) -> Response:
-        given = request.headers.get("x-aib-agent-token", "")
-        if not hmac.compare_digest(given.encode(), self.agent_token.encode()):
+        given = request.headers.get("x-aib-agent-token", "").encode()
+        if not (hmac.compare_digest(given, self.agent_token.encode())
+                or hmac.compare_digest(given, self.session_token.encode())):
             return Response(status_code=403)
         try:
             report = await request.json()
         except ValueError:
             return Response(status_code=400)
-        if isinstance(report, dict):
-            self._agent_report(report)
+        if not isinstance(report, dict) or not isinstance(report.get("agent"), str):
+            return Response(status_code=204)
+        agent = report["agent"]
+        if not self._token_ok(request, agent):
+            return Response(status_code=403)
+        if SESSION_ID.match(agent):  # first: a session's tabs; its check reports are dropped (it has no row)
+            self._session_report(agent, report)
+            return Response(status_code=204)
+        self._agent_report(report)  # wave 1: check reports, then tab_event
+        self._after_agent_report(report)
         return Response(status_code=204)
+
+    def _token_ok(self, request: Request, agent: str) -> bool:
+        """The session token only for a session's id, the agents' token only for an agent's."""
+        given = request.headers.get("x-aib-agent-token", "").encode()
+        wanted = self.session_token if SESSION_ID.match(agent) else self.agent_token
+        return hmac.compare_digest(given, wanted.encode())
+
+    async def _engine_body(self, request: Request) -> tuple[dict | None, Response | None]:
+        try:
+            body = await request.json()
+        except ValueError:
+            return None, Response(status_code=400)
+        if not isinstance(body, dict) or not isinstance(body.get("agent"), str):
+            return None, Response(status_code=400)
+        if not self._token_ok(request, body["agent"]):
+            return None, Response(status_code=403)
+        return body, None
+
+    def _owner_of(self, agent_id: str, handed: bool = False) -> dict | None:
+        """Who an id is, as AI Home's chips show it: an agent (or a tab handed to it), or a Claude Code session."""
+        if SESSION_ID.match(agent_id):
+            session = self.sessions.get(agent_id)
+            return None if session is None else {"kind": "session", "id": agent_id, "name": session["name"],
+                                                 "color": session["color"]}
+        agent = self.agents.agents.get(agent_id)
+        if agent is None:
+            return None
+        return {"kind": "handed" if handed else "agent", "id": agent.id, "name": agent.name, "color": agent.color}
+
+    def _own(self, target: str, owner: dict | None) -> None:
+        """Whose a tab of the user's Brave is, for AI Home (brave mode only)."""
+        if self.brave is None or not target:
+            return
+        if owner is None:
+            self.brave.forget(target)
+        else:
+            self.brave.set_owner(target, owner)
+
+    def _record_tab(self, agent_id: str, target: str) -> None:
+        if SESSION_ID.match(agent_id):
+            tabs = self.sessions[agent_id]["tabs"]
+            if target not in tabs:
+                tabs.append(target)
+                self._sessions_changed()
+        else:
+            self.agents.tab_event(agent_id, "tab_opened", target)
+
+    def _session_report(self, session_id: str, report: dict) -> None:
+        session, kind, target = self.sessions.get(session_id), report.get("kind"), report.get("target")
+        if session is None or not isinstance(target, str) or not target:
+            return
+        if kind in ("tab_opened", "working_tab"):
+            self._record_tab(session_id, target)
+            self._own(target, self._owner_of(session_id))
+            self._group_opened(session_id, target, report)
+        elif kind == "tab_closed":
+            if target in session["tabs"]:
+                session["tabs"].remove(target)
+                self._sessions_changed()
+            self._own(target, None)
+
+    def _after_agent_report(self, report: dict) -> None:
+        """AI Home's chips follow an agent's tabs; a tab one of its pages opened joins its group."""
+        agent_id, kind, target = report["agent"], report.get("kind"), report.get("target")
+        if not isinstance(target, str) or not target or self.agents.agents.get(agent_id) is None:
+            return
+        if kind in ("tab_opened", "working_tab"):
+            self._own(target, self._owner_of(agent_id, handed=bool(report.get("adopted"))))
+            self._group_opened(agent_id, target, report)
+        elif kind == "tab_closed":
+            self._own(target, None)
+
+    def _group_opened(self, owner_id: str, target: str, report: dict) -> None:
+        opener, url = report.get("opener"), report.get("url")
+        if report.get("kind") == "tab_opened" and isinstance(opener, str) and isinstance(url, str):
+            owner = self._owner_of(owner_id)
+            opener_tab = self.groups.tab_of(opener)
+            if owner is not None and opener_tab is not None:
+                self._job(self._group(owner_id, owner["name"], owner["color"], target,
+                                      {"opener_tab": opener_tab, "url": url}))
+
+    async def _group(self, key: str, title: str, color: str, target: str, find: dict) -> dict:
+        answer = await self.groups.group(key, title, color, find)
+        if answer.get("grouped") and isinstance(answer.get("tab"), int):
+            self.groups.remember(target, answer["tab"])
+        return answer
+
+    async def _agent_claim(self, request: Request) -> Response:
+        body, refused = await self._engine_body(request)
+        if refused is not None:
+            return refused
+        agent_id, target = body["agent"], body.get("target")
+        owner = self._owner_of(agent_id)
+        if owner is None:
+            return Response(status_code=404)
+        if not isinstance(target, str) or not target:
+            return Response(status_code=400)
+        self._record_tab(agent_id, target)  # whatever happens to its group, the tab is this agent's or session's
+        self._own(target, owner)
+        if isinstance(body.get("marker"), str) and MARKER.match(body["marker"]):
+            find = {"marker": body["marker"]}
+        elif isinstance(body.get("opener"), str):
+            opener_tab = self.groups.tab_of(body["opener"])
+            if opener_tab is None:
+                return JSONResponse({"grouped": False, "reason": "not_found"})
+            find = {"opener_tab": opener_tab, "url": body["url"] if isinstance(body.get("url"), str) else ""}
+        else:
+            return Response(status_code=400)
+        return JSONResponse(await self._group(agent_id, owner["name"], owner["color"], target, find))
+
+    async def _agent_status(self, request: Request) -> Response:
+        agent_id = request.query_params.get("agent", "")
+        if not self._token_ok(request, agent_id):
+            return Response(status_code=403)
+        if self._owner_of(agent_id) is None:
+            return Response(status_code=404)
+        handed = []
+        agent = self.agents.agents.get(agent_id)
+        if agent is not None:
+            listed = {tab["target"]: tab for tab in (self.brave.tabs() if self.brave is not None else [])}
+            for target in agent.adopted:
+                tab = listed.get(target, {})
+                handed.append({"target": target, "title": tab.get("title", ""), "url": tab.get("url", "")})
+        return JSONResponse({"groups": self.groups.available() == "on", "handed": handed})
+
+    async def _agent_hello(self, request: Request) -> Response:
+        body, refused = await self._engine_body(request)
+        if refused is not None:
+            return refused
+        session_id, pid = body["agent"], body.get("pid")
+        if not SESSION_ID.match(session_id) or not isinstance(pid, int):
+            return Response(status_code=404)
+        known = self.sessions.get(session_id)
+        self.sessions[session_id] = {"id": session_id, "name": "Claude Code", "color": "orange",
+                                     "tabs": known["tabs"] if known else [], "pid": pid}
+        self._sessions_changed()
+        return Response(status_code=204)
+
+    async def _agent_bye(self, request: Request) -> Response:
+        body, refused = await self._engine_body(request)
+        if refused is not None:
+            return refused
+        if self.sessions.pop(body["agent"], None) is None:
+            return Response(status_code=404)
+        if self.brave is not None:
+            self.brave.release(body["agent"])
+        self._sessions_changed()
+        return Response(status_code=204)
+
+    async def _sweep_sessions(self) -> None:
+        """Every SESSION_SWEEP seconds: a session whose process has ended leaves the list (it couldn't say bye)."""
+        while True:
+            await asyncio.sleep(SESSION_SWEEP)
+            for session_id in [key for key, session in self.sessions.items() if not _alive(session["pid"])]:
+                self.sessions.pop(session_id, None)
+                if self.brave is not None:
+                    self.brave.release(session_id)
+                self._sessions_changed()
+
+    def _session_list(self) -> list[dict]:
+        return [dict(session, tabs=list(session["tabs"])) for session in self.sessions.values()]
+
+    def _sessions_changed(self) -> None:
+        self._send_all({"type": "sessions", "sessions": self._session_list()})
+
+    def attach_brave(self, brave) -> None:
+        """Brave mode: the tab list, Watch, thumbnails and the browser card come from the user's Brave (BraveLink)."""
+        self.brave = brave
+        self.attach_tabs(brave)
+        brave.on_state(lambda state: self._browser_changed())
+        self._browser_changed()
+        self._send_all({"type": "tabs", "tabs": brave.tabs()})  # pages already open see Brave's list at once
+
+    def connect_brave(self) -> None:
+        """Connect to Brave now (Brave asks the user): only right after something the user did."""
+        if self.brave is not None and self.brave.state in ("ready", "refused", "lost"):
+            self._job(self.brave.connect())
+
+    def _browser_info(self) -> dict:
+        if self.brave is None:
+            return {"kind": "app", "name": "AI Browser", "state": "connected", "groups": "on"}
+        return {"kind": "brave", "name": self.brave.name, "state": self.brave.state,
+                "groups": self.groups.available()}
+
+    def _browser_changed(self) -> None:
+        self._send_all({"type": "browser", **self._browser_info()})
 
     def _agent_report(self, report: dict) -> None:
         """An engine's report, read and authenticated: wave 1's check reports, then the tab report."""
@@ -291,6 +504,7 @@ class AppServer:
             writer.cancel()
         if self._watcher is not None and self._watcher[0] is ws:
             self._watcher = None
+            self.groups.watcher_changed(False)
             if self.brain is not None:
                 self.brain.watcher = False
 
@@ -300,6 +514,8 @@ class AppServer:
 
     def _to_watcher(self, message: dict) -> bool:
         """A message for Brave's watcher; False when it isn't connected."""
+        if message.get("type") == "open_thread" and isinstance(message.get("url"), str):
+            self._thread_urls[str(message.get("request", ""))] = message["url"]
         if self._watcher is None:
             return False
         self._watcher[1].put_nowait(message)
@@ -328,6 +544,7 @@ class AppServer:
             queue.put_nowait(self.brain.watch_message())
             self.brain.store.set_watcher_seen()
             self.brain.watcher = True
+            self.groups.watcher_changed(True)
         elif kind in WATCHER_MESSAGES:
             if self.brain is not None and self._watcher is not None and self._watcher[0] is ws:
                 await self._from_watcher(kind, message)
@@ -386,6 +603,12 @@ class AppServer:
                 if state.get("jpeg") and agent in self.agents.agents}})
 
     async def _from_watcher(self, kind: str, message: dict) -> None:
+        if kind == "watcher_caps":
+            self.groups.caps_from(message)
+            return
+        if kind == "tab_grouped":
+            self.groups.answered(message)
+            return
         brain = self.brain
         site = message.get("site") if isinstance(message.get("site"), str) else ""
         if kind == "items":
@@ -394,6 +617,9 @@ class AppServer:
             brain.on_replied(site, message["id"])
         elif kind == "thread":
             brain.on_thread(str(message.get("request", "")), message.get("text") or "", message.get("error") or "")
+            url = self._thread_urls.pop(str(message.get("request", "")), None)
+            if url is not None and self.brave is not None:
+                self.brave.mark_brain(url)  # display only: "Brain" on that row
         elif kind == "filled":
             brain.on_filled(str(message.get("request", "")), message.get("ok") is True, _text(message.get("reason")))
         elif kind == "reader_status":
@@ -537,7 +763,8 @@ class AppServer:
         return {"type": "snapshot", "agents": self.agents.snapshot()["agents"],
                 "tabs": self.tabs.tabs() if self.tabs is not None else [],
                 "skills_summary": self._skills_summary(), "max_working": self.agents.max_working,
-                "default_model": self.default_model}
+                "default_model": self.default_model, "browser": self._browser_info(),
+                "sessions": self._session_list()}
 
     # ---- skills -----------------------------------------------------------------------------------------------
 

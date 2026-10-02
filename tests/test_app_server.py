@@ -4,12 +4,16 @@ and the extension's origin; the agents' engines report their tabs with a token o
 import asyncio
 import json
 import os
+import subprocess
+import sys
+import time
 
 import httpx
 import pytest
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from fake_brave import FakeBrave, add_agent
 from test_bridge import EVENTS
 from test_oneshot import oneshots
 
@@ -495,5 +499,176 @@ async def test_check_buttons_come_from_our_pages_and_the_watcher_only_continues(
             await wait_for(lambda: first.check is None)
         assert closed == [[f"T{first.id}"]]
         await wait_for(lambda: SKIP_TEXT in told(log) and CONTINUE_TEXT in told(log))
+    finally:
+        await server.stop()
+
+
+def agent_headers(server):
+    return {"X-AIB-Agent-Token": server.agent_token}
+
+
+def session_headers(server):
+    return {"X-AIB-Agent-Token": server.session_token}
+
+
+async def watcher_socket(server, url):
+    """A stand-in for Brave's watcher on the app's socket, saying it can group."""
+    ws = await connect(socket_url(server, url), origin=WATCHER)
+    await ws.send(json.dumps({"type": "hello", "view": "watcher"}))
+    await until(ws, lambda message: message["type"] == "watch_list")
+    await ws.send(json.dumps({"type": "watcher_caps", "groups": True}))
+    for _ in range(50):
+        if server.groups.available() == "on":
+            break
+        await asyncio.sleep(0.02)
+    return ws
+
+
+async def test_a_claim_without_the_watcher_answers_at_once(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        add_agent(server.agents)
+        async with httpx.AsyncClient() as client:
+            began = time.monotonic()
+            answer = await client.post(url + "/agent-claim", headers=agent_headers(server),
+                                       json={"agent": "a1", "target": "T1", "marker": "0123456789abcdef"})
+            assert answer.json() == {"grouped": False, "reason": "no_watcher"} and time.monotonic() - began < 0.5
+        assert server.agents.agents["a1"].tabs == ["T1"]  # a claim records the tab, whatever its group
+    finally:
+        await server.stop()
+
+
+async def test_a_claim_groups_through_the_watcher(fake_claude, tmp_path):
+    server, url, _ = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
+    watcher = await watcher_socket(server, url)
+    try:
+        add_agent(server.agents)
+        async with httpx.AsyncClient() as client:
+            claim = asyncio.ensure_future(client.post(url + "/agent-claim", headers=agent_headers(server), json={
+                "agent": "a1", "target": "T1", "marker": "0123456789abcdef"}))
+            ask = (await until(watcher, lambda message: message["type"] == "group_tab"))[-1]
+            assert {key: ask[key] for key in ("key", "title", "color", "find")} == {
+                "key": "a1", "title": "Fix the footer", "color": "blue", "find": {"marker": "0123456789abcdef"}}
+            await watcher.send(json.dumps({"type": "tab_grouped", "request": ask["request"], "ok": True, "tab": 412,
+                                           "window": 1, "group": 9}))
+            assert (await claim).json() == {"grouped": True, "tab": 412}
+        assert server.groups.tab_of("T1") == 412
+    finally:
+        await watcher.close()
+        await server.stop()
+
+
+async def test_each_token_claims_only_for_its_own(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        add_agent(server.agents)
+        claim = {"target": "T1", "marker": "0123456789abcdef"}
+        async with httpx.AsyncClient() as client:
+            hello = await client.post(url + "/agent-hello", headers=session_headers(server),
+                                      json={"agent": "cc-t1", "pid": os.getpid()})
+            assert hello.status_code == 204 and server.sessions["cc-t1"]["name"] == "Claude Code"
+            wrong = {"X-AIB-Agent-Token": "wrong"}
+            assert (await client.post(url + "/agent-claim", headers=wrong,
+                                      json={"agent": "a1", **claim})).status_code == 403
+            assert (await client.post(url + "/agent-claim", headers=session_headers(server),
+                                      json={"agent": "a1", **claim})).status_code == 403
+            assert (await client.post(url + "/agent-claim", headers=agent_headers(server),
+                                      json={"agent": "cc-t1", **claim})).status_code == 403
+            assert (await client.post(url + "/agent-claim", headers=agent_headers(server),
+                                      json={"agent": "a9", **claim})).status_code == 404
+            assert (await client.post(url + "/agent-claim", headers=session_headers(server),
+                                      json={"agent": "cc-t1", **claim})).status_code == 200
+            assert server.sessions["cc-t1"]["tabs"] == ["T1"]
+            sneaky = {"agent": "a1", "kind": "tab_opened", "target": "T2", "adopted": False}
+            assert (await client.post(url + "/agent-events", headers=session_headers(server),
+                                      json=sneaky)).status_code == 403  # a session can't report as an app agent
+            assert server.agents.agents["a1"].tabs == []
+            assert (await client.post(url + "/agent-bye", headers=session_headers(server),
+                                      json={"agent": "cc-t1"})).status_code == 204
+            assert "cc-t1" not in server.sessions
+    finally:
+        await server.stop()
+
+
+async def test_agent_status_lists_only_that_agents_handed_tabs(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        server.attach_brave(FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"},
+                                       {"target": "U2", "url": "https://mail.example/", "title": "Mail"}]))
+        add_agent(server.agents, "a1", adopted=["U1"])
+        add_agent(server.agents, "a2", "Other", "green", adopted=["U2"])
+        async with httpx.AsyncClient() as client:
+            answer = await client.get(url + "/agent-status?agent=a1", headers=agent_headers(server))
+            assert answer.json() == {"groups": False,
+                                     "handed": [{"target": "U1", "title": "Shop", "url": "https://shop.example/"}]}
+            refused = await client.get(url + "/agent-status?agent=a1", headers=session_headers(server))
+            assert refused.status_code == 403
+    finally:
+        await server.stop()
+
+
+async def test_a_sessions_check_report_changes_nothing(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        agent = add_agent(server.agents)
+        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            await recv(ws)
+            async with httpx.AsyncClient() as client:
+                await client.post(url + "/agent-hello", headers=session_headers(server),
+                                  json={"agent": "cc-t1", "pid": os.getpid()})
+                answer = await client.post(url + "/agent-events", headers=session_headers(server), json={
+                    "agent": "cc-t1", "kind": "check", "target": "T1", "adopted": False, "check": "google",
+                    "site": "www.google.com"})
+                assert answer.status_code == 204
+            seen = []
+            with pytest.raises(TimeoutError):
+                while True:
+                    seen.append(json.loads(await asyncio.wait_for(ws.recv(), 0.5)))
+            assert not any(message["type"] == "check_request" for message in seen)
+        assert agent.check is None and agent.state == "your_turn"
+    finally:
+        await server.stop()
+
+
+async def test_reports_mark_owners_and_a_page_opened_tab_joins_the_group(fake_claude, tmp_path):
+    server, url, _ = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
+    brave = FakeBrave([])
+    server.attach_brave(brave)
+    watcher = await watcher_socket(server, url)
+    try:
+        add_agent(server.agents)
+        server.groups.remember("T1", 411)
+        async with httpx.AsyncClient() as client:
+            await client.post(url + "/agent-events", headers=agent_headers(server), json={
+                "agent": "a1", "kind": "tab_opened", "target": "T2", "adopted": False, "opener": "T1",
+                "url": "https://shop.example/next"})
+            ask = (await until(watcher, lambda message: message["type"] == "group_tab"))[-1]
+            assert ask["key"] == "a1" and ask["find"] == {"opener_tab": 411, "url": "https://shop.example/next"}
+            assert brave.owners["T2"] == {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"}
+            await client.post(url + "/agent-events", headers=agent_headers(server), json={
+                "agent": "a1", "kind": "tab_closed", "target": "T2", "adopted": False})
+            assert "T2" not in brave.owners
+    finally:
+        await watcher.close()
+        await server.stop()
+
+
+async def test_a_session_whose_process_ended_is_dropped(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import server as server_module
+
+    monkeypatch.setattr(server_module, "SESSION_SWEEP", 0.1)
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    dead = int(subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True,
+                              text=True).stdout)
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(url + "/agent-hello", headers=session_headers(server), json={"agent": "cc-t9",
+                                                                                           "pid": dead})
+        for _ in range(50):
+            if "cc-t9" not in server.sessions:
+                break
+            await asyncio.sleep(0.05)
+        assert "cc-t9" not in server.sessions
     finally:
         await server.stop()
