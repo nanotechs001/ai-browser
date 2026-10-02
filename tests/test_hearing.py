@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -411,3 +412,11 @@ async def test_a_turn_needs_talking_to_be_ready_and_a_valid_id(tmp_path):
     engine.installed = False
     assert "uv sync --extra voice" in hearing.begin("s", "u1")
     assert hearing._turns == {}
+
+
+def test_the_voice_extra_is_optional_and_pinned():
+    import tomllib
+
+    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert project["optional-dependencies"]["voice"] == ["faster-whisper>=1.2,<2"]
+    assert not any("whisper" in dependency for dependency in project["dependencies"])  # the base install stays light
