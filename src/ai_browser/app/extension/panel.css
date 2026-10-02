@@ -68,5 +68,5 @@ select { border: 1px solid var(--line); border-radius: 6px; background: var(--so
 .msg.user.queued { opacity: 0.7; border: 1px dashed var(--line); }
 .action .ms { margin-left: 6px; color: var(--muted); }
 #messages .empty { margin: auto 0; text-align: center; color: var(--muted); }
-#permission-slot { padding: 0 12px; }
-#permission-slot:empty { display: none; }
+#permission-slot, #check-slot { padding: 0 12px; }
+#permission-slot:empty, #check-slot:empty { display: none; }

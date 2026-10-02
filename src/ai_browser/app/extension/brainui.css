@@ -33,3 +33,10 @@
                     word-break: break-word; }
 .permission-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .permission button { font-size: 13px; padding: 2px 10px; }
+/* A bot check waiting for the user (check.js): on AI Home's agent rows, in the chat panel and in Mission Control. */
+.bot-check { border-color: var(--accent); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.bot-check-head { font-weight: 600; font-size: 14px; }
+.bot-check-what { font-size: 13px; overflow-wrap: anywhere; }
+.bot-check-how, .bot-check-skip { margin: 0; font-size: 13px; }
+.bot-check-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.bot-check button { font-size: 13px; padding: 2px 10px; }

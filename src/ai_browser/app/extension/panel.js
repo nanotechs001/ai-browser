@@ -1,6 +1,7 @@
 // The chat beside the page. It shows the agent working in the tab you are looking at; on a tab without one, what
 // you type starts an agent right there (in your tab, which it never closes). On AI Home it shows the agent that was
 // active last. Everything from Claude or from pages is set as text, never parsed as HTML.
+import { checkCard } from "./check.js";
 import { connect, targetOfTab } from "./link.js";
 import { createChat } from "./chat.js";
 import { permissionCard } from "./permission.js";
@@ -66,7 +67,13 @@ function show() {
   $("agent-name").textContent = agent ? agent.name : "AI Browser";
   $("agent-dot").hidden = !agent;
   if (agent) $("agent-dot").style.background = COLORS[agent.color] || "var(--muted)";
-  $("stop").hidden = !(agent && (agent.state === "working" || agent.state === "waiting"));
+  $("stop").hidden = !(agent && (agent.state === "working" || agent.state === "waiting" || agent.check));
+  const check = agent?.check; // a bot check waiting for the user: the same card, above the composer
+  const checkSlot = $("check-slot");
+  if (!check) checkSlot.replaceChildren();
+  else if (checkSlot.firstChild?.dataset.since !== String(check.since)) {
+    checkSlot.replaceChildren(checkCard(agent, (message) => link.send(message)));
+  }
   const asking = agent?.permission; // its tool request waiting for the user: the card above the composer
   const slot = $("permission-slot");
   if (!asking) slot.replaceChildren();

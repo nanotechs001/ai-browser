@@ -1,6 +1,7 @@
 // AI Home: every agent and what it is doing, every tab, and all of Claude's skills. Everything from Claude, pages or
 // skills is set as text; thumbnails are JPEG data the app made from Chrome screenshots.
 import { mountBrain } from "./brainui.js";
+import { checkCard } from "./check.js";
 import { connect } from "./link.js";
 import { createChat, el } from "./chat.js";
 import { permissionCard } from "./permission.js";
@@ -134,8 +135,17 @@ function fillAgentRow(row, agent) {
     parts.permission.remove();
     parts.permission = null;
   }
+  const check = agent.check; // a bot check waiting for the user: its card, on the row
+  if (check && parts.check?.dataset.since !== String(check.since)) {
+    parts.check?.remove();
+    parts.check = checkCard(agent, (message) => link.send(message));
+    row.querySelector(".main").append(parts.check);
+  } else if (!check && parts.check) {
+    parts.check.remove();
+    parts.check = null;
+  }
   parts.watch.disabled = !agent.working_tab;
-  parts.stop.hidden = !(agent.state === "working" || agent.state === "waiting");
+  parts.stop.hidden = !(agent.state === "working" || agent.state === "waiting" || agent.check);
   const jpeg = thumbs.get(agent.id);
   if (jpeg && parts.thumb.dataset.jpeg !== String(jpeg.length) + jpeg.slice(-16)) {
     parts.thumb.src = `data:image/jpeg;base64,${jpeg}`;
@@ -173,7 +183,7 @@ function renderAgents() {
   if (chatAgent && agents.has(chatAgent)) {
     const agent = agents.get(chatAgent);
     $("chat-dot").style.background = COLORS[agent.color] || "var(--muted)";
-    $("chat-stop").hidden = !(agent.state === "working" || agent.state === "waiting");
+    $("chat-stop").hidden = !(agent.state === "working" || agent.state === "waiting" || agent.check);
   }
 }
 
