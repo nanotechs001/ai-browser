@@ -169,6 +169,7 @@ async def _run(home: Path, model: str, headless: bool, claude: str | None, ready
     hearing = HearingService(ModelStore(home / "models"), WhisperEngine())  # talking; the model only on Download
     server = AppServer(home, agents, default_model=model, brain=brain, tools=ToolsConfig(home), workflows=workflows,
                        runner=runner, skill_writer=skills, hearing=hearing)
+    server.out = out
     app = watch = ticker = brave = link_file = None
     try:
         try:

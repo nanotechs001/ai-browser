@@ -17,6 +17,7 @@ import secrets
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import uvicorn
@@ -144,6 +145,8 @@ class AppServer:
         self._sweeper: asyncio.Task | None = None
         self.url: str | None = None
         self.extension_seen = False  # the extension has connected: the one-time setup is done
+        self.origin_mismatch: str | None = None  # an extension with our token, from an origin we didn't compute
+        self.out: Callable[[str], None] = print  # where the app's one-line notes go (run_app passes its own)
         self.setup_key = secrets.token_urlsafe(16)  # only the setup page has it: other sites can't open Finder
         self.reveal = reveal_in_finder
         self.tabs = None
@@ -169,6 +172,17 @@ class AppServer:
         self._origins.add(origin)
         if watcher:
             self._watcher_origins.add(origin)
+
+    def _mismatch(self, origin: str) -> None:
+        """Only an extension holding our config.json has the token: from an origin we didn't compute, it means an
+        extension ID is computed wrong on this computer. The socket is still refused; this says so, once."""
+        if origin == self.origin_mismatch:
+            return
+        self.origin_mismatch = origin
+        app = ", ".join(sorted(self._origins - self._watcher_origins)) or "?"
+        watcher = ", ".join(sorted(self._watcher_origins)) or "?"
+        self.out(f"An AI Browser extension connected as {origin}, but the app expected {app} (AI Browser) or "
+                 f"{watcher} (the watcher): please report this")
 
     def attach_tabs(self, tabs) -> None:
         """The TabWatch, once AI Browser is open: the tab list, Watch and thumbnails."""
@@ -251,7 +265,10 @@ class AppServer:
 
     async def _setup_status(self, request: Request) -> JSONResponse:
         seen = self.brain is not None and self.brain.store.watcher_seen
-        return JSONResponse({"installed": self.extension_seen, "watcher": seen})
+        answer = {"installed": self.extension_seen, "watcher": seen}
+        if self.origin_mismatch:
+            answer["mismatch"] = self.origin_mismatch
+        return JSONResponse(answer)
 
     async def _agent_events(self, request: Request) -> Response:
         given = request.headers.get("x-aib-agent-token", "").encode()
@@ -528,7 +545,12 @@ class AppServer:
         await ws.accept()  # accept first, so a refusal arrives as a close code the page can read
         token = ws.query_params.get("token", "")
         origin = ws.headers.get("origin")
-        if not hmac.compare_digest(token.encode(), self.token.encode()) or origin not in self._origins:
+        token_ok = hmac.compare_digest(token.encode(), self.token.encode())
+        if not token_ok or origin not in self._origins:
+            # Only once the app has allowed its computed IDs: during start-up the extension can connect before
+            # allow_origin runs (AI Browser is launched in a thread), and that is no mismatch.
+            if token_ok and self._origins and isinstance(origin, str) and origin.startswith("chrome-extension://"):
+                self._mismatch(origin)
             await ws.close(code=REFUSED)
             return
         if origin not in self._watcher_origins:

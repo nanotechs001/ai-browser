@@ -56,6 +56,7 @@
     <strong>Chrome asks whether to keep the new tab page?</strong> Choose <strong>Keep it</strong>: AI Home is
     AI Browser's new tab page, and "Change it back" switches AI Browser off.</p>
   <p id="status">Waiting for the extension…</p>
+  <p id="mismatch" class="alt" hidden></p>
 
   <h2 id="brave">The Brain's watcher, in Brave</h2>
   <p class="lead">Also one time: the Brain watches the sites you pick (Gmail, Slack, Asana…) in Brave, your everyday
@@ -93,6 +94,7 @@
 <script>
   "use strict";
   const status = document.getElementById("status");
+  const mismatch = document.getElementById("mismatch");
   document.getElementById("copy").addEventListener("click", async () => {
     const button = document.getElementById("copy");
     try {
@@ -125,6 +127,11 @@
       if (answer.watcher) {
         watcherStatus.textContent = "The watcher is connected: the Brain is on.";
         watcherStatus.className = "done";
+      }
+      if (answer.mismatch) {
+        mismatch.textContent = "An AI Browser extension connected as " + answer.mismatch +
+          ", which this app didn't expect, so it was refused: please report this.";
+        mismatch.hidden = false;
       }
       if (answer.installed && answer.watcher) return;
     } catch {

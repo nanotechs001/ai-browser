@@ -1151,3 +1151,49 @@ async def test_a_home_through_a_junction_keeps_the_path_chrome_sees(tmp_path):
         assert html.escape(str(folder)) in page  # the page shows the junction's path too
     finally:
         await server.stop()
+
+
+async def test_a_wrong_extension_id_is_reported_not_allowed(fake_claude, tmp_path):
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+
+    runner, _, _ = fake_claude
+    server = AppServer(tmp_path / "home", AgentManager(tmp_path / "home", claude=str(runner)))
+    url = await server.start()
+    lines = []
+    server.out = lines.append
+    try:
+        # AI Browser is still starting: the app hasn't allowed its computed IDs yet, and the extension (which already
+        # has this run's token) may connect first. Refused as always, but that is no mismatch.
+        async with connect(socket_url(server, url), origin="chrome-extension://early") as ws:
+            with pytest.raises(ConnectionClosed):
+                await ws.recv()
+        assert server.origin_mismatch is None and lines == []
+        server.allow_origin(ORIGIN)
+        server.allow_origin(WATCHER, watcher=True)
+        async with httpx.AsyncClient() as client:
+            assert "mismatch" not in (await client.get(url + "/setup/status")).json()
+            async with connect(socket_url(server, url, "wrong"), origin="chrome-extension://other") as ws:
+                with pytest.raises(ConnectionClosed):
+                    await ws.recv()
+            assert server.origin_mismatch is None and lines == []  # a wrong token sets nothing
+            for _ in range(2):  # the right token from an origin the app didn't compute: said once
+                async with connect(socket_url(server, url), origin="chrome-extension://unexpected") as ws:
+                    with pytest.raises(ConnectionClosed) as closed:
+                        await ws.recv()
+                    assert closed.value.rcvd.code == 4403  # still refused, never allowed on its own
+            assert server.origin_mismatch == "chrome-extension://unexpected"
+            assert lines == ["An AI Browser extension connected as chrome-extension://unexpected, but the app "
+                             "expected chrome-extension://good (AI Browser) or chrome-extension://watcher (the "
+                             "watcher): please report this"]
+            status = (await client.get(url + "/setup/status")).json()
+            assert status["mismatch"] == "chrome-extension://unexpected"
+    finally:
+        await server.stop()
+
+
+def test_the_setup_page_shows_the_mismatch_as_text():
+    from ai_browser.app.server import SETUP_PAGE
+
+    page = SETUP_PAGE.read_text(encoding="utf-8")
+    assert 'id="mismatch"' in page and "mismatch.textContent" in page and "innerHTML" not in page
