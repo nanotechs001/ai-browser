@@ -27,6 +27,7 @@ const SLOW_MS = 45; // drawn frames further apart than this, on average over 2 s
 const GAP_MS = 250; // a longer gap (a hidden tab, a still Brain) isn't a slow machine: the window starts again
 const FOCUS_MS = 500; // focus(): the alert's aim moves to its new side in a straight line this long
 const BURST_S = 0.8; // a new agent: the Brain's flare fades this long (FADE_S with reduced motion)
+const WORD_S = 0.6; // a spoken word's ring spreads and fades this long
 const CLOUD = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_bright", "u_flow",
                "u_flash", "u_wave", "u_size", "u_word"];
 const LINKS = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_travel", "u_pulse",
@@ -152,6 +153,7 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
   const clock = { flow: 0, flash: 0, travel: 0, sway: 0, wave: 0, breath: 0, beat: 0 };
   // a new agent's flash (and the side it fires toward), the alert's aim, a spoken word's ring
   const effects = { burst: 0, burstDir: [0, 0], focus: [0, 0], word: 0 };
+  const speech = { heard: 0, self: 0 }; // speaking: the last word heard (or when it began), the last ring started here
   const aim = { from: [0, 0], to: [0, 0], at: 0 }; // focus(): where u_focus moves from and to, and since when
   const pace = { start: 0, frames: 0, last: 0 }; // adaptive detail: the drawn frames of the current window
   const pending = { frame: 0, timer: 0 }; // the points are made after the first paint
@@ -165,12 +167,13 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
   let frame = 0;
   let last = 0;
   let shown = false; // the canvas has replaced the orb
-  const api = { mode: "css", setState, burst, focus, destroy };
+  const api = { mode: "css", setState, burst, focus, word, destroy };
 
   function setState(state) {
     if (!STATES.includes(state)) return;
     const was = stage.dataset.state;
     if (was !== state) stage.dataset.state = state; // the CSS orb (and the tests) follow this
+    if (state === "speaking" && was !== "speaking") speech.heard = performance.now();
     target.fill(0);
     target[STATES.indexOf(state)] = 1;
     if (was !== state) wake(); // a still Brain is drawn again only for a change (in motion it never stops)
@@ -187,6 +190,12 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
     const to = direction ? [direction.dx, direction.dz] : [0, 0];
     if (to[0] === aim.to[0] && to[1] === aim.to[1]) return;
     Object.assign(aim, { from: [...effects.focus], to, at: performance.now() });
+  }
+
+  function word() { // speaking: a ring of light spreads from the speech area
+    if (!gl || reduced.matches) return;
+    effects.word = 1;
+    speech.heard = performance.now();
   }
 
   function setCount(value) {
@@ -298,6 +307,11 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
     effects.burst = Math.max(0, effects.burst - step / (still ? FADE_S : BURST_S));
     const k = Math.min(1, Math.max(0, (now - aim.at) / FOCUS_MS));
     effects.focus = [aim.from[0] + (aim.to[0] - aim.from[0]) * k, aim.from[1] + (aim.to[1] - aim.from[1]) * k];
+    effects.word = still ? 0 : Math.max(0, effects.word - step / WORD_S);
+    if (!still && target[3] === 1 && now - speech.heard >= 400 && now - speech.self >= 200) {
+      speech.self = now; // no words reported for 0.4 s: rings 5 times a second, until a word comes
+      effects.word = 1;
+    }
   }
 
   function measure(now) { // adaptive detail: frames that come too far apart halve the points (never grown back)

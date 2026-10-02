@@ -6,7 +6,7 @@ import asyncio
 import json
 
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
-from test_mission import CHROME, WORKING, key, needs_reply, open_mission, open_with, station
+from test_mission import CHROME, WORKING, key, needs_reply, open_mission, open_with, station, voice_on
 
 
 async def shape(stack, body):
@@ -720,3 +720,54 @@ async def test_many_new_agents_at_once_fly_at_most_six_sparks(stack):
     assert await until(js, "document.querySelectorAll('.spawning').length === 0", 3)
     assert await js("window.errors") == []
     assert await until(js, f"getComputedStyle({station('a1', '.worker .arm-l')}).opacity === '1'")
+
+
+# ---- spoken words ----------------------------------------------------------------------------------------------------
+
+WORDS = ("window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };"
+         "speechSynthesis.getVoices = () => [{name: 'Samantha', lang: 'en-US', localService: true}];"
+         "speechSynthesis.cancel = () => {};")
+
+
+def speaking(words, end):
+    """A local voice (as test_mission.py's LOCAL_VOICE) whose speech reports a word at each time in `words` (ms) and
+    ends at `end` (ms)."""
+    return WORDS + ("speechSynthesis.speak = (said) => {"
+                    f" for (const at of {json.dumps(words)}) setTimeout(() => said.onboundary"
+                    " && said.onboundary({name: 'word'}), at);"
+                    f" setTimeout(() => said.onend && said.onend(), {end}); }};")
+
+
+async def spoken(stack, voice):
+    """Mission Control with Voice on and a local voice, speaking an update about a message that needs a reply."""
+    js = await brain_page(stack, voice)
+    await voice_on(js)
+    needs_reply(stack["brain"], sender="Maria", summary="asks to move the launch")
+    assert await until(js, "window.states.includes('speaking')")
+    return js
+
+
+@CHROME
+async def test_each_spoken_word_pulses_the_brain(stack):
+    js = await spoken(stack, speaking([0, 100, 200], 350))
+    assert await until(js, "window.states.at(-1) !== 'speaking'")
+    assert await js("window.gl.max.u_word") > 0.5  # the words, since rings of its own wait 0.4 s
+
+
+@CHROME
+async def test_a_short_update_without_words_starts_no_rings(stack):
+    js = await spoken(stack, speaking([], 300))
+    assert await until(js, "window.states.at(-1) !== 'speaking'")
+    await asyncio.sleep(0.5)
+    assert await js("window.gl.max.u_word") == 0
+
+
+@CHROME
+async def test_a_long_update_without_words_rings_until_it_ends(stack):
+    js = await spoken(stack, speaking([], 1500))
+    assert await until(js, "window.gl.max.u_word > 0.5", 3)  # its own rings, 5 a second
+    assert await until(js, "window.states.at(-1) !== 'speaking'", 3)
+    await asyncio.sleep(1)  # the last ring has faded
+    assert await js("window.gl.last.u_word") == 0
+    await asyncio.sleep(1)
+    assert await js("window.gl.last.u_word") == 0  # and none starts once the speech is over

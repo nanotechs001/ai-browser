@@ -49,6 +49,7 @@ const voice = createVoice({
     renderBrain();
   },
   onBlocked: (blocked) => setText($("voice-note"), blocked ? "Click anywhere on this page to let the Brain speak" : ""),
+  onWord: () => blob.word(),
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });

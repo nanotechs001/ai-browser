@@ -6,7 +6,8 @@
 const WAITING = 3;
 const PAUSE = 600; // ms after a spoken update before the next one
 
-export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {}, hold = 5000 } = {}) {
+export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {}, onWord = () => {},
+                              hold = 5000 } = {}) {
   let queue = []; // [{text, count}]: count > 1 is a summary of that many updates
   let showing = false;
   let timer = null;
@@ -56,6 +57,9 @@ export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {
       utterance.voice = voice;
       utterance.lang = voice.lang || "en-US";
       utterance.onend = () => finish();
+      utterance.onboundary = (event) => { // each spoken word pulses the Brain (only counted: the words stay here)
+        if (event?.name === "word" && !done) onWord();
+      };
       utterance.onerror = (event) => {
         if (event?.error !== "not-allowed") return finish();
         blocked = true; // not spoken: the bubble stays its usual time, and the user is told to click the page
