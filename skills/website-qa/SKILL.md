@@ -9,12 +9,21 @@ One `qa` call checks a whole site. This playbook turns its findings into a repor
 
 ## 1. Pick the browser
 
-- **Sandbox (default):** neutral results, no extensions, no personal logins. Use it for public sites.
-- **Staging behind a login:** `sandbox_start(profile="client-acme")`. Ask the user to log in through the live-view
-  link first. Never type passwords yourself.
+qa crawls in the Docker sandbox by default, even when the session browses in the user's Brave: its tabs and link
+checks stay out of the user's signed-in profile. Its result starts "checked in the Docker sandbox".
+
+- **Sandbox (default):** neutral results, no extensions, no personal logins. QA's own sandbox (profile `qa`) stays up
+  between runs; `uv run ai-browser stop qa` stops it.
+- **Staging behind a login:** ask the user to log in once with `uv run ai-browser live --profile qa` (QA uses that
+  login from then on), or `sandbox_start(profile="client-acme")` for a session of its own. Never type passwords
+  yourself.
+- **The user's own browser:** only when the user asks for their own browser (for their logins, or a site on this
+  computer the sandbox can't reach): `sandbox_start(chrome=true)` first, then `qa`. Say in the report that ad and
+  tracker blocking (Brave Shields, extensions) can hide third-party problems.
 - **Bot checks:** if qa or open stops at a bot check, stop and tell the user. Never switch browsers, profiles or
   tools to get past it: the user solves it, or skips the site.
-- **In the AI Browser app:** just run `qa`; it uses the app's browser.
+- **In the AI Browser app:** just run `qa`. Agents that browse in the user's Brave run it in the sandbox; with
+  `ai-browser app --browser app` it uses AI Browser itself.
 
 ## 2. Run it
 

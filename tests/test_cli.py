@@ -82,3 +82,12 @@ def test_app_takes_the_browser_choice(capsys):
         main(["app", "--help"])
     out = capsys.readouterr().out
     assert "--browser" in out and "{brave,app}" in out
+
+
+def test_the_mcp_example_needs_no_browser_folder():
+    import json
+
+    from ai_browser.config import project_root
+
+    example = json.loads((project_root() / ".mcp.json.example").read_text(encoding="utf-8"))
+    assert "AIB_CHROME_DIR" not in example["mcpServers"]["ai-browser"].get("env", {})  # found by itself (Brave first)

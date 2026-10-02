@@ -34,6 +34,22 @@ claude mcp add ai-browser -- uv run --directory <path-to-this-folder> ai-browser
 
 Then just ask, for example: *"Open example.com in the sandbox and list its links"*.
 
+## Which browser
+
+Agents use **your everyday Brave** by default, the browser you are already signed in to. They work in background
+tabs of their own, grouped and named after their task. Which browser is chosen up front, for every site, and never
+as a way around a block:
+- **Your Brave (the default):** for `ai-browser app` agents, and for Claude Code sessions with no `AIB_BROWSER` set.
+  It needs Brave's remote-debugging switch (see "Use your everyday Brave" below). Google Chrome works too: the
+  browser's folder is found by itself, Brave first, or set `AIB_CHROME_DIR`.
+- **The Docker sandbox:** call `sandbox_start()` in a session, or set `AIB_BROWSER=sandbox` for one.
+- **AI Browser:** `ai-browser app --browser app` (or `AIB_APP_BROWSER=app`). Agents then browse in AI Browser's own
+  Chrome, as before.
+
+If your Brave can't be reached, the agent says how to turn the switch on and asks you. It never moves to another
+browser by itself. Website QA (`qa`) crawls in the Docker sandbox, unless you ask for your own browser first
+(`sandbox_start(chrome=true)`).
+
 ## Logging in to sites
 
 Logins live in **profiles** (Docker volumes), one per client if you like. You log in yourself, never Claude:
@@ -54,9 +70,10 @@ AI Browser is a Google Chrome with a profile of its own (`~/.ai-browser/browser/
 extensions, apart from your everyday browser. Agents drive it through Chrome's debugging port, and that port alone puts
 Chrome in automation mode: every page reads `navigator.webdriver` as true (measured with Chrome 154). Sites can see
 that AI Browser is automated, and Google refuses to sign in there ("This browser or app may not be secure"). Nothing
-hides this. For Google and your other logins, use your own browser, where you are signed in yourself, chosen before the
-task ([Use your own Chrome](#use-your-own-chrome-like-claude-in-chrome-but-faster)); nothing switches browsers on its
-own after a block. When a site answers with a bot check, the agent stops and hands it to you
+hides this. Agents browse in your everyday Brave by default ([Which browser](#which-browser)), where you are signed in
+yourself: chosen before the task, for your logins, and nothing switches browsers on its own after a block. AI Browser
+is their control room: AI Home, Mission Control and the chat panel. With `--browser app`, agents browse in AI Browser
+itself, as before. When a site answers with a bot check, the agent stops and hands it to you
 ([Bot checks](#bot-checks)).
 
 **First start (once).** AI Browser opens a setup page and `chrome://extensions`, and a Finder window shows the
@@ -79,13 +96,19 @@ The extension stays installed. From then on, AI Browser opens on AI Home.
   - Each row shows what the agent is doing now, its last action with timing, a small picture of its tab, and its time
     and cost.
   - Each row has **Watch**, **Chat**, **Stop** and **Close**.
-- **Tabs:** every open tab, and which agent works in it.
+- **Your browser:** a card at the top says where agents browse and whether your Brave is connected. When Brave's
+  switch is off, it shows the steps; when Brave asks "Allow remote debugging?", it says so.
+- **Tabs:** your Brave's web tabs, each marked with whose it is: an agent's, Claude Code's, the Brain's, or yours.
+  - A click brings a tab to the front.
+  - **Hand over** gives one of your tabs to a new or running agent (it reads that tab and acts in it).
+  - **Take back** ends that.
 - **Skills:**
   - every one of Claude's skills (personal, plugins, claude.ai, ai-browser), and which ones each agent loaded;
   - add one to a new task, or ask a running agent to use it.
 
 **In the browser:**
-- Each agent's tabs sit in a coloured tab group named after its task.
+- Each agent's tabs sit in a coloured tab group in your Brave, named after its task. The Brain's watcher makes the
+  groups. Without the watcher, each tab the AI opens gets a window of its own.
 - The toolbar badge shows how many agents are working.
 - The chat beside the page (the toolbar icon, or ⌘⇧Y) follows the tab you are on. It shows that tab's agent, or
   starts one right there, in your tab, which the agent never closes.
@@ -281,47 +304,49 @@ Checks are never solved or dodged: no solver services, no faked browser, no swit
 block. If Google keeps asking in Brave, Brave's fingerprinting protection is a known cause (Brave issue #55197).
 Turning it off for google.com is your own privacy choice, and ai-browser never changes it.
 
-## Use your own Chrome (like Claude in Chrome, but faster)
+## Use your everyday Brave (the default)
 
-When a task needs your own logins (Google, your shop's admin…), ai-browser can drive **your own Chrome** with the same
-fast tools. You choose it before the task, for your logins; it is never a way around a site that blocked the sandbox
-(a bot check is handed to you in every mode, see [Bot checks](#bot-checks)):
+Agents and Claude Code sessions drive your own Brave with the same fast tools. It is the browser you are signed in
+to, so no agent ever needs your password. It is chosen up front, for your logins, and never as a way around a site
+that blocked another browser.
 
-1. Once: in Chrome, open `chrome://inspect/#remote-debugging` and tick **Allow remote debugging for this
-   browser instance**.
-2. In Claude Code, ask to use your Chrome. Claude calls `sandbox_start(chrome=true)`. Set `AIB_BROWSER=chrome`
-   if you want it as the default for a session.
-3. Chrome asks **Allow remote debugging?** Click **Allow**. You'll do this once per session.
+1. Once: in Brave, open `brave://inspect/#remote-debugging` and tick **Allow remote debugging for this browser
+   instance**.
+2. When Brave asks **Allow remote debugging?**, click **Allow**. Brave may ask when `ai-browser app` starts and when
+   each agent or Claude Code session first uses the browser, and again after Brave restarts.
+3. Check it any time with `uv run ai-browser doctor --own`.
 
-What happens in your Chrome:
-- Claude works only in tabs it opens itself, in the background, and closes them at the end. Your other tabs
-  are never read or touched.
-- Those tabs keep full speed in the background, even with the window minimized: a click takes about 20 ms.
-- Only web pages open there. Claude can't open files on your Mac (`file://`) or Chrome's own pages
-  (`chrome://settings`, history…).
-- Your Chrome settings aren't changed: downloads go to your normal folder and the window keeps its size.
-- Shell and skill scripts still run in the Docker sandbox. The work folder is
+**While this switch is on, any program on this computer can reach your Brave, not only ai-browser.** That includes
+the sites you are signed in to.
+- Turn it off when agents aren't working: untick the same box.
+- Only click Allow right after you started AI Browser or gave an agent a task; if Brave asks at any other time, click
+  Deny.
+- While an agent is connected, Brave may show a bar saying it is being controlled by automated software. That is
+  Brave telling you the truth; ai-browser never hides it.
+
+What happens in your Brave:
+- **Background tabs only:**
+  - each agent works in background tabs it opens itself, in a tab group named after its task, in its colour;
+  - nothing comes to the front unless you click **Watch**, or a site shows a bot check (handed to you, see
+    "Bot checks");
+  - a Claude Code session's tabs go in a group called "Claude Code" while `ai-browser app` runs, and in a window of
+    their own otherwise.
+- **Your other tabs:** never read, listed to an agent or touched. AI Home shows them, and **Hand over** gives one to
+  an agent; **Take back** ends that at its next step.
+- **Closing:**
+  - closing an agent closes the tabs it opened; a tab you handed it stays open, ungrouped;
+  - quitting `ai-browser app` leaves the groups in Brave, so nothing an agent left for you is lost;
+  - a Claude Code session's tabs close when the session ends.
+- **Downloads ask first:** a download would land in your Downloads folder, so download buttons and links are ⚠. A
+  download that starts on its own is cancelled, and the agent asks you.
+- **Only web pages open there:** Claude can't open files on your computer (`file://`) or Brave's own pages.
+- **The sandbox's place:** shell and skill scripts still run in the Docker sandbox. The work folder is
   `~/.ai-browser/sandboxes/chrome/work/<task>`.
-  - Claude reads it with `read_file`.
-  - Uploads use a private copy of the file, so nothing in the sandbox can swap it for another one.
-- Closing Claude's tab is fine: it carries on in a new one. If you quit Chrome, Claude reconnects when Chrome is
-  back; it never switches to the sandbox on its own.
-- `sandbox_stop` closes Claude's tabs. The shell container keeps running for other sessions;
-  `uv run ai-browser stop chrome` stops it.
-- Nothing is hidden or spoofed, so some sites may still notice automation. Claude never tries to get around
-  bot checks or CAPTCHAs.
+- **If Brave isn't reachable** (closed, or the switch is off), the agent says so and asks you. It never switches to
+  the sandbox on its own.
 
-To check the setup: `uv run ai-browser doctor --chrome`.
-
-**Brave works too.** Tick the same box at `brave://inspect/#remote-debugging`, then point ai-browser at Brave's folder.
-This repo's `.mcp.json` already does that for the MCP server:
-
-```bash
-AIB_CHROME_DIR="$HOME/Library/Application Support/BraveSoftware/Brave-Browser" uv run ai-browser doctor --chrome
-```
-
-Turn the setting on in one browser only. Brave serves it on port 9222, and while Brave held that port, Chrome stayed
-at "Server running at: starting…" and never shared an address.
+Google Chrome works the same way (`chrome://inspect/#remote-debugging`). The folder is found by itself, Brave first;
+set `AIB_CHROME_DIR` to pick one. Turn the switch on in one browser only.
 
 ## Tools
 
@@ -390,12 +415,12 @@ slower, so 30 pages of a typical site take about three minutes.
 ## Commands
 
 ```bash
-uv run ai-browser app                # AI Browser: Chrome with a Claude side panel
-uv run ai-browser doctor             # health check
-uv run ai-browser bench              # speed vs budgets
-uv run ai-browser live [--profile P] # watch / log in
-uv run ai-browser stop [P | --all]   # stop containers (logins kept); `stop chrome` = own-Chrome shell
-uv run ai-browser build              # rebuild the image
+uv run ai-browser app [--browser brave|app]  # AI Browser; agents browse in your Brave (default) or in AI Browser
+uv run ai-browser doctor [--own]             # health check (the sandbox, or your own Brave or Chrome)
+uv run ai-browser bench                      # speed vs budgets
+uv run ai-browser live [--profile P]         # watch / log in
+uv run ai-browser stop [P | --all]           # stop containers (logins kept); `stop chrome` = own-Chrome shell
+uv run ai-browser build                      # rebuild the image
 ```
 
 ## Safety notes
