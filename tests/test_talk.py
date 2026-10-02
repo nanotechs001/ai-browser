@@ -521,3 +521,96 @@ async def test_a_dropped_line_ends_the_turn_instead_of_waiting(stack):
     assert await js(f"{PANEL}.dataset.state") == "idle"
     assert await eventually(lambda: stack["hearing"]._turns == {})
     assert await until(js, "document.getElementById('status').dataset.state === 'connected'", 10)  # it comes back
+
+
+# ---- setup, first use, and the microphone's problems -----------------------------------------------------------------
+
+BRAVE = ("Object.defineProperty(Navigator.prototype, 'userAgentData', {configurable: true, get: () => ({"
+         " brands: [{brand: 'Brave', version: '152'}, {brand: 'Chromium', version: '152'}], mobile: false,"
+         " platform: 'macOS'})});")
+
+
+@CHROME
+async def test_without_the_extra_a_press_says_how_to_add_it(stack):
+    stack["engine"].installed = False
+    stack["hearing"].platform = "mac"
+    js = await open_talk(stack, mic(), hearing="no_engine")
+    await tap(stack, js, SPACE, " ")
+    assert await until(js, f"{CARD}.includes('uv sync --extra voice')")
+    text = await js(CARD)
+    assert "then restart ai-browser app" in text and "from PyPI" in text
+    assert "Or use your Mac's Dictation in any text box" in text  # the zero-setup way, on a Mac
+    assert await js("window.micOpen") == 0 and await js(f"{PANEL}.dataset.state") == "setup"
+
+
+@CHROME
+async def test_the_model_downloads_only_on_the_click(stack):
+    store = stack["hearing"].models
+    shutil.rmtree(store.folder)
+    store.fetch.delay = 0.4  # before each read: the download takes a couple of seconds
+    js = await open_talk(stack, mic(), hearing="no_model")
+    assert await js("import(chrome.runtime.getURL('talk.js')).then((talk) => talk.megabytes(147769510))") == "148 MB"
+    await tap(stack, js, SPACE, " ")
+    assert await until(js, f"{CARD}.includes('Whisper tiny.en, 2 MB, from Hugging Face')")
+    assert str(store.folder) in await js(CARD) and "Nothing you say is ever sent anywhere." in await js(CARD)
+    assert await js("document.querySelector('#talk-card .download').textContent") == "Download 2 MB"
+    await asyncio.sleep(0.5)
+    assert store.fetch.urls == [] and await js("window.micOpen") == 0  # nothing is fetched before the click
+    await js("document.querySelector('#talk-card .download').click(); true")
+    assert await until(js, f"{CARD}.includes(' of 2 MB') && !!document.querySelector('#talk-card progress')", 5)
+    assert await until(js, f"{NOTICE} === 'Ready: hold Space to talk'", 15)
+    assert len(store.fetch.urls) == 2 and store.present()
+    await talk(stack, js)
+    assert await eventually(lambda: len(stack["engine"].heard) == 1)
+
+
+@CHROME
+async def test_first_use_explains_the_browsers_question_first(stack):
+    stack["hearing"].platform = "mac"
+    js = await open_talk(stack, mic(permission="prompt"))
+    await tap(stack, js, SPACE, " ")
+    assert await until(js, f"{CARD}.includes('Google Chrome will now ask to use your microphone')")
+    text = await js(CARD)
+    assert "Choose Allow while visiting the site (or Allow), not Allow this time" in text
+    assert "macOS may also ask once whether Google Chrome may use the microphone" in text
+    assert "The mic is on only while you hold Space or the mic button." in text
+    assert await js("window.micOpen") == 0 and await js(f"{PANEL}.dataset.state") == "explain"
+    await js("document.querySelector('#talk-card .continue').click(); true")
+    assert await until(js, f"{NOTICE} === 'Ready: hold Space to talk'")
+    assert await js("window.micOpen") == 1 and await js("window.micClosed") == 1  # asked, then closed at once
+    await talk(stack, js)  # allowed now: straight to listening, with no card
+    assert await eventually(lambda: len(stack["engine"].heard) == 1)
+    assert await js("document.querySelector('#talk-card .continue')") is None
+
+
+@CHROME
+async def test_the_first_use_card_on_windows(stack):
+    stack["hearing"].platform = "windows"
+    js = await open_talk(stack, mic(permission="prompt"))
+    await tap(stack, js, SPACE, " ")
+    assert await until(js, f"{CARD}.includes('Windows may be blocking the microphone')")
+    assert "macOS" not in await js(CARD)
+
+
+@CHROME
+async def test_microphone_problems_become_plain_words(stack):
+    stack["hearing"].platform = "mac"
+    blocked = ("The microphone is blocked for AI Browser. Open Google Chrome's Settings → Privacy and security → Site "
+               "settings → Microphone, and allow AI Browser.")
+    cases = [
+        (mic(error=("NotAllowedError", "Permission denied")), blocked),
+        (mic(permission="denied"), blocked),
+        (mic(error=("NotAllowedError", "Permission denied by system")),
+         "macOS blocks the microphone for Google Chrome: System Settings → Privacy & Security → Microphone → turn on "
+         "Google Chrome."),
+        (mic(error=("NotAllowedError", "Permission denied by system")) + BRAVE,
+         "macOS blocks the microphone for Brave: System Settings → Privacy & Security → Microphone → turn on Brave."),
+        (mic(error=("NotFoundError", "Requested device not found")), "No microphone found."),
+        (mic(error=("NotReadableError", "Could not start audio source")),
+         "The microphone is busy, or blocked by the system."),
+    ]
+    for source, words in cases:
+        js = await open_talk(stack, source)
+        await tap(stack, js, SPACE, " ")
+        assert await until(js, f"{CARD}.includes({json.dumps(words)})"), words
+        assert await js(f"{PANEL}.dataset.state") == "idle" and await js("window.micOpen") == 0

@@ -5,7 +5,7 @@
 // Every word here is set with textContent.
 "use strict";
 
-import { openMic } from "./mic.js";
+import { CONSTRAINTS, openMic } from "./mic.js";
 
 const HOLD_MS = 300; // a shorter press of Space is a slip; a shorter press of the mic button is a click (it toggles)
 const LOG_LINES = 6;
@@ -114,14 +114,70 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     return `Listening… let go to finish · ${seconds} s`;
   }
 
-  function setupCard(current) { // talking isn't ready: what is missing, in plain words
+  function setupCard(current) { // talking isn't ready: what is missing, and the one step that fixes it
     const box = el("div", "talk-setup");
-    box.append(el("p", "", String(current.reason || "Talking isn't set up yet")),
-               row(button("OK", "ghost", () => { closeCard(); setState("idle"); })));
+    const later = () => {
+      closeCard();
+      setState("idle");
+    };
+    const size = megabytes(current.size_bytes);
+    const download = () => link.send({ type: "hearing_download" }); // the only way the model is fetched
+    if (current.state === "no_engine") {
+      const steps = el("p");
+      steps.append("Talking needs one extra part on this computer. In the ai-browser folder, run ",
+                   el("code", "", "uv sync --extra voice"), ", then restart ", el("code", "", "ai-browser app"),
+                   ". It downloads faster-whisper and the Python packages it needs, from PyPI.");
+      box.append(steps);
+      if (current.platform === "mac") {
+        box.append(el("p", "muted", "Or use your Mac's Dictation in any text box: press the Microphone key, or the "
+                      + "Dictation shortcut in System Settings → Keyboard."));
+      } else if (current.platform === "windows") {
+        box.append(el("p", "muted", "Or use Voice Access (Windows 11), which runs on this PC."));
+      }
+      box.append(row(button("OK", "ghost", later)));
+    } else if (current.state === "downloading") {
+      const bar = el("progress");
+      bar.max = Number(current.size_bytes) || 1;
+      bar.value = Number(current.done_bytes) || 0;
+      box.append(el("p", "", `Downloading the speech model: ${Math.round((Number(current.done_bytes) || 0) / 1e6)} of `
+                    + size), bar, row(button("Cancel", "ghost cancel", () => link.send({ type: "hearing_cancel" }))));
+    } else if (current.state === "failed") {
+      const reason = String(current.reason || "The download failed");
+      if (reason.startsWith("The speech model couldn't load")) {
+        box.append(el("p", "", `${reason}. Download it again.`),
+                   row(button(`Download ${size}`, "primary download", download), button("Not now", "ghost", later)));
+      } else {
+        box.append(el("p", "", reason),
+                   row(button("Try again", "primary download", download), button("Not now", "ghost", later)));
+      }
+    } else { // no_model
+      box.append(el("p", "", `To understand speech on this computer, AI Browser needs the English speech model: `
+                    + `${current.model}, ${size}, from Hugging Face. It's saved in ${current.folder}. Nothing you `
+                    + "say is ever sent anywhere."),
+                 row(button(`Download ${size}`, "primary download", download), button("Not now", "ghost", later)));
+    }
     return box;
   }
 
-  function micProblem() { // the microphone couldn't open
+  function micProblem(error) { // getUserMedia's refusals, in plain words for this browser and this computer
+    const name = browserName();
+    const system = hearing?.platform;
+    if (error?.name === "NotAllowedError" && /system/i.test(String(error?.message || ""))) {
+      if (system === "mac") {
+        return `macOS blocks the microphone for ${name}: System Settings → Privacy & Security → Microphone → turn `
+          + `on ${name}.`;
+      }
+      if (system === "windows") {
+        return "Windows blocks the microphone: Settings → Privacy & security → Microphone → let desktop apps use it.";
+      }
+      return `This computer blocks the microphone for ${name}.`;
+    }
+    if (error?.name === "NotAllowedError") {
+      return `The microphone is blocked for AI Browser. Open ${name}'s Settings → Privacy and security → Site `
+        + "settings → Microphone, and allow AI Browser.";
+    }
+    if (error?.name === "NotFoundError") return "No microphone found.";
+    if (error?.name === "NotReadableError") return "The microphone is busy, or blocked by the system.";
     return "The microphone couldn't start.";
   }
 
@@ -129,6 +185,41 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     const box = el("div", "talk-problem");
     box.append(el("p", "", text), row(button("OK", "ghost", closeCard)));
     return box;
+  }
+
+  function explainCard() { // before the browser's own question, the first time: what it is, and which choice to make
+    const name = browserName();
+    const box = el("div", "talk-explain");
+    const first = el("p");
+    first.append(`${name} will now ask to use your microphone. Choose `,
+                 el("strong", "", "Allow while visiting the site"), " (or ", el("strong", "", "Allow"), "), not ",
+                 el("strong", "", "Allow this time"), ", so it doesn't ask every time.");
+    box.append(first);
+    if (hearing?.platform === "mac") {
+      box.append(el("p", "", `macOS may also ask once whether ${name} may use the microphone: choose Allow (or OK).`));
+    } else if (hearing?.platform === "windows") {
+      box.append(el("p", "", "If nothing happens, Windows may be blocking the microphone: Settings → Privacy & "
+                    + "security → Microphone → let desktop apps use it."));
+    }
+    box.append(el("p", "muted", "The mic is on only while you hold Space or the mic button."),
+               row(button("Continue", "primary continue", allow), button("Not now", "ghost", () => {
+                 closeCard();
+                 setState("idle");
+               })));
+    return box;
+  }
+
+  async function allow() { // Continue: the browser asks now; nothing is recorded, and the tracks stop at once
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(CONSTRAINTS);
+      for (const track of stream.getTracks()) track.stop();
+      closeCard();
+      setState("idle");
+      tell("Ready: hold Space to talk");
+    } catch (error) {
+      setState("idle");
+      setCard(problemCard(micProblem(error)));
+    }
   }
 
   function drop(current) { // a press that didn't become a turn: the voice may speak again
@@ -154,6 +245,23 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
       }
       setState("setup");
       setCard(setupCard(hearing));
+      return;
+    }
+    let permission = "granted";
+    try {
+      permission = (await navigator.permissions.query({ name: "microphone" })).state;
+    } catch { /* the browser can't say: getUserMedia asks */ }
+    if (turn !== current) return; // thrown away meanwhile (Esc, another window)
+    if (permission === "prompt") { // the first time: say what the browser will ask, before it asks
+      drop(current);
+      setState("explain");
+      setCard(explainCard());
+      return;
+    }
+    if (permission === "denied") {
+      drop(current);
+      setState("idle");
+      setCard(problemCard(micProblem({ name: "NotAllowedError", message: "Permission denied" })));
       return;
     }
     setState("opening");
