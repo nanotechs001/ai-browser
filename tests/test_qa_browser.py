@@ -190,23 +190,60 @@ async def test_a_link_that_is_slow_once_is_tried_again(chrome_browser):
     assert result.status == 200 and result.error is None
 
 
+def record_timeline(monkeypatch) -> tuple[list[tuple[float, str]], list[tuple[float, str]]]:
+    """(every link check QA's checker sends, every page visit's navigation), each as (when, url)."""
+    from ai_browser.qa.checker import LinkChecker
+    from ai_browser.qa.page import PageVisitor
+
+    fetches, navigations = [], []
+    real_fetch, real_send = LinkChecker._fetch, PageVisitor._send
+
+    async def fetch(self, url, credentials):
+        fetches.append((time.monotonic(), url))
+        return await real_fetch(self, url, credentials)
+
+    async def send(self, method, params=None, timeout=30):
+        if method == "Page.navigate":
+            navigations.append((time.monotonic(), params["url"]))
+        return await real_send(self, method, params, timeout)
+
+    monkeypatch.setattr(LinkChecker, "_fetch", fetch)
+    monkeypatch.setattr(PageVisitor, "_send", send)
+    return fetches, navigations
+
+
 @CHROME
-async def test_links_are_checked_while_pages_are_visited(chrome_browser, monkeypatch):
-    from ai_browser.qa import run as run_module
-
-    browser, base, _ = chrome_browser
-    captured = {}
-    real_write = run_module.write_report
-
-    def keep(work, run):
-        captured["run"] = run
-        return real_write(work, run)
-
-    monkeypatch.setattr(run_module, "write_report", keep)
-    await run_module.run_qa(browser, browser.work, base + "qa/index.html", link_budget=0, delay=0.05)
-    run = captured["run"]  # no time after the crawl: the links must have been checked during it
+async def test_other_sites_links_are_checked_while_pages_are_visited(chrome_browser, monkeypatch):
+    run_module, captured = capture(monkeypatch)
+    fetches, navigations = record_timeline(monkeypatch)
+    browser, base, other = chrome_browser
+    await run_module.run_qa(browser, browser.work, base + "qa/index.html", delay=0.05)
+    run = captured["run"]
     assert any(i.kind == "broken link (external)" for i in run.issues)
     assert [why for _, why in run.unchecked] == ["403"]
+    last_visit = navigations[-1][0]
+    elsewhere = [at for at, url in fetches if url.startswith("http://127.0.0.1:")]
+    assert elsewhere and all(at < last_visit for at in elsewhere)  # other sites: during the crawl, on their own turns
+    brochure = [at for at, url in fetches if url == base + "qa/files/brochure.zip"]
+    assert brochure and all(at > last_visit for at in brochure)  # the site's own: after its pages, never ahead of them
+
+
+@CHROME
+async def test_a_link_rich_site_gets_its_pages_visited_before_its_other_links_are_checked(chrome_browser, monkeypatch):
+    run_module, captured = capture(monkeypatch)
+    fetches, navigations = record_timeline(monkeypatch)
+    browser, base, _ = chrome_browser
+    pages = [base + f"qa3/24/{n}.html" for n in range(5)]
+    text = await run_module.run_qa(browser, browser.work, pages[0], max_pages=5, delay=0.05)
+    run = captured["run"]
+    assert [page.url for page in run.pages] == pages and "5 pages" in text.splitlines()[0]
+    assert [url for _, url in navigations] == pages
+    last_visit = navigations[-1][0]
+    early = [url for at, url in fetches if at < last_visit]
+    assert early == pages[1:]  # before the last visit, only each visit's own status check went to the site
+    later = {url for at, url in fetches if at > last_visit}
+    assert len(later) == 24 * 5 - 4 and later.isdisjoint(pages)  # then every link not visited, once
+    assert not run.unchecked
 
 
 
@@ -493,3 +530,21 @@ async def test_a_bot_check_found_by_qa_is_handed_over_in_its_own_tab(chrome_brow
 
     text = await run_module.run_qa(browser, browser.work, base + "qa2/check.html", delay=0.05, on_check=engine_hold)
     assert text.startswith("HELD BY THE ENGINE\n\nqa ")
+
+
+@CHROME
+async def test_in_the_users_own_browser_the_check_tab_gets_the_real_window_back(chrome_browser):
+    from ai_browser.qa import run_qa
+
+    browser, base, _ = chrome_browser
+    await browser.open(base + "checks/counter.html")
+    real = await browser._eval("[innerWidth, innerHeight, devicePixelRatio]")
+    assert real[:2] != [1440, 900]  # QA's own size, so the two can be told apart
+    seen = []
+
+    async def on_check(tab, check):  # what the user gets to solve the check in
+        seen.append(await browser.eval_in(tab, "[innerWidth, innerHeight, devicePixelRatio]"))
+        return None
+
+    await run_qa(browser, browser.work, base + "qa2/check.html", delay=0.05, on_check=on_check)
+    assert seen == [real]

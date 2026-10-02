@@ -69,6 +69,14 @@ class PageVisitor:
         for method, handler in self._handlers:
             self.cdp.off(method, handler)
 
+    async def hand_back(self) -> None:
+        """The tab stays for the user (it shows a bot check). In their own browser (chrome, app) it gets the real window
+        back, not QA's fixed size at scale 1: the user solves the check there, and the session may go on in it. The
+        sandbox's tabs keep QA's size, which is the sandbox's own."""
+        if self.browser.mode in ("chrome", "app"):
+            with contextlib.suppress(CDPError):
+                await self._send("Emulation.clearDeviceMetricsOverride")
+
     # ---- one page --------------------------------------------------------------------------------------
 
     async def visit(self, url: str) -> PageResult:

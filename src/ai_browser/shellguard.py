@@ -1,8 +1,9 @@
 """The shell's seatbelt: before a command runs, refuse the crawl pattern seen in the task logs.
 
 It refuses a browser's user agent given to curl or wget, curl or wget run in parallel (xargs -P, GNU parallel), and
-any host on a site the user skipped after a bot check. It reads the command the way the shell splits it, but it can't
-catch every script: the instructions are the rule, this is a seatbelt."""
+any host on a site the user skipped after a bot check. It reads the command the way the shell splits it, and the
+script given to sh -c or bash -c the same way, but it can't catch every script: the instructions are the rule, this is
+a seatbelt."""
 
 from __future__ import annotations
 
@@ -20,8 +21,11 @@ PARALLEL = ("the shell doesn't fetch in parallel (xargs -P 10 … curl): fetch o
 SKIPPED = "the shell doesn't reach {site}: the user skipped it after a bot check. Ask the user if you need it."
 FETCHERS = frozenset({"curl", "wget"})
 _BROWSER = re.compile(r"mozilla/|chrome/|safari/|firefox/|edg/|opr/|googlebot|bingbot", re.IGNORECASE)
-_XARGS_VALUE = frozenset({"-a", "-d", "-E", "-e", "-I", "-i", "-L", "-l", "-n", "-s", "--arg-file", "--delimiter",
-                          "--eof", "--replace", "--max-lines", "--max-args", "--max-chars"})
+_XARGS_LONG_VALUE = frozenset({"--arg-file", "--delimiter", "--max-args", "--max-chars", "--max-procs"})  # or =value
+_XARGS_VALUE = frozenset("adEILnsP")  # short options whose value is the rest of the word, or else the next word
+_XARGS_OPTIONAL = frozenset("eil")  # short options whose value, if any, is the rest of the word
+SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+_SCRIPT_DEPTH = 3  # sh -c 'bash -c "…"': scripts inside scripts, this deep
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
 _URL_HOST = re.compile(r"\b[a-z][a-z0-9+.-]*://([^/\s'\"<>?#]+)", re.IGNORECASE)
 _HOST_NAME = re.compile(r"(?<![\w.-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})(?![\w-])",
@@ -56,6 +60,40 @@ def _commands(words: list[str]) -> list[list[str]]:
 
 def _name(word: str) -> str:
     return posixpath.basename(word).lower()
+
+
+def _scripts(command: list[str]) -> list[str]:
+    """The scripts a simple command hands to a shell: the word after -c (or -lc, -ec…) of sh, bash and the like,
+    wherever the shell is in the command (xargs -P4 sh -c '…')."""
+    scripts = []
+    for start, word in enumerate(command):
+        if _name(word) not in SHELLS:
+            continue
+        index = start + 1
+        while index < len(command) - 1:
+            option = command[index]
+            if option in ("-o", "+o", "-O", "+O"):  # set and shopt options: their name is the next word
+                index += 2
+            elif option.startswith("--") or option.startswith("+"):
+                index += 1
+            elif not option.startswith("-"):
+                break  # the shell's own options end at its script file
+            elif "c" in option[1:]:
+                scripts.append(command[index + 1])
+                break
+            else:
+                index += 1
+    return scripts
+
+
+def _all_commands(command: str, depth: int = 0) -> list[list[str]]:
+    """The simple commands of a command line, with those of the scripts it hands to a shell."""
+    commands = _commands(_words(command))
+    if depth < _SCRIPT_DEPTH:
+        for words in list(commands):
+            for script in _scripts(words):
+                commands += _all_commands(script, depth + 1)
+    return commands
 
 
 def _short(word: str, following: str, letter: str) -> str | None:
@@ -111,18 +149,27 @@ def _parallel(commands: list[list[str]]) -> bool:
         while index < len(words):
             word = words[index]
             following = words[index + 1] if index + 1 < len(words) else ""
-            if not word.startswith("-"):
+            if not word.startswith("-") or word == "-":
                 break  # xargs's own options end at the command it runs
-            if word in ("-P", "--max-procs"):
-                procs, index = following, index + 2
-            elif word.startswith("--max-procs="):
-                procs, index = word.split("=", 1)[1], index + 1
-            elif re.fullmatch(r"-P\d+", word):
-                procs, index = word[2:], index + 1
-            else:
-                index += 2 if word in _XARGS_VALUE else 1
-                continue
-            if procs.strip() != "1":
+            procs = None
+            if word.startswith("--"):
+                option, equals, attached = word.partition("=")
+                if option == "--max-procs":
+                    procs = attached if equals else following
+                index += 1 if equals or option not in _XARGS_LONG_VALUE else 2  # --eof, --replace: =value only
+            else:  # a cluster of short options, such as -0P4 or -rP 8: the first one that takes a value ends it
+                index += 1
+                for at, letter in enumerate(word[1:], 1):
+                    if letter in _XARGS_OPTIONAL:
+                        break
+                    if letter in _XARGS_VALUE:
+                        value = word[at + 1:]
+                        if not value:
+                            value, index = following, index + 1
+                        if letter == "P":
+                            procs = value
+                        break
+            if procs is not None and procs.strip() != "1":
                 return True
     return False
 
@@ -135,7 +182,7 @@ def _hosts(command: str) -> set[str]:
 
 def shell_problem(command: str, skipped: Iterable[str] = ()) -> str | None:
     """Why the shell refuses this command, or None."""
-    commands = _commands(_words(command))
+    commands = _all_commands(command)
     if any(_BROWSER.search(agent) for words in commands for agent in _agents(words)):
         return USER_AGENT
     fetches = any(_name(word) in FETCHERS for words in commands for word in words)

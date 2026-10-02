@@ -350,11 +350,12 @@ Ask Claude to *"QA client-site.com"*. It calls `qa(url, max_pages=30)`, which:
   content;
 - checks every link once (internal ones with your logins, external ones without), politely: one request at a time
   per site, with a short pause, following robots.txt and Retry-After. A site that answers 429, 403 or a bot check
-  isn't asked again in that run, and links to big sites such as Google aren't checked: they are listed under "Not
-  checked", not as broken. `qa(url, ignore_robots=true)` only for a site you say is yours (staging sites often ask
-  every crawler to stay out);
-- takes about three minutes for 30 pages, and stops visiting pages after five; the summary says where it stopped and
-  why;
+  isn't asked again in that run, and links to big sites such as Google, or to a site you skipped at a bot check,
+  aren't checked: they are listed under "Not checked", not as broken. `qa(url, ignore_robots=true)` only for a site
+  you say is yours (staging sites often ask every crawler to stay out);
+- visits the site's pages first and checks the site's other links after them, so the pages always get their turn.
+  30 pages take about three minutes; a site with many links takes longer, about six minutes at most (it stops
+  visiting pages after five). The summary says where it stopped and why;
 - writes `qa/<site>-<time>/report.html` (one shareable file with screenshots), `issues.csv` and full-page shots.
 
 The skill `ai-browser:website-qa` (in `skills/`) tells Claude how to verify each finding before reporting it, and how
@@ -372,7 +373,12 @@ From `uv run ai-browser bench` (medians, local test pages, MacBook):
 | one type step | 51 ms | 150 ms |
 | open a local page | 13 ms | 500 ms |
 | viewport screenshot | 49 ms | 300 ms |
-| Website QA, 30 pages × 3 sizes (one request at a time per site, 1 s apart) | about 3 min | 5 min limit |
+| Website QA, 30 pages × 3 sizes (one request at a time per site, 1 s apart) | 80 s; 140 s with 61 more links; 6 min with 1,171 | visits stop at 5 min, link checks at about 6 |
+
+The QA row is not from `bench`: it was measured in a throwaway headless Chrome on a local test site whose pages each
+link 1, 3 or 40 more of its own, so 1, 61 or 1,171 links are left after the 30 visits (with 1,171, about 280 are
+checked before the limit and the rest are listed as not checked). Those pages load in under a second; real pages load
+slower, so 30 pages of a typical site take about three minutes.
 
 ## Commands
 

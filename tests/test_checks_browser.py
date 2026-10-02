@@ -121,6 +121,43 @@ async def test_the_engines_hooks_hold_skip_and_wait(chrome_browser):
     assert await browser._eval("document.getElementById('count').textContent") == "0"
 
 
+async def check_comes_up(browser, page: str) -> None:
+    """Press Book on checks/later.html: its picture check comes up 0.8 s later, with no new page; wait it out."""
+    await browser.act(parse_steps([f"click {element_of(page, 'Book')}"]))
+    for _ in range(50):
+        if await browser._eval("document.querySelector('#slot iframe') !== null"):
+            break
+        await asyncio.sleep(0.1)
+    await asyncio.sleep(0.3)  # the frame lays out
+
+
+@CHROME
+async def test_a_check_that_comes_up_without_a_new_page_is_handed_over_by_the_next_call(chrome_browser):
+    browser, base, _ = chrome_browser
+    held = []
+
+    async def hold(tab, check):
+        held.append((tab.key, check))
+        return "HELD"
+
+    browser.on_check(hold)
+    for call in (lambda page: browser.screenshot(), lambda page: browser.screenshot("all"),
+                 lambda page: browser.extract("links"), lambda page: browser.js("document.title"),
+                 lambda page: browser.act(parse_steps([f"click {element_of(page, 'Count')}"]))):
+        page = await browser.open(base + "checks/later.html")
+        assert page.startswith('page  "Book a table (test page)"')
+        await check_comes_up(browser, page)
+        held.clear()
+        assert await call(page) == "HELD"  # no picture, no links, no page value, no click
+        assert held == [(browser.current.key, Check("captcha", "localhost"))]
+        assert await browser._eval("document.getElementById('count').textContent") == "0"
+    browser.skipped_site = lambda url: "SKIPPED" if "/checks/counter.html" in url else None
+    await browser.open(base + "checks/later.html")
+    await browser._eval("history.pushState(null, '', '/checks/counter.html')")  # the address changed, no new page
+    assert await browser.screenshot() == "SKIPPED" and await browser.extract("meta") == "SKIPPED"
+    assert await browser.js("1 + 1") == "SKIPPED" and await browser.act(parse_steps(["scroll down"])) == "SKIPPED"
+
+
 # ---- the Engine: the whole session holds until the user deals with the check ----------------------------------------
 
 
@@ -196,6 +233,19 @@ async def test_while_a_check_waits_nothing_else_runs(chrome_engine, monkeypatch)
     assert (await engine.read_file("note.txt")).text.startswith("kept")
     assert (await engine.observe()).text.startswith(f"⛔ bot check in tab {held.key}")  # still there: handed over again
     assert held.target in activated
+
+
+@CHROME
+async def test_the_engine_holds_at_a_check_that_comes_up_after_a_click(chrome_engine):
+    engine, base = await started(chrome_engine)
+    page = (await engine.open(base + "checks/later.html")).text
+    await check_comes_up(engine.browser, page)
+    tab = engine.browser.current
+    shot = await engine.screenshot()
+    assert shot.text.startswith(render_check(Check("captcha", "localhost"), tab.key)) and shot.images == []
+    assert (engine.gate.held.tab_key, engine.gate.held.check.kind) == (tab.key, "captcha")
+    assert (await engine.act([f"click {element_of(page, 'Count')}"])).text.startswith("⏸ waiting for the user")
+    assert await page_js(engine, tab, "document.getElementById('count').textContent") == "0"
 
 
 @CHROME
@@ -340,6 +390,26 @@ async def test_qa_holds_the_session_at_a_check_it_finds(chrome_engine):
     assert engine.browser.current.key == held.tab_key and held.tab_key in engine.browser.owned
     assert (await engine.open(base + "form.html")).text.startswith("⏸ waiting for the user")
     assert "is gone: carrying on" in await solve(engine, base)
+
+
+@CHROME
+async def test_qa_never_checks_a_link_to_a_site_the_user_skipped(chrome_engine, monkeypatch):
+    from ai_browser.qa.checker import LinkChecker
+
+    asked, real = [], LinkChecker._fetch
+
+    async def fetch(self, url, credentials):
+        asked.append(url)
+        return await real(self, url, credentials)
+
+    monkeypatch.setattr(LinkChecker, "_fetch", fetch)
+    engine, base = await started(chrome_engine)
+    engine.gate.skipped.add("127.0.0.1")  # as after the user skipped it at a bot check
+    text = (await engine.qa(base + "qa2/partner.html", max_pages=1)).text  # its "Partner shop" link is on 127.0.0.1
+    assert asked == [base + "qa/about.html"]  # its other link, checked; never the skipped site's
+    assert "not checked: 1 link to sites the user skipped (127.0.0.1)" in text
+    assert "<h3>skipped after a bot check</h3>" in engine.work.to_host(
+        next(line for line in text.splitlines() if line.startswith("report: ")).split()[1]).read_text(encoding="utf-8")
 
 
 @CHROME

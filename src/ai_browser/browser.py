@@ -734,13 +734,28 @@ class Browser:
             return await self._handoff(check)
         return self.skipped_site(url) if url else None
 
+    async def _blocked(self) -> str | None:
+        """Before screenshot, extract, js or act touch the working tab: the hand-off for a bot check that came up since
+        the last read (an invisible check's picture challenge shows up a moment after a submit click, with no new
+        page), or the skipped text for a skipped site; None when the page is clear. One read of the signals."""
+        if self.current is None:
+            return None
+        url, check = await self._check_tab(self.current)
+        if check is not None:
+            return await self._handoff(check)
+        return self.skipped_site(url) if url else None
+
     # ---- screenshots ----------------------------------------------------------------------------
 
     async def screenshot(self, size: str = "desktop", full_page: bool = False,
-                         element: str | None = None) -> list[Shot]:
+                         element: str | None = None) -> list[Shot] | str:
+        """The shots, or the hand-off (or skipped) text instead when the page is a bot check (or a skipped site)."""
         names = list(SIZES) if size == "all" else [size]
         if any(name not in SIZES for name in names):
             raise BrowserError(f"size {size!r}: use desktop, tablet, mobile or all")
+        blocked = await self._blocked()
+        if blocked is not None:  # never a picture of a check: the user's to solve
+            return blocked
         shots = []
         try:
             for name in names:
@@ -795,6 +810,9 @@ class Browser:
     async def extract(self, kind: str) -> str:
         if kind not in {"links", "tables", "meta"}:
             raise BrowserError(f"extract {kind!r}: use links, tables or meta")
+        blocked = await self._blocked()
+        if blocked is not None:
+            return blocked
         data = await self._reader(f"extract({json.dumps(kind)})")
         if kind == "links":
             links = data["items"]
@@ -834,6 +852,9 @@ class Browser:
 
     async def js(self, code: str) -> str:
         """Plain expression first; a top-level `return` gets a function wrapper; top-level `await` gets REPL mode."""
+        blocked = await self._blocked()
+        if blocked is not None:  # nothing runs in a check page
+            return blocked
         try:
             value = await self._js_eval(code)
         except JSError as exc:
@@ -923,6 +944,9 @@ class Browser:
             return waiting
         if self.current is None:
             raise BrowserError("no open tab")
+        blocked = await self._blocked()
+        if blocked is not None:  # a check came up since the last read, or the page went to a skipped site: no step
+            return blocked
         before = self.current.last or await self.state()
         lines: list[str] = [self._dialog_text(*dialog) for dialog in self._new_dialogs()]
         navigated, ended = False, None

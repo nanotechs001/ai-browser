@@ -21,21 +21,22 @@ from .checker import LinkChecker
 from .issues import link_issue, link_verdict, merge
 from .model import SITE_STOPPED, Issue, LinkResult, PageResult, QARun
 from .page import PageVisitor, page_issues
-from .polite import (BIG_SITE_NOTE, COOL_DOWN, HOST_DELAY, ROBOTS_NOTE, HostGate, HostStopped, Robots, big_site,
-                     cool_reason, short_reason)
+from .polite import (BIG_SITE_NOTE, COOL_DOWN, HOST_DELAY, ROBOTS_NOTE, SKIPPED_NOTE, HostGate, HostStopped, Robots,
+                     big_site, cool_reason, short_reason)
 from .report import folder_for, save_shots, summary, write_report
 from .urls import action_link, is_file, normalize, origin
 
 WORKERS = 1  # one page tab: a second one on the same site would only wait for the gate
 MAX_PAGES = 200
 CRAWL_BUDGET = 300.0  # seconds for visiting pages (about 6 s a page at the polite pace)...
-LINK_BUDGET = 60.0  # ...then for checking the links not visited
+LINK_BUDGET = 60.0  # ...then for checking the links not visited, plus what the crawl left of its budget
 ROBOTS_LIMIT = 500_000  # bytes of robots.txt read
 IGNORED_ROBOTS = "robots.txt: ignored at the user's request"
 
 Progress = Callable[[int, int, str], Awaitable[None]]
 HostStoppedHook = Callable[[str, float, str], None]  # (host, until, why): the Engine's cool-down
 CheckHook = Callable[[Tab, Check], Awaitable[str | None]]  # the Engine's hold: returns the hand-off text
+SkippedSite = Callable[[str], str | None]  # the Engine's skipped sites: the refusal for an address on one, or None
 
 
 @dataclass
@@ -125,11 +126,13 @@ class Frontier:
 
 
 class _Rules:
-    """What QA may request: never a big site, and only what each origin's robots.txt allows of its own pages."""
+    """What QA may request: never a site the user skipped after a bot check, never a big site, and only what each
+    origin's robots.txt allows of its own pages."""
 
-    def __init__(self, checker: LinkChecker, ignore: bool):
+    def __init__(self, checker: LinkChecker, ignore: bool, skipped: SkippedSite | None = None):
         self.checker = checker
         self.ignore = ignore
+        self.skipped = skipped
         self.robots: dict[str, Robots] = {}
 
     async def read(self, site: str) -> Robots | None:
@@ -145,6 +148,8 @@ class _Rules:
 
     def skip(self, url: str, internal: bool) -> str | None:
         """Why a link is never requested, or None."""
+        if self.skipped is not None and self.skipped(url) is not None:
+            return SKIPPED_NOTE
         if big_site(urlsplit(url).hostname or ""):
             return BIG_SITE_NOTE
         robots = self.robots.get(origin(url))
@@ -162,19 +167,21 @@ class _Rules:
 async def run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int = 30, progress: Progress | None = None,
                  on_tabs: Callable[[], None] | None = None, crawl_budget: float = CRAWL_BUDGET,
                  link_budget: float = LINK_BUDGET, delay: float = HOST_DELAY, ignore_robots: bool = False,
-                 on_check: CheckHook | None = None, on_host_stopped: HostStoppedHook | None = None) -> str:
+                 on_check: CheckHook | None = None, on_host_stopped: HostStoppedHook | None = None,
+                 skipped: SkippedSite | None = None) -> str:
     """Check a whole site in the session's browser, politely, write the report and return its summary.
     `ignore_robots` only when the user says the site is theirs; `on_check(tab, check)` lets the Engine hold the
     session at a bot check QA finds (its tab stays open); `on_host_stopped(host, until, why)` hears of every host that
-    refused, for the Engine's cool-down."""
+    refused, for the Engine's cool-down; `skipped(url)` names the sites the user skipped, which QA never asks."""
     with browser.acting():  # pages QA opens may open popups: those are QA's to follow and close
         return await _run_qa(browser, work, url, max_pages, progress, on_tabs, crawl_budget, link_budget, delay,
-                             ignore_robots, on_check, on_host_stopped)
+                             ignore_robots, on_check, on_host_stopped, skipped)
 
 
 async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, progress: Progress | None,
                   on_tabs: Callable[[], None] | None, crawl_budget: float, link_budget: float, delay: float,
-                  ignore_robots: bool, on_check: CheckHook | None, on_host_stopped: HostStoppedHook | None) -> str:
+                  ignore_robots: bool, on_check: CheckHook | None, on_host_stopped: HostStoppedHook | None,
+                  skipped: SkippedSite | None) -> str:
     problem = url_problem(url, browser.mode)
     if problem:
         raise BrowserError(f"{url}: {problem}")
@@ -208,7 +215,7 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
         home = await browser.open_worker()  # reads robots.txt, opens the start page, then stays there to check links
         tabs_changed()
         checker = LinkChecker(browser.cdp, home, gate)
-        rules = _Rules(checker, ignore_robots)
+        rules = _Rules(checker, ignore_robots, skipped)
         robots = await rules.read(origin(start))
         if robots is not None and not robots.allowed(start):
             why = robots.note if robots.closed else "robots.txt asks crawlers not to visit this page"
@@ -248,8 +255,9 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
                                held)
         if held:  # the user's attention is needed now: no more link checks
             await checks.cancel()
-        else:
-            await checks.finish(frontier.links.values(), time.monotonic() + link_budget)
+        else:  # the site's own links not visited are checked now: with link_budget, and what the crawl left of its own
+            await checks.finish(frontier.links.values(),
+                                max(time.monotonic() + link_budget, clock + crawl_budget + link_budget))
         handoff = await _hand_over(held, on_check, kept)
         issues, unchecked = list(chains), []
         for page in pages:
@@ -304,6 +312,7 @@ async def _hand_over(held: list[tuple[PageVisitor, PageResult]], on_check: Check
         return ""
     visitor, page = held[0]
     kept.add(visitor.tab.key)
+    await visitor.hand_back()  # the real window again, for the user to solve the check in
     given = await on_check(visitor.tab, page.check) if on_check is not None else None
     return given or render_check(page.check, visitor.tab.key)
 
@@ -357,12 +366,14 @@ class _Checks:
         await asyncio.gather(*late, return_exceptions=True)
 
 
-def _check_unvisited(frontier: Frontier, checks: _Checks, capacity: int, busy: set[str]) -> None:
-    """Start checking the links no worker will visit: other sites, files, and pages beyond max_pages."""
+def _check_unvisited(frontier: Frontier, checks: _Checks, capacity: int, busy: set[str], site_host: str) -> None:
+    """Start checking the links no worker will visit on other hosts. The site's own (files, and pages beyond
+    max_pages) wait for the crawl to end: on the site's host they would take turns ahead of its page visits, so a site
+    with many links would get only a few of its pages visited."""
     queued = frontier.queued()
     later = set(queued[:max(0, capacity)])  # these pages will be visited (and checked) by the workers
     for url, link in frontier.links.items():
-        if url not in later and url not in busy:
+        if url not in later and url not in busy and (urlsplit(url).hostname or "").lower() != site_host:
             checks.start(link)
 
 
@@ -395,7 +406,7 @@ async def _visit_all(frontier, checker, checks, idle, running, pages, chains, ma
             visitor = idle.pop()
             running[asyncio.ensure_future(_process(url, visitor, frontier, checker, rules))] = (url, visitor)
         _check_unvisited(frontier, checks, max_pages - len(pages) - len(running),
-                         {url for url, _ in running.values()})
+                         {url for url, _ in running.values()}, site_host)
         if not running:
             break
         done, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Book a table (test page)</title></head>
+<body>
+<h1>Book a table</h1>
+<p>This local test page behaves like a form with an invisible picture check: pressing Book shows a picture-check frame
+from another test site a moment later, with no new page. ai-browser's tests use it to check that the next screenshot,
+extract, js or act hands the tab to the user instead of reading or acting on it.</p>
+<button id="book">Book</button>
+<button onclick="const n = document.getElementById('count'); n.textContent = Number(n.textContent) + 1">Count</button>
+<p>Clicks: <span id="count">0</span></p>
+<div id="slot"></div>
+<script>
+  // As an invisible reCAPTCHA does: the challenge frame comes up 0.8 s after the press, and the page stays where it is.
+  document.getElementById("book").addEventListener("click", () => setTimeout(() => {
+    const frame = document.createElement("iframe");
+    frame.src = `http://127.0.0.1:${location.port}/checks/recaptcha/api2/bframe?hl=en`;
+    frame.title = "picture check";
+    frame.style.cssText = "width:400px;height:580px;border:0";
+    document.getElementById("slot").append(frame);
+  }, 800));
+</script>
+</body>
+</html>

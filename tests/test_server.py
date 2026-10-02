@@ -133,3 +133,5 @@ async def test_the_shell_and_qa_descriptions_ask_for_one_request_at_a_time():
     qa = " ".join(tools["qa"].description.split())
     assert "one request at a time per site" in qa and "big sites such as Google aren't checked" in qa
     assert "ignore_robots=true only when the user says the site is theirs" in qa
+    assert ("30 pages take about three minutes; a site with many links takes longer while its other links are checked, "
+            "about six minutes at most.") in qa

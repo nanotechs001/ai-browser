@@ -184,3 +184,5 @@ def test_the_website_qa_skill_hands_bot_checks_over_and_stays_polite():
     assert "## Be polite" in text and "no `xargs -P`" in flat and "ignore_robots=true" in flat
     assert ("30 pages take about three minutes, because qa is polite (below). A run stops visiting pages after five "
             "minutes and says so") in flat
+    assert ("A site with many links takes longer while the links qa didn't visit are checked, about six minutes at "
+            "most.") in flat

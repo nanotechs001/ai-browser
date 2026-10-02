@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from ..checks import site_key
 from ..workfs import WorkDir
 from .model import SITE_STOPPED, Issue, PageResult, QARun
-from .polite import BIG_SITE_NOTE, ROBOTS_FOLLOWED, ROBOTS_NOTE
+from .polite import BIG_SITE_NOTE, ROBOTS_FOLLOWED, ROBOTS_NOTE, SKIPPED_NOTE
 from .urls import slug
 
 TOP = 10  # issues listed in the summary
@@ -103,11 +103,15 @@ def _notes(run: QARun) -> list[str]:
 
 
 def _not_checked(unchecked: list[tuple[str, str]]) -> list[str]:
+    skipped = [url for url, why in unchecked if why == SKIPPED_NOTE]
     big = [url for url, why in unchecked if why == BIG_SITE_NOTE]
     robots = [url for url, why in unchecked if why == ROBOTS_NOTE]
     refused = [why.removeprefix("not checked: ") for _, why in unchecked
                if why.startswith("not checked: ") and " refused (" in why]
     parts = []
+    if skipped:
+        sites = list(dict.fromkeys(site_key(url) for url in skipped))
+        parts.append(f"{_count(len(skipped), 'link')} to sites the user skipped ({', '.join(sites)})")
     if big:
         sites = list(dict.fromkeys(site_key(url) for url in big))
         more = "…" if len(sites) > 2 else ""

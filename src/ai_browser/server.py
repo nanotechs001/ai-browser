@@ -137,8 +137,9 @@ def build_server(engine_factory: Callable[[], Engine] | None = None) -> MCPServe
         insecure content) and every link. Never clicks, types or submits; skips log-out/delete-style links.
         Politely: one request at a time per site, following robots.txt and Retry-After; a site that answers 429, 403
         or a bot check isn't asked again in the run, and big sites such as Google aren't checked. 30 pages take about
-        three minutes. ignore_robots=true only when the user says the site is theirs (staging sites often ask every
-        crawler to stay out). Saves report.html, issues.csv and screenshots in the work folder and returns counts and
+        three minutes; a site with many links takes longer while its other links are checked, about six minutes at most.
+        ignore_robots=true only when the user says the site is theirs (staging sites often ask every crawler to stay
+        out). Saves report.html, issues.csv and screenshots in the work folder and returns counts and
         the top issues. Load the skill ai-browser:website-qa for how to verify findings and write them up."""
         async def progress(done: int, total: int, message: str) -> None:
             if ctx is not None:

@@ -1,9 +1,9 @@
 """Static server for the test pages that forbids caching, so edited pages are always fresh.
 
 It also answers the few routes the tests need. For the QA test site: a two-hop redirect chain, a 403, a request that
-stays open and an HTML page sent as a download. For the bot-check tests: a site's own "Just a moment..." page (403),
-the inside of a check frame, and a redirect to another test page. The host-side test server (testpages.py) loads this
-same handler."""
+stays open and an HTML page sent as a download, and a link-rich site (/qa3/). For the bot-check tests: a site's own
+"Just a moment..." page (403), the inside of a check frame, and a redirect to another test page. The host-side test
+server (testpages.py) loads this same handler."""
 
 import http.server
 import sys
@@ -115,6 +115,21 @@ class NoStore(http.server.SimpleHTTPRequestHandler):
                            headers=[("Retry-After", "1")])
             else:
                 self._send(200, b"<!doctype html><title>Later</title><p>Back again: this page loads fine now.</p>")
+            return True
+        if path.startswith("/qa3/"):  # a link-rich site: /qa3/<width>/<n>.html links <width> pages of its own
+            parts = path.split("/")
+            try:
+                width, number = int(parts[2]), int(parts[3].removesuffix(".html"))
+            except (IndexError, ValueError):
+                width = number = -1
+            if not (1 <= width <= 100 and 0 <= number < 1_000_000 and parts[3].endswith(".html")):
+                self.send_error(404)
+                return True
+            links = "".join(f'<li><a href="{number * width + i}.html">Page {number * width + i}</a></li>'
+                            for i in range(1, width + 1))
+            self._send(200, (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page {number}</title>'
+                             f'</head><body><h1>Page {number}</h1><p><a href="0.html">Home</a></p><ul>{links}</ul>'
+                             "</body></html>").encode())
             return True
         if path in ("/checks/cf", "/checks/cf-auto"):  # a site's own "Just a moment..." (cf-auto moves on by itself)
             script = MOVES_ON if path == "/checks/cf-auto" else ""

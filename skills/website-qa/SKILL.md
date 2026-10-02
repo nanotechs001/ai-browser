@@ -21,7 +21,8 @@ One `qa` call checks a whole site. This playbook turns its findings into a repor
 `qa(url="https://client-site.com", max_pages=30)`
 
 - 30 pages take about three minutes, because qa is polite (below). A run stops visiting pages after five minutes
-  and says so; for bigger sites, run section by section (start at /blog/, /shop/…).
+  and says so. A site with many links takes longer while the links qa didn't visit are checked, about six minutes
+  at most. For bigger sites, run section by section (start at /blog/, /shop/…).
 - It never clicks, types or submits, and never requests log-out, delete or add-to-cart style links (they are listed
   as "not followed").
 - It returns counts, the top 10 issues, and the paths of `report.html` (one shareable file), `issues.csv` and the

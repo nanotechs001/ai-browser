@@ -512,6 +512,8 @@ class Engine:
                          element: str | None = None) -> ToolResult:
         async def action(browser):
             shots = await browser.screenshot(size, full_page, element)
+            if isinstance(shots, str):  # the page is a bot check (handed over) or a skipped site: no picture
+                return shots
             lines = []
             for shot in shots:
                 path = self.log.save_shot(shot.data, f"{shot.label}{'-' + element if element else ''}")
@@ -542,7 +544,7 @@ class Engine:
         async def action(browser):
             return await run_qa(browser, self.work, url, max_pages, progress=progress, on_tabs=self._register,
                                 ignore_robots=ignore_robots, on_check=self._on_check,
-                                on_host_stopped=self.gate.qa_stop)
+                                on_host_stopped=self.gate.qa_stop, skipped=self.gate.skipped_for)
         return await self._with_browser("qa", {"url": url, "max_pages": max_pages, "ignore_robots": ignore_robots},
                                         action, lambda: self.gate.refusal("qa", url=url))
 

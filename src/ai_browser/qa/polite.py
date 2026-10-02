@@ -25,6 +25,7 @@ BIG_SITES = ("goo.gl", "g.co", "youtube.com", "youtu.be", "facebook.com", "fb.co
              "pinterest.com")  # and every Google host (checks.google_host)
 BIG_SITE_NOTE = "not checked: big site (open by hand if it matters)"
 ROBOTS_NOTE = "not checked: robots.txt"
+SKIPPED_NOTE = "not checked: skipped after a bot check"  # a site the user skipped: off-limits for the session
 ROBOTS_FOLLOWED = "robots.txt: followed"
 _STATUS = {403: "403 Forbidden", 429: "429 Too Many Requests", 503: "503 Service Unavailable"}
 
