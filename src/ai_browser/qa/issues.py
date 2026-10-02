@@ -28,8 +28,8 @@ def link_verdict(result: LinkResult) -> str:
             return "ok"
         if status in (404, 410):
             return "broken"
-        if status in _REFUSED or (status == 503 and result.challenge):
-            return "unchecked"
+        if status in _REFUSED or (status == 503 and (result.challenge or result.retry_after is not None)):
+            return "unchecked"  # refused, or "come back later": that says nothing about the link
         if 500 <= status < 600:
             return "server error"
         return "unchecked"

@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 REDIRECTS = {"/qa/old": "/qa/older", "/qa/older": "/qa/about.html"}
 _FLAKY = {"requests": 0}
+_LATER = {"requests": 0}
 CHECK_FRAMES = {"/checks/recaptcha/api2/bframe", "/checks/recaptcha/api2/anchor"}
 JUST_A_MOMENT = (
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Just a moment...</title></head><body>'
@@ -102,6 +103,18 @@ class NoStore(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             if self.command == "GET":
                 self.wfile.write(body)
+            return True
+        if path == "/qa2/busy":  # a site that asks for a two-minute pause
+            self._send(429, b"<!doctype html><title>Too many requests</title><p>Slow down, please.</p>",
+                       headers=[("Retry-After", "120")])
+            return True
+        if path == "/qa2/later":  # unavailable for a second on its first request, fine after that
+            _LATER["requests"] += 1
+            if _LATER["requests"] == 1:
+                self._send(503, b"<!doctype html><title>Back soon</title><p>Back in a second.</p>",
+                           headers=[("Retry-After", "1")])
+            else:
+                self._send(200, b"<!doctype html><title>Later</title><p>Back again: this page loads fine now.</p>")
             return True
         if path in ("/checks/cf", "/checks/cf-auto"):  # a site's own "Just a moment..." (cf-auto moves on by itself)
             script = MOVES_ON if path == "/checks/cf-auto" else ""

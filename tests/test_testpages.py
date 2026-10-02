@@ -42,3 +42,14 @@ def test_host_server_has_the_bot_check_routes():
         assert _get(base + "checks/go?to=" + quote("http://127.0.0.1:80@evil.example/", safe="")).status == 400
     finally:
         stop()
+
+
+def test_host_server_has_the_polite_qa_routes():
+    base, _, stop = testpages.serve_host()
+    try:
+        busy = _get(base + "qa2/busy")
+        assert busy.status == 429 and busy.getheader("Retry-After") == "120"
+        first, second = _get(base + "qa2/later"), _get(base + "qa2/later")
+        assert (first.status, first.getheader("Retry-After"), second.status) == (503, "1", 200)
+    finally:
+        stop()

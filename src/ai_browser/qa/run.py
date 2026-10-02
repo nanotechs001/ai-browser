@@ -18,6 +18,7 @@ from .checker import LinkChecker
 from .issues import link_issue, link_verdict, merge
 from .model import Issue, LinkResult, PageResult, QARun
 from .page import PageVisitor, page_issues
+from .polite import HOST_DELAY, HostGate
 from .report import folder_for, save_shots, summary, write_report
 from .urls import action_link, is_file, normalize, origin
 
@@ -117,14 +118,14 @@ class Frontier:
 
 async def run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int = 30, progress: Progress | None = None,
                  on_tabs: Callable[[], None] | None = None, crawl_budget: float = CRAWL_BUDGET,
-                 link_budget: float = LINK_BUDGET) -> str:
+                 link_budget: float = LINK_BUDGET, delay: float = HOST_DELAY) -> str:
     """Check a whole site in the session's browser, write the report and return its summary."""
     with browser.acting():  # pages QA opens may open popups: those are QA's to follow and close
-        return await _run_qa(browser, work, url, max_pages, progress, on_tabs, crawl_budget, link_budget)
+        return await _run_qa(browser, work, url, max_pages, progress, on_tabs, crawl_budget, link_budget, delay)
 
 
 async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, progress: Progress | None,
-                  on_tabs: Callable[[], None] | None, crawl_budget: float, link_budget: float) -> str:
+                  on_tabs: Callable[[], None] | None, crawl_budget: float, link_budget: float, delay: float) -> str:
     problem = url_problem(url, browser.mode)
     if problem:
         raise BrowserError(f"{url}: {problem}")
@@ -166,7 +167,7 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
         for href, text in first.links:
             frontier.add(href, first.final_url, text)
         await report(1)
-        checker = LinkChecker(browser.cdp, home)
+        checker = LinkChecker(browser.cdp, home, HostGate(delay=delay))  # one gate per run
         checks = _Checks(checker)
         workers = [PageVisitor(browser, await browser.open_worker()) for _ in range(WORKERS)]
         visitors += workers
@@ -187,7 +188,7 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
             if issue is not None:
                 issues.append(issue)
             elif link_verdict(link.result) == "unchecked":
-                unchecked.append((link.url, str(link.result.status or link.result.error or "no answer")))
+                unchecked.append((link.url, _unchecked(link.result)))
         run = QARun(start, site, "your own browser" if browser.mode == "chrome" else "sandbox", started,
                     round(time.monotonic() - clock, 1), pages, merge(issues), unchecked, list(frontier.action),
                     frontier.pending(), stopped)
@@ -206,6 +207,16 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
                     await browser.close_tab(tab)
             browser._opened = [tab for tab in browser._opened if tab.key in before]
             tabs_changed()
+
+
+def _unchecked(result: LinkResult) -> str:
+    """Why a link couldn't be judged: "not checked: …" when QA left it alone, else what the site answered."""
+    error = result.error or ""
+    if error.startswith("not checked: "):
+        return error
+    if error.startswith("stopped: "):
+        return "not checked: " + error.removeprefix("stopped: ")
+    return str(result.status or error or "no answer")
 
 
 class _Checks:
@@ -308,8 +319,7 @@ async def _process(url: str, visitor: PageVisitor, frontier: Frontier,
     """Check the URL first; open it only when it is an HTML page (never a file or a download)."""
     link = frontier.links.get(url)
     try:
-        result = link.result if link is not None and link.result is not None else \
-            await checker.check(url, True, priority=True)
+        result = link.result if link is not None and link.result is not None else await checker.check(url, True)
         if link is not None:
             link.result = result
         if link_verdict(result) != "ok" or not result.page:

@@ -30,6 +30,7 @@ class LinkResult:
     content_type: str = ""
     attachment: bool = False
     challenge: bool = False  # a bot check answered instead of the page
+    retry_after: float | None = None  # seconds the site asked for (its Retry-After header)
 
     @property
     def page(self) -> bool:

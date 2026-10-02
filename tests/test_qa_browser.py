@@ -14,11 +14,12 @@ CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is no
 async def test_link_checker_reports_status_files_and_errors(chrome_browser):
     from ai_browser.qa.checker import LinkChecker
     from ai_browser.qa.issues import link_verdict
+    from ai_browser.qa.polite import HostGate
 
     browser, base, _ = chrome_browser
     await browser.open(base + "qa/index.html")
     other = base.replace("localhost", "127.0.0.1")
-    checker = LinkChecker(browser.cdp, browser.current)
+    checker = LinkChecker(browser.cdp, browser.current, HostGate(delay=0.05))
     results = await asyncio.gather(*[checker.check(url, credentials) for url, credentials in [
         (base + "qa/about.html", True), (base + "qa/missing.html", True), (other + "qa/forbidden", False),
         (base + "qa/old", True), (base + "qa/files/brochure.zip", True), (base + "qa/attachment", True),
@@ -138,7 +139,7 @@ async def test_qa_run_finds_exactly_the_planted_problems(chrome_browser, monkeyp
         progress.append(done)
 
     started = time.monotonic()
-    text = await run_module.run_qa(browser, browser.work, base + "qa/index.html", progress=note)
+    text = await run_module.run_qa(browser, browser.work, base + "qa/index.html", progress=note, delay=0.05)
     took = time.monotonic() - started
     run = captured["run"]
     matches(run.issues, EXPECTED)
@@ -161,7 +162,7 @@ async def test_qa_run_respects_max_pages(chrome_browser):
     from ai_browser.qa import run_qa
 
     browser, base, _ = chrome_browser
-    text = await run_qa(browser, browser.work, base + "qa/index.html", max_pages=2)
+    text = await run_qa(browser, browser.work, base + "qa/index.html", max_pages=2, delay=0.05)
     assert "2 pages" in text.splitlines()[0] and "stopped at max_pages" in text.splitlines()[0]
 
 
@@ -178,10 +179,12 @@ async def test_qa_refuses_local_files_in_the_users_own_browser(chrome_browser):
 @CHROME
 async def test_a_link_that_is_slow_once_is_tried_again(chrome_browser):
     from ai_browser.qa.checker import LinkChecker
+    from ai_browser.qa.polite import HostGate
 
     browser, base, _ = chrome_browser
     await browser.open(base + "qa/index.html")
-    result = await LinkChecker(browser.cdp, browser.current, timeout=1.0).check(base + "qa/flaky", True)
+    checker = LinkChecker(browser.cdp, browser.current, HostGate(delay=0.05), timeout=1.0)
+    result = await checker.check(base + "qa/flaky", True)
     assert result.status == 200 and result.error is None
 
 
@@ -198,7 +201,7 @@ async def test_links_are_checked_while_pages_are_visited(chrome_browser, monkeyp
         return real_write(work, run)
 
     monkeypatch.setattr(run_module, "write_report", keep)
-    await run_module.run_qa(browser, browser.work, base + "qa/index.html", link_budget=0)
+    await run_module.run_qa(browser, browser.work, base + "qa/index.html", link_budget=0, delay=0.05)
     run = captured["run"]  # no time after the crawl: the links must have been checked during it
     assert any(i.kind == "broken link (external)" for i in run.issues)
     assert [why for _, why in run.unchecked] == ["403"]
@@ -214,7 +217,7 @@ async def test_a_cancelled_run_closes_its_tabs(chrome_browser):
     browser, base, _ = chrome_browser
     working, before = browser.current, set(browser.owned)
     with anyio.move_on_after(1.0):  # how the MCP server cancels a tool call the user interrupted
-        await run_qa(browser, browser.work, base + "qa/index.html")
+        await run_qa(browser, browser.work, base + "qa/index.html", delay=0.05)
     await asyncio.sleep(0.5)
     assert browser.current is working and set(browser.owned) == before and browser._opened == []
 
@@ -254,3 +257,53 @@ async def test_a_page_that_moves_on_by_script_keeps_its_findings(chrome_browser)
     assert not page.error
     assert "page didn't load" not in {i.kind for i in page_issues(page, base.rstrip("/"))}
 
+
+def gated_checker(browser):
+    from ai_browser.qa.checker import LinkChecker
+    from ai_browser.qa.polite import HostGate
+
+    return LinkChecker(browser.cdp, browser.current, HostGate(delay=0.05))
+
+
+@CHROME
+async def test_a_host_that_refuses_is_asked_nothing_more(chrome_browser):
+    from ai_browser.qa.issues import link_verdict
+
+    browser, base, _ = chrome_browser
+    await browser.open(base + "qa/index.html")
+    checker = gated_checker(browser)
+    asked, real = [], checker._fetch
+
+    async def fetch(url, credentials):
+        asked.append(url)
+        return await real(url, credentials)
+
+    checker._fetch = fetch
+    busy = await checker.check(base + "qa2/busy", True)
+    assert busy.status == 429 and busy.retry_after == 120 and link_verdict(busy) == "unchecked"
+    assert checker.gate.stopped("localhost") == ("answered 429 Too Many Requests on /qa2/busy (it asked for a "
+                                                 "2-minute pause)")
+    after = await checker.check(base + "qa/about.html", True)
+    assert after.error == "stopped: localhost refused (429)" and link_verdict(after) == "unchecked"
+    assert asked == [base + "qa2/busy"]  # nothing more went to that host
+    other = base.replace("localhost", "127.0.0.1")
+    assert (await checker.check(other + "qa/about.html", True)).status == 200  # other hosts go on
+
+
+@CHROME
+async def test_a_short_503_pause_is_waited_out_once(chrome_browser):
+    browser, base, _ = chrome_browser
+    await browser.open(base + "qa/index.html")
+    checker = gated_checker(browser)
+    started = time.monotonic()
+    later = await checker.check(base + "qa2/later", True)
+    assert later.status == 200 and time.monotonic() - started >= 1
+    assert checker.gate.stopped("localhost") is None
+
+
+@CHROME
+async def test_fetch_text_reads_a_capped_body_through_the_gate(chrome_browser):
+    browser, base, _ = chrome_browser
+    await browser.open(base + "qa/index.html")
+    result, text = await gated_checker(browser).fetch_text(base + "qa/about.html", 60)
+    assert result.status == 200 and text.lower().startswith("<!doctype html>") and len(text.encode()) <= 60
