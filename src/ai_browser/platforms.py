@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -117,3 +118,30 @@ def reveal(path: str) -> bool:
     except OSError:
         return False
     return True
+
+
+RETRY_WAITS = (0.05, 0.1, 0.2, 0.4)  # seconds between tries: Defender, Brave or an editor holds a file that long
+
+
+def _retrying(action):
+    """Run `action`; on Windows a PermissionError (a file another process holds open) is tried again, 5 times in
+    all, then raised as before."""
+    for wait in (*RETRY_WAITS, None):
+        try:
+            return action()
+        except PermissionError:
+            if not WINDOWS or wait is None:
+                raise
+            time.sleep(wait)
+
+
+def replace(src, dst) -> None:
+    _retrying(lambda: os.replace(src, dst))
+
+
+def unlink(path, missing_ok: bool = False) -> None:
+    _retrying(lambda: Path(path).unlink(missing_ok=missing_ok))
+
+
+def rmtree(path) -> None:
+    _retrying(lambda: shutil.rmtree(path))

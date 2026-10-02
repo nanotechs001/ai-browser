@@ -85,3 +85,69 @@ def test_reveal_says_whether_a_folder_window_could_open(monkeypatch, tmp_path):
 
 def test_windows_is_read_from_os_name():
     assert platforms.WINDOWS == (os.name == "nt") and platforms.O_BINARY == getattr(os, "O_BINARY", 0)
+
+
+def test_replace_retries_a_held_file_on_windows_only(tmp_path, monkeypatch):
+    real, failures, waits = platforms.os.replace, [], []
+
+    def held_twice(src, dst):
+        if len(failures) < 2:
+            failures.append(src)
+            raise PermissionError(13, "in use by another process")
+        real(src, dst)
+
+    (tmp_path / "a").write_bytes(b"new")
+    monkeypatch.setattr(platforms.os, "replace", held_twice)
+    monkeypatch.setattr(platforms.time, "sleep", waits.append)
+    monkeypatch.setattr(platforms, "WINDOWS", True)  # only the retry loop changes: no Win32 call is made
+    platforms.replace(tmp_path / "a", tmp_path / "b")
+    assert (tmp_path / "b").read_bytes() == b"new" and waits == [0.05, 0.1]
+    failures.clear()
+    monkeypatch.setattr(platforms, "WINDOWS", False)
+    (tmp_path / "a").write_bytes(b"again")
+    with pytest.raises(PermissionError):
+        platforms.replace(tmp_path / "a", tmp_path / "b")
+    assert waits == [0.05, 0.1]  # elsewhere it fails at once, as before
+
+
+def test_replace_gives_up_after_five_tries(tmp_path, monkeypatch):
+    tries, waits = [], []
+
+    def always_held(src, dst):
+        tries.append(src)
+        raise PermissionError(13, "in use by another process")
+
+    monkeypatch.setattr(platforms.os, "replace", always_held)
+    monkeypatch.setattr(platforms.time, "sleep", waits.append)
+    monkeypatch.setattr(platforms, "WINDOWS", True)
+    with pytest.raises(PermissionError):
+        platforms.replace(tmp_path / "a", tmp_path / "b")
+    assert len(tries) == 5 and waits == [0.05, 0.1, 0.2, 0.4]
+
+
+def test_unlink_and_rmtree_wait_out_a_short_hold(tmp_path, monkeypatch):
+    real_unlink, real_rmtree, holds = Path.unlink, platforms.shutil.rmtree, []
+
+    def busy_unlink(self, missing_ok=False):
+        if "unlink" not in holds:
+            holds.append("unlink")
+            raise PermissionError(13, "being scanned")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    def busy_rmtree(path, *args, **kwargs):
+        if "rmtree" not in holds:
+            holds.append("rmtree")
+            raise PermissionError(13, "in use")
+        return real_rmtree(path, *args, **kwargs)
+
+    (tmp_path / "file").write_bytes(b"x")
+    (tmp_path / "folder" / "inside").mkdir(parents=True)
+    monkeypatch.setattr(Path, "unlink", busy_unlink)
+    monkeypatch.setattr(platforms.shutil, "rmtree", busy_rmtree)
+    monkeypatch.setattr(platforms.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(platforms, "WINDOWS", True)
+    platforms.unlink(tmp_path / "file")
+    platforms.rmtree(tmp_path / "folder")
+    platforms.unlink(tmp_path / "file", missing_ok=True)  # already gone: fine
+    assert holds == ["unlink", "rmtree"]
+    assert not (tmp_path / "file").exists() and not (tmp_path / "folder").exists()
