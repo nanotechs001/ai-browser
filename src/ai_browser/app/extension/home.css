@@ -115,3 +115,13 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .skill-picker .chosen, .skill-picker .matches { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
 .skill-picker .chosen-skill { font-size: 12px; border: none; }
 .skill-picker .add-skill { font-size: 12px; padding: 1px 6px; }
+.browser-card { max-width: 1180px; margin: 12px auto 0; }
+.browser-card .line { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.browser-card ol { margin: 8px 0 0 18px; padding: 0; }
+.browser-card[data-state="connected"] #browser-title { color: var(--ok); }
+.tab { position: relative; flex-wrap: wrap; }
+.tab .actions { display: flex; gap: 4px; }
+.tab .actions button { font-size: 12px; padding: 1px 8px; }
+.tab .menu { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; padding: 6px 0 2px; }
+.tab .menu button { text-align: left; }
+.tab .menu .note { margin: 2px 0 0; font-size: 12px; }

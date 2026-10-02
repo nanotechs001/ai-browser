@@ -15,6 +15,14 @@
   <button id="mission" class="ghost" title="Your agents at work in a 3D room, and the Brain that talks back">Mission
     Control</button>
 </header>
+<section id="browser-card" class="card browser-card" aria-label="Where agents browse" hidden>
+  <div class="line"><strong id="browser-title"></strong>
+    <button id="browser-action" class="primary" type="button" hidden></button></div>
+  <ol id="browser-steps" hidden></ol>
+  <p id="browser-note" class="muted" hidden></p>
+  <p id="browser-groups" class="muted" hidden></p>
+  <p id="browser-warning" class="muted" hidden></p>
+</section>
 <main>
   <section class="card new-task" aria-label="New task">
     <textarea id="task" rows="2" placeholder="What should an agent do? For example: QA my-site.com, 20 pages"></textarea>
@@ -29,6 +37,8 @@
       <span class="muted grow">Or type <kbd>ai</kbd> and a space in the address bar</span>
       <button id="start" class="primary">Start</button>
     </div>
+    <p id="handing" class="muted" hidden><span id="handing-text"></span>
+      <button id="handing-clear" class="ghost" type="button" aria-label="Don't start in that tab">✕</button></p>
   </section>
   <div class="columns">
     <section aria-label="Agents">

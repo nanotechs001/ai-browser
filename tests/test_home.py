@@ -234,3 +234,93 @@ async def test_ai_browser_groups_nothing_when_agents_browse_in_brave(home):
     await post_tab(stack, agent.id, "tab_opened", page)
     await asyncio.sleep(2)
     assert await js("chrome.tabGroups.query({}).then(groups => groups.length)") == 0
+
+
+CHIP = "(target => document.querySelector(`#tabs .tab[data-target='${target}'] .chip`)?.textContent)"
+
+
+def in_row(target, selector):
+    return f"document.querySelector(\"#tabs .tab[data-target='{target}'] {selector}\")"
+
+
+@CHROME
+async def test_the_tab_list_marks_owners_and_hands_tabs_over(home):
+    from fake_brave import FakeBrave
+
+    js, _, stack = home
+    server = stack["server"]
+    agent = await server.agents.create("Fix the footer")
+    brave = FakeBrave([{"target": "T1", "url": "https://shop.example/cart", "title": "Agent page"},
+                       {"target": "U1", "url": "https://mail.example/", "title": HOSTILE},
+                       {"target": "U2", "url": "https://docs.example/", "title": "Docs"},
+                       {"target": "S1", "url": "https://s.example/", "title": "Session page"},
+                       {"target": "B1", "url": "https://mail.example/#t1", "title": "Thread"}])
+    mine = {"id": agent.id, "name": agent.name, "color": agent.color}
+    brave.owners.update({"T1": {"kind": "agent", **mine}, "U2": {"kind": "handed", **mine},
+                         "S1": {"kind": "session", "id": "cc-x", "name": "Claude Code", "color": "orange"},
+                         "B1": {"kind": "brain", "name": "Brain", "color": "purple"}})
+    agent.adopted.append("U2")  # handed to it, as Hand over leaves it: only a handed tab can be taken back
+    server.attach_brave(brave)
+    assert await until(js, f"{CHIP}('T1') === 'Fix the footer'")
+    assert await js(f"['S1', 'B1', 'U2', 'U1'].map({CHIP})") == ["Claude Code", "Brain", "handed to Fix the footer",
+                                                                 "you"]
+    assert "<img" in await js(f"{in_row('U1', '.title')}.textContent")  # a hostile title stays text
+    assert await js("document.querySelectorAll('#tabs img').length") == 0 and await js("document.title") != "pwned"
+    assert await js(f"[{in_row('U1', '.hand')}.hidden, {in_row('T1', '.hand')}.hidden, {in_row('B1', '.hand')}.hidden,"
+                    f" {in_row('U2', '.take')}.hidden]") == [False, True, False, False]
+    await js(f"{in_row('U1', '.hand')}.click(); true")
+    assert "The agent will read this tab and act in it." in await js(f"{in_row('U1', '.menu')}.textContent")
+    await js(f"{in_row('U1', f'.give[data-id={agent.id}]')}.click(); true")
+    for _ in range(50):
+        if "U1" in agent.adopted:
+            break
+        await asyncio.sleep(0.1)
+    assert "U1" in agent.adopted
+    await js(f"{in_row('U2', '.take')}.click(); true")
+    assert await until(js, f"{CHIP}('U2') === 'you'")
+    await js(f"{in_row('B1', '.hand')}.click(); true")
+    await js(f"{in_row('B1', '.new')}.click(); true")  # New agent…: the next task starts in that tab
+    assert await until(js, "document.getElementById('handing-text').textContent === 'Starts in your tab: Thread'")
+    await js("document.getElementById('task').value = 'reply to it'; document.getElementById('start').click(); true")
+    for _ in range(50):
+        if len(server.agents.agents) == 2:
+            break
+        await asyncio.sleep(0.1)
+    assert server.agents.agents["a2"].adopted == ["B1"]
+
+
+@CHROME
+async def test_the_browser_card_follows_brave(home):
+    from fake_brave import FakeBrave
+
+    js, _, stack = home
+    brave = FakeBrave([], state="off")
+    stack["server"].attach_brave(brave)
+    title = "document.getElementById('browser-title').textContent"
+    assert await until(js, f"{title} === 'Your Brave · switch off'")
+    assert "brave://inspect/#remote-debugging" in await js("document.getElementById('browser-steps').textContent")
+    assert await js("document.getElementById('browser-action').textContent") == "Show me how"
+    assert "any program on this computer can reach your Brave" in await js(
+        "document.getElementById('browser-warning').textContent")
+    for state, words in (("ready", "Your Brave · ready"), ("asking", "Your Brave · waiting for Allow"),
+                         ("refused", "Your Brave · not allowed"), ("lost", "Your Brave · closed")):
+        brave.set_state(state)
+        assert await until(js, f"{title} === {json.dumps(words)}")
+    brave.set_state("ready")
+    assert await until(js, "document.getElementById('browser-action').textContent === 'Connect'")
+    await js("document.getElementById('browser-action').click(); true")
+    for _ in range(50):
+        if brave.connects:
+            break
+        await asyncio.sleep(0.1)
+    assert brave.connects == 1
+    brave.set_state("connected")
+    assert await until(js, f"{title} === 'Your Brave · connected'")  # no watcher here: groups are off
+    assert (await js("document.getElementById('browser-groups').textContent")).startswith(
+        "Tab groups off: Load the watcher in Brave to group the AI's tabs")
+
+
+@CHROME
+async def test_ai_browser_mode_says_so(home):
+    js, _, _ = home
+    assert await until(js, "document.getElementById('browser-title').textContent === 'Agents browse in AI Browser'")

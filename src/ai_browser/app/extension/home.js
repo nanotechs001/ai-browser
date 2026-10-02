@@ -5,6 +5,7 @@ import { checkCard } from "./check.js";
 import { connect } from "./link.js";
 import { createChat, el } from "./chat.js";
 import { permissionCard } from "./permission.js";
+import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
 import { mountWorkflows } from "./workflows.js";
@@ -24,6 +25,14 @@ let pending = null; // the new_task request waiting for its "created"
 let pendingTimer = null;
 let chatAgent = null;
 let storedModel = false; // the user picked a model here before: it wins over the app's default
+let browser = null; // where agents browse: {kind, name, state, groups}
+let handing = null; // one of the user's tabs the next new task starts in (Hand over → New agent…)
+const WINDOWS_TAKE_FOCUS = false; // Task 1's by-hand check: true if each new AI window comes to the front
+const STEPS = (name) => [`In ${name}, open ${name === "Brave" ? "brave" : "chrome"}://inspect/#remote-debugging.`,
+  "Tick \"Allow remote debugging for this browser instance\".",
+  `When ${name} asks "Allow remote debugging?", click Allow.`];
+const SAYS = { connected: "connected", off: "switch off", ready: "ready", asking: "waiting for Allow",
+               refused: "not allowed", lost: "closed" };
 const chat = createChat($("chat-messages"));
 const link = connect({ view: "home", onMessage: handle, onState: setStatus });
 const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id) });
@@ -45,14 +54,6 @@ function flash(text) {
   setTimeout(() => { if ($("hint").textContent === text) $("hint").textContent = ""; }, 5000);
 }
 
-function host(url) {
-  try {
-    return new URL(url).host || url;
-  } catch {
-    return url;
-  }
-}
-
 function ordered() {
   return [...agents.values()].sort((a, b) => Number(b.id.slice(1)) - Number(a.id.slice(1)));
 }
@@ -71,7 +72,6 @@ function renderCounts() {
 }
 
 const rows = new Map(); // agent id -> its row, built once and then updated in place (a click must not be lost)
-const tabRows = new Map(); // target -> its row
 
 function button(className, label, onClick) {
   const node = el("button", className, label);
@@ -187,42 +187,82 @@ function renderAgents() {
   }
 }
 
-function makeTabRow(target) {
-  const row = el("div", "tab");
-  row.parts = { title: el("span", "title"), host: el("span", "host"), chip: el("span", "chip") };
-  row.append(row.parts.title, row.parts.host, row.parts.chip);
-  row.addEventListener("click", () => link.send({ type: "watch", target }));
-  return row;
-}
+const tabList = mountTabList($("tabs"), {
+  send: (message) => link.send(message),
+  agents: () => ordered(),
+  newAgent: (tab) => setHanding(tab),
+});
 
 function renderTabs() {
-  const list = $("tabs");
-  const open = new Set(tabs.map((tab) => tab.target));
-  for (const [target, row] of tabRows) {
-    if (!open.has(target)) {
-      row.remove();
-      tabRows.delete(target);
-    }
+  tabList.render(tabs, {
+    brave: browser?.kind === "brave",
+    ownerOf: (target) => { // AI Browser mode: the app's list has no owners, so they come from the agents
+      const agent = owner(target);
+      return agent ? { kind: "agent", name: agent.name, color: agent.color } : { kind: "you" };
+    },
+  });
+}
+
+function setHanding(tab) {
+  handing = tab;
+  $("handing").hidden = !tab;
+  $("handing-text").textContent = tab ? `Starts in your tab: ${tab.title || tab.url}` : "";
+  if (tab) $("task").focus();
+}
+
+function show(node, text) {
+  node.textContent = text || "";
+  node.hidden = !text;
+}
+
+function renderBrowser() {
+  const card = $("browser-card");
+  if (!browser) return;
+  card.hidden = false;
+  card.dataset.state = browser.kind === "brave" ? browser.state : "app";
+  const action = $("browser-action");
+  if (browser.kind !== "brave") {
+    $("browser-title").textContent = "Agents browse in AI Browser";
+    for (const id of ["browser-steps", "browser-note", "browser-groups", "browser-warning"]) $(id).hidden = true;
+    action.hidden = true;
+    return;
   }
-  list.querySelector(".empty")?.remove();
-  let previous = null;
-  for (const tab of tabs) {
-    let row = tabRows.get(tab.target);
-    if (!row) {
-      row = makeTabRow(tab.target);
-      tabRows.set(tab.target, row);
-      if (previous) previous.after(row);
-      else list.prepend(row);
+  const name = browser.name || "Brave";
+  const on = browser.state === "connected" && browser.groups === "on";
+  $("browser-title").textContent = `Your ${name} · ${SAYS[browser.state] || browser.state}${on ? " · tab groups on" : ""}`;
+  const steps = $("browser-steps");
+  steps.textContent = "";
+  for (const step of STEPS(name)) steps.append(el("li", "", step));
+  steps.hidden = browser.state !== "off";
+  const label = { off: "Show me how", ready: "Connect", lost: "Connect", refused: "Try again" }[browser.state];
+  action.textContent = label || "";
+  action.hidden = !label;
+  show($("browser-note"), {
+    ready: `${name} will ask "Allow remote debugging?": click Allow`,
+    asking: `${name} is asking "Allow remote debugging?": click Allow there (or Deny).`,
+    refused: `${name} said no, or nobody answered.`,
+    lost: `${name} quit or restarted.`,
+  }[browser.state]);
+  const why = { no_watcher: `Load the watcher in ${name} to group the AI's tabs; until then they open in a window of `
+                            + `their own.${WINDOWS_TAKE_FOCUS ? " Each new AI window may come to the front." : ""}`,
+                old_watcher: "Update the watcher: reload it in brave://extensions." }[browser.groups];
+  show($("browser-groups"), why ? `Tab groups off: ${why}` : "");
+  show($("browser-warning"), `While the switch is on, any program on this computer can reach your ${name}, not only `
+                             + "AI Browser. Turn it off when agents aren't working.");
+}
+
+async function browserAction() {
+  if (!browser || browser.kind !== "brave") return;
+  if (browser.state === "off") { // the setup page's steps, with their warning
+    try {
+      const config = await (await fetch(chrome.runtime.getURL("config.json"), { cache: "no-store" })).json();
+      await chrome.tabs.create({ url: `${config.server}/setup#switch` });
+    } catch {
+      flash("Not connected: is `ai-browser app` running?");
     }
-    const agent = owner(tab.target);
-    setText(row.parts.title, tab.title || tab.url);
-    setText(row.parts.host, host(tab.url));
-    setText(row.parts.chip, agent ? agent.name : "you");
-    row.parts.chip.style.boxShadow = agent ? `inset 3px 0 0 ${COLORS[agent.color] || "transparent"}` : "";
-    row.title = tab.url;
-    previous = row;
+    return;
   }
-  if (!tabs.length) list.append(el("p", "empty", "No tabs open besides AI Home."));
+  link.send({ type: "brave_connect" });
 }
 
 function usedBy(skill) {
@@ -346,6 +386,8 @@ function handle(message) {
       agents.clear();
       for (const agent of message.agents) agents.set(agent.id, agent);
       tabs = message.tabs || [];
+      browser = message.browser || null;
+      renderBrowser();
       summary = message.skills_summary;
       maxWorking = message.max_working || 3;
       if (!storedModel && message.default_model) $("task-model").value = message.default_model;
@@ -384,6 +426,11 @@ function handle(message) {
       renderTabs();
       train.tabsChanged();
       break;
+    case "browser":
+      browser = { kind: message.kind, name: message.name, state: message.state, groups: message.groups };
+      renderBrowser();
+      renderTabs();
+      break;
     case "thumb": {
       thumbs.set(message.id, message.jpeg);
       const row = rows.get(message.id);
@@ -402,6 +449,7 @@ function handle(message) {
         $("task").value = "";
         for (const input of $("skills-pick").querySelectorAll("input:checked")) input.checked = false;
         updatePicked();
+        setHanding(null);
       }
       break;
     case "error":
@@ -421,7 +469,7 @@ function start() {
   pending = `r${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   $("start").disabled = true;
   const sent = link.send({ type: "new_task", text, skills: pickedSkills(), model: $("task-model").value,
-    request: pending });
+    request: pending, ...(handing ? { adopt: handing.target } : {}) });
   if (!sent) {
     finishRequest();
     flash("Not connected: is `ai-browser app` running?");
@@ -471,6 +519,8 @@ $("mission").addEventListener("click", () => {
   openingMission ??= openMission().catch(() => {}).finally(() => { openingMission = null; });
 });
 $("start").addEventListener("click", start);
+$("browser-action").addEventListener("click", browserAction);
+$("handing-clear").addEventListener("click", () => setHanding(null));
 $("task").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) start();
 });
