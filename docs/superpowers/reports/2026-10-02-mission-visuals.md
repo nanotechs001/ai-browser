@@ -5,26 +5,35 @@ Plan: `docs/superpowers/plans/2026-10-02-mission-visuals.md`.
 
 ## The budget on the M5 (`test_the_budget`, `AIB_PERF=1`)
 
-20 working agents, the Brain thinking, 1280 × 760, over 3 s. The machine was not quiet: another branch was being built
-in parallel (load average 5 to 7), so these are three runs under load. Each cell holds the number the test printed.
+20 working agents, the Brain thinking, 1280 × 760, over 3 s.
 
-| Measure | Budget | Run 1 | Run 2 | Run 3 |
-|---|---|---|---|---|
-| Layouts (`LayoutCount`) | fewer than 10 | 0 | 0 | 0 |
-| Style recalcs (`RecalcStyleCount`) / rAF frames | at most one a frame | 181 / 181 | 181 / 181 | 180 / 180 |
-| Style recalc time (`RecalcStyleDuration`) | at most 60 ms | 44.8 ms | 52.1 ms | 51.1 ms |
-| Main-thread task time (`TaskDuration`) | at most 250 ms | 119 ms | 138 ms | 135 ms |
-| Cloud draws | at most 92 | 90 | 91 | 90 |
-| WebGL contexts | 1 | 1 | 1 | 1 |
-| The Brain's GPU time | at most 1.5 ms a frame | 0.80 ms | 0.77 ms | 0.93 ms |
-| Points | 8000 | 8000 | 8000 | 8000 |
+**The budget is not shown to be met.** Of 12 runs, 3 met every line (pass B). The style recalc time missed its line
+in the other 9, and the Brain's GPU time missed its line in 5 of the 12. Every run was made while another branch was
+being built on this machine, and no run on an idle machine exists yet. The load is the likely cause, but that isn't
+shown: pass B met every line at a load of 5 to 7, while pass D missed at 4.5 to 6.1. Spec decision 10 says "This plan
+is done when the M5 numbers meet the budget", so on these numbers the plan is not done.
 
-The budget is met: every run meets every line, the middle run included.
+Each cell holds the numbers the test printed, run 1 / run 2 / run 3. Load is the 1-minute load average.
 
-**An earlier pass, the same hour, with the same code, failed on recalc time:** 75.1, 86.0 and 60.3 ms, with
-task time at 186, 209 and 158 ms, GPU time at 1.37, 1.55 and 0.82 ms a frame, and the other lines as above. So the
-recalc line follows the machine's load, as the plan's rehearsal warned (67-85 ms there). Re-measure on an idle
-machine after the merge.
+| Pass | Who, when | Load | Recalc time (≤ 60 ms) | Task time (≤ 250 ms) | GPU a frame (≤ 1.5 ms) | Budget |
+|---|---|---|---|---|---|---|
+| A | implementer, Task 12 | 5 to 7 | 75.1 / 86.0 / 60.3 ms | 186 / 209 / 158 ms | 1.37 / 1.55 / 0.82 ms | missed 3 of 3 |
+| B | implementer, Task 12, the same hour, the same code | 5 to 7 | 44.8 / 52.1 / 51.1 ms | 119 / 138 / 135 ms | 0.80 / 0.77 / 0.93 ms | met 3 of 3 |
+| C | the branch's reviewer | 5.5 to 8.7 | 79.1 / 90.0 / 64.2 ms | 193 / 214 / 164 ms | 1.56 / 1.50 / 0.92 ms | missed 3 of 3 |
+| D | the review's fix pass, 2026-10-03 | 4.5 to 6.1 | 78.1 / 95.2 / 78.6 ms | 190 / 221 / 188 ms | 1.63 / 1.52 / 1.54 ms | missed 3 of 3 |
+
+- **Met in every run that printed them** (A, B and D; C reported only the three columns above): no layouts
+  (`LayoutCount` 0), at most one style recalc a frame (180 or 181 for as many rAF frames), 90 or 91 cloud draws (at
+  most 92), 1 WebGL context, and 8000 points.
+- **Task time** met its line in all 12 runs.
+
+**What is still open:**
+1. Run `AIB_PERF=1 uv run pytest tests/test_mission_visuals.py::test_the_budget -q -p no:randomly -s` three times on
+   an idle machine (no parallel build) and add the numbers here.
+2. If an idle run still misses, the levers are the user's call, because each one changes the design:
+   - for the recalc time, fewer animated layers per worker, or a canvas per station (decision 10's steps; see "Where
+     the recalc time goes" below);
+   - for the GPU time, fewer points at the start than the spec's 8000.
 
 **Where the recalc time goes** (thread CPU time of the style recalcs, from a trace, with CSS overrides in one open
 page, four rounds each, medians, under the same load):
