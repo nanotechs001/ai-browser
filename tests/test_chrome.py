@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import socket
@@ -290,6 +291,120 @@ async def test_a_tab_that_fails_to_set_up_is_closed_again(chrome_browser, monkey
         await browser.tabs("new")
     await asyncio.sleep(0.2)
     assert await pages() == before
+
+
+class RecordingPlacer:
+    """Stands in for grouping.Placer: plain background tabs, and a record of what was placed and reported."""
+
+    def __init__(self, params=None):
+        self.link, self.placed_calls, self.popups = None, [], []
+        self.params = params or {"url": "about:blank", "background": True}
+
+    async def create_params(self):
+        return dict(self.params), None
+
+    async def placed(self, target, marker):
+        self.placed_calls.append((target, marker))
+
+    def popup(self, target, opener, url, adopted=False):
+        self.popups.append((target, opener, url, adopted))
+
+
+async def chrome_pages(cdp) -> set[str]:
+    return {info["targetId"] for info in (await cdp.send("Target.getTargets"))["targetInfos"] if info["type"] == "page"}
+
+
+@pytest.fixture
+async def own_browser(throwaway_chrome, tmp_path):
+    """(make(**options) -> a started Browser in chrome mode, base URL, the test's own CDP connection)."""
+    from ai_browser import testpages
+    from ai_browser.browser import Browser
+    from ai_browser.config import Config
+    from ai_browser.workfs import WorkDir
+
+    base, _, stop_pages = testpages.serve_host()
+    cdp = await CDP.connect(find_ws_url(throwaway_chrome, timeout=20))
+    made = []
+
+    async def make(**options):
+        browser = Browser(cdp, WorkDir(tmp_path / "work", f"t{len(made)}"), Config(), mode="chrome", **options)
+        await browser.start()
+        made.append(browser)
+        return browser
+
+    yield make, base, cdp
+    for browser in made:
+        with contextlib.suppress(Exception):
+            await browser.close()
+    await cdp.close()
+    stop_pages()
+
+
+@CHROME
+async def test_the_users_browser_gets_no_tab_until_the_first_open(own_browser):
+    from ai_browser.browser import BrowserError
+
+    make, base, cdp = own_browser
+    before = await chrome_pages(cdp)
+    browser = await make()
+    assert await chrome_pages(cdp) == before and await browser.ensure_tab() == ""  # no blank tab in the user's window
+    with pytest.raises(BrowserError, match="switch to a tab the user handed you"):
+        await browser.observe()
+    await browser.open(base + "form.html")
+    assert len(await chrome_pages(cdp) - before) == 1
+
+
+@CHROME
+async def test_without_the_app_each_tab_gets_its_own_window(own_browser):
+    from ai_browser.grouping import Placer
+
+    make, base, cdp = own_browser
+    user = next(iter(await chrome_pages(cdp)))  # the throwaway Chrome's own first tab stands in for the user's
+    browser = await make(placer=Placer(None))
+    await browser.open(base + "form.html")
+    window = "Browser.getWindowForTarget"
+    ours = (await cdp.send(window, {"targetId": browser.current.target}))["windowId"]
+    assert ours != (await cdp.send(window, {"targetId": user}))["windowId"]
+
+
+@CHROME
+async def test_keep_tabs_lets_go_instead_of_closing(own_browser):
+    make, base, cdp = own_browser
+    browser = await make(keep_tabs=True)  # an agent of ai-browser app: the app closes its tabs with the agent
+    await browser.open(base + "form.html")
+    target = browser.current.target
+    await browser.close()
+    assert target in await chrome_pages(cdp)
+
+
+@CHROME
+async def test_a_tab_a_page_opens_is_reported_with_its_opener(own_browser):
+    from ai_browser.steps import parse_steps
+
+    make, base, _ = own_browser
+    placer = RecordingPlacer()
+    browser = await make(placer=placer)
+    page = await browser.open(base + "popup.html")
+    opener = browser.current.target
+    assert placer.placed_calls == [(opener, None)]  # the first tab was placed before its first load
+    link = next(line.split()[0] for line in page.splitlines() if '"Preview in new tab"' in line)
+    await browser.act(parse_steps([f"click {link}"]))
+    for _ in range(30):
+        if placer.popups:
+            break
+        await asyncio.sleep(0.1)
+    [(target, by, url, adopted)] = placer.popups
+    assert by == opener and url == base + "privacy.html" and not adopted and target == browser.current.target
+
+
+@CHROME
+async def test_a_reconnect_with_no_tab_left_still_says_so(chrome_engine):
+    engine, base, _ = chrome_engine
+    await engine.sandbox_start(chrome=True)
+    await engine.open(base + "form.html")
+    await engine.cdp.close()  # the connection drops while Chrome keeps running: the old tab is closed on reconnect
+    text = (await engine.observe()).text
+    assert text.startswith("(reconnected to your Chrome") and "open a page (open url)" in text
 
 
 # ---- the engine in the user's own Chrome ---------------------------------------------------------------------

@@ -337,12 +337,18 @@ class Engine:
             refused = refuse() if refuse is not None else self.gate.refusal(tool)
             if refused is not None:
                 return notes + refused
+            note = ""
             try:
                 note = await self._ready()
                 try:
                     result = await action(self.browser)
                 finally:
                     self._register()  # tabs may have been opened or closed
+            except BrowserError as exc:  # nothing ran (no tab to work in, say): what happened first still arrives now
+                said = notes + note + self._take_notes()
+                if not said:
+                    raise
+                return f"{said}{exc}"
             except BaseException:
                 self._notes.insert(0, notes)  # not lost: the next call says it
                 raise

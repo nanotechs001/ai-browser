@@ -37,6 +37,8 @@ LOG_KEEP = 200
 LOG_SHOW = 50
 NO_TAB = ("no tab to work in yet: open a page (open url), or adopt one of the user's tabs (tabs list, then tabs "
           "switch uN)")
+NO_TAB_CHROME = ("no tab to work in yet: open a page (open url), or switch to a tab the user handed you (tabs list, "
+                 "then tabs switch hN)")
 _MISSING = "__aib_missing__"
 _UNDEFINED = object()
 CF_WAIT = 8.0  # seconds Cloudflare's own "Just a moment…" page gets to finish by itself; nothing is sent meanwhile
@@ -144,7 +146,7 @@ def url_problem(url: str, mode: str) -> str | None:
 
 class Browser:
     def __init__(self, cdp: CDP, work: WorkDir, cfg: Config, mode: str = "sandbox", hidden_extension: str = "",
-                 front: bool = True):
+                 front: bool = True, placer=None, keep_tabs: bool = False):
         self.cdp = cdp
         self.work = work
         self.cfg = cfg
@@ -155,6 +157,9 @@ class Browser:
         # In AI Browser: True when the user watches this session work (it started in their tab), so its tabs come to
         # the front; an agent started from AI Home works in background tabs and never takes the user's focus.
         self.front = front
+        self.placer = placer  # grouping.Placer in the user's own browser: where each new tab of ours goes
+        self.keep_tabs = keep_tabs  # an agent of ai-browser app: its tabs outlive this process (the app closes them)
+        self._placing: set[asyncio.Future] = set()  # reports of tabs our pages opened, waiting for their address
         self._tab_events: list[Callable[[str, Tab], None]] = []  # ("opened" | "closed", tab)
         self._others: dict[str, str] = {}  # AI Browser tabs the user opened, by listing key (u1...) -> target id
         self.owned: dict[str, Tab] = {}
@@ -337,7 +342,7 @@ class Browser:
             await self.cdp.send("Browser.setDownloadBehavior", {
                 "behavior": "allow", "downloadPath": f"{self.work.sandbox_task}/downloads", "eventsEnabled": True})
         await self.cdp.send("Target.setDiscoverTargets", {"discover": True})
-        if self.mode != "app":  # in AI Browser a blank tab would cover the user's page: one opens when needed
+        if self.mode == "sandbox":  # in the user's browser or AI Browser a blank tab would pop into their window
             await self._new_tab()
 
     def owned_targets(self) -> list[str]:
@@ -347,7 +352,7 @@ class Browser:
     async def close(self) -> None:
         for tab in list(self.owned.values()):
             try:
-                if tab.adopted or self.mode == "app":  # the user's tab, or AI Browser (the app closes agents' tabs)
+                if tab.adopted or self.mode == "app" or self.keep_tabs:  # the user's tab, or the app closes ours
                     await self.cdp.send("Target.detachFromTarget", {"sessionId": tab.session})
                 else:
                     await self.cdp.send("Target.closeTarget", {"targetId": tab.target})
@@ -359,8 +364,11 @@ class Browser:
 
     async def _call(self, method: str, params: dict | None = None, timeout: float = 30) -> dict:
         if self.current is None:
-            raise BrowserError(NO_TAB)
+            raise BrowserError(self._no_tab())
         return await self.cdp.send(method, params, session_id=self.session_id, timeout=timeout)
+
+    def _no_tab(self) -> str:
+        return NO_TAB if self.mode == "app" else NO_TAB_CHROME if self.mode == "chrome" else "no open tab"
 
     def _check_url(self, url: str) -> None:
         problem = url_problem(url, self.mode)
@@ -377,17 +385,26 @@ class Browser:
         return tab
 
     async def open_worker(self, background: bool | None = None) -> Tab:
-        """A new tab of ours (closed with the session) that does not become the working tab: Website QA uses these."""
-        params = {"url": "about:blank"}
-        if self.mode in ("chrome", "app") if background is None else background:
-            params["background"] = True  # don't steal the user's focus
+        """A new tab of ours (closed with the session) that does not become the working tab: Website QA uses these.
+        In the user's own browser the placer picks its place (the agent's tab group, or a window of its own), and the
+        tab waits for its group before anything loads in it."""
+        marker = None
+        if self.placer is not None:
+            params, marker = await self.placer.create_params()
+        else:
+            params = {"url": "about:blank"}
+            if self.mode in ("chrome", "app") if background is None else background:
+                params["background"] = True  # don't steal the user's focus
         target = (await self.cdp.send("Target.createTarget", params))["targetId"]
         try:
-            return await self._setup_tab(target)
-        except BaseException:  # never leave a blank tab in the user's Chrome
+            tab = await self._setup_tab(target)
+        except BaseException:  # never leave a blank tab in the user's browser
             with contextlib.suppress(CDPError):
                 await self.cdp.send("Target.closeTarget", {"targetId": target})
             raise
+        if self.placer is not None:
+            await self.placer.placed(target, marker)
+        return tab
 
     async def close_tab(self, tab: Tab) -> None:
         if self.owned.pop(tab.key, None) is not None:
@@ -418,8 +435,8 @@ class Browser:
 
     async def ensure_tab(self) -> str:
         """Carry on after the tab in use was closed (in another of ours, or a new one); returns a note."""
-        if self.current is not None or (self._lost is None and self.mode == "app"):
-            return ""  # (in AI Browser a session starts without a tab of its own)
+        if self.current is not None or (self._lost is None and self.mode in ("app", "chrome")):
+            return ""  # (in the user's browser and in AI Browser a session starts without a tab of its own)
         lost, self._lost = self._lost or "in use", None
         fallback = self._fallback()
         if fallback is not None:
@@ -436,16 +453,32 @@ class Browser:
         opener = next((tab for tab in self.owned.values() if tab.target == info.get("openerId")), None)
         if info.get("type") != "page" or opener is None or not self._stepping:
             return
-        adoption = asyncio.ensure_future(self._adopt(info["targetId"], users=opener.adopted))
+        adoption = asyncio.ensure_future(self._adopt(info["targetId"], users=opener.adopted, opener=opener.target))
         self._adopting.add(adoption)
         adoption.add_done_callback(self._adopting.discard)
 
-    async def _adopt(self, target: str, users: bool = False) -> None:
+    async def _adopt(self, target: str, users: bool = False, opener: str = "") -> None:
         try:
             tab = await self._setup_tab(target, adopted=users)
         except CDPError:
             return  # closed before we could attach
         self._opened.append(tab)
+        if self.placer is not None and opener:  # it joins its opener's group; the step doesn't wait for that
+            placing = asyncio.ensure_future(self._place_opened(tab, opener))
+            self._placing.add(placing)
+            placing.add_done_callback(self._placing.discard)
+
+    async def _place_opened(self, tab: Tab, opener: str) -> None:
+        """Report a tab one of our pages opened, with its opener and its address once it has one (a new tab is
+        announced without one, then shows where its link led; measured)."""
+        url = ""
+        for _ in range(10):
+            with contextlib.suppress(CDPError, KeyError):
+                url = (await self.cdp.send("Target.getTargetInfo", {"targetId": tab.target}))["targetInfo"]["url"]
+            if url and url != "about:blank":
+                break
+            await asyncio.sleep(0.1)
+        self.placer.popup(tab.target, opener, "" if url == "about:blank" else url, tab.adopted)
 
     async def _follow_opened(self) -> str | None:
         """After a step: switch to a tab the page just opened; returns a note for the step line."""
@@ -582,7 +615,7 @@ class Browser:
     async def _evaluate(self, tab: Tab | None, params: dict, timeout: float = 30) -> dict:
         """Runtime.evaluate in the reader's world of `tab`; a context gone with its page is renewed once."""
         if tab is None:
-            raise BrowserError(NO_TAB)
+            raise BrowserError(self._no_tab())
         context = await self.isolated(tab)
         try:
             return await self.cdp.send("Runtime.evaluate", {**params, "contextId": context},
@@ -943,7 +976,7 @@ class Browser:
         if waiting is not None:  # the session is held at a bot check: no step runs
             return waiting
         if self.current is None:
-            raise BrowserError("no open tab")
+            raise BrowserError(self._no_tab())
         blocked = await self._blocked()
         if blocked is not None:  # a check came up since the last read, or the page went to a skipped site: no step
             return blocked
