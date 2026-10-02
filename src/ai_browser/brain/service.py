@@ -78,6 +78,7 @@ RESULT_LIMIT = 500
 FINISHED = {"your_turn", "stopped", "failed"}
 TALK_TIMEOUT = 60  # seconds for one answer to the user's words
 NOTHING_DONE = "OK, I won't."
+EXPIRED = "This has expired: ask again"  # the card's own words when its time runs out (talk.js)
 
 
 def _clip(value, limit: int) -> str:
@@ -644,8 +645,8 @@ class BrainService:
     async def confirm(self, talk: str, proposal: str, task: str | None = None, model: str | None = None) -> dict:
         """Start (or Draft it), or a plain yes: the open proposal runs once. It can only start an agent or draft."""
         card = self.talks.take(talk, proposal)  # closed first: a second Start, or a late yes, does nothing
-        if card is None:
-            return {"say": ""}
+        if card is None:  # past its two minutes, or the app restarted: nothing runs, and the user hears why
+            return {"say": EXPIRED}
         if card.kind == "start_agent" and self.agents is not None:
             words = task.strip() if isinstance(task, str) and task.strip() else card.task
             agent = await self.agents.create(words, model=model if model in AGENT_MODELS else self.agent_model)

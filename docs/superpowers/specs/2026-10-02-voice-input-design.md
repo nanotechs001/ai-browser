@@ -501,7 +501,9 @@ beside the `BrainService`. `run.py` builds it with `ModelStore(home / "models")`
       draft waits for the watcher to open the thread and for a Claude call;
     - it answers at once: "Drafting your reply to <sender>: check it in the inbox, then Approve". The draft's progress
       and any problem ("Brave's watcher isn't connected…") show on the item, as for the inbox's own Draft reply.
-  - The proposal closes first, so a second Start, or a "yes" after Start, does nothing.
+  - The proposal closes first, so a second Start, or a "yes" after Start, does nothing. A Start on a proposal that
+    is no longer open (past its two minutes, or the app restarted) runs nothing and answers "This has expired: ask
+    again".
 - **`dismiss(talk, proposal)`.**
 - **One question at a time per talk:** a new `respond` cancels the one in flight. `ask_claude` then kills its `claude`
   process (`oneshot.py:57-59`), and the old answer is never sent.
@@ -615,7 +617,8 @@ The README's new "Talking to the Brain" section ends with it:
   in answer to `hearing`, and to every page when it changes (download progress, ready, failed).
 - **`heard {turn, text}` or `heard {turn, error}`:** to the asking socket only.
 - **`brain_answer {talk, request, say, proposal?, open?, hidden?, error?}`:** to the asking socket only. `hidden` is
-  true when the words sounded like a password and were not sent.
+  true when the words sounded like a password and were not sent. If the Brain's answer breaks, the page still gets
+  `say: ""` and `error: "The Brain couldn't answer"` (never the error's own text), so it never waits forever.
   - `proposal` is `{id, kind: "start_agent" | "draft_reply", task?, item?, sender?, subject?, guidance?, model,
     expires_in}`.
 - **Existing messages, unchanged:**

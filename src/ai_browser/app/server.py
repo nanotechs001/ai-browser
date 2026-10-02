@@ -494,8 +494,12 @@ class AppServer:
 
     @staticmethod
     async def _answer(queue: asyncio.Queue, talk: str, request, answering) -> None:
-        """The Brain's answer, to the asking page only; an agent it started is `created` there first."""
-        answer = await answering
+        """The Brain's answer, to the asking page only; an agent it started is `created` there first. If it breaks, the
+        page is still answered (in plain words, never the error's own), so it never waits forever."""
+        try:
+            answer = await answering
+        except Exception:  # a newer question's cancel is not an Exception: that answer is never given
+            answer = {"say": "", "error": "The Brain couldn't answer"}
         if answer.get("agent"):
             queue.put_nowait({"type": "created", "id": answer["agent"], "request": request})
         queue.put_nowait({"type": "brain_answer", "talk": talk, "request": request,

@@ -273,8 +273,10 @@ async def test_start_agent_proposes_the_users_own_words_and_waits_for_confirm(fa
     assert proposal["kind"] == "start_agent" and proposal["task"] == words and proposal["expires_in"] == 120
     assert proposal["model"] == "sonnet" and agents.created == []  # nothing runs before Start
     assert await brain.confirm("k1", proposal["id"]) == {"say": f"Started: {words}", "agent": "a1"}
-    assert await brain.confirm("k1", proposal["id"]) == {"say": ""}  # a second Start does nothing
-    assert agents.created == [{"text": words, "model": "sonnet"}]
+    assert await brain.confirm("k1", proposal["id"]) == {"say": "This has expired: ask again"}  # a second Start
+    assert agents.created == [{"text": words, "model": "sonnet"}]  # does nothing, and says so
+    assert await brain.confirm("k1", "p99") == {"say": "This has expired: ask again"}  # one the app no longer has
+    assert len(agents.created) == 1
     again = (await brain.respond("k1", words))["proposal"]
     await brain.confirm("k1", again["id"], task="fix the footer and the header", model="opus")  # the card's edits
     assert agents.created[-1] == {"text": "fix the footer and the header", "model": "opus"}

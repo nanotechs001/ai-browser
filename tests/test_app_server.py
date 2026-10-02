@@ -613,6 +613,26 @@ async def test_the_brain_answers_the_asker_and_confirm_starts_the_agent(fake_cla
         await server.stop()
 
 
+async def test_a_brain_that_breaks_still_answers_the_page(fake_claude, tmp_path):
+    server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS)
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("the words hunter2 and a traceback")
+
+    server.brain.respond = server.brain.confirm = broken
+    try:
+        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+            await hello(ws)
+            await ws.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "t1", "text": "check the shop"}))
+            await ws.send(json.dumps({"type": "brain_confirm", "talk": "k1", "request": "t2", "proposal": "p1"}))
+            seen = await until(ws, lambda m: m["type"] == "brain_answer" and m["request"] == "t2")
+            answers = [m for m in seen if m["type"] == "brain_answer"]
+            assert answers == [{"type": "brain_answer", "talk": "k1", "request": request, "say": "",
+                                "error": "The Brain couldn't answer"} for request in ("t1", "t2")]  # never the error
+    finally:
+        await server.stop()
+
+
 async def test_a_closed_page_drops_its_turn(fake_claude, tmp_path):
     from test_hearing import chunks, tone
 
