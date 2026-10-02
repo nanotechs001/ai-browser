@@ -19,7 +19,10 @@ from typing import ClassVar
 from ..checks import KINDS
 from .bridge import ClaudeBridge
 
-COLORS = ("blue", "green", "purple", "orange", "cyan", "pink", "yellow", "red", "grey")  # Chrome's tab group colours
+COLORS = ("blue", "green", "cyan", "pink", "yellow", "red", "grey")  # Brave's group colours, minus the Brain's
+# purple and Claude Code's orange, so a group's colour never suggests the wrong owner
+HANDED_NOTE = ("The user handed you a tab: call tabs list and switch to it (it is listed as handed to you by the "
+               "user)")
 KEEP_EVENTS = 5000  # an agent's conversation kept for the chat views (the newest)
 NAME_LIMIT = 40
 CLOSE_WAIT = 10  # seconds a closing agent's turn gets to end after Stop
@@ -89,6 +92,8 @@ class AgentManager:
         self.env = dict(env or {})  # for every agent's ai-browser server: AIB_APP_PROFILE, AIB_APP_EVENTS...
         self.close_tabs = close_tabs  # set by the app once AI Browser is open
         self.on_action = on_action  # after each action: the app takes a thumbnail
+        self.ungroup: Callable[[list[str]], None] | None = None  # set by the app: take tabs out of their group
+        self.on_turn: Callable[[Agent], None] | None = None  # set by the app: an agent starts a turn
         self.tools = None  # the user's MCP servers (ToolsConfig), set by the app: agents ask before using them
         self._asks: dict[str, asyncio.Future] = {}  # agent id -> its tool request waiting for the user
         self.agents: dict[str, Agent] = {}
@@ -198,6 +203,9 @@ class AgentManager:
         if not keep_tabs and agent.tabs and self.close_tabs is not None:
             with contextlib.suppress(Exception):
                 await self.close_tabs(list(agent.tabs))
+        if not keep_tabs and agent.adopted and self.ungroup is not None:  # handed tabs: let go, never closed
+            with contextlib.suppress(Exception):
+                self.ungroup(list(agent.adopted))
         self._broadcast({"type": "agent_closed", "id": agent_id})
 
     async def close_all(self) -> None:
@@ -263,6 +271,35 @@ class AgentManager:
         else:
             return
         self._changed(agent)
+
+    async def hand_tab(self, agent_id: str, target: str, tab: dict) -> bool:
+        """The user handed one of their tabs to this agent (AI Home's Hand over): it is the agent's to use, and stays
+        the user's. The note reaches the agent now, or when its turn ends; the tab's title and address go as page
+        data."""
+        agent = self.agents.get(agent_id)
+        if agent is None or not target:
+            return False
+        if target not in agent.adopted:
+            agent.adopted.append(target)
+        self._changed(agent)
+        await self.send(agent_id, HANDED_NOTE, {"url": str(tab.get("url", "")), "title": str(tab.get("title", "")),
+                                                "label": "handed"})
+        return True
+
+    def take_back(self, target: str) -> str | None:
+        """The user took a handed tab back (AI Home's Take back): the id of the agent that had it, or None. The
+        agent's engine lets go of it at its next action."""
+        for agent in self.agents.values():
+            if target in agent.adopted:
+                agent.adopted.remove(target)
+                if agent.working_tab == target:
+                    agent.working_tab = None
+                if self.ungroup is not None:
+                    with contextlib.suppress(Exception):
+                        self.ungroup([target])
+                self._changed(agent)
+                return agent.id
+        return None
 
     # ---- bot checks: the agent's engine stopped at one, and the user deals with it -------------------------------
 
@@ -338,6 +375,9 @@ class AgentManager:
                 continue
             agent.state = "working"
             self._changed(agent)
+            if self.on_turn is not None:  # the app may connect to the user's Brave now (right after the user's task)
+                with contextlib.suppress(Exception):
+                    self.on_turn(agent)
             self._turns[agent.id] = asyncio.create_task(self._run(agent))
         for agent_id in self._line:
             agent = self.agents.get(agent_id)
@@ -350,7 +390,8 @@ class AgentManager:
             while agent.pending and agent.id in self.agents:
                 text, tab, skills = agent.pending.pop(0)
                 self._record(agent, {"type": "user", "text": text})
-                async for event in agent.bridge.send(text, tab.get("url", ""), tab.get("title", ""), skills):
+                async for event in agent.bridge.send(text, tab.get("url", ""), tab.get("title", ""), skills,
+                                                     tab.get("label", "panel")):
                     self._on_event(agent, event)
         except Exception as exc:  # the row must always learn that the turn ended
             self._on_event(agent, {"type": "error", "text": f"{type(exc).__name__}: {exc}"})

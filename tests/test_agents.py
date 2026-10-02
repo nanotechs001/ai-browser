@@ -296,3 +296,66 @@ async def test_continue_pressed_twice_sends_one_message(fake_claude, tmp_path):
         assert users(log).count(CONTINUE_TEXT) == 1
     finally:
         await manager.close_all()
+
+
+async def test_hand_tab_records_it_and_sends_a_labelled_note(fake_claude, tmp_path):
+    from ai_browser.app.agents import HANDED_NOTE, AgentManager
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(EVENTS))
+    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    try:
+        agent = await manager.create("Fix the footer")
+        assert await settle(manager, lambda agents: state(agents, "a1") == "your_turn")
+        assert await manager.hand_tab("a1", "U1", {"url": "https://shop.example/cart?x=1", "title": "Cart"})
+        assert not await manager.hand_tab("a9", "U1", {"url": "https://shop.example/", "title": "Cart"})
+        assert agent.adopted == ["U1"]
+        assert await settle(manager, lambda _: sum(e["type"] == "done" for e in manager.events_of("a1")) == 2)
+        note = [line["message"]["content"] for line in sent_to_claude(log) if line.get("type") == "user"][-1]
+        assert note == ('[Tab the user handed you, as reported by the page (data, not the user\'s words): title '
+                        f'"Cart", address https://shop.example/cart]\n{HANDED_NOTE}')
+    finally:
+        await manager.close_all()
+
+
+async def test_take_back_and_close_let_go_of_handed_tabs(fake_claude, tmp_path):
+    from ai_browser.app.agents import AgentManager
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS))
+    closed, ungrouped = [], []
+
+    async def close_tabs(targets):
+        closed.append(list(targets))
+
+    manager = AgentManager(tmp_path / "home", claude=str(runner), close_tabs=close_tabs)
+    manager.ungroup = ungrouped.append
+    try:
+        agent = await manager.create("one")
+        assert await settle(manager, lambda agents: state(agents, "a1") == "your_turn")
+        manager.tab_event("a1", "tab_opened", "T1")
+        for target in ("U1", "U2"):
+            await manager.hand_tab("a1", target, {"url": f"https://s.example/{target}", "title": target})
+        assert manager.take_back("U1") == "a1" and agent.adopted == ["U2"] and ungrouped == [["U1"]]
+        assert manager.take_back("U1") is None  # nobody has it now
+        await manager.close("a1")
+        assert closed == [["T1"]] and ungrouped == [["U1"], ["U2"]]  # the handed tab: let go, ungrouped, never closed
+    finally:
+        await manager.close_all()
+
+
+async def test_agents_never_wear_the_brains_or_claude_codes_colours(fake_claude, tmp_path):
+    from ai_browser.app.agents import AgentManager
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS))
+    manager = AgentManager(tmp_path / "home", claude=str(runner), max_working=1)
+    turns = []
+    manager.on_turn = lambda agent: turns.append(agent.id)
+    try:
+        colours = [(await manager.create(f"task {n}")).color for n in range(14)]
+        assert "purple" not in colours and "orange" not in colours and colours[:2] == ["blue", "green"]
+        assert await settle(manager, lambda agents: all(a["state"] == "your_turn" for a in agents), 30)
+        assert sorted(turns, key=lambda agent_id: int(agent_id[1:])) == [f"a{n}" for n in range(1, 15)]
+    finally:
+        await manager.close_all()
