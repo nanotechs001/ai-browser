@@ -61,3 +61,36 @@ async def test_replies_stay_text(panel):
     assert "<img" in await js("document.getElementById('messages').textContent")  # the planted markup is text...
     assert await js("document.querySelectorAll('#messages img').length") == 0  # ...never elements
     assert await js("document.title") != "pwned"
+
+
+@CHROME
+async def test_in_brave_mode_the_panel_starts_agents_without_adopting(panel):
+    from fake_brave import FakeBrave
+
+    js, user_tab, stack = panel
+    stack["server"].attach_brave(FakeBrave([]))
+    assert await until(js, "document.getElementById('start-here').hidden")  # no "start here" beside AI Browser's tabs
+    await js("document.getElementById('input').value = 'find flights'; document.getElementById('send').click(); true")
+    for _ in range(50):
+        if stack["server"].agents.agents:
+            break
+        await asyncio.sleep(0.1)
+    [agent] = list(stack["server"].agents.agents.values())
+    assert agent.adopted == [] and agent.name == "find flights"
+    assert await until(js, "document.getElementById('agent-name').textContent === 'find flights'")
+
+
+@CHROME
+async def test_in_brave_mode_the_panel_never_says_the_task_works_in_this_tab(panel):
+    from fake_brave import FakeBrave
+
+    js, _, stack = panel
+    cdp = stack["cdp"]
+    [home] = [info["targetId"] for info in (await cdp.send("Target.getTargets"))["targetInfos"]
+              if info["url"].endswith("/home.html")]
+    await cdp.send("Target.activateTarget", {"targetId": home})  # beside AI Home, the panel's hint is drawn first
+    assert await until(js, "document.getElementById('messages').textContent.includes('start one in AI Home')")
+    stack["server"].attach_brave(FakeBrave([]))
+    assert await until(js, "document.getElementById('input').placeholder === 'Start a task in Brave'")
+    assert await until(js, "document.getElementById('messages').textContent.includes('agents work in your Brave')")
+    assert "this tab" not in await js("document.getElementById('messages').textContent")

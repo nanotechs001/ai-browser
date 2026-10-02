@@ -568,3 +568,14 @@ async def test_a_lost_webgl_context_hands_over_to_the_orb(mission):
     assert await js("getComputedStyle(document.querySelector('.stage .orb')).display") != "none"
     stack["brain"].broadcast({"type": "brain_activity", "busy": True, "what": "Drafting a reply to Maria"})
     assert await until(js, "document.querySelector('.stage').dataset.state === 'thinking'")
+
+
+@CHROME
+async def test_watch_says_it_brings_the_agents_tab_to_the_front(mission):
+    js, stack = mission
+    stack["script"].write_text(json.dumps(WORKING))
+    await stack["server"].agents.create("Fix the footer")
+    assert await until(js, f"{station('a1')} !== null")
+    await js(f"{station('a1')}.click(); true")
+    assert await until(js, "document.querySelector('#drawer .watch')?.title === "
+                           "\"Bring this agent's tab to the front\"")

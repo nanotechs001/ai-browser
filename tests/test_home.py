@@ -220,3 +220,17 @@ async def test_ai_home_is_one_pinned_tab_in_front_after_a_start(home):
     homes = await js(f"chrome.tabs.query({{}}).then(tabs => tabs.filter(tab => (tab.url || tab.pendingUrl || '')"
                      f".startsWith('{home_url}')).map(tab => [tab.pinned, tab.active, tab.index]))")
     assert [tab for tab in homes if tab[0]] == [[True, True, 0]]  # one pinned AI Home, first and in front
+
+
+@CHROME
+async def test_ai_browser_groups_nothing_when_agents_browse_in_brave(home):
+    from fake_brave import FakeBrave
+
+    js, _, stack = home
+    stack["server"].attach_brave(FakeBrave([]))
+    await asyncio.sleep(0.5)  # the worker hears that agents browse in Brave
+    page, _ = await open_page(stack["cdp"], "data:text/html,<title>Agent page</title>", background=True)
+    agent = await stack["server"].agents.create("group me")
+    await post_tab(stack, agent.id, "tab_opened", page)
+    await asyncio.sleep(2)
+    assert await js("chrome.tabGroups.query({}).then(groups => groups.length)") == 0

@@ -7,6 +7,7 @@ const agents = new Map(); // id -> the agent as the app describes it
 const grouped = new Set(); // targets grouped once: a tab the user takes out of its group stays out
 const groups = new Map(); // agent id -> its tab group
 const targetsOf = new Map(); // agent id -> its targets, to ungroup the user's own tabs when the agent is closed
+let braveMode = false; // agents browse in the user's Brave: their tabs are Brave's, and Brave's watcher groups them
 
 // Clicking the toolbar icon (or pressing ⌘⇧Y) opens the chat in the side panel.
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -106,15 +107,20 @@ function onMessage(message) {
     for (const workflow of message.workflows || []) workflows.set(String(workflow.name).toLowerCase(), workflow.slug);
     return;
   }
+  if (message.type === "browser") {
+    braveMode = message.kind === "brave";
+    return;
+  }
   if (message.type === "snapshot") {
+    braveMode = message.browser?.kind === "brave";
     agents.clear();
     for (const agent of message.agents) {
       agents.set(agent.id, agent);
-      groupTabs(agent);
+      if (!braveMode) groupTabs(agent);
     }
   } else if (message.type === "agent") {
     agents.set(message.agent.id, message.agent);
-    groupTabs(message.agent);
+    if (!braveMode) groupTabs(message.agent);
   } else if (message.type === "agent_closed") {
     agents.delete(message.id);
     ungroupTabs(message.id);

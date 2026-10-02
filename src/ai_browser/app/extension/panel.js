@@ -1,6 +1,7 @@
 // The chat beside the page. It shows the agent working in the tab you are looking at; on a tab without one, what
 // you type starts an agent right there (in your tab, which it never closes). On AI Home it shows the agent that was
-// active last. Everything from Claude or from pages is set as text, never parsed as HTML.
+// active last. While agents browse in the user's Brave, it always shows the agent active last, and what you type
+// starts an agent that works there. Everything from Claude or from pages is set as text, never parsed as HTML.
 import { checkCard } from "./check.js";
 import { connect, targetOfTab } from "./link.js";
 import { createChat } from "./chat.js";
@@ -18,6 +19,8 @@ let shown = null; // the agent shown
 let pending = null; // a new_task waiting for its agent
 let defaultModel = "sonnet";
 let storedModel = false; // the user picked a model here before: it wins over the app's default
+let braveMode = false; // agents browse in the user's Brave: AI Browser's tabs are never an agent's to adopt
+let browserName = "Brave"; // the user's browser, named in the hints
 const chat = createChat($("messages"), { onPage: (page) => { $("page").textContent = page; } });
 const link = connect({ view: "panel", onMessage: handle, onState: setStatus });
 
@@ -41,6 +44,9 @@ function newestFirst(a, b) {
 }
 
 function agentForTab() {
+  if (braveMode) { // the agent that was active last, as on AI Home
+    return [...agents.values()].sort((a, b) => (activity.get(b.id) || 0) - (activity.get(a.id) || 0))[0] || null;
+  }
   if (target) {
     const here = [...agents.values()].filter((agent) => agent.working_tab === target
       || (agent.tabs || []).includes(target) || (agent.adopted || []).includes(target));
@@ -61,7 +67,7 @@ function show() {
     $("page").textContent = "";
     if (id) link.send({ type: "events", id });
   }
-  const startHere = !agent && !!tab && !browserPage(tab.url);
+  const startHere = !braveMode && !agent && !!tab && !browserPage(tab.url);
   $("start-here").hidden = !startHere;
   $("messages").hidden = startHere;
   $("agent-name").textContent = agent ? agent.name : "AI Browser";
@@ -81,9 +87,13 @@ function show() {
     slot.replaceChildren(permissionCard({ ...asking, agent: agent.id }, (message) => link.send(message), agent.name));
   }
   $("model").value = agent ? agent.model : defaultModel;
-  $("input").placeholder = agent ? `Message ${agent.name}` : "Start a task in this tab";
-  if (!agent && !startHere && !$("messages").textContent) {
-    chat.reset("Open a page and start a task beside it, or start one in AI Home.");
+  $("input").placeholder = agent ? `Message ${agent.name}` : braveMode ? `Start a task in ${browserName}`
+    : "Start a task in this tab";
+  const hint = braveMode ? `Start a task here or in AI Home: agents work in your ${browserName}.`
+    : "Open a page and start a task beside it, or start one in AI Home.";
+  const onlyHint = $("messages").childElementCount === 1 && $("messages").firstElementChild.matches("p.empty");
+  if (!agent && !startHere && (!$("messages").textContent || (onlyHint && $("messages").textContent !== hint))) {
+    chat.reset(hint); // also when the mode changed under a hint already drawn
   }
 }
 
@@ -102,10 +112,17 @@ async function refreshTab() {
 function handle(message) {
   switch (message.type) {
     case "snapshot":
+      braveMode = message.browser?.kind === "brave";
+      if (braveMode && message.browser.name) browserName = message.browser.name;
       agents.clear();
       for (const agent of message.agents) agents.set(agent.id, agent);
       if (!storedModel && message.default_model) defaultModel = message.default_model;
       shown = null; // a new connection: draw the conversation again
+      show();
+      break;
+    case "browser":
+      braveMode = message.kind === "brave";
+      if (braveMode && message.name) browserName = message.name;
       show();
       break;
     case "agent":
@@ -139,7 +156,7 @@ function handle(message) {
 function send(text) {
   const message = (text ?? $("input").value).trim();
   if (!message) return;
-  const page = tab && !browserPage(tab.url) ? { url: tab.url, title: tab.title || "" } : {};
+  const page = !braveMode && tab && !browserPage(tab.url) ? { url: tab.url, title: tab.title || "" } : {};
   let sent;
   if (shown) {
     sent = link.send({ type: "send", id: shown, text: message, tab: page });
@@ -147,7 +164,7 @@ function send(text) {
     if (pending) return; // one task per Send
     pending = `p${Date.now()}`;
     sent = link.send({ type: "new_task", text: message, skills: [], model: $("model").value,
-      adopt: target || undefined, tab: page, request: pending });
+      adopt: braveMode ? undefined : target || undefined, tab: page, request: pending });
     setTimeout(() => { pending = null; }, 10000);
     if (!sent) pending = null;
   }

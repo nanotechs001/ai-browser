@@ -219,7 +219,7 @@ function openAgent(id) {
     const current = agents.get(id);
     if (current?.working_tab) link.send({ type: "watch", target: current.working_tab });
   });
-  parts.watch.title = "Bring this agent's tab to the front in AI Browser";
+  parts.watch.title = "Bring this agent's tab to the front";
   parts.stop = button("stop", "Stop", () => link.send({ type: "stop", id }));
   parts.close = button("close ghost", "Close", () => link.send({ type: "close", id }));
   parts.close.title = "End this agent and close the tabs it opened (your own tabs stay open)";
