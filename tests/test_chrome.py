@@ -725,6 +725,15 @@ async def test_a_download_qa_meets_is_not_the_agents(own_browser, tmp_path):
     assert "was stopped" not in await browser.observe()  # QA's report says it; the agent wasn't the one downloading
 
 
+@CHROME
+async def test_qa_after_sandbox_start_chrome_crawls_in_the_users_browser(chrome_engine):
+    engine, base, _ = chrome_engine
+    await engine.sandbox_start(chrome=True)  # the user asked for their own browser
+    result = (await engine.qa(base + "qa/index.html", 2)).text
+    assert not result.startswith("checked in the Docker sandbox") and not result.startswith("error")
+    assert list(engine.work.host_task.rglob("report.html"))
+
+
 # ---- the engine in the user's browser: the link, the placer, kept tabs, handed tabs ---------------------------
 
 

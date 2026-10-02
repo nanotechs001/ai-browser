@@ -1,9 +1,11 @@
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
+from ai_browser import engine as engine_module
 from ai_browser import testpages
 from ai_browser.engine import Engine, ToolResult
 from ai_browser.skills import Catalog, SkillSource
@@ -301,3 +303,102 @@ async def test_with_brave_unreachable_open_explains_and_never_starts_the_sandbox
         assert text.startswith("error: Brave doesn't allow remote debugging yet: open brave://inspect/#remote-debugging")
         assert ("Ask the user to turn the switch on, or whether they want the Docker sandbox instead "
                 "(sandbox_start()).") in text
+
+
+class FakeBoxes:
+    def __init__(self, error):
+        self.started, self.error = [], error
+
+    def start(self, profile="default", fresh=False):
+        self.started.append(profile)
+        raise self.error
+
+
+async def must_not(*args, **kwargs):
+    raise AssertionError("must not be called")
+
+
+async def test_qa_in_the_users_browser_runs_in_qas_sandbox(monkeypatch, tmp_path):
+    monkeypatch.delenv("AIB_BROWSER")
+    engine = Engine(home=tmp_path, catalog=Catalog([], set()))
+    sandboxed, calls = object(), []
+
+    async def sandbox_browser(self):
+        return sandboxed
+
+    async def fake_run_qa(browser, work, url, max_pages, **options):
+        calls.append((browser, work, url, max_pages))
+        return "qa summary"
+
+    async def closed(self, browser):
+        calls.append(("closed", browser))
+
+    monkeypatch.setattr(Engine, "_qa_sandbox_browser", sandbox_browser)
+    monkeypatch.setattr(Engine, "_close_qa_browser", closed)
+    monkeypatch.setattr(Engine, "_start_chrome", must_not)  # QA in the sandbox never connects to the user's Brave
+    monkeypatch.setattr(engine_module, "run_qa", fake_run_qa)
+    result = (await engine.qa("https://example.com/", 5)).text
+    [(browser, work, url, pages), done] = calls
+    assert browser is sandboxed and done == ("closed", sandboxed) and (url, pages) == ("https://example.com/", 5)
+    assert work.host_task == tmp_path / "sandboxes" / "chrome" / "work" / engine.task_id  # where read_file looks
+    assert result.startswith("checked in the Docker sandbox") and "qa summary" in result
+
+
+async def test_qa_starts_profile_qa_and_explains_when_docker_is_missing(monkeypatch, tmp_path):
+    from ai_browser.sandbox import DockerError
+
+    monkeypatch.delenv("AIB_BROWSER")
+    monkeypatch.setattr(engine_module, "run_qa", must_not)
+    engine = Engine(home=tmp_path, catalog=Catalog([], set()))
+    engine.sandboxes = FakeBoxes(DockerError("Docker isn't running: start Docker Desktop"))
+    result = (await engine.qa("https://example.com/")).text
+    assert engine.sandboxes.started == ["qa"]
+    assert result.startswith("error: Docker isn't running: start Docker Desktop; or, if the user wants QA in their "
+                             "own browser, sandbox_start(chrome=true) first")
+
+
+async def test_a_refused_qa_starts_no_sandbox(monkeypatch, tmp_path):
+    monkeypatch.delenv("AIB_BROWSER")
+    monkeypatch.setattr(Engine, "_qa_sandbox_browser", must_not)
+    engine = Engine(home=tmp_path, catalog=Catalog([], set()))
+    engine.gate.skipped.add("example.com")
+    assert "off-limits" in (await engine.qa("https://www.example.com/")).text
+    engine.gate.qa_stopped["shop.example.net"] = (time.time() + 3600, "429")  # not on example.com: that one's skipped
+    assert "qa can run there again" in (await engine.qa("https://shop.example.net/")).text
+
+
+async def test_after_sandbox_start_chrome_qa_crawls_in_the_users_browser(monkeypatch, tmp_path):
+    from ai_browser.sandbox import SandboxInfo
+    from ai_browser.workfs import WorkDir
+
+    monkeypatch.delenv("AIB_BROWSER")
+
+    class SessionBrowser:
+        mode, handed, owned, keep_tabs = "chrome", None, {}, False
+
+        async def ensure_tab(self):
+            return ""
+
+        def owned_targets(self):
+            return []
+
+    class OpenCDP:
+        closed = False
+
+    async def own(self, mode="chrome"):
+        self.info = SandboxInfo("aib-chrome", "chrome", "", tmp_path / "w", False, False, chrome=True)
+        self.work, self.browser, self.cdp = WorkDir(tmp_path / "w", self.task_id), SessionBrowser(), OpenCDP()
+
+    used = []
+
+    async def fake_run_qa(browser, work, url, max_pages, **options):
+        used.append(browser)
+        return "qa summary"
+
+    monkeypatch.setattr(Engine, "_start_chrome", own)
+    monkeypatch.setattr(Engine, "_qa_sandbox_browser", must_not)
+    monkeypatch.setattr(engine_module, "run_qa", fake_run_qa)
+    engine = Engine(home=tmp_path, catalog=Catalog([], set()))
+    await engine.sandbox_start(chrome=True)  # the user asked for their own browser
+    assert "qa summary" in (await engine.qa("https://example.com/")).text
+    assert used == [engine.browser]

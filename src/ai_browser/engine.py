@@ -22,7 +22,7 @@ from .config import READ_LIMIT, SHELL_LIMIT, load_config, project_root
 from .grouping import Placer
 from .live import LiveView
 from .qa import run_qa
-from .sandbox import SandboxInfo, Sandboxes
+from .sandbox import DockerError, SandboxInfo, Sandboxes
 from .shellguard import shell_problem
 from .skills import Catalog
 from .steps import parse_steps
@@ -39,6 +39,9 @@ BAD_BROWSER = "AIB_BROWSER must be own, chrome, brave, sandbox or app"
 ASK_SESSION = ("Ask the user to turn the switch on, or whether they want the Docker sandbox instead "
                "(sandbox_start()).")
 ASK_AGENT = "Ask the user to turn the switch on (AI Home shows how)."
+QA_PROFILE = "qa"  # QA's own named sandbox: it stays up between runs, `ai-browser stop qa` stops it
+QA_HINT = "or, if the user wants QA in their own browser, sandbox_start(chrome=true) first"
+QA_WHERE = "checked in the Docker sandbox"
 _KNOWN_ERRORS = {"ChromeError", "DockerError", "StepError", "PathError", "SkillNotFound", "AmbiguousSkill", "CDPError",
                  "BrowserError", "JSError", "StepStale", "StepBlocked", "ValueError"}
 
@@ -636,14 +639,79 @@ class Engine:
         return await self._with_browser("js", {"code": code}, lambda browser: browser.js(code))
 
     async def qa(self, url: str, max_pages: int = 30, progress=None, ignore_robots: bool = False) -> ToolResult:
-        """Website QA of a whole site in this session's browser, politely; returns the summary (the report is in the
-        work folder). A bot check QA finds holds the session like any other, and a host that refused cools down."""
-        async def action(browser):
+        """Website QA of a whole site, politely; returns the summary (the report is in the work folder). In the user's
+        own browser by default, QA crawls in its own Docker sandbox instead (Decision 11). A bot check QA finds holds
+        the session like any other, and a host that refused cools down."""
+        args = {"url": url, "max_pages": max_pages, "ignore_robots": ignore_robots}
+        try:
+            sandboxed = self._qa_in_sandbox()
+        except ValueError as exc:
+            return await self._run("qa", args, lambda: _raise(exc))
+        if sandboxed:
+            async def work():
+                # First, as in every call: a taken-back held tab ends the hold (Decision 4)
+                notes = await self._taken_back() + self._take_notes()
+                try:
+                    return notes + await self._qa_sandboxed(url, max_pages, progress, ignore_robots)
+                except BaseException:
+                    self._notes.insert(0, notes)  # not lost: the next call says it
+                    raise
+            return await self._run("qa", args, work)
+
+        async def action(browser):  # wave 1's: in this session's own browser
             return await run_qa(browser, self.work, url, max_pages, progress=progress, on_tabs=self._register,
                                 ignore_robots=ignore_robots, on_check=self._on_check,
                                 on_host_stopped=self.gate.qa_stop, skipped=self.gate.skipped_for)
-        return await self._with_browser("qa", {"url": url, "max_pages": max_pages, "ignore_robots": ignore_robots},
-                                        action, lambda: self.gate.refusal("qa", url=url))
+        return await self._with_browser("qa", args, action, lambda: self.gate.refusal("qa", url=url))
+
+    def _qa_in_sandbox(self) -> bool:
+        """QA's browser, by a fixed rule before the run (Decision 11): the Docker sandbox when this session browses
+        in the user's own browser by default; their browser only after sandbox_start(chrome=true), which they asked
+        for. Any other session's browser (a sandbox, AI Browser) runs QA itself."""
+        return self._wanted is None and self._default_kind() == "chrome"
+
+    def _qa_work(self) -> WorkDir:
+        """The session's own work folder, even before its browser is connected: QA's report lands where read_file
+        looks. (A folder left from a browser this session stopped is not it: the next call connects the default.)"""
+        if self.browser is not None and self.work is not None:
+            return self.work
+        return WorkDir(self.home / "sandboxes" / "chrome" / "work", self.task_id)
+
+    async def _qa_sandbox_browser(self) -> Browser:
+        """A Browser in QA's named sandbox (started, or reused), opening no tab of its own; its tabs are q1…"""
+        if self.sandboxes is None:
+            self.sandboxes = Sandboxes(self.home, mounts=self.catalog.mounts())
+        try:
+            info = await asyncio.to_thread(self.sandboxes.start, QA_PROFILE)
+        except DockerError as exc:
+            raise DockerError(f"{exc}; {QA_HINT}") from None
+        cdp = await CDP.connect(await asyncio.to_thread(self.sandboxes.ws_url, info))
+        try:
+            browser = Browser(cdp, self._qa_work(), self.cfg, key_prefix="q")
+            await browser.start(first_tab=False)
+        except BaseException:
+            await cdp.close()
+            raise
+        return browser
+
+    async def _close_qa_browser(self, browser: Browser) -> None:
+        with contextlib.suppress(Exception):
+            await browser.close()
+        with contextlib.suppress(Exception):
+            await browser.cdp.close()
+
+    async def _qa_sandboxed(self, url: str, max_pages: int, progress, ignore_robots: bool) -> str:
+        refused = self.gate.refusal("qa", url=url)  # first: a refused qa starts no sandbox
+        if refused:
+            return refused
+        browser = await self._qa_sandbox_browser()
+        try:
+            summary = await run_qa(browser, self._qa_work(), url, max_pages, progress=progress,
+                                   ignore_robots=ignore_robots, on_host_stopped=self.gate.qa_stop,
+                                   skipped=self.gate.skipped_for)
+        finally:
+            await self._close_qa_browser(browser)
+        return f"{QA_WHERE} (profile {QA_PROFILE})\n{summary}"
 
     # ---- shell and files --------------------------------------------------------------------------------
 

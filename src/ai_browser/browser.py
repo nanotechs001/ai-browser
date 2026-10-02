@@ -147,7 +147,7 @@ def url_problem(url: str, mode: str) -> str | None:
 
 class Browser:
     def __init__(self, cdp: CDP, work: WorkDir, cfg: Config, mode: str = "sandbox", hidden_extension: str = "",
-                 front: bool = True, placer=None, keep_tabs: bool = False, handed=None):
+                 front: bool = True, placer=None, keep_tabs: bool = False, handed=None, key_prefix: str = "t"):
         self.cdp = cdp
         self.work = work
         self.cfg = cfg
@@ -161,6 +161,7 @@ class Browser:
         self.placer = placer  # grouping.Placer in the user's own browser: where each new tab of ours goes
         self.keep_tabs = keep_tabs  # an agent of ai-browser app: its tabs outlive this process (the app closes them)
         self.handed = handed  # async () -> the tabs the user handed this agent ([{"target", "title", "url"}])
+        self.key_prefix = key_prefix  # "q" for QA's own sandbox browser: its tabs never collide with the session's
         self._handed_keys: dict[str, str] = {}  # listing key (h1...) -> target id, until taken on
         self._placing: set[asyncio.Future] = set()  # reports of tabs our pages opened, waiting for their address
         self._tab_events: list[Callable[[str, Tab], None]] = []  # ("opened" | "closed", tab)
@@ -371,12 +372,12 @@ class Browser:
         self._stopped.clear()
         return notes
 
-    async def start(self) -> None:
+    async def start(self, first_tab: bool = True) -> None:
         if self.mode == "sandbox":  # a real Chrome (yours, or AI Browser) keeps the user's Downloads folder
             await self.cdp.send("Browser.setDownloadBehavior", {
                 "behavior": "allow", "downloadPath": f"{self.work.sandbox_task}/downloads", "eventsEnabled": True})
         await self.cdp.send("Target.setDiscoverTargets", {"discover": True})
-        if self.mode == "sandbox":  # in the user's browser or AI Browser a blank tab would pop into their window
+        if self.mode == "sandbox" and first_tab:  # in the user's browser or AI Browser a blank tab would pop up
             await self._new_tab()
 
     def owned_targets(self) -> list[str]:
@@ -533,7 +534,7 @@ class Browser:
     async def _setup_tab(self, target: str, adopted: bool = False) -> Tab:
         session = (await self.cdp.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
         self._seq += 1
-        tab = Tab(f"t{self._seq}", target, session)
+        tab = Tab(f"{self.key_prefix}{self._seq}", target, session)
         width, height, _ = SIZES["desktop"]
 
         def send(method: str, params: dict | None = None):
