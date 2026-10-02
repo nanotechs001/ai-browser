@@ -79,6 +79,7 @@ export function toolLabel(permission) { // "ClickUp: create task", for a station
 }
 
 function tickerOf(agent, state) {
+  if (state === "needs_you" && agent.check) return `bot check · ${agent.check.site}`;
   if (state === "needs_you" && agent.permission) return `wants ${toolLabel(agent.permission)}`;
   if (state === "failed") return agent.status || "failed";
   return agent.last_action || agent.status || STATES[state] || state;
@@ -172,7 +173,7 @@ export function createScene(root, { onSelect = () => {} } = {}) {
 
   function fill(station, agent) {
     const { node, parts } = station;
-    const state = agent.permission ? "needs_you" : String(agent.state || "waiting");
+    const state = agent.permission || agent.check ? "needs_you" : String(agent.state || "waiting");
     if (node.dataset.state !== state) node.dataset.state = state;
     const color = COLORS[agent.color] || COLORS.grey;
     if (node.style.getPropertyValue("--c") !== color) node.style.setProperty("--c", color);

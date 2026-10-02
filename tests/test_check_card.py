@@ -112,3 +112,21 @@ async def test_the_panel_shows_the_same_card_for_the_users_own_tab(panel):
     assert await js(f"{card}.querySelector('.skip-site') === null")
     await js(f"{card}.querySelector('.continue').click(); true")
     assert await heard(seen, ("check_continue", agent.id))
+
+
+@CHROME
+async def test_mission_control_shows_a_bot_check_as_needs_you(stack):
+    js = await open_mission(stack)
+    seen = recorded(stack)
+    agent = await checked(stack)
+    assert await until(js, f"{station(agent.id)}?.dataset.state === 'needs_you'")
+    assert await js(f"{station(agent.id, '.ticker')}.textContent") == "bot check · www.google.com"
+    assert await until(js, "document.getElementById('bubble').textContent.includes("
+                           "'Flights to Manila hit a bot check on www.google.com. It\\'s waiting for you')")
+    assert "needs you" in await js("document.getElementById('counts').textContent")
+    await js(f"{station(agent.id)}.click(); true")
+    card = "document.querySelector('#drawer:not([hidden]) .bot-check')"
+    assert await until(js, f"{card} !== null")
+    assert await js("document.querySelector('#drawer .stop').hidden") is False
+    await js(f"{card}.querySelector('.continue').click(); true")
+    assert await heard(seen, ("check_continue", agent.id))

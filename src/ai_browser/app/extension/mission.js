@@ -2,6 +2,7 @@
 // middle, on the same line to the app as AI Home (link.js), sending only the messages AI Home sends.
 import { createBlob } from "./blob.js";
 import { mountBrain } from "./brainui.js";
+import { checkCard } from "./check.js";
 import { createChat } from "./chat.js";
 import { connect } from "./link.js";
 import { permissionCard } from "./permission.js";
@@ -65,7 +66,7 @@ function setText(node, text) {
 }
 
 function stateOf(agent) {
-  return agent.permission ? "needs_you" : agent.state;
+  return agent.permission || agent.check ? "needs_you" : agent.state;
 }
 
 function setStatus(state) {
@@ -124,7 +125,10 @@ function told(before, agent) { // an agent's change worth a word from the Brain 
   if (was === now) return;
   if (now === "your_turn") voice.say(brief(`${agent.name} is done`));
   else if (now === "failed") voice.say(brief(`${agent.name} hit a problem`));
-  else if (now === "needs_you") voice.say(brief(`${agent.name} wants to use ${toolLabel(agent.permission)}. It's waiting for you`));
+  else if (now === "needs_you") {
+    voice.say(brief(agent.check ? `${agent.name} hit a bot check on ${agent.check.site}. It's waiting for you`
+      : `${agent.name} wants to use ${toolLabel(agent.permission)}. It's waiting for you`));
+  }
 }
 
 function update(agent) {
@@ -241,7 +245,16 @@ function fillDrawer(agent) { // the drawer's agent changed: its parts are update
   setText(parts.status, agent.status || agent.last_action || "");
   parts.status.hidden = !parts.status.textContent;
   parts.watch.disabled = !agent.working_tab;
-  parts.stop.hidden = !(agent.state === "working" || agent.state === "waiting");
+  parts.stop.hidden = !(agent.state === "working" || agent.state === "waiting" || agent.check);
+  const check = agent.check; // a bot check waiting for the user: the same card as AI Home's
+  if (check && parts.checkCard?.dataset.since !== String(check.since)) {
+    parts.checkCard?.remove();
+    parts.checkCard = checkCard(agent, (message) => link.send(message));
+    parts.permission.prepend(parts.checkCard);
+  } else if (!check && parts.checkCard) {
+    parts.checkCard.remove();
+    parts.checkCard = null;
+  }
   const asking = agent.permission; // a tool request waiting for the user: the same card as AI Home's
   if (asking && parts.card?.dataset.request !== asking.request) {
     parts.card?.remove();
