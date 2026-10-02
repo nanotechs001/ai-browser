@@ -17,9 +17,10 @@ REFRESH = 1.5  # seconds between full reads of the tab list: Chrome reports titl
 
 
 class TabWatch:
-    def __init__(self, ws_url: str, extension_id: str):
+    def __init__(self, ws_url: str, extension_id: str, open_timeout: float = 10):
         self.ws_url = ws_url
         self.extension_id = extension_id
+        self.open_timeout = open_timeout
         self._cdp: CDP | None = None
         self._pages: dict[str, dict] = {}  # target id -> {"target", "url", "title"}, in the order they appeared
         self._callbacks: list[Callable[[list[dict]], None]] = []
@@ -27,7 +28,7 @@ class TabWatch:
         self._poll: asyncio.Task | None = None
 
     async def start(self) -> None:
-        self._cdp = await CDP.connect(self.ws_url)
+        self._cdp = await CDP.connect(self.ws_url, open_timeout=self.open_timeout)
         self._cdp.on("Target.targetCreated", self._on_target)
         self._cdp.on("Target.targetInfoChanged", self._on_target)
         self._cdp.on("Target.targetDestroyed", self._on_destroyed)
@@ -40,6 +41,10 @@ class TabWatch:
                 task.cancel()
         if self._cdp is not None:
             await self._cdp.close()
+
+    @property
+    def closed(self) -> bool:
+        return self._cdp is None or self._cdp.closed
 
     # ---- the tab list -------------------------------------------------------------------------------------
 
@@ -104,7 +109,7 @@ class TabWatch:
             with contextlib.suppress(CDPError):
                 await self._cdp.send("Target.closeTarget", {"targetId": target})
 
-    async def page_text(self, target: str) -> str:
+    async def page_text(self, target: str, picked: bool = False) -> str:
         """The text one of AI Browser's tabs shows (a page to learn from, for a skill draft), or "" if it can't be
         read quickly."""
         try:
