@@ -33,6 +33,8 @@ YES = frozenset({"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "go ahead", 
 NO = frozenset({"no", "nope", "cancel", "stop", "never mind", "don't"})
 _SECRET_WORDS = (("password",), ("passcode",), ("pin",), ("cvv",), ("cvc",), ("security", "code"),
                  ("one-time", "code"), ("one", "time", "code"), ("verification", "code"))
+_TELLS = frozenset({"is", "was", "are", "were", ":"})  # "my password is …", "the PINs were …"
+_CONTRACTIONS = (("'s", "is"), ("'re", "are"))  # "password's" is "password is" (Whisper writes both)
 _LONG_NUMBER = re.compile(r"\d(?:[ -]?\d){11,}")  # 12 digits or more, across single spaces and dashes (a card number)
 
 TALK = """You are the Brain of AI Browser, talking with the user. Answer in at most two short sentences, using only the
@@ -180,25 +182,65 @@ def _plain(text) -> str:
     return " ".join(word.strip("'") for word in words.split() if word.strip("'"))
 
 
+def _only(text, phrases: frozenset) -> bool:
+    """True when the words are nothing but phrases from `phrases` ("Yeah, go ahead." is two of YES, and so is "go ahead
+    and do it"); one other word makes it a question ("go ahead and approve it")."""
+    words = _plain(text).split()
+    words = [word for at, word in enumerate(words) if word != "and" or at in (0, len(words) - 1)]
+    longest = max(len(phrase.split()) for phrase in phrases)
+
+    def fits(start: int) -> bool:
+        return start == len(words) or any(" ".join(words[start:start + size]) in phrases and fits(start + size)
+                                          for size in range(1, longest + 1) if start + size <= len(words))
+
+    return bool(words) and fits(0)
+
+
 def is_yes(text) -> bool:
-    """True only when the whole answer is a plain yes ("Yes, please." is; "yes, but use Opus" isn't)."""
-    return _plain(text) in YES
+    """True only when the whole answer is a plain yes ("Yes, please." and "Yeah, go ahead." are; "yes, but use Opus"
+    isn't)."""
+    return _only(text, YES)
 
 
 def is_no(text) -> bool:
-    return _plain(text) in NO
+    return _only(text, NO)
+
+
+def _tokens(raw: str) -> list[str]:
+    tokens = []
+    for token in re.findall(r"[a-z0-9'-]+|:", raw.lower().replace("’", "'")):
+        token = token.strip("'")  # "passwords'" is "passwords"
+        if not token:
+            continue
+        for ending, word in _CONTRACTIONS:
+            if token.endswith(ending) and len(token) > len(ending):
+                tokens += [token[:-len(ending)], word]
+                break
+        else:
+            tokens.append(token)
+    return tokens
+
+
+def _is(token: str, word: str) -> bool:
+    return token in (word, word + "s")  # "passwords", "PINs" and "codes" count too
+
+
+def _numbered(word: str) -> bool:
+    return any(char.isdigit() for char in word)
 
 
 def secret_like(text) -> bool:
     """Words that sound like a password or a code: never sent to Claude. It errs on the side of not sending."""
     raw = str(text or "")
-    tokens = re.findall(r"[a-z0-9'-]+|:", raw.lower().replace("’", "'"))
+    tokens = _tokens(raw)
     for index in range(len(tokens)):
         for words in _SECRET_WORDS:
             end = index + len(words)
-            if tuple(tokens[index:end]) == words and any(
-                    word in ("is", "was", ":") or any(char.isdigit() for char in word) for word in tokens[end:end + 3]):
+            if len(tokens[index:end]) == len(words) and all(map(_is, tokens[index:end], words)) and any(
+                    word in _TELLS or _numbered(word) for word in tokens[end:end + 3]):
                 return True
+        if _is(tokens[index], "code") and any(map(_numbered, tokens[index + 1:index + 4])):
+            return True  # "the code's 4821"; "the code is broken" is still a question
     return bool(_LONG_NUMBER.search(raw))
 
 

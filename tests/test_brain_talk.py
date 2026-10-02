@@ -103,11 +103,15 @@ def test_yes_and_no_are_whole_answers():
     from ai_browser.brain.talk import is_no, is_yes
 
     for text in ("yes", "Yes.", "yeah", "Yep!", "yup", "sure", "OK", "okay", "Go ahead.", "do it", "Start it",
-                 "draft it", "confirm", "Yes, please.", "yes thanks", "Okay, thank you."):
+                 "draft it", "confirm", "Yes, please.", "yes thanks", "Okay, thank you.",
+                 "Yeah, go ahead.", "Yes, do it.", "Okay, do it.", "Sure, go ahead.", "yeah go ahead", "yes yes",
+                 "Yes, please, go ahead and do it."):  # every phrase a yes: how people say it
         assert is_yes(text) and not is_no(text), text
-    for text in ("no", "Nope.", "cancel", "Stop!", "never mind", "Don't.", "No thanks", "don’t"):
+    for text in ("no", "Nope.", "cancel", "Stop!", "never mind", "Don't.", "No thanks", "don’t", "No, cancel.",
+                 "Nope, never mind."):
         assert is_no(text) and not is_yes(text), text
-    for text in ("yes, but use Opus", "yes yes", "I said yes", "done", "continue", "I solved it", "approve it", ""):
+    for text in ("yes, but use Opus", "I said yes", "done", "continue", "I solved it", "approve it", "", "yes no",
+                 "No, go ahead.", "yeah go to the shop", "go ahead and approve it", "sure, send it"):
         assert not is_yes(text) and not is_no(text), text
 
 
@@ -116,10 +120,13 @@ def test_secret_like_errs_on_not_sending():
 
     for text in ("my password is hunter2", "The password: correct horse", "the verification code is 4821",
                  "4111 1111 1111 1111", "4111-1111-1111-1111", "PIN 1234", "my one-time code was 55 12",
-                 "security code 123", "CVV is 123"):
-        assert secret_like(text), text
+                 "security code 123", "CVV is 123",
+                 "My password's hunter2.", "my pin's 4821", "the code's 4821", "my passwords are tiger",
+                 "My PIN’s 4821", "the codes are 4821 and 5512", "our passcodes were tiger", "the code is 4821"):
+        assert secret_like(text), text  # Whisper writes "password's" as often as "password is"
     for text in ("pin the tab", "call 555-123-4567", "what's the password policy on the site?",
-                 "is my password on the staging list", "what is fix the footer doing"):
+                 "is my password on the staging list", "what is fix the footer doing", "the code is broken",
+                 "what's the code doing?", "fix the code's tests", "open the passwords page"):
         assert not secret_like(text), text
 
 

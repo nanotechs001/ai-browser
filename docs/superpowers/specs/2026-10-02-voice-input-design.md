@@ -444,14 +444,18 @@ beside the `BrainService`. `run.py` builds it with `ModelStore(home / "models")`
   - `item` and `agent` must be in the given ids, or the action becomes `none`. A missing item makes the answer "I
     can't find that message";
   - text with no JSON object becomes the answer as plain text (clipped), with no action.
-- **`is_yes(text)` and `is_no(text)`:** true only when the whole text is in the list. The text is lowercased, with
-  punctuation, "please" and "thanks" removed.
+- **`is_yes(text)` and `is_no(text)`:** true only when the whole text is made of phrases from the list (an "and"
+  may join two). The text is lowercased, with punctuation, "please" and "thanks" removed.
   - **Yes:** yes, yeah, yep, yup, sure, ok, okay, go ahead, do it, start it, draft it, confirm.
   - **No:** no, nope, cancel, stop, never mind, don't.
-  - "Yes, but use Opus" is neither, so it goes to Claude.
-- **`secret_like(text)`:** true when either holds:
+  - "Yeah, go ahead.", "Yes, do it." and "go ahead and do it" are yes; "No, cancel." is no.
+  - "Yes, but use Opus" is neither, so it goes to Claude; so is "go ahead and approve it".
+- **`secret_like(text)`:** true when any holds (a word's "'s" counts as "is" and "'re" as "are", and plurals count:
+  "My password's hunter2", "my passwords are tiger"):
   - password, passcode, PIN, CVV, CVC, "security code", "one-time code" or "verification code" is followed within
-    three words by "is", "was", ":" or a word with a digit;
+    three words by "is", "was", "are", "were", ":" or a word with a digit;
+  - "code" is followed within three words by a word with a digit ("the code's 4821"; "the code is broken" is a
+    question);
   - the text has a run of 12 or more digits, counted across single spaces and dashes, since Whisper often writes a
     card number as "4111 1111 1111 1111".
 
