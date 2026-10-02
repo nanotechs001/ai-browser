@@ -2,8 +2,11 @@
 at every station (chibi.js), against a real app server (agents on the fake claude) in a throwaway headless AI Browser.
 The art holds no agent data, text stays text, and nothing is downloaded."""
 
-from test_home import stack  # noqa: F401  (fixture)
-from test_mission import CHROME, open_mission
+import asyncio
+import json
+
+from test_home import stack, until  # noqa: F401  (fixtures)
+from test_mission import CHROME, needs_reply, open_mission, open_with
 
 
 async def shape(stack, body):
@@ -101,3 +104,206 @@ async def test_synapses_link_near_cortex_points(stack):
         " return [pairs.length / 2, pairs instanceof Uint16Array, cortex, lengths,"
         "         again.length === pairs.length && again.every((value, index) => value === pairs[index])];"))
     assert 0 < links <= 900 and typed and cortex and lengths and same
+
+
+# ---- the Brain: hooks injected before the page's own scripts, and helpers --------------------------------------------
+
+GL = """(() => {
+  const gl = window.gl = { last: {}, max: {}, cloud: 0, contexts: 0, gpu: [], timing: 0, t0: 0 };
+  const proto = WebGLRenderingContext.prototype;
+  const names = new WeakMap();
+  const locate = proto.getUniformLocation;
+  proto.getUniformLocation = function (program, name) {
+    const location = locate.call(this, program, name);
+    if (location) names.set(location, name);
+    return location;
+  };
+  for (const method of ['uniform1f', 'uniform2f', 'uniform2fv', 'uniform4fv']) {
+    const real = proto[method];
+    proto[method] = function (location, ...values) {
+      const name = location && names.get(location);
+      if (name) {
+        const value = method === 'uniform1f' ? values[0] : method === 'uniform2f' ? values.slice(0, 2)
+          : Array.from(values[0]);
+        gl.last[name] = value;
+        if (typeof value === 'number') gl.max[name] = Math.max(gl.max[name] ?? -Infinity, value);
+      }
+      return real.call(this, location, ...values);
+    };
+  }
+  const drawArrays = proto.drawArrays;
+  proto.drawArrays = function (mode, first, count) {
+    if (gl.timing > 0 && !gl.t0) gl.t0 = performance.now();
+    const result = drawArrays.call(this, mode, first, count);
+    if (mode === this.POINTS && count >= 1000) {
+      gl.cloud += 1;
+      if (gl.timing > 0 && gl.t0) { // the Brain's GPU time: from the frame's first draw to a pixel read after its cloud
+        this.readPixels(0, 0, 1, 1, this.RGBA, this.UNSIGNED_BYTE, new Uint8Array(4));
+        gl.gpu.push(performance.now() - gl.t0);
+        gl.t0 = 0;
+        gl.timing -= 1;
+      }
+    }
+    return result;
+  };
+  const contexts = new Set();
+  const getContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {
+    const context = getContext.call(this, kind, ...rest);
+    if (context && /webgl/.test(String(kind))) {
+      contexts.add(context);
+      gl.contexts = contexts.size;
+    }
+    return context;
+  };
+})();
+"""
+STATES = """(() => {
+  window.states = [];
+  new MutationObserver((records) => {
+    for (const record of records) {
+      const node = record.target;
+      if (node.classList && node.classList.contains('stage') && node.dataset.state !== window.states.at(-1)) {
+        window.states.push(node.dataset.state);
+      }
+    }
+  }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-state'] });
+})();
+"""
+ARRIVALS = """(() => {
+  Object.assign(window, { spawned: [], sparks: 0, sparksGone: 0, sparksMost: 0, errors: [] });
+  addEventListener('error', (event) => window.errors.push(String(event.message)));
+  addEventListener('unhandledrejection', (event) => window.errors.push(String(event.reason)));
+  const note = (node) => {
+    if (node.classList && node.classList.contains('spawning') && !window.spawned.includes(node.dataset.id)) {
+      window.spawned.push(node.dataset.id);
+    }
+  };
+  new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === 'attributes') note(record.target);
+      for (const node of record.addedNodes) {
+        note(node);
+        if (node.classList && node.classList.contains('spark')) window.sparks += 1;
+      }
+      for (const node of record.removedNodes) {
+        if (node.classList && node.classList.contains('spark')) window.sparksGone += 1;
+      }
+    }
+    window.sparksMost = Math.max(window.sparksMost, document.querySelectorAll('.spark').length);
+  }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+})();
+"""
+HOOKS = GL + STATES + ARRIVALS
+
+
+async def front(stack, js):
+    """Bring the page to the front: a hidden tab runs no animations and no requestAnimationFrame."""
+    await stack["cdp"].send("Page.bringToFront", session_id=js.session)
+    assert await until(js, "document.visibilityState === 'visible'")
+
+
+async def brain_page(stack, extra="", size=None, points=True):
+    """Mission Control with the hooks (and `extra`, also run before the page's scripts), in front, and (with `points`)
+    its Brain's points made."""
+    js = await open_with(stack, HOOKS + extra, size)
+    await front(stack, js)
+    if points:
+        assert await until(js, "document.querySelector('.stage').dataset.points === '8000'", 5)
+    return js
+
+
+def near(name, values, within):
+    """True once the last value given to the uniform `name` is within `within` of `values`."""
+    return (f"(() => {{ const value = window.gl.last[{json.dumps(name)}]; const want = {json.dumps(values)};"
+            " return Array.isArray(value) && value.length === want.length"
+            f" && value.every((one, index) => Math.abs(one - want[index]) <= {within}); }})()")
+
+
+async def reduce_motion(stack, js, on=True):
+    """The system's Reduce Motion, switched on (or off) in this page, as the user would while it is open."""
+    await stack["cdp"].send("Emulation.setEmulatedMedia", {"features": [
+        {"name": "prefers-reduced-motion", "value": "reduce" if on else ""}]}, session_id=js.session)
+
+
+# ---- the Brain -------------------------------------------------------------------------------------------------------
+
+@CHROME
+async def test_the_brain_is_drawn_with_points_once_they_are_made(stack):
+    js = await open_with(stack, HOOKS)
+    await front(stack, js)
+    stage = "document.querySelector('.stage')"
+    assert await js(f"{stage}.dataset.mode") == "webgl"
+    assert await until(js, f"{stage}.dataset.points === '8000'", 3)
+    assert await until(js, "getComputedStyle(document.querySelector('.stage .orb')).display === 'none'"
+                           " && getComputedStyle(document.querySelector('.stage canvas')).display !== 'none'", 2)
+    assert await js("window.gl.cloud") > 0
+    await js("document.querySelector('.stage canvas').getContext('webgl').getExtension('WEBGL_lose_context')"
+             ".loseContext(); true")
+    assert await until(js, f"{stage}.dataset.mode === 'css' && {stage}.dataset.points === undefined")  # fallback()
+
+
+@CHROME
+async def test_a_brain_opened_with_reduce_motion_on_is_drawn_once(stack):
+    js = await brain_page(stack, points=False)
+    await reduce_motion(stack, js)  # on before the page loads again: the Brain never moves
+    await js("window.before = true; location.reload(); true")
+    assert await until(js, "window.before === undefined"
+                           " && document.getElementById('status')?.dataset.state === 'connected'")
+    assert await js("matchMedia('(prefers-reduced-motion: reduce)').matches")
+    assert await until(js, "document.querySelector('.stage').dataset.points === '8000'"
+                           " && getComputedStyle(document.querySelector('.stage canvas')).display !== 'none'", 5)
+    await asyncio.sleep(0.5)  # the page's first messages are in
+    drawn = await js("window.gl.cloud")
+    await asyncio.sleep(1)
+    assert drawn >= 1 and await js("window.gl.cloud") == drawn  # drawn once its points were ready, then still
+
+
+@CHROME
+async def test_a_context_lost_before_the_points_leaves_the_dotted_brain(stack):
+    lose = ("(() => { const real = HTMLCanvasElement.prototype.getContext;"
+            " HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {"
+            "  const context = real.call(this, kind, ...rest);"
+            "  if (context && /webgl/.test(kind) && !this.lost) { this.lost = true;"
+            "   setTimeout(() => context.getExtension('WEBGL_lose_context').loseContext(), 0); }"
+            "  return context; }; })();")
+    js = await brain_page(stack, lose, points=False)
+    stage = "document.querySelector('.stage')"
+    assert await until(js, f"{stage}.dataset.mode === 'css'")
+    await asyncio.sleep(1.5)  # long after the points would have been made
+    assert await js(f"{stage}.dataset.points") is None
+    assert await js("getComputedStyle(document.querySelector('.stage .orb')).display") != "none"
+    assert await js("getComputedStyle(document.querySelector('.stage canvas')).display") == "none"
+    assert await js("[window.errors, window.gl.cloud]") == [[], 0]
+
+
+@CHROME
+async def test_the_brain_draws_at_most_30_frames_a_second(stack):
+    js = await brain_page(stack)
+    before = await js("window.gl.cloud")
+    await asyncio.sleep(2)
+    drawn = await js("window.gl.cloud") - before
+    assert 20 <= drawn <= 62, drawn
+
+
+@CHROME
+async def test_the_brain_blends_its_states(stack):
+    js = await brain_page(stack, points=False)
+    brain = stack["brain"]
+    brain.broadcast({"type": "brain_activity", "busy": True, "what": "Sorting 2 new messages from Gmail"})
+    assert await until(js, near("u_mix", [0, 1, 0, 0], 0.05))
+    needs_reply(brain)
+    brain.broadcast({"type": "brain_activity", "busy": False, "what": ""})
+    assert await until(js, near("u_mix", [0, 0, 1, 0], 0.05))
+    brain.done("gmail:t1")
+    assert await until(js, near("u_mix", [1, 0, 0, 0], 0.05))
+
+
+@CHROME
+async def test_twenty_agents_share_one_webgl_context(stack):
+    js = await brain_page(stack, points=False)
+    for number in range(20):
+        await stack["server"].agents.create(f"Task number {number}")
+    assert await until(js, "document.querySelectorAll('.station').length === 20")
+    await asyncio.sleep(1)
+    assert await js("window.gl.contexts") == 1
