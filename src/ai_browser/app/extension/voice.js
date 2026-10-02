@@ -5,6 +5,11 @@
 
 const WAITING = 3;
 const PAUSE = 600; // ms after a spoken update before the next one
+const GUARD_MS = 12000; // a voice that never says it ended is stopped after this long (longer for a long answer)
+
+export function guardMs(text, hold = 5000) { // about 75 ms a character: a 240-character answer isn't cut off
+  return Math.max(hold, GUARD_MS, 75 * String(text || "").length);
+}
 
 export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {}, onWord = () => {},
                               hold = 5000 } = {}) {
@@ -14,6 +19,9 @@ export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {
   let voice = null; // the on-device voice, while Voice is on
   let speaking = false;
   let blocked = false; // Chrome lets a page speak only after the user clicked it (a reloaded page must ask again)
+  let paused = false; // the user is talking: nothing is spoken or shown until the turn ends
+  let current = null; // the update on show now
+  let spoken = 0; // counts utterances: the late end of one cut short by pause() moves nothing on
 
   function summary(count) {
     return `${count} more update${count === 1 ? "" : "s"}: open the Brain`;
@@ -28,7 +36,15 @@ export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {
 
   function next() {
     clearTimeout(timer);
+    if (paused) { // held: what waits comes once the user is done talking
+      showing = false;
+      current = null;
+      bubble.hidden = true;
+      bubble.textContent = "";
+      return;
+    }
     const update = queue.shift();
+    current = update || null;
     if (!update) {
       showing = false;
       bubble.hidden = true;
@@ -45,9 +61,11 @@ export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {
 
   function speak(text) {
     let done = false;
+    const mine = ++spoken;
     const finish = (wait = PAUSE) => {
       if (done) return;
       done = true;
+      if (mine !== spoken) return; // cut short by pause(): what comes next waits for resume()
       setSpeaking(false);
       clearTimeout(timer);
       timer = setTimeout(next, wait);
@@ -73,7 +91,7 @@ export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {
           speechSynthesis.cancel();
         } catch { /* nothing to stop */ }
         finish();
-      }, Math.max(hold, 12000));
+      }, guardMs(text, hold));
     } catch {
       setSpeaking(false);
       timer = setTimeout(next, hold);
@@ -86,18 +104,48 @@ export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {
     onBlocked(false);
   }
 
-  function say(text) {
+  function stop() { // the speech in progress ends now; its end handler moves the queue on
+    try {
+      speechSynthesis.cancel();
+    } catch { /* nothing was speaking */ }
+  }
+
+  function say(text, { priority = false } = {}) {
     const words = String(text || "").trim();
     if (!words) return;
-    queue.push({ text: words, count: 1 });
-    if (queue.length > WAITING) { // a burst: what waits becomes one summary, and the voice stops
-      queue = [{ text: "", count: queue.reduce((sum, update) => sum + update.count, 0) }];
-      if (speaking) {
-        try {
-          speechSynthesis.cancel();
-        } catch { /* nothing was speaking */ }
+    if (priority) { // the Brain's answer to the user: first in line, never part of a summary
+      const answers = queue.filter((update) => update.priority).length;
+      queue.splice(answers, 0, { text: words, count: 1, priority: true });
+      if (showing && !current?.priority) { // a background update gives way at once, and isn't repeated
+        if (speaking) stop();
+        else next();
+      } else if (!showing) {
+        next();
       }
+      return;
     }
+    queue.push({ text: words, count: 1 });
+    const updates = queue.filter((update) => !update.priority);
+    if (updates.length > WAITING) { // a burst: what waits becomes one summary, and the voice stops
+      queue = [...queue.filter((update) => update.priority),
+               { text: "", count: updates.reduce((sum, update) => sum + update.count, 0) }];
+      if (speaking && !current?.priority) stop();
+    }
+    if (!showing) next();
+  }
+
+  function pause() { // the user started talking: speech stops now, and nothing more is spoken or shown
+    paused = true;
+    spoken += 1;
+    clearTimeout(timer);
+    if (speaking) stop();
+    setSpeaking(false);
+    next();
+  }
+
+  function resume() { // the turn ended: what waited comes now
+    if (!paused) return;
+    paused = false;
     if (!showing) next();
   }
 
@@ -138,5 +186,5 @@ export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {
     return { on: true, reason: "" };
   }
 
-  return { say, setEnabled, unblock, get enabled() { return Boolean(voice); } };
+  return { say, pause, resume, setEnabled, unblock, get enabled() { return Boolean(voice); } };
 }

@@ -142,9 +142,9 @@ The first press checks the app's `hearing_status` and shows one card. The mic do
     on this PC."
 - **No model:**
   - "To understand speech on this computer, AI Browser needs the English speech model: Whisper base.en, 148 MB, from
-    Hugging Face. It's saved in <folder>. Nothing you say is ever sent anywhere." The folder is
-    `hearing_status.folder` (`~/.ai-browser/models/faster-whisper-base.en` by default), so it is right on Windows and
-    with `$AIB_HOME` too.
+    Hugging Face. It's saved in <folder>. Your voice never leaves this computer; your words go to Claude, like
+    typed text." The folder is `hearing_status.folder` (`~/.ai-browser/models/faster-whisper-base.en` by default),
+    so it is right on Windows and with `$AIB_HOME` too.
   - Buttons: **Download 148 MB** and **Not now**.
   - About the size: the user approved "about 142 MB", which is whisper.cpp's figure in MiB. The faster-whisper files
     add up to 147,769,510 bytes, which is 141 MiB or 148 MB. The card shows the real total, computed from the pinned
@@ -168,7 +168,8 @@ It shows when the status is ready and `navigator.permissions.query({name: "micro
 - on a Mac only (`hearing_status.platform` is `mac`): "macOS may also ask once whether <Browser> may use the
   microphone: choose **Allow** (or **OK**)." On Windows the line is "If nothing happens, Windows may be blocking the
   microphone: Settings → Privacy & security → Microphone → let desktop apps use it.";
-- "The mic is on only while you hold Space or the mic button.";
+- "The mic is on only while you hold Space or the mic button, or from a click on the mic button until you click it
+  again.";
 - **Continue** calls `getUserMedia` from that click. Once it is allowed, the page stops the tracks at once (nothing is
   recorded) and says "Ready: hold Space to talk".
 - **Not now** closes the card.
@@ -444,14 +445,18 @@ beside the `BrainService`. `run.py` builds it with `ModelStore(home / "models")`
   - `item` and `agent` must be in the given ids, or the action becomes `none`. A missing item makes the answer "I
     can't find that message";
   - text with no JSON object becomes the answer as plain text (clipped), with no action.
-- **`is_yes(text)` and `is_no(text)`:** true only when the whole text is in the list. The text is lowercased, with
-  punctuation, "please" and "thanks" removed.
+- **`is_yes(text)` and `is_no(text)`:** true only when the whole text is made of phrases from the list (an "and"
+  may join two). The text is lowercased, with punctuation, "please" and "thanks" removed.
   - **Yes:** yes, yeah, yep, yup, sure, ok, okay, go ahead, do it, start it, draft it, confirm.
   - **No:** no, nope, cancel, stop, never mind, don't.
-  - "Yes, but use Opus" is neither, so it goes to Claude.
-- **`secret_like(text)`:** true when either holds:
+  - "Yeah, go ahead.", "Yes, do it." and "go ahead and do it" are yes; "No, cancel." is no.
+  - "Yes, but use Opus" is neither, so it goes to Claude; so is "go ahead and approve it".
+- **`secret_like(text)`:** true when any holds (a word's "'s" counts as "is" and "'re" as "are", and plurals count:
+  "My password's hunter2", "my passwords are tiger"):
   - password, passcode, PIN, CVV, CVC, "security code", "one-time code" or "verification code" is followed within
-    three words by "is", "was", ":" or a word with a digit;
+    three words by "is", "was", "are", "were", ":" or a word with a digit;
+  - "code" is followed within three words by a word with a digit ("the code's 4821"; "the code is broken" is a
+    question);
   - the text has a run of 12 or more digits, counted across single spaces and dashes, since Whisper often writes a
     card number as "4111 1111 1111 1111".
 
@@ -496,7 +501,9 @@ beside the `BrainService`. `run.py` builds it with `ModelStore(home / "models")`
       draft waits for the watcher to open the thread and for a Claude call;
     - it answers at once: "Drafting your reply to <sender>: check it in the inbox, then Approve". The draft's progress
       and any problem ("Brave's watcher isn't connected…") show on the item, as for the inbox's own Draft reply.
-  - The proposal closes first, so a second Start, or a "yes" after Start, does nothing.
+  - The proposal closes first, so a second Start, or a "yes" after Start, does nothing. A Start on a proposal that
+    is no longer open (past its two minutes, or the app restarted) runs nothing and answers "This has expired: ask
+    again".
 - **`dismiss(talk, proposal)`.**
 - **One question at a time per talk:** a new `respond` cancels the one in flight. `ask_claude` then kills its `claude`
   process (`oneshot.py:57-59`), and the old answer is never sent.
@@ -610,7 +617,8 @@ The README's new "Talking to the Brain" section ends with it:
   in answer to `hearing`, and to every page when it changes (download progress, ready, failed).
 - **`heard {turn, text}` or `heard {turn, error}`:** to the asking socket only.
 - **`brain_answer {talk, request, say, proposal?, open?, hidden?, error?}`:** to the asking socket only. `hidden` is
-  true when the words sounded like a password and were not sent.
+  true when the words sounded like a password and were not sent. If the Brain's answer breaks, the page still gets
+  `say: ""` and `error: "The Brain couldn't answer"` (never the error's own text), so it never waits forever.
   - `proposal` is `{id, kind: "start_agent" | "draft_reply", task?, item?, sender?, subject?, guidance?, model,
     expires_in}`.
 - **Existing messages, unchanged:**

@@ -12,6 +12,9 @@ dependencies = [
   "uvicorn>=0.30",
 ]
 
+[project.optional-dependencies]
+voice = ["faster-whisper>=1.2,<2"]  # talking to the Brain: speech to text on this computer (uv sync --extra voice)
+
 [project.scripts]
 ai-browser = "ai_browser.cli:main"
 

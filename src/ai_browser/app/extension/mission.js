@@ -7,6 +7,7 @@ import { createChat } from "./chat.js";
 import { connect } from "./link.js";
 import { permissionCard } from "./permission.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
+import { mountTalk } from "./talk.js";
 import { createVoice } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
@@ -22,6 +23,8 @@ let selected = null;
 let pending = null; // the new_task request waiting for its "created": one Start, one agent
 let pendingTimer = null;
 let storedModel = false;
+let talkState = "idle"; // the talk panel's state (talk.js): the Brain listens while the user talks
+let talk = null; // the talk panel, mounted once the line to the app exists
 
 const scene = createScene($("scene"), { onSelect: select, onCamera: aimBrain });
 const brainButton = el("button", "brain");
@@ -54,6 +57,19 @@ const voice = createVoice({
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
+talk = mountTalk({
+  panel: $("talk"),
+  micButton: $("mic"),
+  link,
+  voice,
+  onState: (state) => {
+    talkState = state;
+    renderBrain();
+  },
+  openAgent: (id) => select(id),
+  openBrain: () => openBrain(),
+  model: () => $("task-model").value, // the model last picked here or in AI Home
+});
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -71,6 +87,7 @@ function stateOf(agent) {
 }
 
 function setStatus(state) {
+  talk?.connection(state); // a lost line ends a turn, or a question, at once
   $("status").dataset.state = state;
   $("status").title = { connected: "Connected to ai-browser app", connecting: "Connecting…" }[state]
     || "Not connected: is `ai-browser app` running?";
@@ -163,7 +180,8 @@ function forget(id) {
 function renderBrain() { // the Brain thinks while it works, beats while something needs the user
   const needs = [...brainItems.values()].filter((item) => item.kind === "needs_reply").length;
   const agentsNeed = [...agents.values()].some((agent) => stateOf(agent) === "needs_you");
-  const state = speaking ? "speaking" : brainState.busy ? "thinking" : needs || agentsNeed ? "alert" : "idle";
+  const state = talkState === "listening" ? "listening" : speaking ? "speaking"
+    : brainState.busy || talkState === "transcribing" ? "thinking" : needs || agentsNeed ? "alert" : "idle";
   blob.setState(state);
   setText(brainCount, needs ? `${needs} ${needs === 1 ? "needs" : "need"} you` : "");
   setText(brainWhat, brainState.busy ? brainState.what : "");
@@ -374,6 +392,7 @@ function handle(message) {
       if (drawer.id) link.send({ type: "events", id: drawer.id });
       link.send({ type: "thumbs" }); // the latest pictures, for a page opened after they were taken
       link.send({ type: "brain" });
+      link.send({ type: "hearing" }); // can this page talk? (asked again after every reconnect)
       break;
     }
     case "agent_event":
@@ -390,6 +409,12 @@ function handle(message) {
         finishStart();
         $("task").value = "";
       }
+      talk?.onMessage(message); // a start from the talk's card, or a spoken yes
+      break;
+    case "hearing_status":
+    case "heard":
+    case "brain_answer":
+      talk?.onMessage(message);
       break;
     case "error":
       if (pending && message.request === pending) finishStart();

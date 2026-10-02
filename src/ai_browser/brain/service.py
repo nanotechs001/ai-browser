@@ -15,6 +15,8 @@ from collections.abc import Callable
 
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
+from .talk import (AGENT_MODELS, HIDDEN, SECRET_ANSWER, Talks, is_no, is_yes, parse_answer, secret_like,
+                   state_summary, talk_prompt)
 
 KINDS = {"needs_reply", "new", "skip"}
 SUGGESTIONS = {"draft", "agent", "tell"}
@@ -74,6 +76,9 @@ FILL_WAIT = 60  # seconds for the watcher to put an approved reply in the reply 
 RESTARTED = "The app restarted: try again"
 RESULT_LIMIT = 500
 FINISHED = {"your_turn", "stopped", "failed"}
+TALK_TIMEOUT = 60  # seconds for one answer to the user's words
+NOTHING_DONE = "OK, I won't."
+EXPIRED = "This has expired: ask again"  # the card's own words when its time runs out (talk.js)
 
 
 def _clip(value, limit: int) -> str:
@@ -147,6 +152,9 @@ class BrainService:
         self._requests = 0
         self._feed: asyncio.Queue | None = None
         self._follower: asyncio.Task | None = None
+        self.talks = Talks()  # Mission Control's talks: a few exchanges each, and at most one open proposal
+        self._asking: dict[str, asyncio.Task] = {}  # talk id -> the answer being worked out now
+        self._talk_jobs: set[asyncio.Task] = set()  # drafts started by a talk's Draft it (or a yes to one)
 
     # ---- lifecycle ----------------------------------------------------------------------------------------
 
@@ -158,7 +166,7 @@ class BrainService:
             self._follower = asyncio.ensure_future(self._follow())
 
     async def stop(self) -> None:
-        tasks = [*self._batches.values(), *([self._follower] if self._follower else [])]
+        tasks = [*self._batches.values(), *self._talk_jobs, *([self._follower] if self._follower else [])]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -572,6 +580,90 @@ class BrainService:
             await self.hand(item.id, text)
         else:
             self._note(item, _clip(choice.get("reply"), 300) or "I can't do that from here")
+
+    # ---- talking: the user's own words, spoken or typed in Mission Control ------------------------------------------
+
+    async def respond(self, talk: str, text: str, proposal: str | None = None, task: str | None = None,
+                      model: str | None = None) -> dict:
+        """The Brain's answer to the user's words. A newer question in the same talk cancels this one (its claude
+        process ends with it), and its answer is never given."""
+        current = asyncio.current_task()
+        earlier = self._asking.get(talk)
+        if earlier is not None and earlier is not current and not earlier.done():
+            earlier.cancel()
+        self._asking[talk] = current
+        try:
+            return await self._respond(talk, _clip(text, 2000), proposal, task, model)
+        finally:
+            if self._asking.get(talk) is current:
+                del self._asking[talk]
+
+    async def _respond(self, talk: str, text: str, proposal_id: str | None, task: str | None,
+                       model: str | None) -> dict:
+        if not text:
+            return {"say": ""}
+        card = self.talks.proposal(talk)
+        if card is not None and card.id == proposal_id:
+            if is_yes(text):  # the card runs as Start would, as it now reads: no Claude call
+                answer = await self.confirm(talk, proposal_id, task=task, model=model)
+                self.talks.add(talk, text, answer.get("say", ""))
+                return answer
+            if is_no(text):
+                self.dismiss(talk, proposal_id)
+                self.talks.add(talk, text, NOTHING_DONE)
+                return {"say": NOTHING_DONE}
+        self.talks.drop(talk)  # any other words close the card: they are a new question
+        if secret_like(text):  # never sent to Claude, and not kept in the talk either
+            self.talks.add(talk, HIDDEN, SECRET_ANSWER)
+            return {"say": SECRET_ANSWER, "hidden": True}
+        agents = self.agents.snapshot()["agents"] if self.agents is not None else []
+        items = [item.public() for item in self.store.items()]
+        state = state_summary(agents, items, self.store.others, self._working[-1] if self._working else "")
+        with self._busy("Thinking about what you said"):
+            answer = await self.ask(talk_prompt(text, self.talks.history(talk), state), model="haiku",
+                                    claude=self.claude, cwd=self.store.folder / "calls", timeout=TALK_TIMEOUT)
+        if answer.error:
+            return {"say": "", "error": f"The Brain couldn't answer: {answer.error}"}
+        parsed = parse_answer(answer.text, {str(row.get("id")) for row in agents}, {item["id"] for item in items})
+        reply: dict = {"say": parsed.say}
+        if parsed.action == "open":
+            reply["open"] = {"brain": True} if parsed.target == "brain" else {"agent": parsed.agent}
+        elif parsed.action == "start_agent" and self.agents is not None:
+            card = self.talks.propose(talk, "start_agent", task=text, model=self.agent_model)  # the user's words
+            reply["proposal"] = card.public(self.talks.expires_in(card))
+        elif parsed.action == "draft_reply":
+            item = self.store.get(parsed.item)
+            if item is None:
+                reply["say"] = "I can't find that message"
+            else:
+                card = self.talks.propose(talk, "draft_reply", item=item.id, sender=item.sender, subject=item.subject,
+                                          guidance=text, model=self.draft_model)  # the user's words, as the guidance
+                reply["proposal"] = card.public(self.talks.expires_in(card))
+        self.talks.add(talk, text, reply["say"])
+        return reply
+
+    async def confirm(self, talk: str, proposal: str, task: str | None = None, model: str | None = None) -> dict:
+        """Start (or Draft it), or a plain yes: the open proposal runs once. It can only start an agent or draft."""
+        card = self.talks.take(talk, proposal)  # closed first: a second Start, or a late yes, does nothing
+        if card is None:  # past its two minutes, or the app restarted: nothing runs, and the user hears why
+            return {"say": EXPIRED}
+        if card.kind == "start_agent" and self.agents is not None:
+            words = task.strip() if isinstance(task, str) and task.strip() else card.task
+            agent = await self.agents.create(words, model=model if model in AGENT_MODELS else self.agent_model)
+            return {"say": f"Started: {agent.name}", "agent": agent.id}
+        if card.kind == "draft_reply":
+            item = self.store.get(card.item)
+            if item is None:
+                return {"say": "That message is gone"}
+            job = asyncio.ensure_future(self.draft(item.id, guidance=card.guidance))  # it waits for the watcher
+            self._talk_jobs.add(job)
+            job.add_done_callback(self._talk_jobs.discard)
+            return {"say": f"Drafting your reply to {item.sender or 'them'}: check it in the inbox, then Approve"}
+        return {"say": ""}
+
+    def dismiss(self, talk: str, proposal: str) -> None:
+        """Cancel on the card, or a plain no."""
+        self.talks.take(talk, proposal)
 
     # ---- the user's commands ------------------------------------------------------------------------------
 

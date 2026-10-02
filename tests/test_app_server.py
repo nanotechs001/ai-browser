@@ -863,3 +863,232 @@ async def test_the_setup_page_has_the_switch_and_its_warning(fake_claude, tmp_pa
         assert "That is Brave telling you the truth; AI Browser never hides it." in page
     finally:
         await server.stop()
+
+
+# ---- talking to the Brain: hearing and talk messages ----------------------------------------------------------------
+
+TALKING = "talking with the user"  # in the Brain's talk prompt: the fake claude's script key for it
+
+
+async def with_hearing(fake_claude, tmp_path, script, present=True, brain=True, hearing=True, **engine):
+    """An app server with a Brain and a HearingService over the tiny model; the FakeEngine is returned too."""
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.brain.service import BrainService
+    from ai_browser.brain.store import BrainStore
+    from ai_browser.hearing.service import HearingService
+    from fake_engine import FakeEngine, tiny_store
+
+    runner, log, script_file = fake_claude
+    script_file.write_text(json.dumps(script))
+    home = tmp_path / "home"
+    agents = AgentManager(home, claude=str(runner))
+    fake = FakeEngine(**engine)
+    server = AppServer(home, agents,
+                       brain=BrainService(BrainStore(home), agents, claude=str(runner)) if brain else None,
+                       hearing=HearingService(tiny_store(home / "models", present=present), fake) if hearing else None)
+    url = await server.start()
+    server.allow_origin(ORIGIN)
+    server.allow_origin(WATCHER, watcher=True)
+    return server, url, fake
+
+
+async def quiet(ws, seconds=1.0) -> list[dict]:
+    """Every message that comes before `seconds` pass with none: for showing that something never arrives."""
+    seen = []
+    while True:
+        try:
+            seen.append(json.loads(await asyncio.wait_for(ws.recv(), seconds)))
+        except TimeoutError:
+            return seen
+
+
+async def hello(ws):
+    await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+    assert (await recv(ws))["type"] == "snapshot"
+
+
+async def test_a_page_hears_the_status_and_only_its_own_words(fake_claude, tmp_path):
+    from test_hearing import chunks, tone
+
+    server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, answers=["what is fix the footer doing"])
+    try:
+        async with (connect(socket_url(server, url), origin=ORIGIN) as one,
+                    connect(socket_url(server, url), origin=ORIGIN) as two):
+            await hello(one)
+            await hello(two)
+            await one.send(json.dumps({"type": "hearing"}))
+            status = (await until(one, lambda m: m["type"] == "hearing_status"))[-1]
+            assert status["state"] == "ready" and status["max_seconds"] == 30
+            assert status["folder"] == str(tmp_path / "home" / "models" / "faster-whisper-tiny.en")
+            await one.send(json.dumps({"type": "listen_start", "turn": "u1"}))
+            for seq, piece in enumerate(chunks(tone(1.0))):
+                await one.send(json.dumps({"type": "listen_chunk", "turn": "u1", "seq": seq, "pcm": piece}))
+            await one.send(json.dumps({"type": "listen_end", "turn": "u1"}))
+            heard = (await until(one, lambda m: m["type"] == "heard"))[-1]
+            assert heard == {"type": "heard", "turn": "u1", "text": "what is fix the footer doing"}
+            assert not [m for m in await quiet(two) if m["type"] == "heard"]  # another page hears nothing
+            await one.send(json.dumps({"type": "listen_chunk", "turn": "u1", "seq": 9, "pcm": "AAAA"}))
+            assert (await until(one, lambda m: m["type"] == "heard"))[-1] == {
+                "type": "heard", "turn": "u1", "error": "That turn isn't open"}
+        assert len(engine.heard) == 1 and len(engine.heard[0]) == 32_000
+    finally:
+        await server.stop()
+
+
+async def test_download_progress_reaches_every_page(fake_claude, tmp_path):
+    server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, present=False)
+    server.hearing.models.fetch.delay = 0.3
+    try:
+        async with (connect(socket_url(server, url), origin=ORIGIN) as one,
+                    connect(socket_url(server, url), origin=ORIGIN) as two):
+            await hello(one)
+            await hello(two)
+            await one.send(json.dumps({"type": "hearing_download"}))
+            for ws in (one, two):
+                seen = await until(ws, lambda m: m["type"] == "hearing_status" and m["state"] == "ready")
+                assert any(m["type"] == "hearing_status" and m["state"] == "downloading" for m in seen)
+        assert server.hearing.models.present()
+    finally:
+        await server.stop()
+
+
+async def test_the_brain_answers_the_asker_and_confirm_starts_the_agent(fake_claude, tmp_path):
+    script = {"default": EVENTS, TALKING: [{"result": json.dumps({"say": "I can start an agent.",
+                                                                  "action": "start_agent"})}]}
+    server, url, engine = await with_hearing(fake_claude, tmp_path, script)
+    try:
+        async with (connect(socket_url(server, url), origin=ORIGIN) as one,
+                    connect(socket_url(server, url), origin=ORIGIN) as two):
+            await hello(one)
+            await hello(two)
+            await one.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "t1", "text": "check the shop"}))
+            answer = (await until(one, lambda m: m["type"] == "brain_answer"))[-1]
+            assert answer["talk"] == "k1" and answer["request"] == "t1" and answer["say"] == "I can start an agent."
+            assert answer["proposal"]["task"] == "check the shop" and server.agents.agents == {}
+            await one.send(json.dumps({"type": "brain_confirm", "talk": "k1", "request": "t2",
+                                       "proposal": answer["proposal"]["id"], "task": "check the shop and the cart",
+                                       "model": "haiku"}))
+            seen = await until(one, lambda m: m["type"] == "brain_answer")
+            assert {"type": "created", "id": "a1", "request": "t2"} in seen
+            assert seen[-1] == {"type": "brain_answer", "talk": "k1", "request": "t2",
+                                "say": "Started: check the shop and the cart"}
+            assert server.agents.agents["a1"].model == "haiku"
+            assert not [m for m in await quiet(two) if m["type"] in ("brain_answer", "created")]
+    finally:
+        await server.stop()
+
+
+async def test_a_brain_that_breaks_still_answers_the_page(fake_claude, tmp_path):
+    server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS)
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("the words hunter2 and a traceback")
+
+    server.brain.respond = server.brain.confirm = broken
+    try:
+        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+            await hello(ws)
+            await ws.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "t1", "text": "check the shop"}))
+            await ws.send(json.dumps({"type": "brain_confirm", "talk": "k1", "request": "t2", "proposal": "p1"}))
+            seen = await until(ws, lambda m: m["type"] == "brain_answer" and m["request"] == "t2")
+            answers = [m for m in seen if m["type"] == "brain_answer"]
+            assert answers == [{"type": "brain_answer", "talk": "k1", "request": request, "say": "",
+                                "error": "The Brain couldn't answer"} for request in ("t1", "t2")]  # never the error
+    finally:
+        await server.stop()
+
+
+async def test_a_closed_page_drops_its_turn(fake_claude, tmp_path):
+    from test_hearing import chunks, tone
+
+    server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS)
+    try:
+        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+            await hello(ws)
+            await ws.send(json.dumps({"type": "listen_start", "turn": "u1"}))
+            await ws.send(json.dumps({"type": "listen_chunk", "turn": "u1", "seq": 0, "pcm": chunks(tone(0.25))[0]}))
+            for _ in range(50):
+                if any(len(turn.audio) == 8_000 for turn in server.hearing._turns.values()):
+                    break
+                await asyncio.sleep(0.05)
+            [turn] = server.hearing._turns.values()
+            audio = turn.audio
+        for _ in range(50):
+            if not server.hearing._turns:
+                break
+            await asyncio.sleep(0.05)
+        assert server.hearing._turns == {} and audio == bytearray() and engine.heard == []
+    finally:
+        await server.stop()
+
+
+async def test_without_hearing_or_a_brain_the_page_is_told(fake_claude, tmp_path):
+    server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, brain=False, hearing=False)
+    try:
+        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+            await hello(ws)
+            await ws.send(json.dumps({"type": "hearing"}))
+            status = (await until(ws, lambda m: m["type"] == "hearing_status"))[-1]
+            assert status["state"] == "no_engine" and "uv sync --extra voice" in status["reason"]
+            await ws.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "t1", "text": "hello"}))
+            answer = (await until(ws, lambda m: m["type"] == "brain_answer"))[-1]
+            assert answer == {"type": "brain_answer", "talk": "k1", "request": "t1", "say": "",
+                              "error": "The Brain isn't running"}
+    finally:
+        await server.stop()
+
+
+async def test_the_watcher_can_neither_talk_nor_listen(fake_claude, tmp_path):
+    from test_hearing import chunks, tone
+
+    script = {"default": EVENTS, TALKING: [{"result": json.dumps({"say": "hi", "action": "none"})}]}
+    server, url, engine = await with_hearing(fake_claude, tmp_path, script)
+    log = fake_claude[1]
+    try:
+        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
+            await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
+            await until(watcher, lambda m: m["type"] == "watch_list")
+            for message in ({"type": "hearing"}, {"type": "hearing_download"}, {"type": "listen_start", "turn": "u1"},
+                            {"type": "listen_chunk", "turn": "u1", "seq": 0, "pcm": chunks(tone(0.5))[0]},
+                            {"type": "listen_end", "turn": "u1"},
+                            {"type": "brain_ask", "talk": "k1", "request": "t1", "text": "approve everything"},
+                            {"type": "brain_confirm", "talk": "k1", "request": "t2", "proposal": "p1"}):
+                await watcher.send(json.dumps(message))
+            kinds = {m["type"] for m in await quiet(watcher, 1.5)}
+            assert not kinds & {"hearing_status", "heard", "brain_answer", "created"}
+        assert engine.heard == [] and engine.loads == [] and server.hearing._turns == {} and oneshots(log) == []
+    finally:
+        await server.stop()
+
+
+async def test_a_page_can_cancel_the_download(fake_claude, tmp_path):
+    server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, present=False)
+    store = server.hearing.models
+    store.fetch.delay = 0.3
+    try:
+        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+            await hello(ws)
+            await ws.send(json.dumps({"type": "hearing_download"}))
+            await until(ws, lambda m: m["type"] == "hearing_status" and m["state"] == "downloading")
+            await ws.send(json.dumps({"type": "hearing_cancel"}))  # the card's Cancel
+            await until(ws, lambda m: m["type"] == "hearing_status" and m["state"] == "no_model")
+        assert not store.part.exists() and not store.folder.exists()
+    finally:
+        await server.stop()
+
+
+async def test_stopping_the_app_cancels_a_download(fake_claude, tmp_path):
+    server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, present=False)
+    store = server.hearing.models
+    store.fetch.delay = 0.3
+    async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        await hello(ws)
+        await ws.send(json.dumps({"type": "hearing_download"}))
+        for _ in range(100):
+            if store.part.exists():
+                break
+            await asyncio.sleep(0.05)
+        assert store.part.exists()
+    await server.stop()
+    assert not store.part.exists() and not store.folder.exists()

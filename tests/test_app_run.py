@@ -376,3 +376,30 @@ async def test_first_start_in_brave_mode_names_the_extension_folder(fake_claude,
     extension = str((tmp_path / "home" / "app" / "extension").resolve())
     assert code == 0 and shown == [extension]  # the extension's folder in Finder, never the user's Brave folder
     assert extension in "\n".join(lines)
+
+
+@CHROME
+async def test_the_app_can_hear_with_its_models_folder(fake_claude, tmp_path):
+    from websockets.asyncio.client import connect
+
+    from ai_browser.app.run import run_app
+
+    runner, _, _ = fake_claude
+    seen = {}
+
+    async def ready(url, app):
+        config = json.loads((tmp_path / "home" / "app" / "extension" / "config.json").read_text(encoding="utf-8"))
+        socket_url = url.replace("http", "ws") + "/ws?token=" + config["token"]
+        async with connect(socket_url, origin=f"chrome-extension://{app.extension_id}") as ws:
+            await ws.send(json.dumps({"type": "hearing"}))
+            while (message := json.loads(await asyncio.wait_for(ws.recv(), 10)))["type"] != "hearing_status":
+                pass
+            seen["status"] = message
+        app.process.kill()  # the user closes AI Browser
+
+    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=str(runner), ready=ready,
+                                          out=lambda *args: None), 30)
+    status = seen["status"]
+    assert code == 0 and status["folder"] == str(tmp_path / "home" / "models" / "faster-whisper-base.en")
+    assert status["size_bytes"] == 147_769_510 and status["model"] == "Whisper base.en"
+    assert status["state"] in ("no_engine", "no_model")  # never ready by itself: the model comes only on Download
