@@ -306,7 +306,7 @@ async def wait_closed(engine) -> None:
 async def test_engine_drives_the_users_chrome(chrome_engine):
     engine, base, _ = chrome_engine
     started = await engine.sandbox_start(chrome=True)
-    assert "your own Chrome" in started.text
+    assert "your Chrome" in started.text
     assert f"work folder /work/{engine.task_id}" in started.text  # the path read_file and upload take
     opened = await engine.open(base + "form.html")
     assert 'page  "Form test"' in opened.text
@@ -344,7 +344,7 @@ async def test_engine_explains_when_remote_debugging_is_off(tmp_path, monkeypatc
 @CHROME
 async def test_engine_reconnects_after_chrome_restarts(chrome_engine):
     engine, base, folder = chrome_engine
-    assert "your own Chrome" in (await engine.sandbox_start(chrome=True)).text
+    assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text
     await engine.open(base + "form.html")
     await engine.cdp.send("Browser.close")  # relaunch the same throwaway profile on a new port after closing it
     await wait_closed(engine)
@@ -370,14 +370,14 @@ async def test_a_failed_reconnect_never_falls_back_to_the_sandbox(chrome_engine,
         raise AssertionError("fell back to the Docker sandbox")
 
     monkeypatch.setattr(Engine, "_start", no_sandbox)
-    assert "your own Chrome" in (await engine.sandbox_start(chrome=True)).text
+    assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text
     await engine.open(base + "form.html")
     await engine.cdp.send("Browser.close")  # the user quits Chrome
     await wait_closed(engine)
     (folder / "DevToolsActivePort").unlink(missing_ok=True)
     for _ in range(2):  # each call explains; none quietly switches to another browser
         result = await engine.observe()
-        assert result.text.startswith("error: Chrome") and "sandbox" not in result.text
+        assert result.text.startswith("error: Chrome") and "Ask the user to turn the switch on" in result.text
     process = launch(folder, headless=True)
     try:
         find_ws_url(folder, timeout=20)
@@ -392,7 +392,7 @@ async def test_a_failed_reconnect_never_falls_back_to_the_sandbox(chrome_engine,
 @CHROME
 async def test_a_dropped_connection_closes_the_old_tabs_on_reconnect(chrome_engine):
     engine, base, _ = chrome_engine
-    assert "your own Chrome" in (await engine.sandbox_start(chrome=True)).text
+    assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text
     await engine.open(base + "form.html")
     old = engine.browser.current.target
     await engine.cdp.close()  # the connection drops while Chrome keeps running
@@ -405,7 +405,7 @@ async def test_a_dropped_connection_closes_the_old_tabs_on_reconnect(chrome_engi
 @CHROME
 async def test_a_tab_closed_outside_the_session_is_replaced(chrome_engine):
     engine, base, _ = chrome_engine
-    assert "your own Chrome" in (await engine.sandbox_start(chrome=True)).text
+    assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text
     await engine.open(base + "form.html")
     gone = engine.browser.current.target
     await engine.cdp.send("Target.closeTarget", {"targetId": gone})  # the user closes our tab
@@ -418,7 +418,7 @@ async def test_a_tab_closed_outside_the_session_is_replaced(chrome_engine):
 @CHROME
 async def test_a_popup_that_closes_itself_hands_back_to_its_opener(chrome_engine):
     engine, base, _ = chrome_engine
-    assert "your own Chrome" in (await engine.sandbox_start(chrome=True)).text
+    assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text
     page = (await engine.open(base + "popup.html")).text
     button = next(line.split()[0] for line in page.splitlines() if '"Sign in, then close"' in line)
     out = (await engine.act([f"click {button}"])).text
@@ -436,7 +436,7 @@ async def test_a_popup_that_closes_itself_hands_back_to_its_opener(chrome_engine
 @CHROME
 async def test_shell_still_runs_in_the_docker_sandbox(chrome_engine):
     engine, _, _ = chrome_engine
-    assert "your own Chrome" in (await engine.sandbox_start(chrome=True)).text
+    assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text
     result = await engine.shell("whoami && (ls /profile >/dev/null 2>&1 || echo no-profile)")
     assert result.text.splitlines()[:2] == ["agent", "no-profile"]
     assert engine.info.shell == engine.sandboxes.chrome_shell()  # this home's own shell, never another home's
@@ -449,11 +449,11 @@ async def test_the_shell_outlives_other_sessions_and_comes_back_when_stopped(chr
     from ai_browser.skills import Catalog
 
     engine, _, _ = chrome_engine
-    assert "your own Chrome" in (await engine.sandbox_start(chrome=True)).text
+    assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text
     assert (await engine.shell("echo one")).text.startswith("one")
     other = Engine(home=engine.home, default_profile="pytest-chrome", catalog=Catalog([], set()))
     try:
-        assert "your own Chrome" in (await other.sandbox_start(chrome=True)).text
+        assert "your Chrome" in (await other.sandbox_start(chrome=True)).text
         assert (await other.shell("echo other")).text.startswith("other")
         await other.sandbox_stop()  # another session ends: the shell they shared keeps running
         assert engine.sandboxes.is_running(engine.info.shell)

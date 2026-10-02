@@ -164,7 +164,7 @@ async def test_a_check_that_comes_up_without_a_new_page_is_handed_over_by_the_ne
 async def started(chrome_engine):
     """The Engine on the throwaway Chrome (standing in for the user's own browser): (engine, base)."""
     engine, base, _ = chrome_engine
-    assert "your own Chrome" in (await engine.sandbox_start(chrome=True)).text
+    assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text
     return engine, base
 
 
@@ -279,7 +279,7 @@ async def test_a_closed_check_tab_makes_its_site_off_limits(chrome_engine):
     assert (await engine.qa(base + "qa/index.html")).text.startswith(refused)
     assert (await engine.shell("curl -s http://localhost:8000/")).text.startswith("⛔ the shell doesn't reach localhost")
     await engine.sandbox_stop()
-    assert "your own Chrome" in (await engine.sandbox_start(chrome=True)).text  # a new connection, the same Engine
+    assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text  # a new connection, the same Engine
     assert (await engine.open(base + "checks/counter.html")).text.startswith(refused)
     redirected = (await engine.open(other + "checks/go?to=" + quote(base + "checks/counter.html", safe=""))).text
     assert redirected.startswith(refused) and '"Count"' not in redirected

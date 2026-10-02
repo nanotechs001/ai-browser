@@ -242,3 +242,62 @@ async def test_two_engines_share_container(tmp_path):
     finally:
         await second.sandbox_stop()
         subprocess.run(["docker", "volume", "rm", "aib-profile-pytest-two"], capture_output=True)
+
+
+@pytest.mark.parametrize("value, kind", [("", "chrome"), ("own", "chrome"), ("chrome", "chrome"), ("brave", "chrome"),
+                                         (" Brave ", "chrome"), ("OWN", "chrome"), ("sandbox", "sandbox"),
+                                         ("app", "app")])
+def test_aib_browser_picks_the_browser(monkeypatch, tmp_path, value, kind):
+    monkeypatch.setenv("AIB_BROWSER", value)
+    assert Engine(home=tmp_path, catalog=Catalog([], set()))._default_kind() == kind
+
+
+async def test_an_unknown_aib_browser_is_refused_never_guessed(monkeypatch, tmp_path):
+    monkeypatch.setenv("AIB_BROWSER", "firefox")
+
+    async def nothing(*args, **kwargs):
+        raise AssertionError("started a browser")
+
+    monkeypatch.setattr(Engine, "_start", nothing)
+    monkeypatch.setattr(Engine, "_start_chrome", nothing)
+    engine = Engine(home=tmp_path, catalog=Catalog([], set()))
+    result = await engine.open("https://example.com")
+    assert result.text.startswith("error: AIB_BROWSER must be own, chrome, brave, sandbox or app")
+
+
+async def test_sandbox_start_chooses_up_front(monkeypatch, tmp_path):
+    monkeypatch.delenv("AIB_BROWSER")
+    started = []
+
+    async def sandbox(self, profile, fresh):
+        started.append(("sandbox", profile))
+        raise RuntimeError("stop here")
+
+    async def own(self, mode="chrome"):
+        started.append((mode,))
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(Engine, "_start", sandbox)
+    monkeypatch.setattr(Engine, "_start_chrome", own)
+    engine = Engine(home=tmp_path, catalog=Catalog([], set()))
+    await engine.sandbox_start()
+    await engine.sandbox_start(chrome=True)
+    assert started == [("sandbox", "default"), ("chrome",)]
+
+
+async def test_with_brave_unreachable_open_explains_and_never_starts_the_sandbox(monkeypatch, tmp_path):
+    monkeypatch.delenv("AIB_BROWSER")
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    folder.mkdir(parents=True)  # Brave is installed; its switch is off
+    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
+
+    async def no_sandbox(self, profile, fresh):
+        raise AssertionError("fell back to the Docker sandbox")
+
+    monkeypatch.setattr(Engine, "_start", no_sandbox)
+    engine = Engine(home=tmp_path / "home", catalog=Catalog([], set()))
+    for _ in range(2):  # each call explains; none quietly switches browsers
+        text = (await engine.open("https://example.com")).text
+        assert text.startswith("error: Brave doesn't allow remote debugging yet: open brave://inspect/#remote-debugging")
+        assert ("Ask the user to turn the switch on, or whether they want the Docker sandbox instead "
+                "(sandbox_start()).") in text
