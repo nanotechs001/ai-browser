@@ -212,3 +212,96 @@ async def test_the_brains_threads_go_in_its_group_and_ai_home_marks_them(watcher
                                                for tab in brave.tabs()))
     finally:
         await brave.close()
+
+
+async def brave_for(watcher, tmp_path):  # noqa: F811
+    from ai_browser.app.bravelink import BraveLink
+
+    brave = BraveLink(tmp_path / "profile", every=0.2)
+    await brave.start()
+    await brave.connect()
+    watcher.server.attach_brave(brave)
+    return brave
+
+
+async def hand(watcher, verb, **message):  # noqa: F811
+    """What AI Home's Hand over / Take back sends, as the app handles it."""
+    queue = asyncio.Queue()
+    await watcher.server._brave_command(queue, verb, message)
+    assert queue.empty(), queue.get_nowait()
+
+
+@CHROME
+async def test_a_handed_tab_is_used_taken_back_and_left_open(watcher, tmp_path, monkeypatch):  # noqa: F811
+    base = watcher.base
+    brave = await brave_for(watcher, tmp_path)
+    add_agent(watcher.server.agents, "a1", "Fix the footer", "blue")
+    await groups_on(watcher)
+    engine = agent_engine(watcher, tmp_path, monkeypatch)
+    try:
+        await engine.open(base + "form.html")
+        first_window = (await group_of(watcher, base + "form.html"))[2]
+        user = (await watcher.cdp.send("Target.createTarget", {"url": base + "privacy.html", "newWindow": True}))
+        user = user["targetId"]
+        assert await watcher.until(lambda: any(tab["target"] == user for tab in brave.tabs()))
+        await hand(watcher, "hand_tab", id="a1", target=user)
+        for _ in range(30):
+            if await group_of(watcher, base + "privacy.html"):
+                break
+            await asyncio.sleep(0.1)
+        title, color, group_window, window = await group_of(watcher, base + "privacy.html")
+        assert (title, color) == ("Fix the footer", "blue")
+        assert group_window == window != first_window  # never moved: a second group in its own window
+        await asyncio.sleep(1.1)  # the engine reads the handed tabs at most once a second (open just read them)
+        listing = (await engine.tabs("list")).text
+        assert "h1" in listing and "(handed to you by the user)" in listing
+        assert 'page  "Privacy"' in (await engine.tabs("switch", "h1")).text
+        assert 'page  "Privacy"' in (await engine.observe()).text
+        await hand(watcher, "take_back", target=user)
+        for _ in range(30):
+            if await group_of(watcher, base + "privacy.html") is None:
+                break
+            await asyncio.sleep(0.1)
+        assert await group_of(watcher, base + "privacy.html") is None  # out of the agent's group
+        await asyncio.sleep(1.1)  # the engine reads the handed tabs at most once a second
+        taken = (await engine.observe()).text
+        assert "(the user took back tab t2)" in taken
+        await hand(watcher, "hand_tab", id="a1", target=user)
+        await asyncio.sleep(1)
+        await watcher.server.agents.close("a1")
+        assert await watcher.until(lambda: any(tab["target"] == user and tab["owner"] == {"kind": "you"}
+                                               for tab in brave.tabs()))  # still open, the user's again
+        for _ in range(30):
+            if await group_of(watcher, base + "privacy.html") is None:
+                break
+            await asyncio.sleep(0.1)
+        assert await group_of(watcher, base + "privacy.html") is None  # and ungrouped
+    finally:
+        await engine.close()
+        await brave.close()
+
+
+@CHROME
+async def test_take_back_during_a_bot_check_skips_the_site(watcher, tmp_path, monkeypatch):  # noqa: F811
+    base = watcher.base
+    brave = await brave_for(watcher, tmp_path)
+    agent = add_agent(watcher.server.agents, "a1", "Fix the footer", "blue")
+    await groups_on(watcher)
+    engine = agent_engine(watcher, tmp_path, monkeypatch)
+    try:
+        user = (await watcher.cdp.send("Target.createTarget", {"url": base + "checks/unusual.html"}))["targetId"]
+        assert await watcher.until(lambda: any(tab["target"] == user for tab in brave.tabs()))
+        await hand(watcher, "hand_tab", id="a1", target=user)
+        handed = (await engine.tabs("switch", "h1")).text
+        assert "⛔ bot check" in handed
+        assert await watcher.until(lambda: agent.check is not None)
+        assert agent.check["adopted"] is True  # the user's own tab: the card offers no Skip this site
+        await hand(watcher, "take_back", target=user)
+        await asyncio.sleep(1.1)  # the engine reads the handed tabs at most once a second
+        ended = (await engine.observe()).text
+        assert "off-limits" in ended and engine.gate.held is None  # the take-back counts as closing it
+        assert "off-limits" in (await engine.open(base + "form.html")).text  # the site stays skipped
+        assert user in {tab["target"] for tab in brave.tabs()}  # the user's tab stays open
+    finally:
+        await engine.close()
+        await brave.close()
