@@ -53,6 +53,7 @@ TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
 SKILL_MESSAGES = {"skill_draft", "skill_save"}
 CHECK_MESSAGES = {"check_continue", "check_skip"}  # a bot check's buttons; the watcher may Continue, never Skip
+BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back"}  # only AI Browser's own pages send these
 CHECK_SITE = re.compile(r"[a-z0-9.-]{1,253}")  # a host name, nothing else
 CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{1,64}")  # an engine's live view
 WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "schedule", "run", "tools", "skills",
@@ -149,6 +150,8 @@ class AppServer:
         self._server: _QuietServer | None = None
         self._task: asyncio.Task | None = None
         agents.on_action = self._on_action
+        agents.ungroup = self._ungroup  # a handed tab taken back, or let go when its agent closes
+        agents.on_turn = lambda agent: self.connect_brave()  # an agent's turn: right after the user's task
         if tabs is not None:
             self.attach_tabs(tabs)
 
@@ -447,6 +450,44 @@ class AppServer:
     def _browser_changed(self) -> None:
         self._send_all({"type": "browser", **self._browser_info()})
 
+    def _handable(self, target: str | None) -> dict | None:
+        """A tab of the user's Brave that may be handed to an agent: listed there, and nobody else's."""
+        if self.brave is None or not target:
+            return None
+        return next((tab for tab in self.brave.tabs()
+                     if tab["target"] == target and tab["owner"]["kind"] in ("you", "brain")), None)
+
+    async def _brave_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        if kind == "brave_connect":
+            self.connect_brave()
+        elif kind == "hand_tab":
+            error = await self._hand(str(message.get("id", "")), message.get("target"))
+            if error:
+                queue.put_nowait({"type": "error", "text": error})
+        elif kind == "take_back" and isinstance(message.get("target"), str):
+            had = self.agents.take_back(message["target"])  # the agent it was handed to, or None
+            if had is not None:  # only a handed tab: an agent's own tab is never the user's to take back
+                self._own(message["target"], None)
+
+    async def _hand(self, agent_id: str, target) -> str:
+        """Hand over: the user's click gives one of their tabs to an agent; "" when done, else why not."""
+        tab = self._handable(target if isinstance(target, str) else None)
+        if tab is None:
+            return "That tab can't be handed over: it is closed, or an agent or Claude Code already works in it"
+        agent = self.agents.agents.get(agent_id)
+        if agent is None:
+            return "That agent has closed"
+        self._own(target, self._owner_of(agent_id, handed=True))
+        await self.agents.hand_tab(agent_id, target, {"url": tab["url"], "title": tab["title"]})
+        self._job(self._group(agent.id, agent.name, agent.color, target, {"url": tab["url"]}))
+        return ""
+
+    def _ungroup(self, targets: list[str]) -> None:
+        """Out of their group (a handed tab taken back, or let go when its agent closes): they're the user's again."""
+        self.groups.ungroup([tab for tab in (self.groups.tab_of(target) for target in targets) if tab is not None])
+        for target in targets:
+            self._own(target, None)
+
     def _agent_report(self, report: dict) -> None:
         """An engine's report, read and authenticated: wave 1's check reports, then the tab report."""
         if isinstance(report, dict) and all(isinstance(report.get(key), str) for key in ("agent", "kind", "target")):
@@ -526,6 +567,8 @@ class AppServer:
             message = await self._feed.get()
             if message.get("type") == "agent_closed":
                 self._thumbs.pop(str(message.get("id")), None)
+                if self.brave is not None:
+                    self.brave.release(str(message.get("id")))
             self._send_all(message)
             if message.get("type") in ("permission_request", "check_request"):
                 self._to_watcher(message)  # a Brave notification too
@@ -566,6 +609,9 @@ class AppServer:
                 await agents.continue_check(agent_id)
             elif self._origin_of.get(ws) not in self._watcher_origins:
                 await agents.skip_check(agent_id)
+        elif kind in BRAVE_MESSAGES:  # (everyday Brave) only AI Browser's own pages, never the watcher's origin
+            if self._origin_of.get(ws) not in self._watcher_origins:
+                await self._brave_command(queue, kind, message)
         elif kind == "hello":
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
@@ -578,8 +624,16 @@ class AppServer:
                 return
             skills = [skill for skill in message.get("skills") or [] if isinstance(skill, str)][:20]
             adopt = message.get("adopt") if isinstance(message.get("adopt"), str) and message.get("adopt") else None
+            handed = self._handable(adopt) if adopt and self.brave is not None else None
+            if adopt and self.brave is not None and handed is None:  # in brave mode: only a tab Brave lists
+                queue.put_nowait({"type": "error", "request": request,
+                                  "text": "That tab can't be handed over: it is closed, or an agent works in it"})
+                return
             model = message.get("model") if message.get("model") in MODELS else self.default_model
             agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")))
+            if handed is not None:
+                self._own(adopt, self._owner_of(agent.id, handed=True))
+                self._job(self._group(agent.id, agent.name, agent.color, adopt, {"url": handed["url"]}))
             queue.put_nowait({"type": "created", "id": agent.id, "request": request})
         elif kind == "send":
             text = _text(message.get("text"))
@@ -616,7 +670,8 @@ class AppServer:
         elif kind == "replied" and isinstance(message.get("id"), str):
             brain.on_replied(site, message["id"])
         elif kind == "thread":
-            brain.on_thread(str(message.get("request", "")), message.get("text") or "", message.get("error") or "")
+            if brain is not None:
+                brain.on_thread(str(message.get("request", "")), message.get("text") or "", message.get("error") or "")
             url = self._thread_urls.pop(str(message.get("request", "")), None)
             if url is not None and self.brave is not None:
                 self.brave.mark_brain(url)  # display only: "Brain" on that row
@@ -715,7 +770,7 @@ class AppServer:
                     raise ValueError("Write what the agent should do")
                 page = ""
                 if isinstance(message.get("page_target"), str) and self.tabs is not None:
-                    page = await self.tabs.page_text(message["page_target"])
+                    page = await self.tabs.page_text(message["page_target"], picked=True)
                 name, text = await writer.from_description(description, _text(message.get("examples")), page)
             queue.put_nowait({"type": "skill_drafted", "request": request, "name": name, "text": text})
         except (ValueError, SkillError) as exc:
