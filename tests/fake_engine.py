@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import hashlib
 import io
+import threading
 import time
 from pathlib import Path
 
 from ai_browser.hearing.model import ModelFile, ModelSpec, ModelStore
+from ai_browser.hearing.engine import Heard
 
 CONFIG = b'{"tiny": true}\n'
 WEIGHTS = bytes(range(256)) * 7813  # 2,000,128 bytes: "2 MB" on the page, two 1 MB pieces and a little more
@@ -73,3 +75,48 @@ def tiny_store(root: Path, present: bool = True) -> ModelStore:
     if present:
         install(store)
     return store
+
+
+class FakeEngine:
+    """The speech engine, faked: each transcription gives the next answer (the last one repeats). It records every
+    turn's audio, every load, and whether two transcriptions ever ran at once."""
+
+    def __init__(self, answers=("hello",), available: bool = True, delay: float = 0.0,
+                 load_error: Exception | None = None):
+        self.answers = list(answers)
+        self.installed = available  # False: as if `uv sync --extra voice` hadn't been run
+        self.delay = delay  # seconds each load and each transcription take
+        self.load_error = load_error
+        self.error: Exception | None = None  # raised by transcribe
+        self.speech_seconds = 1.0  # how much speech the voice detector "found"
+        self.heard: list[bytes] = []
+        self.loads: list[Path] = []
+        self.overlapped = False
+        self._busy = 0
+        self._guard = threading.Lock()
+
+    def available(self) -> bool:
+        return self.installed
+
+    def load(self, folder) -> None:
+        self.loads.append(Path(folder))
+        if self.delay:
+            time.sleep(self.delay)
+        if self.load_error is not None:
+            raise self.load_error
+
+    def transcribe(self, pcm: bytes) -> Heard:
+        with self._guard:
+            self._busy += 1
+            self.overlapped = self.overlapped or self._busy > 1
+        try:
+            self.heard.append(bytes(pcm))
+            if self.delay:
+                time.sleep(self.delay)
+            if self.error is not None:
+                raise self.error
+            text = self.answers.pop(0) if len(self.answers) > 1 else (self.answers[0] if self.answers else "")
+            return Heard(text=text, speech_seconds=self.speech_seconds)
+        finally:
+            with self._guard:
+                self._busy -= 1

@@ -1,14 +1,19 @@
 """Hearing: the pinned speech model and its download, the speech engine, and push-to-talk turns. No test downloads or
 loads Whisper: the model is a tiny pinned stand-in served locally (fake_engine.TINY), and the engine is a fake."""
 
+import asyncio
+import importlib.util
 import socket
 import ssl
+import subprocess
+import sys
+import time
 import urllib.error
 from types import SimpleNamespace
 
 import pytest
 
-from fake_engine import CONFIG, TINY, WEIGHTS, tiny_store
+from fake_engine import CONFIG, TINY, WEIGHTS, FakeEngine, install, tiny_store
 
 
 def test_the_pin_is_whisper_base_en_at_one_revision():
@@ -125,3 +130,122 @@ def test_certificates_are_always_checked():
     context = tls_context()
     assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
     assert type(context).__module__.startswith("truststore")  # the computer's own certificate store
+
+
+# ---- the engine, the status and the download -------------------------------------------------------------------------
+
+async def eventually(check, seconds=8.0):
+    for _ in range(int(seconds * 20)):
+        if check():
+            return True
+        await asyncio.sleep(0.05)
+    return bool(check())
+
+
+def hearing_for(tmp_path, present=True, **engine):
+    """A HearingService over the tiny model (in place unless present=False) and a FakeEngine. Every status it
+    broadcasts is kept, with the time it was sent ("at")."""
+    from ai_browser.hearing.service import HearingService
+
+    fake = FakeEngine(**engine)
+    store = tiny_store(tmp_path / "models", present=present)
+    hearing = HearingService(store, fake, platform="darwin")
+    statuses = []
+    hearing.on_status = lambda status: statuses.append({**status, "at": time.monotonic()})
+    return hearing, fake, store, statuses
+
+
+def test_the_states_say_what_is_missing(tmp_path):
+    from ai_browser.hearing.service import platform_name, unavailable_status
+
+    hearing, engine, store, _ = hearing_for(tmp_path, present=False, available=False)
+    status = hearing.status()
+    assert status["state"] == "no_engine" and "`uv sync --extra voice`" in status["reason"]
+    engine.installed = True
+    assert hearing.status() == {"state": "no_model", "reason": "The speech model isn't on this computer yet",
+                                "size_bytes": TINY.size_bytes, "done_bytes": 0,
+                                "folder": str(tmp_path / "models" / "faster-whisper-tiny.en"),
+                                "model": "Whisper tiny.en", "max_seconds": 30, "platform": "mac", "loaded": False}
+    install(store)
+    assert hearing.status()["state"] == "ready" and hearing.status()["reason"] == ""
+    assert engine.loads == [] and store.fetch.urls == []  # a status never loads the model or touches the network
+    assert [platform_name(name) for name in ("darwin", "win32", "linux")] == ["mac", "windows", "linux"]
+    assert unavailable_status()["state"] == "no_engine" and unavailable_status()["max_seconds"] == 30
+
+
+def test_the_real_engine_imports_nothing_heavy_until_it_loads():
+    code = ("import sys; from ai_browser.hearing.engine import WhisperEngine; "
+            "from ai_browser.hearing.service import HearingService; WhisperEngine().available(); "
+            "print('faster_whisper' in sys.modules, 'numpy' in sys.modules)")
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert result.stdout.split() == ["False", "False"], result.stderr
+
+
+@pytest.mark.skipif(importlib.util.find_spec("faster_whisper") is None, reason="the voice extra isn't installed")
+def test_the_real_engine_loads_only_from_its_folder(tmp_path):
+    from ai_browser.hearing.engine import WhisperEngine
+
+    engine = WhisperEngine()
+    assert engine.available()
+    with pytest.raises(FileNotFoundError, match="^no model folder at "):
+        engine.load(tmp_path / "missing")  # never a name faster-whisper would look up on Hugging Face
+
+
+async def test_a_download_ends_ready_with_progress_at_most_twice_a_second(tmp_path):
+    hearing, engine, store, statuses = hearing_for(tmp_path, present=False)
+    store.fetch.delay = 0.3  # before each read of a 1 MB piece
+    hearing.start_download()
+    hearing.start_download()  # a second click while it runs does nothing
+    assert hearing.status()["state"] == "downloading"
+    assert await eventually(lambda: hearing.status()["state"] == "ready", 15)
+    downloading = [status for status in statuses if status["state"] == "downloading"]
+    assert statuses[-1]["state"] == "ready" and any(status["done_bytes"] > 0 for status in downloading)
+    done = [status["done_bytes"] for status in downloading]
+    assert done == sorted(done)
+    assert all(later["at"] - earlier["at"] >= 0.45 for earlier, later in zip(downloading, downloading[1:]))
+    assert len(store.fetch.urls) == 2 and store.present() and not store.part.exists()
+
+
+async def test_a_bad_download_fails_and_the_next_click_clears_it(tmp_path):
+    hearing, engine, store, statuses = hearing_for(tmp_path, present=False)
+    store.fetch.corrupt = {"model.bin"}
+    hearing.start_download()
+    assert await eventually(lambda: hearing.status()["state"] == "failed")
+    assert hearing.status()["reason"] == "The download didn't match the expected file: nothing was kept"
+    assert statuses[-1]["state"] == "failed" and not store.folder.exists() and not store.part.exists()
+    store.fetch.corrupt = set()
+    hearing.start_download()
+    assert hearing.status()["state"] == "downloading"  # the click clears the failure
+    assert await eventually(lambda: hearing.status()["state"] == "ready")
+
+
+async def test_cancel_mid_download_leaves_no_model(tmp_path):
+    hearing, engine, store, statuses = hearing_for(tmp_path, present=False)
+    store.fetch.delay = 0.3
+    hearing.start_download()
+    assert await eventually(lambda: store.part.exists())
+    hearing.cancel_download()
+    assert await eventually(lambda: hearing.status()["state"] == "no_model")
+    assert not store.part.exists() and not store.folder.exists()
+
+
+async def test_stopping_mid_download_keeps_nothing(tmp_path):
+    from ai_browser.hearing.service import HearingService
+
+    hearing, engine, store, statuses = hearing_for(tmp_path, present=False)
+    store.fetch.delay = 0.3
+    hearing.start_download()
+    assert await eventually(lambda: hearing.status()["done_bytes"] > 0)
+    await hearing.stop()  # the app closes mid-download
+    assert not store.part.exists() and not store.folder.exists()
+    again = HearingService(tiny_store(tmp_path / "models", present=False), FakeEngine())
+    assert again.status()["state"] == "no_model"  # the next start offers Download again
+
+
+async def test_download_is_offered_only_for_a_missing_or_broken_model(tmp_path):
+    hearing, engine, store, statuses = hearing_for(tmp_path)
+    hearing.start_download()
+    assert hearing.status()["state"] == "ready" and store.fetch.urls == []  # never over a model that is there
+    missing, engine2, store2, _ = hearing_for(tmp_path / "other", present=False, available=False)
+    missing.start_download()
+    assert missing.status()["state"] == "no_engine" and store2.fetch.urls == []
