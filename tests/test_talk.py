@@ -645,6 +645,40 @@ async def test_start_runs_the_users_own_words_once(stack):
 
 
 @CHROME
+async def test_start_works_again_after_the_line_drops_mid_start(stack):
+    talk_script(stack, {"say": "Shall I start an agent on that?", "action": "start_agent"})
+    brain, called = stack["brain"], []
+
+    async def unanswered(*args, **kwargs):  # the app never answers this Start: its line goes down first
+        called.append(args)
+        await asyncio.Event().wait()
+
+    brain.confirm = unanswered
+    js = await open_talk(stack, mic())
+    go = "document.querySelector('#talk-card .talk-go')"
+
+    async def typed(words):
+        await js(f"document.getElementById('talk-text').value = {json.dumps(words)};"
+                 " document.getElementById('talk-form').requestSubmit(); true")
+
+    await typed("check the shop")
+    assert await until(js, f"!!{go}")
+    await js(f"{go}.click(); true")
+    assert await eventually(lambda: called) and await js(f"{go}.disabled") is True
+    for ws in list(stack["server"]._sockets):  # the app's end of the line closes (an app restart looks the same)
+        await ws.close()
+    assert await until(js, f"{NOTICE} === 'Not connected: is `ai-browser app` running?'", 5)
+    assert await js(f"{go}.disabled") is False  # the card can be tried again
+    assert await until(js, "document.getElementById('status').dataset.state === 'connected'", 10)
+    del brain.confirm  # the app is back, and answers
+    await typed("check the cart")
+    assert await until(js, f"document.querySelector('#talk-card .talk-task')?.value === 'check the cart'")
+    await js(f"{go}.click(); true")
+    assert await until(js, f"{station('a1')} !== null")  # Start works again, with no reload
+    assert list(stack["server"].agents.agents) == ["a1"]
+
+
+@CHROME
 async def test_a_spoken_yes_starts_the_open_proposal(stack):
     stack["engine"].answers = ["check the shop", "yes"]
     talk_script(stack, {"say": "Shall I start an agent on that?", "action": "start_agent"})

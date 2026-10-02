@@ -545,6 +545,11 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
       progress("");
       tell(NOT_CONNECTED);
     }
+    if (confirming) { // a Start whose answer can't come now: the card may be tried again (the app runs it once)
+      confirming = null;
+      if (proposal) for (const node of proposal.buttons) node.disabled = false;
+      tell(NOT_CONNECTED);
+    }
   }
 
   function onMessage(message) {
