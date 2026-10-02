@@ -6,7 +6,7 @@ import asyncio
 import json
 
 from test_home import stack, until  # noqa: F401  (fixtures)
-from test_mission import CHROME, needs_reply, open_mission, open_with
+from test_mission import CHROME, WORKING, needs_reply, open_mission, open_with
 
 
 async def shape(stack, body):
@@ -455,3 +455,60 @@ async def test_the_id_picks_the_hair_and_the_skin(stack):
                             " return [[made.dataset.hair, made.dataset.skin], [String(variant.hair),"
                             " String(variant.skin)]]; })()")
     assert made == wanted
+
+
+@CHROME
+async def test_a_workers_pose_shows_the_agents_state(stack):
+    js = await poses(stack)
+    shown = {
+        "working": {".arm-l": "1", ".arm-r": "1", ".arm-up": "0", ".arm-thumb": "0", ".eyes-open": "1"},
+        "needs_you": {".arm-up": "1", ".arm-r": "0", ".mouth-o": "1"},
+        "your_turn": {".arm-thumb": "1", ".arm-r": "0", ".eyes-happy": "1"},
+        "failed": {".eyes-shut": "1", ".mouth-sad": "1", ".sweat": "1"},
+        "stopped": {".eyes-shut": "1"},
+    }
+    for state, parts in shown.items():
+        for part, value in parts.items():
+            assert await js(opacity(state, part)) == value, (state, part)
+    assert await js(f"getComputedStyle({worker('failed', '.head')}).transform") != "none"
+    filters = await js(f"[...{worker('stopped')}.querySelectorAll('.part')].map(part => getComputedStyle(part).filter)")
+    assert len(filters) == len(PARTS) and "none" not in filters
+    delays = await js(f"getComputedStyle({worker('working', '.blink')}).animationDelay.split(',').map(parseFloat)")
+    assert [round(delay, 3) for delay in delays] == [0, -0.2]  # the nod, then the blink: pose-working is hair 0, skin 1
+
+
+@CHROME
+async def test_the_worker_itself_never_makes_a_stacking_context(stack):
+    js = await poses(stack)
+    for state in POSE_STATES:
+        style = await js(f"(() => {{ const style = getComputedStyle({worker(state)}); return [style.transform,"
+                         " style.filter, style.opacity, style.willChange, style.zIndex, style.isolation]; })()")
+        assert style == ["none", "none", "1", "auto", "auto", "auto"], state
+        layers = await js(f"[...{worker(state)}.children].map(part => getComputedStyle(part).zIndex)")
+        assert layers == ["1"] * 5 + ["3"] * 5, state  # behind the desk (layer 2), or in front of it
+
+
+@CHROME
+async def test_only_html_layers_are_animated(stack):
+    js = await poses(stack)
+    assert await js("document.getAnimations().filter(animation => animation.effect"
+                    " && animation.effect.target instanceof SVGElement).length") == 0
+    assert await js("document.getAnimations().some(animation => animation.effect"
+                    " && animation.effect.target.matches('#poses .worker .part'))")
+
+
+@CHROME
+async def test_with_reduced_motion_nothing_moves(stack):
+    stack["script"].write_text(json.dumps(WORKING))
+    for name in ("one", "two", "three"):
+        await stack["server"].agents.create(name)
+    js = await open_with(stack)
+    await front(stack, js)
+    assert await until(js, "document.querySelectorAll('.station[data-state=\"working\"]').length === 3")
+    assert await js(POSES)
+    moving = ("document.getAnimations().filter(animation => animation.playState === 'running'"
+              " && animation.effect?.target?.closest?.('.worker')).length")
+    assert await until(js, f"{moving} > 0")  # the workers move, until the user turns Reduce Motion on
+    await reduce_motion(stack, js)
+    await asyncio.sleep(1)
+    assert await js("document.getAnimations().filter(animation => animation.playState === 'running').length") == 0
