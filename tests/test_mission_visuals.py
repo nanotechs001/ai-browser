@@ -384,3 +384,74 @@ async def test_without_webgl_the_orb_is_a_dotted_brain(stack):
                     " return style.maskImage || style.webkitMaskImage; })()")
     assert mask and mask != "none"
     assert await js(f"{stage}.dataset.points") is None
+
+
+# ---- the workers, in a pose harness: one worker per state in a test container ----------------------------------------
+
+POSE_STATES = ["working", "waiting", "needs_you", "your_turn", "failed", "stopped"]
+PARTS = ["body", "head", "face", "blink", "sweat", "arm-l", "arm-r", "arm-up", "arm-thumb", "sparkle"]
+POSES = """(async () => {
+  const chibi = await import(chrome.runtime.getURL('chibi.js'));
+  chibi.ensureDefs(document);
+  const box = document.createElement('div');
+  box.id = 'poses';
+  box.style.cssText = 'position: fixed; left: 0; top: 60px; display: flex; gap: 8px; z-index: 5';
+  for (const state of ['working', 'waiting', 'needs_you', 'your_turn', 'failed', 'stopped']) {
+    const station = document.createElement('div');
+    station.className = 'station';
+    station.dataset.state = state;
+    station.style.setProperty('--c', '#4c8df6');
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.append(chibi.createWorker('pose-' + state));
+    station.append(card);
+    box.append(station);
+  }
+  document.body.append(box);
+  window.chibi = chibi;
+  return true;
+})()"""
+
+
+def worker(state, part=""):
+    return f"document.querySelector('#poses .station[data-state=\"{state}\"] .worker {part}'.trim())"
+
+
+def opacity(state, part):
+    return f"getComputedStyle({worker(state, part)}).opacity"
+
+
+async def poses(stack):
+    """Mission Control, in front, with the pose harness (`window.chibi` is the module)."""
+    js = await open_with(stack)
+    await front(stack, js)
+    assert await js(POSES)
+    return js
+
+
+@CHROME
+async def test_a_worker_is_made_of_parts_with_no_text_or_pictures(stack):
+    js = await poses(stack)
+    assert await js("window.chibi.PARTS") == PARTS
+    for state in POSE_STATES:
+        found = await js(f"[...{worker(state)}.children].map(part => [part.className,"
+                         " part.querySelectorAll(':scope > svg').length, part.children.length])")
+        assert found == [[f"part {name}", 1, 1] for name in PARTS], state
+        assert await js(f"{worker(state)}.textContent") == ""
+        assert await js(f"{worker(state)}.querySelectorAll('image, foreignObject, text, use').length") == 0
+        assert await js(f"{worker(state)}.getAttribute('aria-hidden')") == "true"
+
+
+@CHROME
+async def test_the_id_picks_the_hair_and_the_skin(stack):
+    js = await poses(stack)
+    assert await js("window.chibi.variantOf('a1')") == {"hair": 1, "skin": 1}
+    assert await js("window.chibi.variantOf('a1')") == {"hair": 1, "skin": 1}  # every time
+    assert await js("new Set(Array.from({length: 20}, (_, index) => {"
+                    " const variant = window.chibi.variantOf('a' + (index + 1));"
+                    " return variant.hair + '-' + variant.skin; })).size") == 9
+    made, wanted = await js("(() => { const made = window.chibi.createWorker('a7');"
+                            " const variant = window.chibi.variantOf('a7');"
+                            " return [[made.dataset.hair, made.dataset.skin], [String(variant.hair),"
+                            " String(variant.skin)]]; })()")
+    assert made == wanted
