@@ -216,3 +216,10 @@ async def test_the_bridge_notes_loaded_skills_and_tool_ids(fake_claude, tmp_path
     done = next(event for event in events if event["type"] == "tool_result")
     assert bridge.loaded_skills == {"ai-browser:website-qa"} and tool["id"] == "u9"
     assert done["id"] == "u9" and done["ms"] == 41
+
+
+def test_the_panel_prompt_hands_bot_checks_to_the_user():
+    from ai_browser.app.bridge import PANEL_PROMPT
+
+    assert ("If a result says ⛔ bot check, stop and tell the user in one line: the tab is in front for them, and AI "
+            "Home shows Continue. Don't reload, retry or open the site another way.") in " ".join(PANEL_PROMPT.split())

@@ -12,20 +12,28 @@ One `qa` call checks a whole site. This playbook turns its findings into a repor
 - **Sandbox (default):** neutral results, no extensions, no personal logins. Use it for public sites.
 - **Staging behind a login:** `sandbox_start(profile="client-acme")`. Ask the user to log in through the live-view
   link first. Never type passwords yourself.
-- **Sites that block the sandbox** (bot checks): `sandbox_start(chrome=true)` uses the user's own browser. Say in the
-  report that ad and tracker blocking (Brave Shields, extensions) can hide third-party problems.
+- **Bot checks:** if qa or open stops at a bot check, stop and tell the user. Never switch browsers, profiles or
+  tools to get past it: the user solves it, or skips the site.
 - **In the AI Browser app:** just run `qa`; it uses the app's browser.
 
 ## 2. Run it
 
 `qa(url="https://client-site.com", max_pages=30)`
 
-- 30 pages take about a minute or two. Use up to 200 for big sites; for very big ones, run section by section
-  (start at /blog/, /shop/…).
+- 30 pages take about three minutes, because qa is polite (below). A run stops visiting pages after five minutes
+  and says so; for bigger sites, run section by section (start at /blog/, /shop/…).
 - It never clicks, types or submits, and never requests log-out, delete or add-to-cart style links (they are listed
   as "not followed").
 - It returns counts, the top 10 issues, and the paths of `report.html` (one shareable file), `issues.csv` and the
   screenshots.
+
+## Be polite
+
+- `qa` goes one request at a time per site, follows robots.txt and Retry-After, and stops a site after a 429, 403 or
+  bot check. The summary says where it stopped and what it didn't check.
+- Never crawl from the shell: no curl loops, no `xargs -P`, no faked user agents.
+- `ignore_robots=true` only when the user says the site is theirs (staging sites often tell every crawler to stay
+  out). The report then says robots.txt was ignored at their request.
 
 ## 3. Verify before you report
 
@@ -42,8 +50,9 @@ The checks are careful, but confirm every high and medium issue yourself before 
 
 ## 4. Known false positives
 
-- Sites that refuse automated checks (LinkedIn, some shops) appear under "couldn't check", not as broken. Open
-  them by hand if they matter.
+- Sites that refuse automated checks appear under "Not checked", not as broken. So do links to big sites (Google,
+  YouTube, LinkedIn…), which qa never requests, pages robots.txt asks crawlers to skip, and links on hosts that
+  stopped answering (429, 403 or a bot check). Open them by hand if they matter.
 - Pages behind a login look broken unless the session is logged in.
 - In the user's own browser, extensions can change pages or block requests.
 
@@ -56,7 +65,8 @@ Use this shape; keep it short and concrete:
 > **Fix first (high):** 1. … — page, screen size, what happens, how to fix it.
 > **Should fix (medium):** …
 > **Nice to fix (low):** …
-> **Not checked:** links that refused automated checks; anything behind a login; forms.
+> **Not checked:** links to big sites (Google, YouTube…), pages robots.txt asks crawlers to skip, hosts that stopped
+> answering; anything behind a login; forms.
 > Full report with screenshots: report.html (attached).
 
 - Lead with what visitors experience, not technical detail.
