@@ -3,11 +3,15 @@ over the pipe stands in for Brave (the `watcher` fixture of test_watcher.py), ne
 
 import asyncio
 import json
+import os
 
 import pytest
 
 from ai_browser.chrome import chrome_binary
-from test_home import evaluate, until
+from ai_browser.engine import Engine
+from ai_browser.skills import Catalog
+from fake_brave import add_agent
+from test_home import evaluate, open_page, until
 from test_watcher import watcher  # noqa: F401  (fixture)
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
@@ -44,3 +48,167 @@ async def test_the_watcher_sees_the_marker_and_may_group(watcher):  # noqa: F811
     assert history["entries"][0]["url"] == MARKER  # fact 3: Back from the first page shows the blank page
     assert await page("document.referrer") == ""  # the first page loads with no referrer
     await asyncio.sleep(0)
+
+
+async def groups_on(watcher):  # noqa: F811
+    assert await watcher.until(lambda: watcher.server.groups.available() == "on"), "watcher_caps never said yes"
+
+
+def agent_engine(watcher, tmp_path, monkeypatch, agent="a1"):  # noqa: F811
+    """An engine in own mode, set up the way ai-browser app sets up an agent's (AIB_APP_* from the app)."""
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path / "profile"))  # the watcher fixture's throwaway Chrome
+    monkeypatch.setenv("AIB_APP_AGENT", agent)
+    monkeypatch.setenv("AIB_APP_EVENTS", watcher.server.url + "/agent-events")
+    monkeypatch.setenv("AIB_APP_AGENT_TOKEN", watcher.server.agent_token)
+    return Engine(home=tmp_path / f"engine-{agent}", catalog=Catalog([], set()))
+
+
+ACTIVE = "chrome.tabs.query({active: true, lastFocusedWindow: true}).then(([tab]) => tab && tab.id)"
+
+
+@CHROME
+async def test_an_agents_tabs_go_in_its_group_without_taking_the_focus(watcher, tmp_path, monkeypatch):  # noqa: F811
+    base = watcher.base
+    add_agent(watcher.server.agents, "a1", "Fix the footer", "blue")
+    await groups_on(watcher)
+    await open_page(watcher.cdp, base + "form.html")  # the user's own page, in front, with the same address later
+    front = await watcher.worker_js(ACTIVE)
+    engine = agent_engine(watcher, tmp_path, monkeypatch)
+    try:
+        page = (await engine.open(base + "popup.html")).text
+        assert 'page  "Popup test"' in page
+        title, color, group_window, window = await group_of(watcher, base + "popup.html")
+        assert (title, color) == ("Fix the footer", "blue") and group_window == window
+        assert (await engine.js("document.referrer")).text.startswith('""')
+        assert await watcher.worker_js(ACTIVE) == front  # the user's focus never moved
+        link = next(line.split()[0] for line in page.splitlines() if '"Preview in new tab"' in line)
+        await engine.act([f"click {link}"])
+        for _ in range(30):  # a tab its page opened joins its group
+            if await group_of(watcher, base + "privacy.html"):
+                break
+            await asyncio.sleep(0.1)
+        assert (await group_of(watcher, base + "privacy.html"))[:2] == ["Fix the footer", "blue"]
+        await engine.tabs("new", url=base + "form.html")
+        user_form = await watcher.worker_js(
+            f"chrome.tabs.query({{}}).then(tabs => tabs.filter(tab => tab.url === {json.dumps(base + 'form.html')})"
+            ".map(tab => tab.groupId))")
+        assert sorted(user_form)[0] == -1 and len(user_form) == 2  # the user's tab with that address stays out
+        assert await watcher.worker_js(ACTIVE) == front
+    finally:
+        await engine.close()
+
+
+@CHROME
+async def test_two_agents_two_groups_and_a_tab_in_another_window_moves_to_its_group(watcher, tmp_path,  # noqa: F811
+                                                                                      monkeypatch):
+    base = watcher.base
+    add_agent(watcher.server.agents, "a1", "Fix the footer", "blue")
+    add_agent(watcher.server.agents, "a2", "Check prices", "green")
+    await groups_on(watcher)
+    first = agent_engine(watcher, tmp_path, monkeypatch, "a1")
+    await first.open(base + "popup.html")
+    second = agent_engine(watcher, tmp_path, monkeypatch, "a2")
+    try:
+        await second.open(base + "report.html")
+        one, two = await group_of(watcher, base + "popup.html"), await group_of(watcher, base + "report.html")
+        assert one[:2] == ["Fix the footer", "blue"] and two[:2] == ["Check prices", "green"]
+        await watcher.cdp.send("Target.createTarget", {"url": base + "textonly.html", "newWindow": True})
+        await asyncio.sleep(0.5)  # the user now works in another window
+        await first.tabs("new", url=base + "long.html")
+        title, _, group_window, window = await group_of(watcher, base + "long.html")
+        assert title == "Fix the footer" and window == group_window == one[2]  # moved to the agent's group
+    finally:
+        await first.close()
+        await second.close()
+
+
+@CHROME
+async def test_a_closed_group_is_made_again_and_the_users_move_stands(watcher, tmp_path, monkeypatch):  # noqa: F811
+    base = watcher.base  # Review Focus 2
+    add_agent(watcher.server.agents, "a1", "Fix the footer", "blue")
+    await groups_on(watcher)
+    engine = agent_engine(watcher, tmp_path, monkeypatch)
+    try:
+        await engine.open(base + "popup.html")
+        assert await group_of(watcher, base + "popup.html")
+        await watcher.worker_js(f"chrome.tabs.query({{}}).then(tabs => tabs.find(tab => tab.url === "
+                                f"{json.dumps(base + 'popup.html')})).then(tab => chrome.tabs.ungroup(tab.id))"
+                                ".then(() => true)")  # the user dissolves the group (its only tab leaves it)
+        await engine.tabs("new", url=base + "report.html")
+        assert (await group_of(watcher, base + "report.html"))[:2] == ["Fix the footer", "blue"]
+        assert await group_of(watcher, base + "popup.html") is None  # the tab the user took out stays out
+    finally:
+        await engine.close()
+
+
+@CHROME
+async def test_without_the_watcher_the_page_still_loads_ungrouped(watcher, tmp_path, monkeypatch):  # noqa: F811
+    base = watcher.base
+    add_agent(watcher.server.agents, "a1", "Fix the footer", "blue")
+    await groups_on(watcher)
+    engine = agent_engine(watcher, tmp_path, monkeypatch)
+    try:
+        await engine.open(base + "popup.html")  # the engine learns groups are on (kept for 10 s)
+        watcher.server._watcher_origins.clear()  # from now on the watcher can't be the app's watcher again
+        await watcher.server._watcher[0].close()
+        assert await watcher.until(lambda: watcher.server.groups.available() == "no_watcher")
+        page = (await engine.tabs("new", url=base + "report.html")).text
+        assert 'page  "' in page and await group_of(watcher, base + "report.html") is None
+    finally:
+        await engine.close()
+
+
+@CHROME
+async def test_a_claude_code_session_joins_while_the_app_runs(watcher, tmp_path, monkeypatch):  # noqa: F811
+    from ai_browser import grouping
+
+    base = watcher.base
+    monkeypatch.setattr(grouping, "REREAD_EVERY", 0)
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path / "profile"))
+    await groups_on(watcher)
+    home = tmp_path / "session-home"
+    (home / "app").mkdir(parents=True)
+    link = home / "app" / "link.json"
+    link.write_text(json.dumps({"events": watcher.server.url + "/agent-events",
+                                "session_token": watcher.server.session_token, "pid": os.getpid()}), encoding="utf-8")
+    engine = Engine(home=home, catalog=Catalog([], set()))
+    try:
+        await engine.open(base + "form.html")
+        title, color, _, form_window = await group_of(watcher, base + "form.html")
+        assert (title, color) == ("Claude Code", "orange") and f"cc-{engine.task_id}" in watcher.server.sessions
+        link.unlink()  # the app has quit
+        await engine.tabs("new", url=base + "report.html")
+        assert await group_of(watcher, base + "report.html") is None
+        report_window = await watcher.worker_js(
+            f"chrome.tabs.query({{}}).then(tabs => tabs.find(tab => tab.url === {json.dumps(base + 'report.html')}))"
+            ".then(tab => tab.windowId)")
+        assert report_window != form_window  # a window of its own
+    finally:
+        await engine.close()
+
+
+@CHROME
+async def test_the_brains_threads_go_in_its_group_and_ai_home_marks_them(watcher, tmp_path):  # noqa: F811
+    from ai_browser.app.bravelink import BraveLink
+
+    brave = BraveLink(tmp_path / "profile", every=0.2)
+    await brave.start()
+    await brave.connect()
+    watcher.server.attach_brave(brave)
+    try:
+        verdicts = [{"id": "gmail:t1", "kind": "needs_reply", "summary": "Maria asks to move the launch",
+                     "why": "a client", "suggest": "draft"}]
+        watcher.script.write_text(json.dumps({"default": [{"result": "[]"}],
+                                              "You sort new messages": [{"result": json.dumps(verdicts)}],
+                                              "You draft a reply": [{"result": "Monday works for us."}]}))
+        await watcher.watch("gmail", "brain/gmail.html")
+        assert await watcher.until(lambda: "t1" in watcher.raw_ids())
+        await watcher.brain.draft("gmail:t1")
+        thread = watcher.brain.store.get("gmail:t1").url
+        assert (await group_of(watcher, thread))[:2] == ["Brain", "purple"]
+        assert await watcher.until(lambda: any(tab["url"] == thread and tab["owner"]["kind"] == "brain"
+                                               for tab in brave.tabs()))
+    finally:
+        await brave.close()

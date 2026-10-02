@@ -1,10 +1,13 @@
 // The watcher's worker, in the user's everyday browser (Brave). It keeps the line to `ai-browser app` (the Brain),
-// registers a reader (a content script) for each site the user watches, shows the Brain's notifications, and does
-// the only two things it ever does in a page: open a thread when the user asks for a draft, and put the reply the
-// user approved into that thread's reply box. It never sends anything.
+// registers a reader (a content script) for each site the user watches, shows the Brain's notifications, does the
+// only two things it ever does in a page (open a thread when the user asks for a draft, and put the reply the user
+// approved into that thread's reply box), and puts the AI's tabs in groups. It never sends anything.
 import { BUILD } from "./build.js";
+import { groupBrainTab, groupsAvailable, groupTab, ungroupTabs, watchNewTabs } from "./groups.js";
 import { connect } from "./link.js";
 import { checkAction, checkNotification, notificationFor } from "./notify.js";
+
+watchNewTabs();
 
 const BRAIN = chrome.runtime.getURL("brain.html");
 const READERS = new Set(["gmail", "slack", "asana"]); // added sites use the region reader
@@ -23,7 +26,10 @@ const link = connect({
   onState: (state) => {
     chrome.action.setBadgeText({ text: state === "connected" ? "" : "off" }).catch(() => {});
     chrome.action.setBadgeBackgroundColor({ color: "#6b6a66" }).catch(() => {});
-    if (state === "connected") flush();
+    if (state === "connected") {
+      link.send({ type: "watcher_caps", groups: groupsAvailable() }); // right after its hello (link.js sends it)
+      flush();
+    }
   },
 });
 
@@ -71,6 +77,8 @@ async function handle(message) {
   } else if (message.type === "notify") await notify(message);
   else if (message.type === "permission_request") await askPermission(message);
   else if (message.type === "check_request") await askCheck(message);
+  else if (message.type === "group_tab") link.send({ type: "tab_grouped", ...(await groupTab(message)) });
+  else if (message.type === "ungroup_tabs") await ungroupTabs(message.tabs);
   else if (message.type === "open_thread") await openThread(message);
   else if (message.type === "fill_reply") await fillReply(message);
 }
@@ -362,6 +370,7 @@ async function openThread({ request, url }) {
   try {
     const tab = await chrome.tabs.create({ url, active: true });
     threadTabs.set(url, tab.id);
+    await groupBrainTab(tab);
     await loaded(tab.id, 12000);
     const answer = await ask(tab.id, { type: "thread" }, 15000, (reply) => Boolean(reply?.text));
     link.send(answer ? { type: "thread", request, text: answer.text }
@@ -381,6 +390,7 @@ async function fillReply({ request, url, text }) {
       if (!/^https?:\/\//.test(url || "")) throw new Error("this message has no web address");
       tab = await chrome.tabs.create({ url, active: true });
       threadTabs.set(url, tab.id);
+      await groupBrainTab(tab);
       await loaded(tab.id, 15000);
     }
     await chrome.tabs.update(tab.id, { active: true });
