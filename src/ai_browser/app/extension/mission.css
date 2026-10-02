@@ -81,6 +81,8 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
                                   animation: beat 1.1s linear infinite; }
 .stage[data-state="speaking"] .orb { --a: #8ff5d2; --b: #2fb38f; --glow: rgba(80, 230, 180, 0.5);
                                      animation: talk 0.5s ease-in-out infinite; }
+.stage[data-state="listening"] .orb { --a: #fff2fa; --b: #f28cd9; --glow: rgba(242, 140, 217, 0.5);
+                                      animation: breathe 4.2s ease-in-out infinite; }
 .brain-label { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: -24px; min-height: 40px;
                text-align: center; pointer-events: none; }
 .brain-label .count { font-weight: 700; color: var(--accent); font-size: 15px; text-shadow: 0 0 12px rgba(0, 0, 0, 0.8); }

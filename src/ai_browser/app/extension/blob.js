@@ -1,20 +1,22 @@
 // The Brain, drawn as a brain: thousands of glowing points in its shape (brainshape.js) over a faint web of links,
 // with signals running along them. One WebGL1 canvas and three draws a frame (the web, the pulses, the cloud), at most
-// 30 frames a second. Its state (idle, thinking, alert, speaking) blends the colours and the motion from one to the
-// next. The points are made after the page's first paint; until then, and without WebGL or once the context is lost,
-// the dotted brain in CSS (the orb) shows the same states (the stage's data-state). With reduced motion it is still:
-// drawn once its points are ready, then only for a short colour fade after a change.
+// 30 frames a second. Its state (idle, thinking, alert, speaking, listening) blends the colours and the motion from
+// one to the next. The points are made after the page's first paint; until then, and without WebGL or once the
+// context is lost, the dotted brain in CSS (the orb) shows the same states (the stage's data-state). With reduced
+// motion it is still: drawn once its points are ready, then only for a short colour fade after a change.
 "use strict";
 
 import { brainPoints, synapses } from "./brainshape.js";
 
-const STATES = ["idle", "thinking", "alert", "speaking"];
+// listening (the user is talking: voice input) is the fifth. Its weight goes to its own uniform, u_listen, so
+// u_mix keeps the four weights it always had (WebGL1 has no vec5).
+const STATES = ["idle", "thinking", "alert", "speaking", "listening"];
 const FRAME_MS = 1000 / 30; // the Brain doesn't need more than 30 frames a second
 const TABLE = { // the states' own numbers, in STATES' order; what is drawn is their blend by the state weights
-  speed: [0.25, 1, 0.6, 0.8], // how fast the points drift
-  flash: [0.35, 2.2, 1.2, 1.6], // how often a point flashes
-  pulse: [0.15, 0.84, 0.54, 0.6], // how fast the signals travel
-  sway: [20, 12, 20, 20], // seconds per sway, there and back
+  speed: [0.25, 1, 0.6, 0.8, 0.25], // how fast the points drift
+  flash: [0.35, 2.2, 1.2, 1.6, 0], // how often a point flashes
+  pulse: [0.15, 0.84, 0.54, 0.6, 0.3], // how fast the signals travel
+  sway: [20, 12, 20, 20, 20], // seconds per sway, there and back (listening's own sway stops: see advance())
 };
 const YAW = (-55 * Math.PI) / 180; // its left side three-quarters on: the speech area faces the user
 const SWAY = (30 * Math.PI) / 180;
@@ -28,14 +30,15 @@ const GAP_MS = 250; // a longer gap (a hidden tab, a still Brain) isn't a slow m
 const FOCUS_MS = 500; // focus(): the alert's aim moves to its new side in a straight line this long
 const BURST_S = 0.8; // a new agent: the Brain's flare fades this long (FADE_S with reduced motion)
 const WORD_S = 0.6; // a spoken word's ring spreads and fades this long
-const CLOUD = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_bright", "u_flow",
-               "u_flash", "u_wave", "u_size", "u_word"];
-const LINKS = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_travel", "u_pulse",
-               "u_burst_dir"];
+const CLOUD = ["u_mix", "u_listen", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst",
+               "u_bright", "u_flow", "u_flash", "u_wave", "u_size", "u_word"];
+const LINKS = ["u_mix", "u_listen", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst",
+               "u_travel", "u_pulse", "u_burst_dir"];
 
 const SHARED = `
 precision highp float;
 uniform vec4 u_mix;
+uniform float u_listen; // listening's weight (the fifth state)
 uniform float u_yaw;
 uniform float u_pitch;
 uniform float u_scale;
@@ -55,7 +58,8 @@ vec3 view(vec3 p) {
 }
 float aim(vec3 q) {
   vec2 side = normalize(q.xz + vec2(0.0001, 0.0));
-  return mix(1.0, 0.35 + 0.65 * smoothstep(-0.2, 0.8, dot(side, u_focus)), u_mix.z);
+  float alert = mix(1.0, 0.35 + 0.65 * smoothstep(-0.2, 0.8, dot(side, u_focus)), u_mix.z);
+  return mix(alert, 0.35 + 0.65 * smoothstep(-0.2, 0.8, side.y), u_listen); // listening: toward the user
 }
 `;
 const CLOUD_VERTEX = `${SHARED}
@@ -73,7 +77,7 @@ void main() {
   vec3 centre = kind < 0.5 ? vec3(a_pos.x < 0.0 ? -0.17 : 0.17, 0.06, 0.0) : vec3(0.0);
   vec3 normal = a_pos - centre;
   normal /= max(length(normal), 0.0001);
-  float drift = dot(u_mix, vec4(0.006, 0.020, 0.010, 0.010)) * u_motion;
+  float drift = (dot(u_mix, vec4(0.006, 0.020, 0.010, 0.010)) + 0.004 * u_listen) * u_motion;
   vec3 wander = vec3(sin(0.7 * u_flow + phase), cos(0.5 * u_flow + 1.7 * phase),
                      sin(0.6 * u_flow + 2.3 * phase)) * drift;
   if (kind < 0.5) wander -= normal * dot(wander, normal);
@@ -86,9 +90,9 @@ void main() {
   float wave = u_mix.y * exp(-ahead * ahead / 0.01) * u_motion;
   float ring = u_word * step(abs(distance(a_pos, vec3(0.30, 0.0, 0.35)) - 0.6 * (1.0 - u_word)), 0.05) * u_motion;
   vec3 ridge = (mat4(vec4(0.30, 0.45, 1.00, 0.0), vec4(0.30, 0.85, 1.00, 0.0), vec4(1.00, 0.55, 0.30, 0.0),
-                     vec4(0.30, 0.95, 0.75, 0.0)) * u_mix).rgb;
+                     vec4(0.30, 0.95, 0.75, 0.0)) * u_mix).rgb + vec3(1.00, 0.95, 0.98) * u_listen; // listening: white
   vec3 groove = (mat4(vec4(0.70, 0.50, 1.00, 0.0), vec4(0.65, 0.50, 1.00, 0.0), vec4(1.00, 0.30, 0.25, 0.0),
-                      vec4(0.55, 1.00, 0.90, 0.0)) * u_mix).rgb;
+                      vec4(0.55, 1.00, 0.90, 0.0)) * u_mix).rgb + vec3(0.95, 0.55, 0.85) * u_listen; // listening: rose
   vec3 base = mix(groove, ridge, a_info.y);
   bool core = kind > 2.5;
   if (core) base = mix(base, vec3(1.0), 0.3);
@@ -122,13 +126,14 @@ void main() {
   float persp = 2.6 / (2.6 - q.z);
   gl_Position = vec4(q.xy * persp * 1.05, 0.0, 1.0);
   vec3 m = view(mid);
-  float fires = step(fract(a_phase * 7.0), dot(u_mix, vec4(0.10, 0.85, 0.60, 0.50)) * aim(m));
+  float fires = step(fract(a_phase * 7.0), (dot(u_mix, vec4(0.10, 0.85, 0.60, 0.50)) + 0.20 * u_listen) * aim(m));
   vec2 side = normalize(m.xz + vec2(0.0001, 0.0));
   fires = max(fires, step(0.2, u_burst) * step(0.0001, dot(side, u_burst_dir)));
   float swell = smoothstep(0.85, 1.0, t) * u_pulse;
   float depth = 0.5 + 0.5 * smoothstep(-0.8, 0.8, q.z);
   vec3 tint = (mat4(vec4(0.55, 0.75, 1.00, 0.0), vec4(0.60, 1.00, 1.00, 0.0), vec4(1.00, 0.80, 0.50, 0.0),
-                    vec4(0.70, 1.00, 0.90, 0.0)) * u_mix).rgb;
+                    vec4(0.70, 1.00, 0.90, 0.0)) * u_mix).rgb
+              + vec3(1.00, 0.85, 0.95) * u_listen; // listening: pale rose
   v_color = tint * (1.0 + 0.6 * swell);
   v_alpha = (u_pulse > 0.5 ? fires * u_motion : 0.10) * depth;
   v_round = u_pulse;
@@ -148,8 +153,8 @@ void main() {
 export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced-motion: reduce)"), count = 8000,
                                           seed = 7 } = {}) {
   const stage = canvas.closest(".stage") || canvas.parentElement;
-  const target = [1, 0, 0, 0]; // the state's weights the Brain moves toward
-  const mix = [1, 0, 0, 0];
+  const target = [1, 0, 0, 0, 0]; // the state's weights the Brain moves toward
+  const mix = [1, 0, 0, 0, 0];
   const clock = { flow: 0, flash: 0, travel: 0, sway: 0, wave: 0, breath: 0, beat: 0 };
   // a new agent's flash (and the side it fires toward), the alert's aim, a spoken word's ring
   const effects = { burst: 0, burstDir: [0, 0], focus: [0, 0], word: 0 };
@@ -273,28 +278,28 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
     wake();
   }
 
-  function blend(row) {
-    return row[0] * mix[0] + row[1] * mix[1] + row[2] * mix[2] + row[3] * mix[3];
+  function blend(row) { // the states' numbers, weighted: listening's (the fifth) too
+    return row.reduce((sum, value, index) => sum + value * mix[index], 0);
   }
 
   function advance(step) { // normal motion: every clock moves on at its state's blended speed, so nothing jumps
     clock.flow = (clock.flow + step * blend(TABLE.speed)) % (200 * Math.PI);
     clock.flash = (clock.flash + step * blend(TABLE.flash)) % (2 * Math.PI);
     clock.travel = (clock.travel + step * blend(TABLE.pulse)) % 1;
-    clock.sway = (clock.sway + (step * 2 * Math.PI) / blend(TABLE.sway)) % (10 * Math.PI);
+    clock.sway = (clock.sway + ((step * 2 * Math.PI) / blend(TABLE.sway)) * (1 - mix[4])) % (10 * Math.PI);
     clock.wave = (clock.wave + step * 1.6) % (2 * Math.PI);
     clock.breath = (clock.breath + step * 1.3) % (2 * Math.PI);
     clock.beat = (clock.beat + step) % BEAT_S;
     const peak = (x) => Math.exp(-((x / 0.06) ** 2));
     const beat = (0.035 * peak(clock.beat) + 0.02 * peak(clock.beat - 0.22)) * mix[2];
-    return { yaw: YAW + SWAY * Math.sin(clock.sway), pitch: PITCH + 0.05 * Math.sin(0.6 * clock.sway),
+    return { yaw: YAW + SWAY * (1 - mix[4]) * Math.sin(clock.sway), pitch: PITCH + 0.05 * Math.sin(0.6 * clock.sway),
              scale: (1 + 0.015 * Math.sin(clock.breath)) * (1 + beat), bright: (0.25 * beat) / 0.035, motion: 1 };
   }
 
   function ease(step, still) { // the weights move toward the state: eased, or a straight line that lands when still
     let changing = false;
     const move = step / FADE_S;
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < STATES.length; index += 1) {
       const gap = target[index] - mix[index];
       if (still) mix[index] = Math.abs(gap) <= move ? target[index] : mix[index] + Math.sign(gap) * move;
       else mix[index] += gap * Math.min(1, step * 3);
@@ -329,7 +334,8 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
   }
 
   function shared(uniforms, view) { // set on every drawn frame: the tests read u_mix, u_focus and u_burst
-    gl.uniform4fv(uniforms.u_mix, mix);
+    gl.uniform4fv(uniforms.u_mix, mix.slice(0, 4)); // idle, thinking, alert, speaking (uniform4fv takes 4)
+    gl.uniform1f(uniforms.u_listen, mix[4]); // listening
     gl.uniform1f(uniforms.u_yaw, view.yaw);
     gl.uniform1f(uniforms.u_pitch, view.pitch);
     gl.uniform1f(uniforms.u_scale, view.scale);
