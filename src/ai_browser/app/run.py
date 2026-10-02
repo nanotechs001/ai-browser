@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import fcntl
 import inspect
 import json
 import os
 from collections.abc import Callable
 from pathlib import Path
 
+from .. import platforms
 from ..appbrowser import (AppBrowserError, app_profile, extension_id_for, extension_installed, launch_app_browser,
                           prepare_extension)
 from ..brain.service import BrainService
@@ -155,13 +155,7 @@ def _lock(home: Path):
     """An exclusive lock on <home>/app/lock held for the whole run, or None if another run holds it."""
     folder = home / "app"
     folder.mkdir(parents=True, exist_ok=True)
-    handle = open(folder / "lock", "a")
-    try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        handle.close()
-        return None
-    return handle
+    return platforms.lock_file(folder / "lock")
 
 
 async def _run(home: Path, model: str, headless: bool, claude: str | None, ready: Callable | None,

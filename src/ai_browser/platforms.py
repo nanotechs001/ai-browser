@@ -10,6 +10,7 @@ Every macOS-only path of the project is written here and nowhere else (tests/tes
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import functools
 import os
@@ -19,6 +20,7 @@ import sys
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from typing import IO
 
 WINDOWS = os.name == "nt"
 O_BINARY = getattr(os, "O_BINARY", 0)  # without it, os.open on Windows turns every "\n" written into "\r\n"
@@ -193,3 +195,49 @@ def _windows_pid_alive(pid: int) -> bool:
         return code.value == STILL_ACTIVE
     finally:
         kernel32.CloseHandle(handle)
+
+
+class _WindowsLock:
+    """The lock file's handle on Windows. close() unlocks the byte before closing: Windows may release the lock of a
+    closed file late, and the next start must not find it taken."""
+
+    def __init__(self, handle):
+        self._handle = handle
+
+    @property
+    def closed(self) -> bool:
+        return self._handle.closed
+
+    def close(self) -> None:
+        import msvcrt  # Windows only
+
+        if self._handle.closed:
+            return
+        with contextlib.suppress(OSError):
+            self._handle.seek(0)
+            msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
+        self._handle.close()
+
+
+def lock_file(path) -> IO | _WindowsLock | None:
+    """An exclusive lock on `path`, held until the returned object's close(); None when another holder has it. If
+    the holder dies, the OS releases the lock either way."""
+    handle = open(path, "a+b")
+    if WINDOWS:
+        import msvcrt  # Windows only
+
+        try:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            handle.close()
+            return None
+        return _WindowsLock(handle)
+    import fcntl  # POSIX only
+
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    return handle

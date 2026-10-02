@@ -161,3 +161,38 @@ def test_pid_alive():
     child.wait(timeout=30)
     assert not platforms.pid_alive(child.pid)  # exited and waited for
     assert not platforms.pid_alive(0) and not platforms.pid_alive(-1)
+
+
+def test_a_second_lock_on_the_same_file_waits_for_the_first(tmp_path):
+    first = platforms.lock_file(tmp_path / "lock")
+    assert first is not None
+    assert platforms.lock_file(tmp_path / "lock") is None
+    first.close()
+    again = platforms.lock_file(tmp_path / "lock")
+    assert again is not None
+    again.close()
+
+
+def test_a_lock_held_by_a_crashed_app_is_free_again(tmp_path):
+    import subprocess
+    import time
+
+    code = ("import sys, time\nfrom ai_browser.platforms import lock_file\nheld = lock_file(sys.argv[1])\n"
+            "print(held is not None, flush=True)\ntime.sleep(60)\n")
+    child = subprocess.Popen([sys.executable, "-c", code, str(tmp_path / "lock")], stdout=subprocess.PIPE,
+                             encoding="utf-8")
+    try:
+        assert child.stdout.readline().strip() == "True"
+        assert platforms.lock_file(tmp_path / "lock") is None  # another process holds it
+    finally:
+        child.kill()  # like ending it in Task Manager: no close(), no unlock
+        child.wait(timeout=10)
+        child.stdout.close()
+    again = None
+    for _ in range(20):  # the OS releases a dead process's lock, on Windows maybe a moment later
+        again = platforms.lock_file(tmp_path / "lock")
+        if again is not None:
+            break
+        time.sleep(0.1)
+    assert again is not None and (tmp_path / "lock").exists()  # the file left behind doesn't block the next start
+    again.close()
