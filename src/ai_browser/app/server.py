@@ -260,6 +260,8 @@ class AppServer:
         if SESSION_ID.match(agent):  # first: a session's tabs; its check reports are dropped (it has no row)
             self._session_report(agent, report)
             return Response(status_code=204)
+        if self._hands_a_tab(report):  # in Brave only the user's Hand over hands a tab, never a report
+            return Response(status_code=204)
         self._agent_report(report)  # wave 1: check reports, then tab_event
         self._after_agent_report(report)
         return Response(status_code=204)
@@ -323,6 +325,16 @@ class AppServer:
                 session["tabs"].remove(target)
                 self._sessions_changed()
             self._own(target, None)
+
+    def _hands_a_tab(self, report: dict) -> bool:
+        """Whether a tab report from an agent's engine would make a tab of the user's Brave that isn't handed to it now
+        "handed": a report that arrived after Take back (the engine's answer is cached 1 s), or one about a tab the
+        user never handed. In brave mode only Hand over (or a task started in a tab) hands a tab; such a report is
+        dropped. (In AI Browser the engine's report is how the app learns of a tab the agent adopted.)"""
+        if self.brave is None or not report.get("adopted") or report.get("kind") not in ("tab_opened", "working_tab"):
+            return False
+        agent = self.agents.agents.get(report["agent"])
+        return agent is not None and report.get("target") not in agent.adopted
 
     def _after_agent_report(self, report: dict) -> None:
         """AI Home's chips follow an agent's tabs; a tab one of its pages opened joins its group."""

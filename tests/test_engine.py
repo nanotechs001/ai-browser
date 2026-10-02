@@ -254,6 +254,34 @@ def test_aib_browser_picks_the_browser(monkeypatch, tmp_path, value, kind):
     assert Engine(home=tmp_path, catalog=Catalog([], set()))._default_kind() == kind
 
 
+
+@pytest.mark.parametrize("browser, profile, kind", [("", "client-acme", "sandbox"), (" ", " client-acme ", "sandbox"),
+                                                    ("", "default", "chrome"), ("", "", "chrome"),
+                                                    ("brave", "client-acme", "chrome"),
+                                                    ("sandbox", "client-acme", "sandbox")])
+def test_a_sandbox_profile_alone_chooses_the_sandbox_up_front(monkeypatch, tmp_path, browser, profile, kind):
+    """Review (final), Important 3: AIB_PROFILE names a sandbox profile (README "Logging in to sites"). Set without
+    AIB_BROWSER it chooses the Docker sandbox up front, as before Brave became the default: a session set up for a
+    client's logins never browses in the user's personal Brave instead."""
+    monkeypatch.setenv("AIB_BROWSER", browser)
+    monkeypatch.setenv("AIB_PROFILE", profile)
+    assert Engine(home=tmp_path, catalog=Catalog([], set()))._default_kind() == kind
+
+
+def test_the_status_line_says_a_sandbox_profile_isnt_used_in_the_users_browser(monkeypatch, tmp_path):
+    from ai_browser.sandbox import SandboxInfo
+    from ai_browser.workfs import WorkDir
+
+    monkeypatch.setenv("AIB_BROWSER", "brave")  # chosen explicitly: the profile can't apply there
+    monkeypatch.setenv("AIB_PROFILE", "client-acme")
+    engine = Engine(home=tmp_path, catalog=Catalog([], set()))
+    engine.info = SandboxInfo("aib-chrome", "chrome", "", tmp_path / "w", False, False, chrome=True)
+    engine.work = WorkDir(tmp_path / "w", engine.task_id)
+    assert ("\nAIB_PROFILE=client-acme is a Docker sandbox profile: not used here (sandbox_start(profile="
+            "\"client-acme\") uses it)") in engine._status_text()
+    monkeypatch.setenv("AIB_PROFILE", "default")
+    assert "AIB_PROFILE" not in engine._status_text()
+
 async def test_an_unknown_aib_browser_is_refused_never_guessed(monkeypatch, tmp_path):
     monkeypatch.setenv("AIB_BROWSER", "firefox")
 
@@ -402,3 +430,74 @@ async def test_after_sandbox_start_chrome_qa_crawls_in_the_users_browser(monkeyp
     await engine.sandbox_start(chrome=True)  # the user asked for their own browser
     assert "qa summary" in (await engine.qa("https://example.com/")).text
     assert used == [engine.browser]
+
+
+async def test_an_app_agents_first_call_qa_tells_ai_home_of_its_bot_check(monkeypatch, tmp_path):
+    """Review (final), Important 1: an app agent whose first browser call is qa meets a bot check in QA's sandbox.
+    No Brave was connected, yet AI Home hears of it ("needs you", Continue, the live-view link), and of its end."""
+    from ai_browser.agentlink import AgentLink
+    from ai_browser.browser import Tab
+    from ai_browser.checks import Check
+
+    monkeypatch.setenv("AIB_BROWSER", "chrome")  # as the app sets it for every agent in brave mode
+    monkeypatch.setenv("AIB_APP_AGENT", "a1")
+    monkeypatch.setenv("AIB_APP_EVENTS", "http://127.0.0.1:9/agent-events")
+    monkeypatch.setenv("AIB_APP_AGENT_TOKEN", "agents-token")
+    reports = []
+    monkeypatch.setattr(AgentLink, "report", lambda self, kind, target, adopted=False, **extra: reports.append(
+        (self.agent, self.token, kind, target, extra)))
+
+    class QABrowser:
+        owned: dict = {}
+
+        async def bring_to_front(self, tab):
+            pass
+
+    class Live:
+        url = "http://127.0.0.1:7777/live"
+
+        async def detach(self):
+            pass
+
+        async def stop(self):
+            pass
+
+    async def sandbox_browser(self):
+        return QABrowser()
+
+    async def show_live(self, browser):
+        self.live = Live()
+
+    async def closed(self, browser):
+        pass
+
+    async def fake_run_qa(browser, work, url, max_pages, on_check=None, **options):
+        return await on_check(Tab("q1", "QA-TARGET", "S"), Check("cloudflare", "example.com"))
+
+    monkeypatch.setattr(Engine, "_qa_sandbox_browser", sandbox_browser)
+    monkeypatch.setattr(Engine, "_show_live", show_live)
+    monkeypatch.setattr(Engine, "_close_qa_browser", closed)
+    monkeypatch.setattr(Engine, "_start_chrome", must_not)  # its first call: no Brave connected, none needed
+    monkeypatch.setattr(engine_module, "run_qa", fake_run_qa)
+    engine = Engine(home=tmp_path, catalog=Catalog([], set()))
+    result = (await engine.qa("https://example.com/")).text
+    assert engine.gate.held is not None and engine.gate.held.where == "qa" and Live.url in result
+    assert reports == [("a1", "agents-token", "check", "QA-TARGET",
+                        {"check": "cloudflare", "site": "example.com", "live": Live.url})]
+    await engine.tabs("close", "q1")  # the user chose Skip this site
+    assert reports[-1] == ("a1", "agents-token", "check_cleared", "QA-TARGET", {"how": "closed"})
+    await engine.close()
+
+
+def test_the_readme_opens_with_the_default_browser_not_the_sandbox():
+    """Review (final), Important 3: someone deciding whether to install reads first that, by default, Claude works in
+    their signed-in Brave; the sandbox's "can't see your files" promise is the sandbox's alone."""
+    from ai_browser.config import project_root
+
+    text = (project_root() / "README.md").read_text(encoding="utf-8")
+    opening = text.split("\n## ", 1)[0]
+    assert "by default your everyday Brave" in opening and "with your logins" in opening
+    assert "A sandboxed browser" not in opening and "**Its own browser:**" not in opening
+    assert "in the sandbox and list its links" not in text  # the first example no longer assumes the sandbox
+    assert "with no `AIB_BROWSER` set, that chooses the sandbox up front" in text  # what AIB_PROFILE does now
+    assert "starts one right there, in your tab" not in text.split("With `--browser app`")[0].split("## AI Browser")[1]

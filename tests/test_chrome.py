@@ -667,6 +667,48 @@ async def test_a_handed_tab_is_listed_taken_on_and_given_back(own_browser):  # R
         cdp.send = send
 
 
+
+@CHROME
+async def test_a_tab_the_agent_opens_from_a_handed_tab_is_its_own_and_take_back_ends_the_handed_one(own_browser):
+    """Review (final), Important 2: the agent's click in a handed tab opens a new tab. That tab is the agent's own
+    (its steps opened it: reported as not the user's, grouped with the agent, closed with it), never a second handed
+    tab that Take back would miss. Take back lets go of the handed tab, and the session carries on in its own."""
+    from ai_browser.steps import parse_steps
+
+    make, base, cdp = own_browser
+    user = (await cdp.send("Target.createTarget", {"url": base + "popup.html"}))["targetId"]
+    for _ in range(50):  # until the user's page shows its title
+        infos = (await cdp.send("Target.getTargets"))["targetInfos"]
+        if any(info["targetId"] == user and info.get("title") == "Popup test" for info in infos):
+            break
+        await asyncio.sleep(0.1)
+    handed = [{"target": user, "title": "Popup test", "url": base + "popup.html"}]
+
+    async def handed_tabs():
+        return list(handed)
+
+    placer = RecordingPlacer()
+    browser = await make(handed=handed_tabs, keep_tabs=True, placer=placer)
+    reports = []
+    browser.on_tab_event(lambda kind, tab: reports.append((kind, tab.target, tab.adopted)))
+    page = await browser.tabs("switch", "h1")
+    link = next(line.split()[0] for line in page.splitlines() if '"Preview in new tab"' in line)
+    assert "opened new tab" in await browser.act(parse_steps([f"click {link}"]))
+    preview = browser.current
+    assert preview.target != user and not preview.adopted and not preview.handed
+    assert ("opened", preview.target, False) in reports  # AI Home files it under the agent's own tabs
+    for _ in range(30):
+        if placer.popups:
+            break
+        await asyncio.sleep(0.1)
+    assert placer.popups == [(preview.target, user, base + "privacy.html", False)]  # it joins the agent's group
+    await browser.tabs("switch", "t1")  # back in the handed tab when the user takes it back
+    handed.clear()  # AI Home's Take back
+    assert await browser.let_go_of_taken_back() == "(the user took back tab t1)\n"
+    assert [tab.target for tab in browser.owned.values()] == [preview.target] and browser.current is preview
+    assert not any(tab.adopted or tab.handed for tab in browser.owned.values())  # nothing of the user's is kept
+    assert user in await chrome_pages(cdp)  # let go of, never closed
+
 def test_download_is_a_risky_word_only_in_the_users_browser(tmp_path):
     import re
 

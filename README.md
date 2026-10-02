@@ -1,8 +1,15 @@
 # ai-browser
 
-A sandboxed browser and shell that Claude drives directly. Claude is the worker, so no LLM API keys are needed.
+A browser and shell that Claude drives directly: by default your everyday Brave, or a sandboxed Chromium in Docker.
+Claude is the worker, so no LLM API keys are needed.
 
-- **Its own browser:** Chromium runs inside Docker. It can't see your files, your Chrome, or your Claude login.
+- **Your Brave by default, signed in as you:** once you turn on Brave's remote-debugging switch
+  ([Use your everyday Brave](#use-your-everyday-brave-the-default)), Claude works in your everyday Brave (or Chrome),
+  with your logins. It works only in background tabs it opens itself and tabs you hand it; it never reads your other
+  tabs. While the switch is on, any program on this computer can reach your Brave.
+- **Or a sandbox, apart from your logins:** the Docker sandbox runs Chromium inside Docker. It can't see your files,
+  your Brave, or your Claude login ([Which browser](#which-browser)). Shell commands and skill scripts always run in
+  Docker.
 - **Fast, compact page reading:** every page becomes a short numbered list (`e3 button "Publish" ⚠`). Claude acts by number, many steps per call, and gets back only what changed.
 - **Guarded actions:** before every click or keystroke, the target is re-checked to make sure it's still there, unchanged, enabled and not covered. Risky buttons (publish, delete, submit, pay…) need an explicit confirmation.
 - **All your Claude skills, on demand:** the 400+ installed skills are searchable. Nothing loads until it's needed, and skill scripts run inside the sandbox.
@@ -32,7 +39,8 @@ This folder has a `.mcp.json`. Open Claude Code in this folder and approve the *
 claude mcp add ai-browser -- uv run --directory <path-to-this-folder> ai-browser mcp
 ```
 
-Then just ask, for example: *"Open example.com in the sandbox and list its links"*.
+Then just ask, for example: *"Open example.com and list its links"*. That opens in your Brave, in a background tab
+of its own; ask for the sandbox (*"…in the sandbox"*) to keep the work apart from your logins.
 
 ## Which browser
 
@@ -42,7 +50,8 @@ as a way around a block:
 - **Your Brave (the default):** for `ai-browser app` agents, and for Claude Code sessions with no `AIB_BROWSER` set.
   It needs Brave's remote-debugging switch (see "Use your everyday Brave" below). Google Chrome works too: the
   browser's folder is found by itself, Brave first, or set `AIB_CHROME_DIR`.
-- **The Docker sandbox:** call `sandbox_start()` in a session, or set `AIB_BROWSER=sandbox` for one.
+- **The Docker sandbox:** call `sandbox_start()` in a session, or set `AIB_BROWSER=sandbox` for one. Setting only
+  `AIB_PROFILE` (a sandbox profile, see [Logging in to sites](#logging-in-to-sites)) chooses it too.
 - **AI Browser:** `ai-browser app --browser app` (or `AIB_APP_BROWSER=app`). Agents then browse in AI Browser's own
   Chrome, as before.
 
@@ -52,13 +61,17 @@ browser by itself. Website QA (`qa`) crawls in the Docker sandbox, unless you as
 
 ## Logging in to sites
 
-Logins live in **profiles** (Docker volumes), one per client if you like. You log in yourself, never Claude:
+In your Brave you are already signed in. In the Docker sandbox, logins live in **profiles** (Docker volumes), one per
+client if you like. You log in yourself, never Claude:
 
 ```bash
 uv run ai-browser live --profile client-acme
 ```
 
-Open the printed link, click into the page and log in. Your typing goes only to the sandbox and is never logged. Press Ctrl-C when done; the login stays saved. In Claude Code, use `sandbox_start(profile="client-acme")`, or set `AIB_PROFILE=client-acme` for the session.
+Open the printed link, click into the page and log in. Your typing goes only to the sandbox and is never logged. Press
+Ctrl-C when done; the login stays saved. In Claude Code, use `sandbox_start(profile="client-acme")`, or set
+`AIB_PROFILE=client-acme` for the session: with no `AIB_BROWSER` set, that chooses the sandbox up front, with that
+profile's logins. If `AIB_BROWSER` names your Brave, the profile isn't used, and the status line says so.
 
 ## AI Browser (a browser with AI Home and Claude agents)
 
@@ -110,8 +123,9 @@ The extension stays installed. From then on, AI Browser opens on AI Home.
 - Each agent's tabs sit in a coloured tab group in your Brave, named after its task. The Brain's watcher makes the
   groups. Without the watcher, each tab the AI opens gets a window of its own.
 - The toolbar badge shows how many agents are working.
-- The chat beside the page (the toolbar icon, or ⌘⇧Y) follows the tab you are on. It shows that tab's agent, or
-  starts one right there, in your tab, which the agent never closes.
+- The chat beside the page in AI Browser (its toolbar icon, or ⌘⇧Y) shows the agent that was active last, and a
+  task typed there starts an agent that works in your Brave. With `--browser app`, it follows the tab you are on,
+  shows that tab's agent, or starts one right there, in your tab, which the agent never closes.
 
 How it works:
 - **Claude:** each agent is Claude Code on this Mac (`claude -p`), signed in with your Claude account, with no API
@@ -332,7 +346,8 @@ What happens in your Brave:
   - a Claude Code session's tabs go in a group called "Claude Code" while `ai-browser app` runs, and in a window of
     their own otherwise.
 - **Your other tabs:** never read, listed to an agent or touched. AI Home shows them, and **Hand over** gives one to
-  an agent; **Take back** ends that at its next step.
+  an agent; **Take back** ends that at its next step. A tab the agent's own click opens from a handed tab is the
+  agent's: it sits in its group and closes with it.
 - **Closing:**
   - closing an agent closes the tabs it opened; a tab you handed it stays open, ungrouped;
   - quitting `ai-browser app` leaves the groups in Brave, so nothing an agent left for you is lost;

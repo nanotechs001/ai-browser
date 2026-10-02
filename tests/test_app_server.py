@@ -814,6 +814,42 @@ async def test_take_back_leaves_an_agents_own_tab_its_own(fake_claude, tmp_path)
         await server.stop()
 
 
+
+async def test_in_brave_only_hand_over_hands_a_tab_so_a_late_report_cant_undo_take_back(fake_claude, tmp_path):
+    """Review (final), Important 2 (app side) and Minor 1: in brave mode a tab is handed only by Hand over (or a task
+    started in it), never by an engine's report saying "adopted". So a report that arrives after Take back (the
+    engine's handed answer is cached 1 s) can't hand the tab back, and no tab becomes "handed" from a report alone."""
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"},
+                       {"target": "U2", "url": "https://mail.example/", "title": "Mail"}])
+    server.attach_brave(brave)
+    agent = add_agent(server.agents, adopted=["U1"])
+    handed = {"kind": "handed", "id": "a1", "name": "Fix the footer", "color": "blue"}
+    brave.set_owner("U1", handed)
+
+    async def report(client, kind, target):
+        answer = await client.post(url + "/agent-events", headers=agent_headers(server), json={
+            "agent": "a1", "kind": kind, "target": target, "adopted": True})
+        assert answer.status_code == 204
+
+    try:
+        async with connect(socket_url(server, url), origin=ORIGIN) as ws, httpx.AsyncClient() as client:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            await recv(ws)
+            await report(client, "working_tab", "U1")  # while handed, the agent's reports about it count
+            assert agent.working_tab == "U1" and brave.owners["U1"] == handed
+            await ws.send(json.dumps({"type": "take_back", "target": "U1"}))
+            await until(ws, lambda message: message["type"] == "agent" and "U1" not in message["agent"]["adopted"])
+            for kind in ("working_tab", "tab_opened"):
+                for target in ("U1", "U2"):  # taken back; never handed
+                    await report(client, kind, target)
+            status = await client.get(url + "/agent-status?agent=a1", headers=agent_headers(server))
+            assert status.json()["handed"] == []  # the engine lets go of U1 at its next call
+        assert agent.adopted == [] and agent.tabs == [] and agent.working_tab is None
+        assert "U1" not in brave.owners and "U2" not in brave.owners  # still the user's in AI Home
+    finally:
+        await server.stop()
+
 async def test_the_setup_page_has_the_switch_and_its_warning(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:

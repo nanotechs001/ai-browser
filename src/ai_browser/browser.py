@@ -482,13 +482,16 @@ class Browser:
 
     def _on_target_created(self, params: dict, session: str | None) -> None:
         """Adopt tabs and popups that one of our tabs opened (target=_blank, window.open) while our own steps (or a
-        QA run) were running. Any other new tab is the user's, even when it was opened from one of our tabs; and one
-        opened from the user's (adopted) tab stays theirs too: followed, never closed."""
+        QA run) were running. Any other new tab is the user's, even when it was opened from one of our tabs. In AI
+        Browser one opened from the user's (adopted) tab stays theirs too: followed, never closed. In the user's own
+        browser one our steps opened from a handed tab is ours (Decision 4: popups its own steps opened), grouped and
+        closed with us: Take back gives back the handed tab, and no tab of the user's is kept beyond it."""
         info = params.get("targetInfo", {})
         opener = next((tab for tab in self.owned.values() if tab.target == info.get("openerId")), None)
         if info.get("type") != "page" or opener is None or not self._stepping:
             return
-        adoption = asyncio.ensure_future(self._adopt(info["targetId"], users=opener.adopted, opener=opener.target))
+        users = opener.adopted and self.mode != "chrome"
+        adoption = asyncio.ensure_future(self._adopt(info["targetId"], users=users, opener=opener.target))
         self._adopting.add(adoption)
         adoption.add_done_callback(self._adopting.discard)
 

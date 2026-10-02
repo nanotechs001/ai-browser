@@ -46,6 +46,12 @@ _KNOWN_ERRORS = {"ChromeError", "DockerError", "StepError", "PathError", "SkillN
                  "BrowserError", "JSError", "StepStale", "StepBlocked", "ValueError"}
 
 
+def _sandbox_profile() -> str:
+    """AIB_PROFILE when it names a sandbox profile other than "default" (README "Logging in to sites"), else ""."""
+    profile = os.environ.get("AIB_PROFILE", "").strip()
+    return "" if profile == "default" else profile
+
+
 def browser_kind(value: str) -> str | None:
     """The browser AIB_BROWSER names ("chrome": the user's own; "sandbox"; "app"), or None for anything else."""
     return BROWSER_KINDS.get(value.strip().lower())
@@ -104,6 +110,8 @@ class Engine:
         self.log = TaskLog(self.home / "tasks", self.task_id)
         self.default_profile = default_profile
         self._kind = browser_kind(os.environ.get("AIB_BROWSER", ""))  # None: a value that names no browser
+        if not os.environ.get("AIB_BROWSER", "").strip() and _sandbox_profile():
+            self._kind = "sandbox"  # AIB_PROFILE alone (a client's logins) chooses the Docker sandbox up front
         self.default_chrome = self._kind == "chrome"  # the user's own browser (Brave or Chrome): the default
         self.default_app = self._kind == "app"  # AI Browser (ai-browser app)
         self._wanted: tuple[str, bool, str] | None = None  # (profile, fresh, sandbox|chrome|app) from sandbox_start
@@ -201,9 +209,7 @@ class Engine:
         work_host = self.home / "sandboxes" / "chrome" / "work"  # shared with the shell container of both modes
         work = WorkDir(work_host, self.task_id)
         adopt = os.environ.get("AIB_APP_ADOPT", "") if agent else ""
-        if agent and os.environ.get("AIB_APP_EVENTS"):  # an agent of ai-browser app reports its tabs to the app
-            self._link = self._link or AgentLink(os.environ["AIB_APP_EVENTS"],
-                                                 os.environ.get("AIB_APP_AGENT_TOKEN", ""), agent)
+        self._app_link()  # an agent of ai-browser app reports its tabs to the app
         self._placer = None
         if mode == "chrome":  # where our tabs go: the app's tab groups (through its watcher), or windows of their own
             rediscover = None if agent else (lambda: AgentLink.discover(self.home, self.task_id))
@@ -239,6 +245,14 @@ class Engine:
             self._register()
         if mode == "chrome":  # AI Browser is in plain sight: no live view needed
             await self._attach_live()
+
+    def _app_link(self) -> AgentLink | None:
+        """An agent of ai-browser app reports to the app (AIB_APP_EVENTS) from its first call, whichever browser that
+        call uses: a bot check QA meets in its own sandbox, before any Brave is connected, reaches AI Home too."""
+        agent = os.environ.get("AIB_APP_AGENT", "")
+        if self._link is None and agent and os.environ.get("AIB_APP_EVENTS"):
+            self._link = AgentLink(os.environ["AIB_APP_EVENTS"], os.environ.get("AIB_APP_AGENT_TOKEN", ""), agent)
+        return self._link
 
     def _report(self, kind: str, tab) -> None:
         """Tell the app about one of this session's tabs (an agent's link, or a Claude Code session's)."""
@@ -440,9 +454,10 @@ class Engine:
                 await browser.bring_to_front(tab)
         sandbox = where == "qa" or (self.info is not None and not self.info.chrome)
         live = self.live.url if sandbox and self.live is not None and self.live.url else None
-        if self._link is not None:
-            self._link.report("check", tab.target, tab.adopted, check=check.kind, site=check.site,
-                              **({"live": live} if where == "qa" and live else {}))
+        link = self._app_link()  # even when QA's sandbox is the first browser this agent used
+        if link is not None:
+            link.report("check", tab.target, tab.adopted, check=check.kind, site=check.site,
+                        **({"live": live} if where == "qa" and live else {}))
         return self.gate.handoff(check, tab.key, live)
 
     def _release(self, how: str) -> str:
@@ -510,11 +525,14 @@ class Engine:
                     "scripts run in a Docker sandbox)")
         if info.chrome:
             where = f" · {placement}" if placement else ""
+            profile = _sandbox_profile()  # AIB_BROWSER chose the user's browser: a sandbox profile can't apply there
+            unused = (f"\nAIB_PROFILE={profile} is a Docker sandbox profile: not used here "
+                      f"(sandbox_start(profile=\"{profile}\") uses it)") if profile else ""
             return (f"browser: your {self._browser_name()} · only tabs this session opens, and tabs the user hands "
                     f"it{where}\n"
                     f"work folder {self.work.sandbox_task} (on this Mac: {self.work.host_task}; shell and skill "
                     "scripts run in a Docker sandbox)\n"
-                    f"live view: {live}")
+                    f"live view: {live}{unused}")
         return (f"sandbox {info.name} ready · profile {info.profile}{' (throwaway)' if info.fresh else ''}\n"
                 f"work folder {self.work.sandbox_task} (on this Mac: {self.work.host_task})\n"
                 f"live view: {live}")
@@ -867,5 +885,7 @@ class Engine:
             self._qa_browser = None
         if self.browser is not None:
             await self._teardown(stop_container=bool(self.info and self.info.fresh))
+        if self._link is not None:  # reports from calls that used no browser of the session's (QA's sandbox)
+            await self._link.flush()
         if self.live is not None:
             await self.live.stop()
