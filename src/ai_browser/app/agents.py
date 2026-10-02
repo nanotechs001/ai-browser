@@ -16,12 +16,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
+from ..checks import KINDS
 from .bridge import ClaudeBridge
 
 COLORS = ("blue", "green", "purple", "orange", "cyan", "pink", "yellow", "red", "grey")  # Chrome's tab group colours
 KEEP_EVENTS = 5000  # an agent's conversation kept for the chat views (the newest)
 NAME_LIMIT = 40
 CLOSE_WAIT = 10  # seconds a closing agent's turn gets to end after Stop
+# What the agent hears from Continue and Skip this site: fixed texts, never a site's name or any page data.
+CONTINUE_TEXT = "I've dealt with the bot check. Call observe and carry on with the task."
+SKIP_TEXT = ("Skip the site with the bot check: I closed its tab. Carry on without it, and tell me what you couldn't "
+             "do.")
 _SCHEME = re.compile(r"\bhttps?://(?:www\.)?", re.IGNORECASE)
 _FILLER = {"and", "or", "then", "to", "the", "a", "an", "of", "in", "on", "with", "for", "from"}
 
@@ -62,10 +67,12 @@ class Agent:
     pending: list = field(default_factory=list, repr=False)  # (text, tab, skills) waiting for this agent's turn
     tools: dict = field(default_factory=dict, repr=False)  # tool_use id -> (name, summary)
     permission: dict | None = None  # a tool request waiting for the user: {request, server, tool, input}
+    # a bot check waiting for the user: {kind, check, what, site, target, adopted, live, since}
+    check: dict | None = None
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
-                                         "permission")
+                                         "permission", "check")
 
     def public(self) -> dict:
         return {key: list(value) if isinstance(value, list) else value
@@ -164,6 +171,11 @@ class AgentManager:
         agent.pending.clear()
         if agent.permission is not None:  # a tool request still waiting: Stop is a no
             self.answer_permission(agent_id, agent.permission["request"], "deny")
+        if agent.check is not None:  # the card goes; only a read of the page or a closed tab ends the engine's hold
+            agent.check = None
+            if agent_id not in self._turns and agent_id not in self._line:
+                agent.state = "stopped"
+                self._changed(agent)
         if agent_id in self._line:
             self._line.remove(agent_id)
             agent.state = "stopped"
@@ -211,7 +223,7 @@ class AgentManager:
         finally:
             self._asks.pop(agent_id, None)
             agent.permission = None
-            if agent.state == "needs_you":
+            if agent.state == "needs_you" and agent.check is None:  # a bot check still waits: it still needs you
                 agent.state = "working"
             self._changed(agent)
 
@@ -251,6 +263,71 @@ class AgentManager:
         else:
             return
         self._changed(agent)
+
+    # ---- bot checks: the agent's engine stopped at one, and the user deals with it -------------------------------
+
+    def check_event(self, agent_id: str, report: dict) -> None:
+        """The agent's engine holds at a bot check (the app checked the report's values first): it needs the user."""
+        agent = self.agents.get(agent_id)
+        kind = report.get("check")
+        if agent is None or kind not in KINDS:
+            return
+        target = str(report.get("target", ""))
+        fresh = agent.check is None or agent.check["target"] != target
+        live = report.get("live") if isinstance(report.get("live"), str) else None
+        agent.check = {"kind": "check", "check": kind, "what": KINDS[kind], "site": str(report.get("site", "")),
+                       "target": target, "adopted": bool(report.get("adopted")), "live": live,
+                       "since": time.time() if fresh else agent.check["since"]}
+        agent.state = "needs_you"
+        self._changed(agent)
+        if fresh:  # once per hold: every page, and Brave's watcher
+            self._broadcast({"type": "check_request", "agent": agent.id, "name": agent.name,
+                             **{key: agent.check[key] for key in ("site", "what", "target", "live")}})
+
+    def check_cleared(self, agent_id: str, target: str, how: str) -> None:
+        """The engine's hold ended: the check is gone ("solved") or its tab was closed ("closed")."""
+        agent = self.agents.get(agent_id)
+        if agent is None or agent.check is None or agent.check["target"] != target:
+            return
+        agent.check = None
+        self._settle(agent)
+        self._changed(agent)
+
+    async def continue_check(self, agent_id: str) -> None:
+        """The user's Continue: the card goes, and the agent hears CONTINUE_TEXT (once, however often it's pressed)."""
+        agent = self.agents.get(agent_id)
+        if agent is None or agent.check is None:
+            return
+        agent.check = None
+        self._settle(agent)
+        self._changed(agent)
+        await self.send(agent_id, CONTINUE_TEXT)
+
+    async def skip_check(self, agent_id: str) -> None:
+        """The user's Skip this site: the app closes the agent's own tab with the check (never the user's tab, never
+        one in QA's sandbox), and the agent hears SKIP_TEXT. The engine sees the tab close and skips the site."""
+        agent = self.agents.get(agent_id)
+        check = agent.check if agent is not None else None
+        if check is None or check["adopted"] or check["live"] or check["target"] not in agent.tabs:
+            return
+        agent.check = None
+        self._settle(agent)
+        self._changed(agent)
+        if self.close_tabs is not None:
+            with contextlib.suppress(Exception):
+                await self.close_tabs([check["target"]])
+        await self.send(agent_id, SKIP_TEXT)
+
+    def _settle(self, agent: Agent) -> None:
+        """The state once a tool request or a bot check stopped waiting."""
+        if agent.permission is not None or agent.check is not None:
+            agent.state = "needs_you"
+        elif agent.id in self._turns:
+            agent.state = "working"
+        elif agent.id in self._line:
+            agent.state = "waiting"
+        elif agent.state == "needs_you":
+            agent.state = "your_turn"
 
     # ---- turns --------------------------------------------------------------------------------------------
 
@@ -303,7 +380,8 @@ class AgentManager:
             agent.seconds = round(agent.seconds + (event.get("seconds") or 0), 1)
             agent.cost = round(agent.cost + (event.get("cost") or 0), 4)
             agent.status = ""
-            agent.state = "working" if agent.pending else "stopped" if event.get("stopped") else "your_turn"
+            agent.state = "working" if agent.pending else "stopped" if event.get("stopped") else \
+                "needs_you" if agent.check is not None else "your_turn"
         elif kind == "error":
             agent.status = str(event.get("text", ""))
             agent.state = "working" if agent.pending else "failed"
