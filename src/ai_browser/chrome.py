@@ -3,15 +3,17 @@ turns it on themselves), and launch separate throwaway Chromes for tests and AI 
 
 from __future__ import annotations
 
+import ntpath
 import os
 import shutil
 import socket
 import subprocess
-import sys
+import sys  # noqa: F401 (kept: tests patch chrome.sys.platform, the one sys platforms reads)
 import time
 from pathlib import Path
 
-MAC_CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+from . import platforms
+
 TICK = 'tick "Allow remote debugging for this browser instance"'
 
 
@@ -21,14 +23,7 @@ class ChromeError(RuntimeError):
 
 def own_browser_dirs() -> list[Path]:
     """Where the user's own browsers keep their profiles on this platform, Brave first."""
-    if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-        return [base / "BraveSoftware" / "Brave-Browser", base / "Google" / "Chrome"]
-    if sys.platform == "win32":
-        local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-        return [local / "BraveSoftware" / "Brave-Browser" / "User Data", local / "Google" / "Chrome" / "User Data"]
-    config = Path.home() / ".config"
-    return [config / "BraveSoftware" / "Brave-Browser", config / "google-chrome"]
+    return [platforms.user_data_dir("brave"), platforms.user_data_dir("chrome")]  # Brave first
 
 
 def _port_of(folder: Path) -> tuple[int, str] | None:
@@ -85,14 +80,62 @@ def allow_hint(folder: Path) -> str:
     return f"open {inspect_address(folder)} in {browser_name(folder)} and {TICK}, then try again"
 
 
+_ON_PATH = {"chrome": (("chrome",), ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")),
+            "brave": (("brave",), ("brave-browser",))}
+
+
 def chrome_binary() -> str | None:
-    if MAC_CHROME.exists():
-        return str(MAC_CHROME)
-    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+    """Google Chrome for AI Browser and the throwaway test browsers: $AIB_CHROME_BINARY as given, else the usual
+    places, else Windows' App Paths record, else PATH."""
+    configured = os.environ.get("AIB_CHROME_BINARY")
+    if configured:
+        return configured  # a wrong path shows up as "AI Browser could not start: …"
+    return _installed("chrome")
+
+
+def brave_binary() -> str | None:
+    """Whether Brave is installed (doctor --setup says so). The app never starts the user's Brave."""
+    return _installed("brave")
+
+
+def _installed(browser: str) -> str | None:
+    for candidate in platforms.browser_candidates(browser):
+        if candidate.is_file():
+            return str(candidate)
+    if platforms.WINDOWS:
+        found = _registry_path(f"{browser}.exe")
+        if found:
+            return found
+    windows_names, other_names = _ON_PATH[browser]
+    for name in windows_names if platforms.WINDOWS else other_names:
         found = shutil.which(name)
         if found:
             return found
     return None
+
+
+def _registry_path(program: str) -> str | None:
+    """Windows' own record of where a program is installed (App Paths), current user first."""
+    import winreg  # Windows only
+
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(root, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{program}") as key:
+                value, _ = winreg.QueryValueEx(key, "")
+        except OSError:
+            continue
+        path = str(value or "").strip().strip('"')
+        if path and Path(path).is_file():
+            return path
+    return None
+
+
+def _same_folder(a, b) -> bool:
+    """Whether two paths name the same folder: resolved, and on Windows without regard to case."""
+    left, right = os.path.realpath(a), os.path.realpath(b)
+    if platforms.WINDOWS:
+        return ntpath.normcase(left) == ntpath.normcase(right)
+    return left == right
 
 
 def find_ws_url(user_data_dir: Path, timeout: float = 0) -> str:
@@ -124,7 +167,7 @@ def launch(user_data_dir: Path, headless: bool = True, extra_args: tuple[str, ..
     if binary is None:
         raise ChromeError("Google Chrome is not installed")
     folder = Path(user_data_dir)
-    if folder.resolve() in {real.resolve() for real in own_browser_dirs()}:  # whatever AIB_CHROME_DIR says
+    if any(_same_folder(folder, candidate) for candidate in own_browser_dirs()):  # never a real browser folder
         raise ChromeError("refusing to launch a browser on the user's own profile folder")
     folder.mkdir(parents=True, exist_ok=True)
     args = [binary, f"--user-data-dir={folder}", "--remote-debugging-port=0", "--no-first-run",

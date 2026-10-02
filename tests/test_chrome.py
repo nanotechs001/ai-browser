@@ -863,3 +863,48 @@ async def test_a_session_joins_the_running_app_and_says_goodbye(chrome_engine):
         assert ("POST", "/agent-bye", {"agent": agent}) in [(m, p, b) for m, p, b, _ in app.requests]
     finally:
         app.stop()
+
+
+def test_aib_chrome_binary_wins_over_the_usual_places(tmp_path, monkeypatch):
+    custom = tmp_path / "chrome.exe"
+    custom.write_bytes(b"")
+    monkeypatch.setenv("AIB_CHROME_BINARY", str(custom))
+    assert chrome_binary() == str(custom)
+
+
+def test_browsers_are_found_in_the_usual_places_then_on_path(tmp_path, monkeypatch):
+    from ai_browser import chrome, platforms
+
+    brave = tmp_path / "Brave Browser"
+    brave.write_bytes(b"")
+    monkeypatch.delenv("AIB_CHROME_BINARY", raising=False)
+    monkeypatch.setattr(platforms, "browser_candidates",
+                        lambda browser, system=None, env=None: [tmp_path / "missing", brave] if browser == "brave" else [])
+    monkeypatch.setattr(chrome, "_registry_path", lambda program: None)
+    assert chrome.brave_binary() == str(brave)
+    monkeypatch.setattr(chrome.shutil, "which", lambda name: f"/bin/{name}")
+    assert chrome.chrome_binary() == "/bin/" + ("chrome" if os.name == "nt" else "google-chrome")
+
+
+def test_the_everyday_folders_come_from_platforms(monkeypatch):
+    import sys
+
+    from ai_browser import chrome, platforms
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", "C:\\Users\\me\\AppData\\Local")
+    assert chrome.own_browser_dirs() == [platforms.user_data_dir("brave"), platforms.user_data_dir("chrome")]
+    assert all(folder.name.endswith("User Data") for folder in chrome.own_browser_dirs())
+
+
+def test_the_guard_ignores_case_on_windows(tmp_path, monkeypatch):
+    from ai_browser import chrome, platforms
+
+    real = tmp_path / "BraveSoftware" / "Brave-Browser" / "User Data"
+    monkeypatch.setattr(chrome, "own_browser_dirs", lambda: [real])
+    monkeypatch.setenv("AIB_CHROME_BINARY", str(tmp_path / "chrome.exe"))
+    monkeypatch.setattr(platforms, "WINDOWS", True)  # only the comparison changes: no Win32 call is made
+    assert chrome._same_folder(tmp_path / "bravesoftware" / "brave-browser" / "user data", real)
+    with pytest.raises(ChromeError):
+        launch(tmp_path / "bravesoftware" / "brave-browser" / "user data")
+    assert not (tmp_path / "bravesoftware").exists()  # refused before anything was made
