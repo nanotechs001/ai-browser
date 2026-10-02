@@ -1,9 +1,11 @@
 """Launch AI Browser: a Google Chrome with its own profile and our extension (AI Home and the chat panel).
 
-Headed, AI Browser is a normal Chrome: started with a debugging port only, never with --remote-debugging-pipe, which
-puts Chrome in automation mode (navigator.webdriver true on every page, so Google answered searches with its "unusual
-traffic" page; measured with Chrome 154). Branded Chrome ignores --load-extension since version 137, so the user loads
-the extension once (Developer mode, Load unpacked) from a fixed folder; Chrome derives its ID from that folder's path.
+Headed, AI Browser is started with a debugging port (`--remote-debugging-port=0`) and never with
+`--remote-debugging-pipe`. Both put Chrome in automation mode: on Chrome 154, every page reports `navigator.webdriver`
+true with the port flag alone (measured on 2026-10-02, with and without it). Sites can see that AI Browser is
+automated, and Google refuses to sign in there ("This browser or app may not be secure"). Nothing hides this.
+Branded Chrome ignores --load-extension since version 137, so the user loads the extension once (Developer mode, Load
+unpacked) from a fixed folder; Chrome derives its ID from that folder's path.
 
 Headless launches (tests) still install the extension over the pipe with Extensions.loadUnpacked, for that run only;
 Chrome quits when that pipe closes. The engine connects separately, through the debugging port."""

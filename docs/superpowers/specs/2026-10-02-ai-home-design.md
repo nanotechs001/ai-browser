@@ -23,8 +23,11 @@ agent working?"
   - tasks can be typed in the address bar;
   - the toolbar shows a badge;
   - the chat sits beside the page.
-- **A normal Chrome:** AI Browser does not run in automation mode, so Google and other sites treat the user's own
-  browsing like any Chrome.
+- ~~**A normal Chrome:** AI Browser does not run in automation mode, so Google and other sites treat the user's own
+  browsing like any Chrome.~~
+  **Corrected 2026-10-02 (safe-browsing spec):** measured, `navigator.webdriver` is true in headed AI Browser because
+  of `--remote-debugging-port`; sites can see it is automated and Google refuses sign-in there. Hiding that was never
+  a goal.
 
 Success means:
 1. **Two tasks at once:** two tasks started from AI Home run together, each in its own coloured tab group. AI Home shows
@@ -37,7 +40,10 @@ Success means:
    - AI Home lists every skill with a count per source;
    - it marks the skills each agent loaded;
    - skills picked for a new task are loaded by that agent.
-6. **Not a bot:** `navigator.webdriver` is false on AI Browser's pages, and a Google search works as in any Chrome.
+6. ~~**Not a bot:** `navigator.webdriver` is false on AI Browser's pages, and a Google search works as in any Chrome.~~
+   **Corrected 2026-10-02 (safe-browsing spec):** measured, `navigator.webdriver` is true in headed AI Browser because
+   of `--remote-debugging-port`; sites can see it is automated and Google refuses sign-in there. Hiding that was
+   never a goal.
 7. **Clean ending:**
    - quitting Chrome, or closing its last window, ends `ai-browser app`;
    - Ctrl-C in the terminal quits Chrome;
@@ -368,7 +374,10 @@ New in this project:
   - two agents in parallel on the planted QA site;
   - one in the user's current tab;
   - a screenshot of AI Home for the user;
-  - a check that `navigator.webdriver` is false in headed AI Browser.
+  - ~~a check that `navigator.webdriver` is false in headed AI Browser.~~
+    **Corrected 2026-10-02 (safe-browsing spec):** measured, `navigator.webdriver` is true in headed AI Browser
+    because of `--remote-debugging-port`; sites can see it is automated and Google refuses sign-in there. Hiding that
+    was never a goal.
 
 ## Out of scope
 

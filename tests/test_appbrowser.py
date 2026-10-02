@@ -83,7 +83,7 @@ def test_a_chrome_that_cannot_run_is_reported_plainly(tmp_path, monkeypatch):
         appbrowser.launch_app_browser(tmp_path / "profile", tmp_path / "extension", headless=True)
 
 
-def test_headed_ai_browser_is_not_in_automation_mode(tmp_path):
+def test_headed_ai_browser_never_uses_the_pipe(tmp_path):
     from ai_browser.appbrowser import chrome_args
 
     args = chrome_args("/chrome", tmp_path / "profile", headless=False, pipe=False,
@@ -150,3 +150,26 @@ async def test_without_the_pipe_chrome_opens_the_urls_and_quits_on_close(tmp_pat
         started = time.monotonic()
         await asyncio.to_thread(app.close)
     assert app.closed and time.monotonic() - started < 15
+
+
+CORRECTED = ("**Corrected 2026-10-02 (safe-browsing spec):** measured, `navigator.webdriver` is true in headed AI "
+             "Browser because of `--remote-debugging-port`; sites can see it is automated and Google refuses sign-in "
+             "there. Hiding that was never a goal.")
+
+
+def test_the_docs_say_ai_browser_is_visible_as_automated():
+    import ai_browser.appbrowser as appbrowser
+    from ai_browser.config import project_root
+
+    doc = " ".join(appbrowser.__doc__.split())
+    assert "Sites can see that AI Browser is automated, and Google refuses to sign in there" in doc
+    assert "normal Chrome" not in doc
+
+    def flat(name):
+        path = project_root() / "docs" / "superpowers" / name
+        return " ".join(path.read_text(encoding="utf-8").split())
+
+    assert flat("specs/2026-10-02-ai-home-design.md").count(CORRECTED) == 3
+    assert flat("plans/2026-10-02-ai-home.md").count(CORRECTED) == 1
+    assert ("the user's own browser is chosen before a task, for their logins; it is never a way around a block. A "
+            "bot check is handed to the user in every mode.") in flat("specs/2026-10-02-own-chrome-mode-design.md")

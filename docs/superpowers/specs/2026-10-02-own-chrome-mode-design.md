@@ -9,6 +9,9 @@ fast numbered reads, batched guarded actions, ⚠ confirmations, dialog rules an
 sites that refuse the sandboxed headless browser (airlines, banks, ticketing), or when the user's existing
 logins are needed. The Docker sandbox stays the default.
 
+**Corrected 2026-10-02 (safe-browsing spec):** the user's own browser is chosen before a task, for their logins; it is
+never a way around a block. A bot check is handed to the user in every mode.
+
 ## Decisions
 
 - **Opt-in per session:** `sandbox_start(chrome=true)`; `AIB_BROWSER=chrome` makes it the session default.
