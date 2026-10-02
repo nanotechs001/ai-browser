@@ -122,6 +122,7 @@ class Engine:
         self._agent_id = ""  # AIB_APP_AGENT: this engine serves an agent of ai-browser app
         self.gate = CheckGate()  # the bot-check hold and the skipped sites: they outlast any browser this session uses
         self._notes: list[str] = []  # a hold that ended between calls (the user closed the tab): the next call says so
+        self._qa_browser: Browser | None = None  # QA's sandbox browser, kept while a bot check it found is held
 
     @property
     def catalog(self) -> Catalog:
@@ -583,6 +584,9 @@ class Engine:
                                         lambda: self.gate.refusal("open", url=url))
 
     async def observe(self, find: str | None = None) -> ToolResult:
+        if self._qa_hold():  # the held tab is in QA's sandbox: read it there
+            return await self._run("observe", {"find": find}, lambda: self._observe_qa_hold(find))
+
         async def action(browser: Browser) -> str:
             held = self.gate.held
             if held is None or held.where != "session":  # (a hold in QA's own browser: the everyday-Brave spec)
@@ -623,6 +627,10 @@ class Engine:
                                         action)
 
     async def tabs(self, action: str = "list", tab: str | None = None, url: str | None = None) -> ToolResult:
+        if self._qa_hold() and (action == "list" or (action == "close" and tab == self.gate.held.tab_key)):
+            return await self._run("tabs", {"action": action, "tab": tab, "url": url},
+                                   lambda: self._tabs_qa_hold(action, tab))
+
         async def run(browser: Browser) -> str:
             text = await browser.tabs(action, tab, url)
             return self._mark_held(text) if action == "list" else text
@@ -705,13 +713,83 @@ class Engine:
         if refused:
             return refused
         browser = await self._qa_sandbox_browser()
+
+        async def on_check(tab, check) -> str:  # a bot check on one of the site's pages: held there, in QA's sandbox
+            await self._show_live(browser)  # first, so the tab brought to the front is the one the live view shows
+            return await self._hold(browser, tab, check, where="qa")
+
         try:
             summary = await run_qa(browser, self._qa_work(), url, max_pages, progress=progress,
-                                   ignore_robots=ignore_robots, on_host_stopped=self.gate.qa_stop,
-                                   skipped=self.gate.skipped_for)
+                                   ignore_robots=ignore_robots, on_check=on_check,
+                                   on_host_stopped=self.gate.qa_stop, skipped=self.gate.skipped_for)
         finally:
-            await self._close_qa_browser(browser)
+            if self.gate.held is not None and self.gate.held.where == "qa":
+                self._qa_browser = browser  # kept, with its held tab, until the hold ends
+            else:
+                await self._close_qa_browser(browser)
         return f"{QA_WHERE} (profile {QA_PROFILE})\n{summary}"
+
+    async def _show_live(self, browser: Browser) -> None:
+        """Point the live view at `browser` (starting it if needed): the user solves a check in QA's sandbox there."""
+        if self.live is None:
+            live = LiveView()
+            try:
+                await live.start()
+            except RuntimeError:
+                return  # no free port: the hand-off says so without a link
+            self.live = live
+        await self.live.attach(browser)
+
+    def _qa_hold(self) -> bool:
+        held = self.gate.held
+        return held is not None and held.where == "qa" and self._qa_browser is not None
+
+    async def _end_qa_hold(self) -> None:
+        """The hold in QA's sandbox ended (solved or skipped): the live view goes back to the session's browser, then
+        QA's browser closes (in that order, so the live view never streams from a closed connection)."""
+        browser, self._qa_browser = self._qa_browser, None
+        if self.live is not None:
+            if self.browser is not None and self.cdp is not None and not self.cdp.closed and \
+                    not (self.info is not None and self.info.chrome and self.info.profile == "app"):
+                await self.live.attach(self.browser)
+            else:
+                await self.live.detach()
+        if browser is not None:
+            await self._close_qa_browser(browser)
+
+    async def _qa_release(self, how: str) -> str:
+        """End a hold in QA's sandbox: wave 1's release (the note, the report, a skipped site), then QA's browser
+        goes. `_release` stays sync because wave 1's tab-closed callback calls it."""
+        note = self._release(how)
+        await self._end_qa_hold()
+        return note
+
+    async def _observe_qa_hold(self, find: str | None) -> str:
+        browser, held = self._qa_browser, self.gate.held
+        tab = browser.owned.get(held.tab_key)
+        if tab is None or browser.cdp.closed:  # closed in the live view, by the page, or with QA's sandbox: skipped
+            return await self._qa_release("closed")
+        await browser._switch(tab)
+        check = await browser.check_now(tab)
+        if check is not None:  # still there after the user's Continue: in front again, handed over again
+            with contextlib.suppress(BrowserError, CDPError):
+                await browser.bring_to_front(tab)
+            return self.gate.handoff(check, tab.key, self.live.url if self.live is not None else None)
+        page = await browser.observe(find)
+        return await self._qa_release("solved") + page
+
+    async def _tabs_qa_hold(self, action: str, tab: str | None) -> str:
+        browser, held = self._qa_browser, self.gate.held
+        if action == "close":  # the user asked to skip the site: closed there, and the site is off-limits
+            closing = browser.owned.get(tab)
+            if closing is not None:
+                with contextlib.suppress(BrowserError, CDPError):  # QA's sandbox may be gone: skipped all the same
+                    await browser.close_tab(closing)
+            return await self._qa_release("closed")
+        mine = await self.browser.tabs("list") if self.browser is not None and self.cdp is not None \
+            and not self.cdp.closed else ""
+        line = f"  {held.tab_key}  in QA's Docker sandbox: {held.check.site} (bot check: waiting for the user)"
+        return "\n".join(part for part in (mine, line) if part)
 
     # ---- shell and files --------------------------------------------------------------------------------
 
@@ -784,6 +862,9 @@ class Engine:
 
     async def close(self) -> None:
         """End this session: close its tabs; throwaway sandboxes are removed, named ones stay warm."""
+        if self._qa_browser is not None:
+            await self._close_qa_browser(self._qa_browser)
+            self._qa_browser = None
         if self.browser is not None:
             await self._teardown(stop_container=bool(self.info and self.info.fresh))
         if self.live is not None:
