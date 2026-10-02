@@ -220,3 +220,304 @@ async def test_the_mic_sends_16k_mono_chunks_and_closes(stack):
     assert await js("window.micError || ''") == ""
     assert await js(MIC_CANCEL) == 0  # cancel hands over nothing more
     assert await js("window.micOpen") == 2 and await js("window.micClosed") == 2
+
+
+# ---- push-to-talk in Mission Control ---------------------------------------------------------------------------------
+
+PANEL = "document.getElementById('talk')"
+LOG = "[...document.querySelectorAll('#talk-log li')].map((line) => line.textContent)"
+NOTICE = "document.getElementById('talk-notice').textContent"
+CARD = "document.getElementById('talk-card').textContent"
+SPACE = {"key": " ", "code": "Space", "windowsVirtualKeyCode": 32}
+ENTER = {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}
+ESCAPE = {"key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27}
+
+
+async def key_down(stack, js, key, text=None):
+    """A real key press (CDP Input), as a person's: it gives the page user activation."""
+    await stack["cdp"].send("Input.dispatchKeyEvent", {"type": "keyDown", **key, **({"text": text} if text else {})},
+                            session_id=js.session)
+
+
+async def key_up(stack, js, key):
+    await stack["cdp"].send("Input.dispatchKeyEvent", {"type": "keyUp", **key}, session_id=js.session)
+
+
+async def tap(stack, js, key, text=None):
+    await key_down(stack, js, key, text)
+    await key_up(stack, js, key)
+
+
+SPOKE = "/· [1-9][0-9]* s$/.test(document.getElementById('talk-status').textContent)"  # a second of sound has gone
+
+
+async def mouse(stack, js, selector, kind):
+    """Half of a real click on the middle of `selector`: kind is "mousePressed" or "mouseReleased"."""
+    x, y = await js(f"(() => {{ const r = document.querySelector({json.dumps(selector)}).getBoundingClientRect();"
+                    " return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+    await stack["cdp"].send("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y, "button": "left",
+                                                         "clickCount": 1}, session_id=js.session)
+
+
+async def talk(stack, js, seconds=0.3):
+    """Hold Space until a second of sound has gone to the app, `seconds` more, then let go. It waits for the sound,
+    not the clock: a fresh browser's audio can start a moment late."""
+    await key_down(stack, js, SPACE, " ")
+    assert await until(js, f"{PANEL}.dataset.state === 'listening'")
+    assert await until(js, SPOKE)
+    await asyncio.sleep(seconds)
+    await key_up(stack, js, SPACE)
+
+
+def talk_script(stack, *answers, default=WORKING):
+    """The fake claude: agents run `default`; the Brain's talk calls get `answers` in order (the last one repeats)."""
+    stack["script"].write_text(json.dumps({"default": default, TALKING: [
+        {"result": answer if isinstance(answer, str) else json.dumps(answer)} for answer in answers]}))
+
+
+def talk_calls(stack):
+    return [call["oneshot"] for call in oneshots(stack["log"]) if TALKING in call["oneshot"]]
+
+
+async def open_talk(stack, *sources, hearing="ready"):
+    """Mission Control with `sources` run before its scripts, in front, once it knows whether talking is ready."""
+    js = await open_with(stack, "".join(sources))
+    await front(stack, js)
+    assert await until(js, f"{PANEL}.dataset.hearing === {json.dumps(hearing)}")
+    return js
+
+
+@CHROME
+async def test_a_spoken_question_gets_a_spoken_answer(stack):
+    engine = stack["engine"]
+    engine.answers = ["what is fix the footer doing"]
+    answer = "Fix the footer is checking the links in the footer."
+    talk_script(stack, {"say": answer, "action": "none"})
+    js = await open_talk(stack, mic(), LOCAL_VOICE)
+    assert await js(f"{PANEL}.hidden") is True  # the talk panel stays hidden until the first turn
+    await js(BUBBLES)
+    await voice_on(js)
+    await talk(stack, js, 0.3)  # about 1.5 s of sound in all
+    assert await eventually(lambda: engine.heard)
+    [pcm] = engine.heard
+    assert 36_000 <= len(pcm) <= 60_000  # 1.5 s of 16 kHz 16-bit mono is 48,000 bytes: ±25%
+    samples = array("h")
+    samples.frombytes(pcm)
+    assert math.sqrt(sum(value * value for value in samples) / len(samples)) / 32768 > 0.05  # not silent
+    assert 836 <= crossings_per_second(samples) <= 924  # 880 a second for 440 Hz: 16 kHz arrived intact
+    assert await until(js, f"{LOG}.includes('You: what is fix the footer doing')")
+    assert await until(js, f"{LOG}.includes({json.dumps('Brain: ' + answer)})")
+    assert "The user's words: what is fix the footer doing" in talk_calls(stack)[0]
+    assert await until(js, f"window.seen.includes({json.dumps(answer)})")  # in the speech bubble
+    assert await until(js, f"window.spoken.some(([text, voice]) => text === {json.dumps(answer)}"
+                           " && voice === 'Samantha')")  # and said aloud, by a voice on this computer
+    assert await js("window.micOpen") == 1 and await js("window.micClosed") == 1  # the mic closed with the turn
+    assert await until(js, f"{PANEL}.dataset.state === 'idle'")
+    assert await js(f"{PANEL}.hidden") is False and await js("document.querySelector('#talk .talk-note').textContent") \
+        == "Your voice stays on this computer. Your words go to Claude, like typed text."
+
+
+@CHROME
+async def test_words_that_sound_like_a_password_never_leave(stack):
+    from ai_browser.brain.talk import HIDDEN, SECRET_ANSWER
+
+    stack["engine"].answers = ["my password is hunter2"]
+    talk_script(stack, {"say": "OK.", "action": "none"})
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    assert await until(js, f"{LOG}.includes({json.dumps('Brain: ' + SECRET_ANSWER)})")
+    assert await js(LOG) == [f"You: {HIDDEN}", f"Brain: {SECRET_ANSWER}"]  # the page hides the words too
+    assert talk_calls(stack) == []  # nothing went to Claude
+
+
+@CHROME
+async def test_a_tap_of_space_is_dropped(stack):
+    js = await open_talk(stack, mic())
+    await tap(stack, js, SPACE, " ")
+    assert await until(js, f"{NOTICE} === 'Hold Space while you talk'")
+    await asyncio.sleep(0.5)
+    assert stack["engine"].heard == [] and talk_calls(stack) == []
+    assert await js("window.micOpen") == await js("window.micClosed")
+
+
+@CHROME
+async def test_space_keeps_its_job_in_text_boxes_and_on_buttons(stack):
+    talk_script(stack, {"say": "OK.", "action": "none"})
+    await stack["server"].agents.create("Fix the footer")
+    js = await open_talk(stack, mic())
+    assert await until(js, f"{station('a1')} !== null")
+    await js("document.getElementById('task').focus(); true")
+    await tap(stack, js, SPACE, " ")
+    assert await until(js, "document.getElementById('task').value === ' '")  # it typed a space
+    await js(f"document.getElementById('task').value = ''; {station('a1')}.focus(); true")
+    await tap(stack, js, SPACE, " ")
+    assert await until(js, "!document.getElementById('drawer').hidden")  # it pressed the focused station
+    await asyncio.sleep(0.5)
+    assert await js("window.micOpen") == 0 and await js(f"{PANEL}.dataset.state") == "idle"
+    await js("document.getElementById('task').focus(); true")
+    for kind in ("mousePressed", "mouseReleased"):  # a click on the room, away from every control
+        await stack["cdp"].send("Input.dispatchMouseEvent", {"type": kind, "x": 40, "y": 300, "button": "left",
+                                                             "clickCount": 1}, session_id=js.session)
+    assert await js("document.activeElement === document.body")  # it gives Space back to talking
+    await talk(stack, js)
+    assert await eventually(lambda: len(stack["engine"].heard) == 1)
+
+
+@CHROME
+async def test_esc_throws_the_turn_away_and_does_nothing_else(stack):
+    stack["script"].write_text(json.dumps(WORKING))
+    await stack["server"].agents.create("Fix the footer")
+    js = await open_talk(stack, mic())
+    assert await until(js, f"{station('a1')} !== null")
+    await js(f"{station('a1')}.click(); true")  # the drawer opens (a script's click leaves the keys with the page)
+    assert await until(js, "!document.getElementById('drawer').hidden")
+    await key_down(stack, js, SPACE, " ")
+    assert await until(js, f"{PANEL}.dataset.state === 'listening'")
+    await asyncio.sleep(0.5)
+    await tap(stack, js, ESCAPE)
+    await key_up(stack, js, SPACE)
+    await asyncio.sleep(1)
+    assert stack["engine"].heard == [] and talk_calls(stack) == []  # nothing transcribed, nothing asked
+    assert await js("document.getElementById('drawer').hidden") is False  # and the drawer stays open
+    assert await js("window.micOpen") == 1 and await js("window.micClosed") == 1
+    assert await js(f"{PANEL}.dataset.state") == "idle"
+
+
+@CHROME
+async def test_the_mic_button_clicks_holds_and_stops_at_the_cap(stack):
+    engine = stack["engine"]
+    talk_script(stack, {"say": "OK.", "action": "none"})
+    stack["hearing"].max_seconds = 2  # the page takes its cap from hearing_status
+    js = await open_talk(stack, mic())
+    assert await js("document.getElementById('mic').title") == "Talk to the Brain: hold Space, or hold or click here"
+    assert (await js("document.getElementById('help').textContent")).endswith("· hold Space to talk")
+
+    async def heard(count):
+        assert await eventually(lambda: len(engine.heard) == count), count
+        assert await until(js, f"{PANEL}.dataset.state === 'idle'")
+
+    await click(stack, js, "#mic")  # a click: it listens until the next click
+    assert await until(js, f"{PANEL}.dataset.state === 'listening'")
+    assert await js("document.getElementById('mic').getAttribute('aria-pressed')") == "true"
+    assert await until(js, SPOKE)
+    await click(stack, js, "#mic")
+    await heard(1)
+    assert await js("document.getElementById('mic').getAttribute('aria-pressed')") == "false"
+    await mouse(stack, js, "#mic", "mousePressed")  # held: it listens until it is let go
+    assert await until(js, f"{PANEL}.dataset.state === 'listening'")
+    assert await until(js, SPOKE)
+    await mouse(stack, js, "#mic", "mouseReleased")
+    await heard(2)
+    await js("document.getElementById('mic').focus(); true")
+    await talk(stack, js)  # Space on the focused mic button: the same as on the page, and never a click
+    await heard(3)
+    await asyncio.sleep(0.5)
+    assert await js(f"{PANEL}.dataset.state") == "idle" and len(engine.heard) == 3
+    await tap(stack, js, ENTER, "\r")  # Enter on it toggles, like a click
+    assert await until(js, f"{PANEL}.dataset.state === 'listening'")
+    assert await until(js, SPOKE)
+    await tap(stack, js, ENTER, "\r")
+    await heard(4)
+    await click(stack, js, "#mic")  # left listening: the 2-second cap ends it
+    assert await until(js, f"{NOTICE} === \"That's 2 seconds: I stopped listening\"", 6)
+    await heard(5)
+    assert len(engine.heard[-1]) <= 64_000
+    assert await js("window.micOpen") == 5 and await js("window.micClosed") == 5
+
+
+@CHROME
+async def test_talking_cuts_speech_and_holds_updates_until_it_ends(stack):
+    talk_script(stack, {"say": "Nothing else needs you.", "action": "none"})
+    js = await open_talk(stack, mic(), SLOW_VOICE)
+    await voice_on(js)
+    needs_reply(stack["brain"], raw_id="t1", sender="Maria", summary="asks to move the launch")
+    assert await until(js, "window.spoken.length === 1")  # an update is being spoken (this voice takes 2 s)
+    await key_down(stack, js, SPACE, " ")
+    assert await until(js, f"{PANEL}.dataset.state === 'listening'")
+    assert await js("window.spoken[1]") == ["cancel"]  # the speech stopped before the mic opened
+    needs_reply(stack["brain"], raw_id="t2", sender="Ben", summary="asks about staging")
+    await asyncio.sleep(1)
+    assert await js("window.spoken.length") == 2  # nothing is spoken while the user talks
+    assert await js("document.getElementById('bubble').hidden") is True  # or shown
+    await key_up(stack, js, SPACE)
+    assert await until(js, "window.spoken.some(([kind, text]) => kind === 'speak'"
+                           " && text === 'Ben needs your reply: asks about staging')", 12)  # it comes after the turn
+
+
+@CHROME
+async def test_show_me_the_inbox_opens_the_brain(stack):
+    stack["engine"].answers = ["show me the inbox"]
+    talk_script(stack, {"say": "Here is your inbox.", "action": "open", "target": "brain"})
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    assert await until(js, "!document.getElementById('drawer').hidden"
+                           " && document.getElementById('drawer-title').textContent === 'The Brain'")  # no confirming
+    assert await js(NOTICE) == "Switch on Voice to hear answers"  # Voice is off: said once, at the first answer
+
+
+@CHROME
+async def test_hostile_words_and_answers_stay_text(stack):
+    stack["engine"].answers = [HOSTILE]
+    talk_script(stack, {"say": HOSTILE, "action": "none"})
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    assert await until(js, f"{LOG}.filter((line) => line.includes('<img')).length === 2")
+    assert await js("[...document.images].filter((img) => !img.closest('.monitor')).length") == 0
+    assert await js("document.title") != "pwned"
+
+
+def test_no_cloud_speech_anywhere_in_the_extension():
+    files = [path for path in EXTENSION.rglob("*") if path.suffix in (".js", ".html", ".json", ".css")]
+    assert any(path.name == "talk.js" for path in files)
+    for path in files:
+        assert "SpeechRecognition" not in path.read_text(encoding="utf-8"), path  # nor webkitSpeechRecognition
+
+
+@CHROME
+async def test_switching_windows_while_holding_space_ends_the_turn_once(stack):
+    talk_script(stack, {"say": "OK.", "action": "none"})
+    js = await open_talk(stack, mic())
+    await key_down(stack, js, SPACE, " ")
+    assert await until(js, f"{PANEL}.dataset.state === 'listening'")
+    assert await until(js, SPOKE)
+    await js("window.dispatchEvent(new Event('blur')); true")  # another window took the keys: no keyup comes
+    assert await eventually(lambda: len(stack["engine"].heard) == 1)
+    await key_up(stack, js, SPACE)  # the late keyup, once the user is back
+    await asyncio.sleep(1)
+    assert len(stack["engine"].heard) == 1
+    assert await js("window.micOpen") == 1 and await js("window.micClosed") == 1
+    assert await until(js, f"{PANEL}.dataset.state === 'idle'")
+
+
+@CHROME
+async def test_only_the_newest_questions_answer_shows(stack):
+    stack["script"].write_text(json.dumps({
+        "default": WORKING,
+        "first question": [{"sleep": 2.5, "result": json.dumps({"say": "The old answer.", "action": "none"})}],
+        TALKING: [{"result": json.dumps({"say": "The new answer.", "action": "none"})}]}))
+    js = await open_talk(stack, mic())
+    for words in ("first question", "second question"):  # typed in Ask the Brain, the second before the first's answer
+        await js(f"document.getElementById('talk-text').value = {json.dumps(words)};"
+                 " document.getElementById('talk-form').requestSubmit(); true")
+    assert await until(js, f"{LOG}.includes('Brain: The new answer.')")
+    await asyncio.sleep(3)
+    assert await js(f"{LOG}.filter((line) => line.startsWith('Brain:'))") == ["Brain: The new answer."]
+    assert await js(f"{LOG}.filter((line) => line.startsWith('You:'))") == ["You: first question",
+                                                                              "You: second question"]
+
+
+@CHROME
+async def test_a_dropped_line_ends_the_turn_instead_of_waiting(stack):
+    stack["engine"].delay = 4  # the model takes a while to load, and the words to become text
+    talk_script(stack, {"say": "OK.", "action": "none"})
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    assert await until(js, f"{PANEL}.dataset.state === 'transcribing'")
+    assert (await js("document.getElementById('talk-status').textContent")).endswith(
+        "(the first time takes a few seconds longer)")  # the model is still loading: the page says so
+    for ws in list(stack["server"]._sockets):  # the app's end of the line closes (an app restart looks the same)
+        await ws.close()
+    assert await until(js, f"{NOTICE} === 'Not connected: is `ai-browser app` running?'", 5)
+    assert await js(f"{PANEL}.dataset.state") == "idle"
+    assert await eventually(lambda: stack["hearing"]._turns == {})
+    assert await until(js, "document.getElementById('status').dataset.state === 'connected'", 10)  # it comes back

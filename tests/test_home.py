@@ -64,11 +64,16 @@ async def stack(fake_claude, tmp_path):
     from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
 
     brain = BrainService(BrainStore(home), agents, claude=str(runner))
+    from ai_browser.hearing.service import HearingService
+    from fake_engine import FakeEngine, tiny_store
+
+    engine = FakeEngine(answers=["what is fix the footer doing"])
+    hearing = HearingService(tiny_store(home / "models"), engine)  # talking is ready: the tiny model is in place
     workflows = WorkflowStore(home)
     tools = ToolsConfig(home, claude_home=tmp_path / "user")  # the tests that use it write a configuration there
     skills = SkillWriter(tmp_path / "user" / ".claude" / "skills", claude=str(runner), cwd=tmp_path / "calls")
     server = AppServer(home, agents, brain=brain, workflows=workflows, runner=WorkflowRunner(workflows, agents),
-                       tools=tools, skill_writer=skills)
+                       tools=tools, skill_writer=skills, hearing=hearing)
     url = await server.start()
     folder = prepare_extension(home, url, server.token)
     app = launch_app_browser(tmp_path / "profile", folder, headless=True)
@@ -80,7 +85,7 @@ async def stack(fake_claude, tmp_path):
     cdp = await CDP.connect(app.ws_url)
     state = {"server": server, "app": app, "cdp": cdp, "url": url, "folder": folder, "home": home, "log": log,
              "runner": runner, "script": script, "brain": brain, "workflows": workflows, "tools": tools,
-             "user": tmp_path / "user"}
+             "hearing": hearing, "engine": engine, "user": tmp_path / "user"}
     yield state
     await cdp.close()
     await watch.close()

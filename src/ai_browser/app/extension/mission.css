@@ -303,3 +303,30 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
   *, *::before, *::after { animation: none !important; }
   .station, .shadow { transition-duration: 0.01s !important; }
 }
+
+/* ---- talking to the Brain: the mic button and the talk panel ---------------------------------------------------- */
+.task-bar .mic { display: inline-grid; place-items: center; width: 34px; height: 30px; padding: 0; flex: none; }
+.task-bar .mic svg { width: 18px; height: 18px; fill: currentColor; }
+.task-bar .mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+                                      box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.35); }
+.talk { left: 50%; bottom: 76px; transform: translateX(-50%); width: min(720px, calc(100vw - 32px)); max-height: 42vh;
+        overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.talk:not([hidden]) ~ .help { display: none; }
+.talk-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.talk-log li { white-space: pre-wrap; word-break: break-word; }
+.talk-log li.you { color: var(--muted); }
+.talk-status:empty, .talk-notice:empty, .talk-card:empty { display: none; }
+.talk-notice { color: var(--wait); font-size: 13px; }
+.talk-card { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.talk-card p { margin: 0; }
+.talk-card code { font: 12px ui-monospace, Menlo, monospace; background: var(--soft); border-radius: 4px;
+                  padding: 0 4px; }
+.talk-card textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 8px;
+                      padding: 6px 8px; background: var(--bg); }
+.talk-card progress { width: 100%; }
+.talk-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap; }
+.talk-card .row { margin-top: 0; }
+.talk-form { display: flex; gap: 8px; }
+.talk-form input { flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
+                   background: var(--bg); }
+.talk-note { margin: 0; font-size: 12px; }
