@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from ai_browser.chrome import chrome_binary
+from conftest import file_mode
 from test_bridge import EVENTS
 from test_home import home, stack  # noqa: F401  (fixtures)
 from test_oneshot import oneshots
@@ -58,7 +59,7 @@ def test_workflow_files_round_trip_and_bad_ones_are_reported(tmp_path):
     store = WorkflowStore(tmp_path)
     saved = store.save(FOOTER)
     path = tmp_path / "workflows" / "footer-fix.md"
-    assert saved.slug == "footer-fix" and path.stat().st_mode & 0o777 == 0o600
+    assert saved.slug == "footer-fix" and file_mode(path) in (0o600, None)
     text = path.read_text()
     assert text.startswith("---\n") and text.rstrip().endswith("post what you did in #web-team")
     again = WorkflowStore(tmp_path).get("footer-fix")

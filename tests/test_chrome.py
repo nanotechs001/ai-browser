@@ -10,6 +10,7 @@ import pytest
 from ai_browser.cdp import CDP, CDPError
 from ai_browser.chrome import (ChromeError, chrome_binary, find_ws_url, launch, own_browser_dir,
                                own_browser_dirs)
+from conftest import symlink_or_skip
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 
@@ -35,6 +36,7 @@ def test_own_browser_folders_brave_first(monkeypatch, tmp_path, platform, parts)
 
     monkeypatch.setattr(chrome.sys, "platform", platform)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     assert chrome.own_browser_dirs() == [tmp_path / part for part in parts]
 
 
@@ -243,7 +245,7 @@ async def test_chrome_mode_uploads_a_copy_the_sandbox_cannot_swap(chrome_browser
     chooser = next(line.split()[0] for line in page.splitlines() if '"Choose image"' in line)
     assert (await browser.act(parse_steps([f"upload {chooser} logo.png"]))).startswith("✓ upload")
     logo.unlink()
-    logo.symlink_to(secret)  # what a process in the sandboxed shell could do once the upload was checked
+    symlink_or_skip(secret, logo)  # what a process in the sandboxed shell could do once the upload was checked
     read = "document.getElementById('file').files[0].text()"
     assert await browser._eval(read, await_promise=True) == "real image bytes"
     staged = list((browser.work.host_root.parent / "uploads").rglob("logo.png"))

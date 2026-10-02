@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ai_browser.workfs import PathError, WorkDir
+from conftest import symlink_or_skip
 
 
 @pytest.fixture
@@ -39,7 +40,7 @@ def test_symlink_escape_is_rejected(work, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret").write_text("x")
-    os.symlink(outside, work.host_task / "link")
+    symlink_or_skip(outside, work.host_task / "link")
     with pytest.raises(PathError):
         work.to_host("link/secret")
 
@@ -69,7 +70,7 @@ def _checks_pass(monkeypatch):
 def test_reads_never_follow_a_link_swapped_in_after_the_check(work, tmp_path, monkeypatch):
     secret = tmp_path / "secret.txt"
     secret.write_text("TOP SECRET")
-    os.symlink(secret, work.host_task / "notes.txt")
+    symlink_or_skip(secret, work.host_task / "notes.txt")
     _checks_pass(monkeypatch)
     with pytest.raises(PathError, match="symbolic link"):
         work.read_text("notes.txt", 100)
@@ -79,7 +80,7 @@ def test_writes_never_follow_a_link_swapped_in_after_the_check(work, tmp_path, m
     target = tmp_path / "zshrc"
     target.write_text("original")
     (work.host_task / ".shell").mkdir()
-    os.symlink(target, work.host_task / ".shell" / "001.log")  # the shell knows the next log name
+    symlink_or_skip(target, work.host_task / ".shell" / "001.log")  # the shell knows the next log name
     _checks_pass(monkeypatch)
     with pytest.raises(PathError, match="symbolic link"):
         work.write_text(".shell/001.log", "replaced")
@@ -89,13 +90,14 @@ def test_writes_never_follow_a_link_swapped_in_after_the_check(work, tmp_path, m
 def test_writes_never_create_files_through_a_linked_folder(work, tmp_path, monkeypatch):
     outside = tmp_path / "outside"
     outside.mkdir()
-    os.symlink(outside, work.host_task / "out")
+    symlink_or_skip(outside, work.host_task / "out")
     _checks_pass(monkeypatch)
     with pytest.raises(PathError, match="symbolic link"):
         work.write_text("out/new.txt", "x")
     assert not (outside / "new.txt").exists()
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Windows has no FIFOs (NTFS can't hold one)")
 def test_a_fifo_is_refused_without_hanging(work):
     os.mkfifo(work.host_task / "pipe")
     outcome = {}
@@ -138,7 +140,7 @@ def test_snapshot_copies_into_a_private_folder(work):
 def test_write_bytes_never_follows_links(work, tmp_path, monkeypatch):
     target = tmp_path / "victim"
     target.write_bytes(b"original")
-    os.symlink(target, work.host_task / "shot.jpg")
+    symlink_or_skip(target, work.host_task / "shot.jpg")
     _checks_pass(monkeypatch)
     with pytest.raises(PathError, match="symbolic link"):
         work.write_bytes("shot.jpg", b"new")

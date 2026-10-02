@@ -1,5 +1,7 @@
+import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +19,35 @@ def _docker_unavailable() -> str | None:
     if result.returncode != 0:
         return "sandbox image not built (run: uv run ai-browser build)"
     return None
+
+
+POSIX_ONLY = "needs macOS or Linux (file descriptors 3 and 4, or the DevTools pipe)"
+WINDOWS_ONLY = "Windows behaviour (junctions, msvcrt, Win32 APIs)"
+PIPE_FIXTURES = {"stack", "watcher", "app_browser", "app_engine"}  # they launch AI Browser over the DevTools pipe
+
+
+def platform_skip(item, windows: bool) -> str | None:
+    """Why this test can't run on this OS, or None. On Windows: a posix_only test, or one that uses a fixture that
+    installs the extension over the DevTools pipe (item.fixturenames holds every fixture it needs, however deep)."""
+    if windows and ("posix_only" in item.keywords or set(getattr(item, "fixturenames", ())) & PIPE_FIXTURES):
+        return POSIX_ONLY
+    if not windows and "windows_only" in item.keywords:
+        return WINDOWS_ONLY
+    return None
+
+
+def symlink_or_skip(target, link) -> None:
+    """os.symlink, or a skip with the reason where this system can't make links (Windows without Developer Mode)."""
+    try:
+        os.symlink(target, link, target_is_directory=Path(target).is_dir())
+    except OSError as exc:
+        pytest.skip(f"this system can't make symbolic links: {exc}")
+
+
+def file_mode(path) -> int | None:
+    """A file's permission bits, or None on Windows: there chmod only toggles read-only, and the token files keep
+    Windows' per-user folder permissions instead (the spec's Safety section)."""
+    return None if os.name == "nt" else Path(path).stat().st_mode & 0o777
 
 
 @pytest.fixture(autouse=True)
@@ -85,6 +116,11 @@ def sandbox(tmp_path_factory):
 
 
 def pytest_collection_modifyitems(config, items):
+    windows = os.name == "nt"
+    for item in items:
+        reason = platform_skip(item, windows)
+        if reason:
+            item.add_marker(pytest.mark.skip(reason=reason))
     docker_items = [item for item in items if "docker" in item.keywords]
     if not docker_items:
         return

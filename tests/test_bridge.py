@@ -3,6 +3,8 @@
 import asyncio
 import json
 
+from conftest import file_mode
+
 EVENTS = [
     {"type": "system", "subtype": "init", "session_id": "s-1", "model": "claude-sonnet-5-5",
      "mcp_servers": [{"name": "ai-browser", "status": "connected"}]},
@@ -180,7 +182,7 @@ async def test_each_agent_has_its_own_settings_and_cannot_switch_browsers(fake_c
     await bridge.close()
     argv = json.loads(log.read_text().splitlines()[0])
     config = tmp_path / "home" / "app" / "agents" / "a7" / "mcp.json"
-    assert argv[argv.index("--mcp-config") + 1] == str(config) and config.stat().st_mode & 0o777 == 0o600
+    assert argv[argv.index("--mcp-config") + 1] == str(config) and file_mode(config) in (0o600, None)
     assert json.loads(config.read_text())["mcpServers"]["ai-browser"]["env"]["AIB_APP_AGENT"] == "a7"
     assert argv[argv.index("--disallowedTools") + 1] == "mcp__ai-browser__sandbox_start"
     cwd = json.loads((tmp_path / "fake-claude.log.env").read_text())["cwd"]

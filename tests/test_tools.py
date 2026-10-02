@@ -4,6 +4,8 @@ tool that isn't always allowed waits for the user's answer (the fake claude asks
 import asyncio
 import json
 
+from conftest import file_mode
+
 INIT = {"type": "system", "subtype": "init", "session_id": "s-1", "model": "claude-haiku",
         "mcp_servers": [{"name": "ai-browser", "status": "connected"}],
         "tools": ["mcp__ai-browser__open", "mcp__clickup__create_task", "mcp__clickup__get_task"]}
@@ -89,7 +91,7 @@ def test_servers_are_read_from_claude_code_config(tmp_path):
     tools.allow_always("mcp__figma__get_file")
     again = ToolsConfig(tmp_path / "home", claude_home=tmp_path / "user")
     assert again.enabled() == {"figma"} and again.always() == {"mcp__figma__get_file"}
-    assert (tmp_path / "home" / "tools.json").stat().st_mode & 0o777 == 0o600
+    assert file_mode(tmp_path / "home" / "tools.json") in (0o600, None)
     again.forget("mcp__figma__get_file")
     assert again.always() == set()
 
@@ -163,7 +165,7 @@ async def test_enabled_servers_reach_the_agents_mcp_config(fake_claude, tmp_path
     assert await settled(agents, agent.id) == "your_turn"
     config_file = tmp_path / "home" / "app" / "agents" / agent.id / "mcp.json"
     servers = json.loads(config_file.read_text())["mcpServers"]
-    assert set(servers) == {"ai-browser", "figma"} and config_file.stat().st_mode & 0o777 == 0o600
+    assert set(servers) == {"ai-browser", "figma"} and file_mode(config_file) in (0o600, None)
     argv = commands(log)[-1]
     assert "--strict-mcp-config" in argv and argv[argv.index("--tools") + 1] == ""
     workflow = await agents.create("only canvas", servers=["canvas"])  # a workflow's own list: still only if on

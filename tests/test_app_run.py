@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from ai_browser.chrome import chrome_binary
+from conftest import file_mode
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 
@@ -30,6 +31,7 @@ async def page_urls(app) -> list[str]:
         await cdp.close()
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_run_app_opens_the_browser_and_ends_when_it_closes(fake_claude, tmp_path):
     from ai_browser.app.run import run_app
@@ -56,6 +58,7 @@ async def test_run_app_opens_the_browser_and_ends_when_it_closes(fake_claude, tm
         probe.bind(("127.0.0.1", int(seen["url"].rsplit(":", 1)[1])))
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_run_app_refuses_a_profile_already_in_use(fake_claude, tmp_path):
     from ai_browser.app.run import run_app
@@ -73,6 +76,7 @@ async def test_run_app_refuses_a_profile_already_in_use(fake_claude, tmp_path):
     assert code == 1 and any("already open" in line for line in lines)
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_a_second_run_changes_nothing_for_the_running_one(fake_claude, tmp_path):
     from ai_browser.app.run import run_app
@@ -94,6 +98,7 @@ async def test_a_second_run_changes_nothing_for_the_running_one(fake_claude, tmp
     assert any("already running" in line for line in seen["lines"]) and seen["unchanged"]
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_run_app_ends_when_the_last_window_closes(fake_claude, tmp_path):
     from ai_browser.app.run import run_app
@@ -182,6 +187,7 @@ async def opened(app, ending, seconds=10) -> bool:
         await cdp.close()
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_first_start_also_sets_up_the_watcher(fake_claude, tmp_path, monkeypatch):
     from ai_browser.app import run
@@ -219,6 +225,7 @@ async def test_first_start_also_sets_up_the_watcher(fake_claude, tmp_path, monke
     assert code == 0 and shown == [watcher]  # the Finder window, once; the printed steps until it is set up
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_the_brain_survives_a_restart(fake_claude, tmp_path):
     from websockets.asyncio.client import connect
@@ -248,6 +255,7 @@ async def test_the_brain_survives_a_restart(fake_claude, tmp_path):
     assert code == 0 and [item["id"] for item in seen["snapshot"]["items"]] == ["gmail:t1"]
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_scheduled_workflows_tick_while_the_app_runs(fake_claude, tmp_path, monkeypatch):
     from ai_browser.app import run
@@ -303,6 +311,7 @@ def test_the_app_picks_brave_when_its_folder_exists(tmp_path, monkeypatch):  # R
     assert brave_env(folder) == {"AIB_BROWSER": "chrome", "AIB_CHROME_DIR": str(folder)}
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_claude, tmp_path, monkeypatch):
     from websockets.asyncio.client import connect
@@ -317,7 +326,7 @@ async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_
 
     async def ready(url, app):
         link = home / "app" / "link.json"
-        seen["mode"] = link.stat().st_mode & 0o777
+        seen["mode"] = file_mode(link)
         seen["link"] = json.loads(link.read_text(encoding="utf-8"))
         seen["url"] = url
         token = json.loads((home / "app" / "extension" / "config.json").read_text())["token"]
@@ -342,7 +351,7 @@ async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_
     code = await asyncio.wait_for(run.run_app(home, headless=True, claude=str(runner), ready=ready,
                                               out=lines.append, browser="brave"), 60)
     printed = "\n".join(lines)
-    assert code == 0 and seen["mode"] == 0o600
+    assert code == 0 and seen["mode"] in (0o600, None)
     assert seen["link"] == {"events": seen["url"] + "/agent-events", "session_token": seen["link"]["session_token"],
                             "pid": os.getpid()} and seen["link"]["session_token"]
     assert seen["browser"] == {"kind": "brave", "name": "Brave", "state": "off", "groups": "no_watcher"}
@@ -378,6 +387,7 @@ async def test_first_start_in_brave_mode_names_the_extension_folder(fake_claude,
     assert extension in "\n".join(lines)
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_the_app_can_hear_with_its_models_folder(fake_claude, tmp_path):
     from websockets.asyncio.client import connect

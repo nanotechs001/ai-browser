@@ -19,6 +19,7 @@ def test_prepare_extension_copies_the_panel_with_its_config(tmp_path):
     assert json.loads((folder / "config.json").read_text()) == {"server": "http://127.0.0.1:8792", "token": "secret"}
 
 
+@pytest.mark.posix_only
 @CHROME
 async def test_launch_installs_the_panel_and_the_engine_can_connect(tmp_path):
     from ai_browser.appbrowser import AppBrowserError, launch_app_browser, prepare_extension
@@ -44,6 +45,7 @@ async def test_launch_installs_the_panel_and_the_engine_can_connect(tmp_path):
     assert app.closed
 
 
+@pytest.mark.posix_only
 @CHROME
 def test_launch_works_whatever_descriptors_the_caller_has_open(tmp_path):
     import subprocess
@@ -80,7 +82,7 @@ def test_a_chrome_that_cannot_run_is_reported_plainly(tmp_path, monkeypatch):
 
     monkeypatch.setattr(appbrowser, "chrome_binary", lambda: str(tmp_path / "missing-chrome"))
     with pytest.raises(appbrowser.AppBrowserError, match="AI Browser could not start"):
-        appbrowser.launch_app_browser(tmp_path / "profile", tmp_path / "extension", headless=True)
+        appbrowser.launch_app_browser(tmp_path / "profile", tmp_path / "extension", headless=True, pipe_install=False)
 
 
 def test_headed_ai_browser_never_uses_the_pipe(tmp_path):
@@ -112,6 +114,7 @@ def test_the_install_check_reads_the_profile(tmp_path):
     assert extension_installed(profile, folder)  # some Chrome builds keep it in Preferences
 
 
+@pytest.mark.posix_only
 @CHROME
 def test_the_extension_id_is_the_one_chrome_gives(tmp_path):
     from ai_browser.appbrowser import extension_id_for, launch_app_browser, prepare_extension

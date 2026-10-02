@@ -121,6 +121,7 @@ async def test_a_workflow_is_saved_from_the_form_and_run(home):
 async def test_train_a_new_agent_saves_a_skill_after_review(home, monkeypatch):
     js, _, stack = home
     monkeypatch.setenv("HOME", str(stack["user"]))  # the skills list reads ~/.claude/skills
+    monkeypatch.setenv("USERPROFILE", str(stack["user"]))  # Path.home() on Windows
     stack["script"].write_text(json.dumps({"default": EVENTS, "You write a skill": [{"result": DRAFT}]}))
     await js("document.getElementById('train-section').open = true; true")
     train = "document.getElementById('train')"

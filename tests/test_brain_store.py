@@ -2,6 +2,8 @@
 
 import json
 
+from conftest import file_mode
+
 
 def item(raw_id, kind, **fields):
     from ai_browser.brain.store import Item
@@ -31,7 +33,7 @@ def test_the_store_survives_a_restart_and_keeps_only_what_matters(tmp_path):
     assert [e.site for e in again.watch()] == ["gmail", "slack", "asana"]
     assert again.entry("gmail").instructions == "Always tell me about clients" and again.entry("gmail").enabled
     for name in ("inbox.json", "watch.json"):
-        assert (tmp_path / "brain" / name).stat().st_mode & 0o777 == 0o600
+        assert file_mode(tmp_path / "brain" / name) in (0o600, None)
     clock[0] += 25 * 3600
     again.expire()
     assert [i.id for i in again.items()] == ["gmail:t1"]  # "new" goes after a day; "needs your reply" stays

@@ -13,6 +13,7 @@ import pytest
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from conftest import file_mode
 from fake_brave import FakeBrave, add_agent
 from test_agents import sent_to_claude
 from test_bridge import EVENTS
@@ -343,7 +344,7 @@ def test_prepare_watcher_updates_its_folder_in_place(tmp_path):
     folder, build = prepare_watcher(tmp_path, "http://127.0.0.1:8792", "secret")
     assert folder == tmp_path / "app" / "watcher" and len(build) == 12
     assert json.loads((folder / "config.json").read_text()) == {"server": "http://127.0.0.1:8792", "token": "secret"}
-    assert (folder / "config.json").stat().st_mode & 0o777 == 0o600
+    assert file_mode(folder / "config.json") in (0o600, None)
     assert (folder / "link.js").exists() and f'"{build}"' in (folder / "build.js").read_text()
     manifest = json.loads((folder / "manifest.json").read_text())
     assert "https://mail.google.com/*" in manifest["host_permissions"]
