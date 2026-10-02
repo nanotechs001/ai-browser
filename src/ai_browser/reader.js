@@ -1,4 +1,5 @@
-/* ai-browser page reader: defines window.__aib once per document.
+/* ai-browser page reader: defines window.__aib once per document, in its own isolated world ("aib"), where the page's
+   scripts can neither see nor change it.
    Derived from jev-ultrafast's snapshot.js (MIT, browser-use). */
 (() => {
   if (window.__aib) return;
@@ -477,7 +478,7 @@
 
   const docId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2);
 
-  window.__aib = {
+  const api = {
     doc: docId,
 
     count() {
@@ -662,4 +663,8 @@
       });
     },
   };
+
+  // Defence in depth: pages never see this world at all, and even here the reader can't be replaced.
+  Object.defineProperty(window, "__aib", { value: Object.freeze(api), writable: false, configurable: false,
+                                           enumerable: false });
 })();

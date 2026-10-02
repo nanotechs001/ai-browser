@@ -10,7 +10,7 @@ import re
 import time
 from pathlib import Path
 
-from ..browser import Browser, JSError, Tab, _arg_text, _exception_text, _forget, _jpeg_size
+from ..browser import Browser, JSError, Tab, _arg_text, _forget, _jpeg_size
 from ..cdp import CDPError
 from ..config import SHOT_MAX_WIDTH, SIZES
 from .issues import lower
@@ -39,6 +39,7 @@ class PageVisitor:
     """Visits pages one after another in one tab, collecting what each page reports while it loads."""
 
     def __init__(self, browser: Browser, tab: Tab):
+        self.browser = browser
         self.cdp = browser.cdp
         self.tab = tab
         self._page: PageResult | None = None
@@ -159,11 +160,8 @@ class PageVisitor:
         return await self.cdp.send(method, params, session_id=self.tab.session, timeout=timeout)
 
     async def _eval(self, expression: str, await_promise: bool = False):
-        result = await self._send("Runtime.evaluate", {
-            "expression": expression, "returnByValue": True, "awaitPromise": await_promise}, timeout=20)
-        if "exceptionDetails" in result:
-            raise JSError(_exception_text(result))
-        return result.get("result", {}).get("value")
+        """In the reader's isolated world of this tab: a page can't hide its own problems from QA either."""
+        return await self.browser.eval_in(self.tab, expression, await_promise, timeout=20)
 
     async def _probe(self, call: str, await_promise: bool = False):
         """Call window.__aibqa.<call>, injecting the probe first when this document lacks it."""

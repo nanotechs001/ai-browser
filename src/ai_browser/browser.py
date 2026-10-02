@@ -23,7 +23,8 @@ from .render import diff_rows, render_diff, render_page, risky_regex
 from .steps import ID_OPS, Step
 from .workfs import WorkDir
 
-READER_JS = Path(__file__).with_name("reader.js").read_text()
+READER_JS = Path(__file__).with_name("reader.js").read_text(encoding="utf-8")  # it holds "…": never the OS default
+WORLD = "aib"  # the reader's own isolated world: the page's scripts can neither see nor change it
 LOAD_TIMEOUT = 15
 CONTENT_WAIT = 3.0
 WAIT_TEXT_CAP = 10
@@ -69,6 +70,7 @@ class Tab:
     dialogs: list = field(default_factory=list)  # (kind, message, accepted), answered automatically
     reported: int = 0  # dialogs already shown to the caller
     adopted: bool = False  # a tab the user opened (AI Browser): left open when the session ends
+    world: int | None = None  # the reader's isolated-world context in the current document (dropped on navigation)
 
 
 @dataclass
@@ -175,6 +177,8 @@ class Browser:
         cdp.on("Network.requestWillBeSent", self._on_request)
         cdp.on("Network.responseReceived", self._on_response)
         cdp.on("Network.loadingFailed", self._on_failed)
+        cdp.on("Runtime.executionContextDestroyed", self._on_context_destroyed)
+        cdp.on("Runtime.executionContextsCleared", self._on_contexts_cleared)
 
     # ---- tabs and navigation tracking ---------------------------------------------------------
 
@@ -216,6 +220,17 @@ class Browser:
         tab, frame = self._tab_for(session), params.get("frame", {})
         if tab and not frame.get("parentId"):
             tab.frame = frame.get("id", tab.frame)
+            tab.world = None  # a new document: the reader's world there is a new context
+
+    def _on_context_destroyed(self, params: dict, session: str | None) -> None:
+        tab = self._tab_for(session)
+        if tab and params.get("executionContextId") == tab.world:
+            tab.world = None
+
+    def _on_contexts_cleared(self, params: dict, session: str | None) -> None:
+        tab = self._tab_for(session)
+        if tab:
+            tab.world = None
 
     # ---- dialogs: answered at once (a dialog left open freezes the tab) -----------------------
 
@@ -458,7 +473,7 @@ class Browser:
             # Also keeps a background tab in the user's Chrome visible: without it the tab is hidden (even more so
             # when the window is minimized), frames stop and timers run once a second, so a click took 6 s, not 20 ms.
             send("Emulation.setFocusEmulationEnabled", {"enabled": True}),
-            send("Page.addScriptToEvaluateOnNewDocument", {"source": READER_JS}),
+            send("Page.addScriptToEvaluateOnNewDocument", {"source": READER_JS, "worldName": WORLD}),
         ]
         if self.mode == "sandbox":  # the user's own Chrome keeps its real window size
             setup.append(send("Emulation.setDeviceMetricsOverride",
@@ -545,23 +560,56 @@ class Browser:
         while not await self._reader("ready()") and loop.time() < deadline:
             await asyncio.sleep(0.05)
 
-    # ---- evaluation ---------------------------------------------------------------------------
+    # ---- evaluation: the reader's isolated world (js alone runs in the page's own world) ------------
 
-    async def _eval(self, expression: str, await_promise: bool = False, timeout: float = 30):
-        result = await self._call("Runtime.evaluate", {
-            "expression": expression, "returnByValue": True, "awaitPromise": await_promise}, timeout=timeout)
+    async def isolated(self, tab: Tab) -> int:
+        """The reader's isolated world in the tab's current document. Chrome keeps one per frame and name, so this is
+        the world the reader was installed in at document start; cached until the page navigates."""
+        if tab.world is None:
+            reply = await self.cdp.send("Page.createIsolatedWorld", {"frameId": tab.frame, "worldName": WORLD},
+                                        session_id=tab.session)
+            tab.world = reply["executionContextId"]
+        return tab.world
+
+    async def _evaluate(self, tab: Tab | None, params: dict, timeout: float = 30) -> dict:
+        """Runtime.evaluate in the reader's world of `tab`; a context gone with its page is renewed once."""
+        if tab is None:
+            raise BrowserError(NO_TAB)
+        context = await self.isolated(tab)
+        try:
+            return await self.cdp.send("Runtime.evaluate", {**params, "contextId": context},
+                                       session_id=tab.session, timeout=timeout)
+        except CDPError as exc:
+            if "Cannot find context" not in str(exc):
+                raise
+        if tab.world == context:
+            tab.world = None
+        return await self.cdp.send("Runtime.evaluate", {**params, "contextId": await self.isolated(tab)},
+                                   session_id=tab.session, timeout=timeout)
+
+    async def eval_in(self, tab: Tab | None, expression: str, await_promise: bool = False, timeout: float = 30):
+        """Evaluate in the reader's isolated world of `tab`: it shares the page's DOM, never its JavaScript."""
+        result = await self._evaluate(tab, {"expression": expression, "returnByValue": True,
+                                            "awaitPromise": await_promise}, timeout)
         if "exceptionDetails" in result:
             raise JSError(_exception_text(result))
         return result.get("result", {}).get("value")
 
-    async def _reader(self, call: str, await_promise: bool = False, timeout: float = 30):
-        """Call window.__aib.<call>, injecting the reader first if this document lacks it."""
+    async def _eval(self, expression: str, await_promise: bool = False, timeout: float = 30):
+        return await self.eval_in(self.current, expression, await_promise, timeout)
+
+    async def _reader_in(self, tab: Tab | None, call: str, await_promise: bool = False, timeout: float = 30):
+        """Call window.__aib.<call> in the tab's isolated world, injecting the reader there if this document lacks it
+        (a tab adopted before the session attached)."""
         expression = f"window.__aib ? window.__aib.{call} : {json.dumps(_MISSING)}"
-        value = await self._eval(expression, await_promise, timeout)
+        value = await self.eval_in(tab, expression, await_promise, timeout)
         if value == _MISSING:
-            await self._eval(READER_JS)
-            value = await self._eval(expression, await_promise, timeout)
+            await self.eval_in(tab, READER_JS)
+            value = await self.eval_in(tab, expression, await_promise, timeout)
         return value
+
+    async def _reader(self, call: str, await_promise: bool = False, timeout: float = 30):
+        return await self._reader_in(self.current, call, await_promise, timeout)
 
     # ---- reading ------------------------------------------------------------------------------
 
@@ -1024,7 +1072,7 @@ class Browser:
         elif op == "upload":
             await self._target(element, "upload", confirmed=True)
             path = self._upload_path(step.value)
-            node = await self._call("Runtime.evaluate", {"expression": f"window.__aib.node({json.dumps(element)})"})
+            node = await self._evaluate(self.current, {"expression": f"window.__aib.node({json.dumps(element)})"})
             object_id = node.get("result", {}).get("objectId")
             if not object_id:
                 raise StepStale(f"{element} gone; the current page is below")

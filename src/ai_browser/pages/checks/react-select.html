@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>React-style select (test page)</title></head>
+<body>
+<h1>Pick a size</h1>
+<label for="size">Size</label>
+<select id="size"><option>Small</option><option>Medium</option><option>Large</option></select>
+<p>State: <span id="state">Small</span></p>
+<script>
+  // Watches the select the way React does: a value tracker on the element itself, in the page's own world, and a
+  // "change" listener that ignores a change the tracker already saw.
+  const select = document.getElementById("size");
+  const proto = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+  let tracked = select.value;
+  Object.defineProperty(select, "value", {
+    configurable: true,
+    get() { return proto.get.call(this); },
+    set(next) { tracked = String(next); proto.set.call(this, next); },
+  });
+  select.addEventListener("change", () => {
+    const now = proto.get.call(select);
+    if (now === tracked) return;
+    tracked = now;
+    document.getElementById("state").textContent = now;
+  });
+</script>
+</body>
+</html>
