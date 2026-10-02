@@ -16,6 +16,7 @@ from starlette.responses import HTMLResponse, PlainTextResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from . import platforms
 from .browser import Browser, Tab
 from .cdp import CDPError
 from .config import LIVE_PORTS
@@ -36,9 +37,15 @@ class _QuietServer(uvicorn.Server):
 
 
 def _bind(host: str, port: int) -> socket.socket | None:
-    """Bind the port ourselves (no probe-then-bind race); None when it is taken."""
+    """Bind the port ourselves (no probe-then-bind race); None when it is taken, or reserved (Hyper-V's ranges
+    answer WinError 10013, which is an OSError too)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if platforms.WINDOWS:
+        # On Windows SO_REUSEADDR lets a second socket bind a port already held: any local program could take the
+        # app's port and receive connections that carry the token. Exclusive use instead.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind((host, port))
     except OSError:

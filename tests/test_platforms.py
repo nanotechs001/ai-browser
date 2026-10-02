@@ -196,3 +196,93 @@ def test_a_lock_held_by_a_crashed_app_is_free_again(tmp_path):
         time.sleep(0.1)
     assert again is not None and (tmp_path / "lock").exists()  # the file left behind doesn't block the next start
     again.close()
+
+
+def test_a_held_port_is_never_bound_twice():
+    from ai_browser.live import _bind
+
+    first = _bind("127.0.0.1", 0)
+    first.listen()
+    try:
+        assert _bind("127.0.0.1", first.getsockname()[1]) is None
+    finally:
+        first.close()
+
+
+def _sockets(socket_class):
+    """live.py's view of the socket module, with another socket class in it."""
+    import socket as real
+    from types import SimpleNamespace
+
+    return SimpleNamespace(socket=socket_class, AF_INET=real.AF_INET, SOCK_STREAM=real.SOCK_STREAM,
+                           SOL_SOCKET=real.SOL_SOCKET, SO_REUSEADDR=real.SO_REUSEADDR,
+                           SO_EXCLUSIVEADDRUSE=getattr(real, "SO_EXCLUSIVEADDRUSE", -5))
+
+
+def test_windows_binds_ports_for_exclusive_use(monkeypatch):
+    from ai_browser import live
+
+    options = []
+
+    class Recorder:
+        def __init__(self, *args):
+            pass
+
+        def setsockopt(self, level, option, value):
+            options.append((level, option, value))
+
+        def bind(self, address):
+            pass
+
+        def close(self):
+            pass
+
+    sockets = _sockets(Recorder)
+    monkeypatch.setattr(live, "socket", sockets)
+    monkeypatch.setattr(platforms, "WINDOWS", True)  # only the socket option changes: no Win32 call is made
+    assert isinstance(live._bind("127.0.0.1", 8770), Recorder)
+    assert options == [(sockets.SOL_SOCKET, sockets.SO_EXCLUSIVEADDRUSE, 1)]  # and no SO_REUSEADDR
+
+
+async def test_a_reserved_port_is_skipped_like_a_taken_one(monkeypatch):
+    import socket as real
+
+    from ai_browser import live
+
+    probe = real.socket()
+    probe.bind(("127.0.0.1", 0))
+    reserved = probe.getsockname()[1]
+    probe.close()
+
+    class Reserving(real.socket):  # Hyper-V's reserved ranges answer WinError 10013, a PermissionError
+        def bind(self, address):
+            if address[1] == reserved:
+                raise PermissionError(13, "forbidden by its access permissions (WinError 10013)")
+            return super().bind(address)
+
+    monkeypatch.setattr(live, "socket", _sockets(Reserving))
+    assert live._bind("127.0.0.1", reserved) is None
+    view = live.LiveView(ports=range(reserved, reserved + 20))
+    url = await view.start()
+    try:
+        assert f":{reserved}/" not in url  # the next port was tried
+    finally:
+        await view.stop()
+
+
+@pytest.mark.windows_only
+def test_a_port_bind_holds_cant_be_taken_with_reuseaddr():
+    import socket
+
+    from ai_browser.live import _bind
+
+    held = _bind("127.0.0.1", 0)
+    held.listen()
+    second = socket.socket()
+    second.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        with pytest.raises(OSError):
+            second.bind(("127.0.0.1", held.getsockname()[1]))
+    finally:
+        second.close()
+        held.close()
