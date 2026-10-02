@@ -12,6 +12,7 @@ const LOG_LINES = 6;
 const BYTES_PER_SECOND = 32000; // 16 kHz, 16-bit, mono
 const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
 const CONTROLS = "button, input, textarea, select, a, label, summary, [contenteditable]";
+const MODELS = [["sonnet", "Sonnet · balanced"], ["opus", "Opus · best"], ["haiku", "Haiku · fastest"]];
 
 export function megabytes(bytes) { // the page's sizes: 1 MB is 1,000,000 bytes, rounded to whole MB
   return `${Math.round((Number(bytes) || 0) / 1e6)} MB`;
@@ -58,6 +59,8 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
   let asking = null; // the brain_ask request waiting for its answer
   let lastYou = null; // that question's "You: …" line
   let hinted = false; // "Switch on Voice to hear answers" is said once
+  let proposal = null; // the open proposal card: {id, kind, box, picker, node, buttons, timer}
+  let confirming = null; // the brain_confirm request waiting for its answer
 
   function setState(next) {
     state = next;
@@ -220,6 +223,79 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
       setState("idle");
       setCard(problemCard(micProblem(error)));
     }
+  }
+
+  function showProposal(offer) { // the Brain's proposal: it runs only on Start (Draft it) or a plain yes
+    closeProposal();
+    const box = el("div", "talk-proposal");
+    box.dataset.kind = String(offer.kind || "");
+    const entry = { id: String(offer.id || ""), kind: offer.kind, box: null, picker: null, node: box, buttons: [],
+                    timer: null };
+    if (offer.kind === "start_agent") {
+      const text = el("textarea", "talk-task");
+      text.rows = 2;
+      text.value = String(offer.task || ""); // the user's own words, which they may edit
+      text.setAttribute("aria-label", "The agent's task");
+      const picker = el("select", "talk-model");
+      picker.setAttribute("aria-label", "Model");
+      for (const [value, label] of MODELS) {
+        const option = el("option", "", label);
+        option.value = value;
+        picker.append(option);
+      }
+      const last = model(); // the model last picked (the task bar's, from chrome.storage.local)
+      picker.value = MODELS.some(([value]) => value === last) ? last : String(offer.model || "sonnet");
+      entry.box = text;
+      entry.picker = picker;
+      box.append(el("p", "", "Start an agent with this task:"), text, picker);
+    } else {
+      const who = `${offer.sender || "them"}${offer.subject ? ` (${offer.subject})` : ""}`;
+      box.append(el("p", "", `Draft a reply to ${who} that says what you asked:`),
+                 el("blockquote", "talk-guidance", String(offer.guidance || "")));
+    }
+    const go = button(offer.kind === "start_agent" ? "Start" : "Draft it", "primary talk-go", () => confirm(entry));
+    const no = button("Cancel", "ghost talk-cancel", () => {
+      link.send({ type: "brain_dismiss", talk: talkId, proposal: entry.id });
+      closeProposal();
+    });
+    entry.buttons = [go, no];
+    box.append(row(go, no, el("span", "muted", "or say yes")));
+    const seconds = Number(offer.expires_in);
+    entry.timer = setTimeout(() => expire(entry), (Number.isFinite(seconds) ? Math.max(0, seconds) : 120) * 1000);
+    proposal = entry;
+    setCard(box);
+  }
+
+  function closeProposal() {
+    if (!proposal) return;
+    clearTimeout(proposal.timer);
+    if (proposal.node.isConnected) closeCard();
+    proposal = null;
+  }
+
+  function expire(entry) { // past its two minutes: the app won't run it any more either
+    if (proposal !== entry) return;
+    proposal = null;
+    entry.node.replaceChildren(el("p", "muted", "This has expired: ask again"));
+  }
+
+  function confirm(entry) { // Start (or Draft it): one click, one run
+    if (proposal !== entry || confirming) return;
+    confirming = newId("t");
+    for (const node of entry.buttons) node.disabled = true;
+    const message = { type: "brain_confirm", talk: talkId, request: confirming, proposal: entry.id };
+    if (entry.box) message.task = entry.box.value;
+    if (entry.picker) message.model = entry.picker.value;
+    if (!link.send(message)) {
+      confirming = null;
+      for (const node of entry.buttons) node.disabled = false;
+      tell(NOT_CONNECTED);
+    }
+  }
+
+  function created(message) { // the agent the card (or a spoken yes) started: the card has done its job
+    if (message.request !== null && message.request !== undefined
+        && (message.request === confirming || message.request === asking)) closeProposal();
   }
 
   function drop(current) { // a press that didn't become a turn: the voice may speak again
@@ -396,6 +472,11 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     lastYou = line("You", words);
     asking = newId("t");
     const message = { type: "brain_ask", talk: talkId, request: asking, text: words };
+    if (proposal) { // a plain yes runs this card as it now reads: its box's words and its model
+      message.proposal = proposal.id;
+      if (proposal.box) message.task = proposal.box.value;
+      if (proposal.picker) message.model = proposal.picker.value;
+    }
     if (!link.send(message)) {
       asking = null;
       setState("idle");
@@ -410,12 +491,21 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
   }
 
   function answered(message) {
-    if (message.talk !== talkId || message.request !== asking) return; // an older question's answer is never shown
-    asking = null;
-    if (message.hidden && lastYou) lastYou.textContent = "You: (hidden: it sounded like a password)";
-    if (!turn) {
-      setState("idle");
-      progress("");
+    if (message.talk !== talkId) return;
+    const confirmed = confirming !== null && message.request === confirming;
+    if (!confirmed && message.request !== asking) return; // an older question's answer is never shown
+    if (confirmed) {
+      confirming = null;
+      closeProposal();
+    } else {
+      asking = null;
+      if (message.hidden && lastYou) lastYou.textContent = "You: (hidden: it sounded like a password)";
+      if (!turn) {
+        setState("idle");
+        progress("");
+      }
+      if (message.proposal) showProposal(message.proposal);
+      else closeProposal(); // any other answer closes the open card: the words were a new question
     }
     if (message.error) tell(String(message.error));
     if (message.say) {
@@ -460,6 +550,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     if (message.type === "hearing_status") statusChanged(message);
     else if (message.type === "heard") heard(message);
     else if (message.type === "brain_answer") answered(message);
+    else if (message.type === "created") created(message);
   }
 
   // ---- Space, Esc, the mic button and the box ------------------------------------------------------------------

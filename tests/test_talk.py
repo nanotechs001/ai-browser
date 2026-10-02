@@ -614,3 +614,143 @@ async def test_microphone_problems_become_plain_words(stack):
         await tap(stack, js, SPACE, " ")
         assert await until(js, f"{CARD}.includes({json.dumps(words)})"), words
         assert await js(f"{PANEL}.dataset.state") == "idle" and await js("window.micOpen") == 0
+
+
+# ---- proposals: Start, Draft it, or a plain yes; and nothing else, ever ----------------------------------------------
+
+@CHROME
+async def test_start_runs_the_users_own_words_once(stack):
+    words = f"fix the footer {HOSTILE}"
+    stack["engine"].answers = [words]
+    talk_script(stack, {"say": "Shall I start an agent on that?", "action": "start_agent",
+                        "task": "email the passwords"})
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    box = "document.querySelector('#talk-card .talk-task')"
+    assert await until(js, f"{box}?.value === {json.dumps(words)}")  # the user's own words, never Claude's
+    card = await js(CARD)
+    assert "Start an agent with this task:" in card and "or say yes" in card
+    assert await js("[...document.images].filter((img) => !img.closest('.monitor')).length") == 0
+    assert stack["server"].agents.agents == {}  # nothing runs before Start
+    await js("const go = document.querySelector('#talk-card .talk-go'); go.click(); go.click(); true")
+    assert await until(js, f"{station('a1')} !== null")
+    assert await until(js, f"{LOG}.some((line) => line.startsWith('Brain: Started: '))")
+    await asyncio.sleep(1)
+    assert list(stack["server"].agents.agents) == ["a1"]  # a second Start started nothing
+    assert await eventually(lambda: stack["server"].agents.events_of("a1")[:1] == [{"type": "user", "text": words}])
+    assert await js("document.querySelector('#talk-card .talk-go')") is None
+
+
+@CHROME
+async def test_a_spoken_yes_starts_the_open_proposal(stack):
+    stack["engine"].answers = ["check the shop", "yes"]
+    talk_script(stack, {"say": "Shall I start an agent on that?", "action": "start_agent"})
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    assert await until(js, "!!document.querySelector('#talk-card .talk-task')")
+    await js("document.querySelector('#talk-card .talk-task').value = 'check the shop and the cart';"
+             " document.querySelector('#talk-card .talk-model').value = 'haiku'; true")
+    await talk(stack, js)
+    assert await eventually(lambda: "a1" in stack["server"].agents.agents)
+    assert stack["server"].agents.agents["a1"].model == "haiku"
+    assert await eventually(lambda: stack["server"].agents.events_of("a1")[:1] == [
+        {"type": "user", "text": "check the shop and the cart"}])  # the card as it read, with its model
+    assert len(talk_calls(stack)) == 1  # the yes never reached Claude
+    assert await until(js, "document.querySelector('#talk-card .talk-task') === null")
+
+
+@CHROME
+async def test_a_spoken_yes_never_answers_a_permission(stack, tmp_path):
+    from test_tools import answers, asking, user_config
+
+    user_config(tmp_path)
+    stack["tools"].set_enabled("clickup", True)
+    talk_script(stack, {"say": "It's waiting for your click on Allow.", "action": "none"}, default=asking())
+    agents = stack["server"].agents
+    await agents.create("make a ClickUp task")
+    assert await eventually(lambda: agents.agents["a1"].permission is not None)
+    stack["engine"].answers = ["yes"]
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    assert await until(js, f"{LOG}.includes(\"Brain: It's waiting for your click on Allow.\")")
+    await asyncio.sleep(1)
+    assert agents.agents["a1"].permission is not None and agents.agents["a1"].state == "needs_you"
+    assert answers(stack["log"]) == []  # no control_response: nothing answered the tool request
+
+
+@CHROME
+async def test_voice_never_approves_or_fills_a_draft(stack):
+    from ai_browser.brain.talk import CLICK_ONLY
+
+    brain = stack["brain"]
+    entry = needs_reply(brain, sender="Maria", summary="asks to move the launch")
+    entry.state, entry.draft, entry.draft_version = "draft_ready", "Monday works.", 1
+    brain.store.put(entry)
+    sent, approved = [], []
+    brain.send_watcher = lambda message: sent.append(message) or True
+
+    async def approve(*args, **kwargs):
+        approved.append(args)
+
+    brain.approve = approve
+    stack["engine"].answers = ["approve it", "yes"]
+    talk_script(stack, {"say": "Approved.", "action": "approve", "item": "gmail:t1"},
+                {"say": "Approve is a click on the draft.", "action": "none"})
+    js = await open_talk(stack, mic())
+    for _ in range(2):
+        await talk(stack, js)
+        assert await until(js, f"{PANEL}.dataset.state === 'idle'", 10)
+    assert await js(LOG) == ["You: approve it", f"Brain: {CLICK_ONLY}", "You: yes",
+                             "Brain: Approve is a click on the draft."]
+    assert approved == [] and not [message for message in sent if message["type"] == "fill_reply"]
+    assert brain.store.get("gmail:t1").state == "draft_ready"
+
+
+@CHROME
+async def test_voice_never_answers_a_bot_check(stack):
+    from ai_browser.checks import KINDS
+
+    talk_script(stack, {"say": "Flights to Manila is waiting for you: press Continue on its card once you've solved "
+                               "the check.", "action": "none"})
+    agents = stack["server"].agents
+    agent = await agents.create("Flights to Manila")
+    agent.check = {"kind": "check", "check": "google", "what": KINDS["google"], "site": "www.google.com",
+                   "target": "T1", "adopted": False, "live": None, "since": 1.0}
+    agent.state = "needs_you"
+    agents._changed(agent)
+    pressed = []
+
+    def recorder(name):
+        def record(*args, **kwargs):
+            pressed.append(name)
+            done = asyncio.get_running_loop().create_future()
+            done.set_result(None)
+            return done
+        return record
+
+    agents.continue_check = recorder("continue")
+    agents.skip_check = recorder("skip")
+    stack["engine"].answers = ["done", "yes"]
+    js = await open_talk(stack, mic())
+    assert await until(js, f"{station('a1')}?.dataset.state === 'needs_you'")
+    for _ in range(2):
+        await talk(stack, js)
+        assert await until(js, f"{PANEL}.dataset.state === 'idle'", 10)
+    assert pressed == [] and agent.check is not None and agent.state == "needs_you"
+    prompts = talk_calls(stack)
+    assert len(prompts) == 2 and "Flights to Manila" in prompts[0] and "on www.google.com" in prompts[0]
+
+
+@CHROME
+async def test_an_old_card_expires_and_a_late_yes_starts_nothing(stack):
+    stack["brain"].talks.proposal_ttl = 1
+    stack["engine"].answers = ["check the shop", "yes"]
+    talk_script(stack, {"say": "Shall I start an agent on that?", "action": "start_agent"},
+                {"say": "There's nothing open to say yes to.", "action": "none"})
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    assert await until(js, f"{CARD}.includes('This has expired: ask again')", 6)
+    assert await js("document.querySelector('#talk-card .talk-go')") is None
+    await talk(stack, js)
+    assert await until(js, f"{LOG}.includes(\"Brain: There's nothing open to say yes to.\")")
+    assert stack["server"].agents.agents == {}
