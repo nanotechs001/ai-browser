@@ -23,6 +23,9 @@ from ..brain.tools import ToolsConfig
 from ..brain.watcher import prepare_watcher
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..cdp import CDP, CDPError
+from ..hearing.engine import WhisperEngine
+from ..hearing.model import ModelStore
+from ..hearing.service import HearingService
 from .agents import AgentManager
 from .server import AppServer, reveal_in_finder
 from .tabs import TabWatch
@@ -121,8 +124,9 @@ async def _run(home: Path, model: str, headless: bool, claude: str | None, ready
     workflows = WorkflowStore(home)
     runner = WorkflowRunner(workflows, agents)
     skills = SkillWriter(Path.home() / ".claude" / "skills", claude=claude, cwd=home / "brain" / "calls")
+    hearing = HearingService(ModelStore(home / "models"), WhisperEngine())  # talking; the model only on Download
     server = AppServer(home, agents, default_model=model, brain=brain, tools=ToolsConfig(home), workflows=workflows,
-                       runner=runner, skill_writer=skills)
+                       runner=runner, skill_writer=skills, hearing=hearing)
     app = watch = ticker = None
     try:
         try:

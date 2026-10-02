@@ -33,6 +33,7 @@ from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
 from ..config import load_config, project_root
+from ..hearing.service import HearingService, unavailable_status
 from ..live import _bind, _QuietServer, _serve
 from ..skills import Catalog
 from .agents import Agent, AgentManager
@@ -48,6 +49,10 @@ BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_se
 TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"}
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
 SKILL_MESSAGES = {"skill_draft", "skill_save"}
+HEARING_MESSAGES = {"hearing", "hearing_download", "hearing_cancel", "listen_start", "listen_chunk", "listen_end",
+                    "listen_cancel"}  # push-to-talk: only AI Browser's own pages, never the watcher
+TALK_MESSAGES = {"brain_ask", "brain_confirm", "brain_dismiss"}  # the talk with the Brain: the same
+_TALK_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 CHECK_MESSAGES = {"check_continue", "check_skip"}  # a bot check's buttons; the watcher may Continue, never Skip
 CHECK_SITE = re.compile(r"[a-z0-9.-]{1,253}")  # a host name, nothing else
 CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{1,64}")  # an engine's live view
@@ -92,13 +97,16 @@ class AppServer:
                  host: str = "127.0.0.1", ports: range = APP_PORTS, default_model: str = "sonnet",
                  brain: BrainService | None = None, tools: ToolsConfig | None = None,
                  workflows: WorkflowStore | None = None, runner: WorkflowRunner | None = None,
-                 skill_writer: SkillWriter | None = None):
+                 skill_writer: SkillWriter | None = None, hearing: HearingService | None = None):
         self.home = Path(home)
         self.agents = agents
         self.brain = brain
         self.skill_writer = skill_writer  # skills the Brain drafts, written only on the user's Save
         if skill_writer is not None and skill_writer.on_saved is None:
             skill_writer.on_saved = self.skills_changed
+        self.hearing = hearing  # push-to-talk: the user's speech becomes text on this computer (Mission Control)
+        if hearing is not None:
+            hearing.on_status = lambda status: self._send_all({"type": "hearing_status", **status})
         self.tools = tools  # the user's MCP servers for the agents (AI Home → Tools)
         if tools is not None:
             agents.tools = tools
@@ -178,6 +186,8 @@ class AppServer:
         raise RuntimeError(f"no free port for the AI Browser app server ({self.ports.start}-{self.ports.stop - 1})")
 
     async def stop(self) -> None:
+        if self.hearing is not None:
+            await self.hearing.stop()  # a download in progress is cancelled, and nothing half-written is kept
         if self.brain is not None:
             await self.brain.stop()
         await self.agents.close_all()  # every agent's Claude Code process ends with the app
@@ -281,6 +291,8 @@ class AppServer:
     def _unsubscribe(self, ws: WebSocket) -> None:
         self._sockets.pop(ws, None)
         self._origin_of.pop(ws, None)
+        if self.hearing is not None:
+            self.hearing.drop(ws)  # a closed page's turn, and its audio, go with it
         writer = self._writers.pop(ws, None)
         if writer is not None:
             writer.cancel()
@@ -344,6 +356,12 @@ class AppServer:
                 await agents.continue_check(agent_id)
             elif self._origin_of.get(ws) not in self._watcher_origins:
                 await agents.skip_check(agent_id)
+        elif kind in HEARING_MESSAGES:
+            if self._origin_of.get(ws) not in self._watcher_origins:  # only AI Browser's own pages talk or listen
+                self._hearing_command(ws, queue, kind, message)
+        elif kind in TALK_MESSAGES:
+            if self._origin_of.get(ws) not in self._watcher_origins:
+                self._talk_command(queue, kind, message)
         elif kind == "hello":
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
@@ -418,6 +436,70 @@ class AppServer:
             brain.set_paused(message.get("on") is True)
         elif kind == "style":
             brain.set_style(_text(message.get("text")))
+
+    # ---- talking to the Brain: push-to-talk turns and the talk (AI Browser's own pages only) ----------------------
+
+    def _hearing_command(self, ws: WebSocket, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        hearing = self.hearing
+        if kind == "hearing":
+            queue.put_nowait({"type": "hearing_status", **(hearing.status() if hearing else unavailable_status())})
+            return
+        if hearing is None:
+            return
+        turn = message.get("turn") if isinstance(message.get("turn"), str) else ""
+        if kind == "hearing_download":  # only the Download button sends it: the one way the model is fetched
+            hearing.start_download()
+        elif kind == "hearing_cancel":
+            hearing.cancel_download()
+        elif kind == "listen_start":
+            self._heard_error(queue, turn, hearing.begin(ws, turn))
+        elif kind == "listen_chunk":
+            self._heard_error(queue, turn, hearing.add(ws, turn, message.get("seq"), message.get("pcm")))
+        elif kind == "listen_end":
+            self._job(self._listen_end(ws, queue, turn))  # the words take a moment: the socket reads on meanwhile
+        elif kind == "listen_cancel":
+            hearing.cancel(ws, turn)
+
+    @staticmethod
+    def _heard_error(queue: asyncio.Queue, turn: str, error: str) -> None:
+        if error:  # to the asking page only: its turn ended
+            queue.put_nowait({"type": "heard", "turn": turn[:40], "error": error})
+
+    async def _listen_end(self, ws: WebSocket, queue: asyncio.Queue, turn: str) -> None:
+        text, error = await self.hearing.finish(ws, turn)
+        queue.put_nowait({"type": "heard", "turn": turn[:40], **({"error": error} if error else {"text": text})})
+
+    def _talk_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        talk = message.get("talk")
+        if not isinstance(talk, str) or not _TALK_ID.match(talk):
+            return
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        if self.brain is None:
+            if kind != "brain_dismiss":
+                queue.put_nowait({"type": "brain_answer", "talk": talk, "request": request, "say": "",
+                                  "error": "The Brain isn't running"})
+            return
+        proposal = message.get("proposal") if isinstance(message.get("proposal"), str) else None
+        task = _text(message.get("task")) or None  # the card's box, as the user left it
+        model = message.get("model") if message.get("model") in MODELS else None
+        if kind == "brain_ask":
+            text = message.get("text").strip()[:2000] if isinstance(message.get("text"), str) else ""
+            if text:
+                self._job(self._answer(queue, talk, request,
+                                       self.brain.respond(talk, text, proposal=proposal, task=task, model=model)))
+        elif kind == "brain_confirm" and proposal is not None:
+            self._job(self._answer(queue, talk, request, self.brain.confirm(talk, proposal, task=task, model=model)))
+        elif kind == "brain_dismiss" and proposal is not None:
+            self.brain.dismiss(talk, proposal)
+
+    @staticmethod
+    async def _answer(queue: asyncio.Queue, talk: str, request, answering) -> None:
+        """The Brain's answer, to the asking page only; an agent it started is `created` there first."""
+        answer = await answering
+        if answer.get("agent"):
+            queue.put_nowait({"type": "created", "id": answer["agent"], "request": request})
+        queue.put_nowait({"type": "brain_answer", "talk": talk, "request": request,
+                          **{key: value for key, value in answer.items() if key != "agent"}})
 
     def _tools_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
         if kind == "permission":  # only a click in one of our pages answers a tool request
