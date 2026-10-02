@@ -461,3 +461,35 @@ async def test_qa_never_crawls_a_big_site():
 
     with pytest.raises(BrowserError, match="www.youtube.com is a big site"):
         await run_qa(Stub(), None, "https://www.youtube.com/@someone")
+
+
+@CHROME
+async def test_a_bot_check_found_by_qa_is_handed_over_in_its_own_tab(chrome_browser, monkeypatch):
+    from ai_browser.checks import Check
+    from ai_browser.render import render_check
+
+    run_module, captured = capture(monkeypatch)
+    asked = record_fetches(monkeypatch)
+    browser, base, _ = chrome_browser
+    before = set(browser.owned)
+    calls = []
+
+    async def on_check(tab, check):
+        calls.append((tab, check))
+        return None  # the run writes the plain hand-off itself
+
+    text = await run_module.run_qa(browser, browser.work, base + "qa2/check.html", delay=0.05, on_check=on_check)
+    [(tab, check)] = calls
+    assert check == Check("traffic", "localhost")
+    assert set(browser.owned) == before | {tab.key}  # the check's tab stays open; QA's other tabs closed
+    assert text.startswith(render_check(check, tab.key) + "\n\nqa ")
+    assert "stopped early: localhost answered with a bot check on /checks/unusual.html" in text
+    assert ("https://www.google.com/maps", BIG_SITE_NOTE) in captured["run"].unchecked
+    assert not any("google.com" in url for url in asked)
+    await browser.close_tab(tab)
+
+    async def engine_hold(tab, check):
+        return "HELD BY THE ENGINE"
+
+    text = await run_module.run_qa(browser, browser.work, base + "qa2/check.html", delay=0.05, on_check=engine_hold)
+    assert text.startswith("HELD BY THE ENGINE\n\nqa ")

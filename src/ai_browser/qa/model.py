@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..checks import Check
+
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 SITE_STOPPED = "host stopped"  # QARun.stopped when the site under QA refused (429, 403 or a bot check)
 HTML_TYPES = {"text/html", "application/xhtml+xml", ""}  # no content type: browsers sniff, usually a page
@@ -67,6 +69,7 @@ class PageResult:
     downloads: list[str] = field(default_factory=list)  # downloads the page started (each one cancelled)
     error: str = ""  # the page itself could not be loaded
     note: str = ""  # the page changed while it was checked: what was found so far is kept
+    check: Check | None = None  # the page is a bot check: handed to the user, never woken, scrolled or photographed
     seconds: float = 0.0
 
 

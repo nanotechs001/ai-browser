@@ -13,7 +13,9 @@ from urllib.parse import urlsplit
 
 import anyio
 
-from ..browser import Browser, BrowserError, url_problem
+from ..browser import Browser, BrowserError, Tab, url_problem
+from ..checks import Check
+from ..render import render_check
 from ..workfs import WorkDir
 from .checker import LinkChecker
 from .issues import link_issue, link_verdict, merge
@@ -33,6 +35,7 @@ IGNORED_ROBOTS = "robots.txt: ignored at the user's request"
 
 Progress = Callable[[int, int, str], Awaitable[None]]
 HostStoppedHook = Callable[[str, float, str], None]  # (host, until, why): the Engine's cool-down
+CheckHook = Callable[[Tab, Check], Awaitable[str | None]]  # the Engine's hold: returns the hand-off text
 
 
 @dataclass
@@ -159,18 +162,19 @@ class _Rules:
 async def run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int = 30, progress: Progress | None = None,
                  on_tabs: Callable[[], None] | None = None, crawl_budget: float = CRAWL_BUDGET,
                  link_budget: float = LINK_BUDGET, delay: float = HOST_DELAY, ignore_robots: bool = False,
-                 on_host_stopped: HostStoppedHook | None = None) -> str:
+                 on_check: CheckHook | None = None, on_host_stopped: HostStoppedHook | None = None) -> str:
     """Check a whole site in the session's browser, politely, write the report and return its summary.
-    `ignore_robots` only when the user says the site is theirs; `on_host_stopped(host, until, why)` hears of every
-    host that refused, for the Engine's cool-down."""
+    `ignore_robots` only when the user says the site is theirs; `on_check(tab, check)` lets the Engine hold the
+    session at a bot check QA finds (its tab stays open); `on_host_stopped(host, until, why)` hears of every host that
+    refused, for the Engine's cool-down."""
     with browser.acting():  # pages QA opens may open popups: those are QA's to follow and close
         return await _run_qa(browser, work, url, max_pages, progress, on_tabs, crawl_budget, link_budget, delay,
-                             ignore_robots, on_host_stopped)
+                             ignore_robots, on_check, on_host_stopped)
 
 
 async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, progress: Progress | None,
                   on_tabs: Callable[[], None] | None, crawl_budget: float, link_budget: float, delay: float,
-                  ignore_robots: bool, on_host_stopped: HostStoppedHook | None) -> str:
+                  ignore_robots: bool, on_check: CheckHook | None, on_host_stopped: HostStoppedHook | None) -> str:
     problem = url_problem(url, browser.mode)
     if problem:
         raise BrowserError(f"{url}: {problem}")
@@ -187,6 +191,8 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
     visitors: list[PageVisitor] = []
     checks: _Checks | None = None
     gate = HostGate(delay=delay)  # one gate per run: every request QA makes takes its host's turn
+    held: list[tuple[PageVisitor, PageResult]] = []  # a page that was a bot check, and the visitor whose tab shows it
+    kept: set[str] = set()  # QA's tabs that stay open: the one with the check, for the user
 
     def tabs_changed() -> None:  # keeps the session registry current, so a crash can't strand our tabs
         if on_tabs is not None:
@@ -218,25 +224,33 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
         site = origin(normalize(first.final_url) or start)
         if site != origin(start):  # redirected to another origin: its own robots.txt, before any other page of it
             await rules.read(site)
+        if first.check is not None:  # the start page itself is a bot check
+            held.append((visitors[0], first))
         folder = folder_for(site, started)
         save_shots(work, folder, 1, first)
         frontier = Frontier(site)
         frontier.mark(start)
         frontier.mark(first.final_url)
-        pages, chains = [first], []
+        pages, chains = ([] if held else [first]), []
         if len(first.hops) >= 2:
             chains.append(_chain(start, first, [start]))
         for href, text in first.links:
             frontier.add(href, first.final_url, text)
-        await report(1)
+        if not held:
+            await report(1)
         checks = _Checks(checker, rules)
         workers = [PageVisitor(browser, await browser.open_worker(), gate) for _ in range(WORKERS)]
         visitors += workers
         tabs_changed()
         site_host = urlsplit(site).hostname or ""
         stopped = await _crawl(frontier, checker, checks, workers, pages, chains, max_pages, clock + crawl_budget,
-                               report, lambda page, number: save_shots(work, folder, number, page), rules, site_host)
-        await checks.finish(frontier.links.values(), time.monotonic() + link_budget)
+                               report, lambda page, number: save_shots(work, folder, number, page), rules, site_host,
+                               held)
+        if held:  # the user's attention is needed now: no more link checks
+            await checks.cancel()
+        else:
+            await checks.finish(frontier.links.values(), time.monotonic() + link_budget)
+        handoff = await _hand_over(held, on_check, kept)
         issues, unchecked = list(chains), []
         for page in pages:
             issues += page_issues(page, site)
@@ -255,7 +269,8 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
         run = QARun(start, site, "your own browser" if browser.mode == "chrome" else "sandbox", started,
                     round(time.monotonic() - clock, 1), pages, merge(issues), unchecked, list(frontier.action),
                     frontier.pending(), stopped, stopped_hosts=dict(gate.stops), robots=rules.note(site))
-        return summary(run, write_report(work, run))
+        text = summary(run, write_report(work, run))
+        return f"{handoff}\n\n{text}" if handoff else text
     finally:
         with anyio.CancelScope(shield=True):  # even when the call is cancelled, every QA tab must close
             if checks is not None:
@@ -264,7 +279,7 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
                 visitor.close()
             if browser._adopting:  # popups still being set up
                 await asyncio.wait(set(browser._adopting), timeout=2)
-            for key in [key for key in browser.owned if key not in before]:  # our tabs, and popups pages opened
+            for key in [key for key in browser.owned if key not in before and key not in kept]:  # ours, and popups
                 tab = browser.owned.get(key)
                 if tab is not None:
                     await browser.close_tab(tab)
@@ -281,6 +296,16 @@ def _unchecked(result: LinkResult) -> str:
     if error.startswith("stopped: "):
         return "not checked: " + error.removeprefix("stopped: ")
     return str(result.status or error or "no answer")
+
+
+async def _hand_over(held: list[tuple[PageVisitor, PageResult]], on_check: CheckHook | None, kept: set[str]) -> str:
+    """A page of the site was a bot check: its tab stays open for the user and the session holds (on_check)."""
+    if not held:
+        return ""
+    visitor, page = held[0]
+    kept.add(visitor.tab.key)
+    given = await on_check(visitor.tab, page.check) if on_check is not None else None
+    return given or render_check(page.check, visitor.tab.key)
 
 
 def _tell_stopped(gate: HostGate, hook: HostStoppedHook | None) -> None:
@@ -343,14 +368,14 @@ def _check_unvisited(frontier: Frontier, checks: _Checks, capacity: int, busy: s
 
 async def _crawl(frontier: Frontier, checker: LinkChecker, checks: _Checks, workers: list[PageVisitor],
                  pages: list[PageResult], chains: list[Issue], max_pages: int, deadline: float, report,
-                 saved, rules: _Rules, site_host: str) -> str:
-    """Visit queued pages with the workers until none are left, max_pages is reached, time runs out or the site
-    refused."""
+                 saved, rules: _Rules, site_host: str, held: list) -> str:
+    """Visit queued pages with the workers until none are left, max_pages is reached, time runs out, the site refused
+    or a page was a bot check."""
     idle = list(workers)
     running: dict[asyncio.Future, tuple[str, PageVisitor]] = {}
     try:
         return await _visit_all(frontier, checker, checks, idle, running, pages, chains, max_pages, deadline, report,
-                                saved, rules, site_host)
+                                saved, rules, site_host, held)
     finally:  # cancelled, or done: no visit may go on in the background
         for task in running:
             task.cancel()
@@ -359,11 +384,11 @@ async def _crawl(frontier: Frontier, checker: LinkChecker, checks: _Checks, work
 
 
 async def _visit_all(frontier, checker, checks, idle, running, pages, chains, max_pages, deadline, report,
-                     saved, rules, site_host) -> str:
+                     saved, rules, site_host, held) -> str:
     gate = checker.gate
     while True:
         while idle and len(pages) + len(running) < max_pages and time.monotonic() < deadline \
-                and gate.stopped(site_host) is None:
+                and gate.stopped(site_host) is None and not held:
             url = frontier.pop()
             if url is None:
                 break
@@ -375,8 +400,12 @@ async def _visit_all(frontier, checker, checks, idle, running, pages, chains, ma
             break
         done, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
-            idle.append(running.pop(task)[1])
+            visitor = running.pop(task)[1]
             url, page = task.result()
+            if page is not None and page.check is not None:
+                held.append((visitor, page))  # its tab stays as it is, for the user: it visits nothing more
+                continue
+            idle.append(visitor)
             if page is None:
                 continue
             final = normalize(page.final_url) or page.url
@@ -393,7 +422,7 @@ async def _visit_all(frontier, checker, checks, idle, running, pages, chains, ma
             for href, text in page.links:
                 frontier.add(href, final, text)
             await report(len(pages))
-    if gate.stopped(site_host) is not None:
+    if held or gate.stopped(site_host) is not None:
         return SITE_STOPPED
     if not frontier.pending():
         return ""

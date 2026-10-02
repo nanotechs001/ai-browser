@@ -100,6 +100,11 @@ class PageVisitor:
             finally:
                 _forget(loaded)
             await self._quiet(QUIET_WAIT)
+            page.check = await self.browser.check_now(self.tab)
+            if page.check is not None:  # a bot check: its host is stopped, and the page is the user's to deal with
+                self.gate.stop(host, stop_reason(page.status, urlsplit(url).path or "/", challenge=True))
+                page.final_url = await self._eval("location.href")
+                return page
             if self._refused(page, host, url):  # 429, 403 or a bot check header: the page is left as it is
                 page.final_url = await self._eval("location.href")
                 return page
