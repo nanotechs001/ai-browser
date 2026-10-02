@@ -3,7 +3,12 @@ at every station (chibi.js), against a real app server (agents on the fake claud
 The art holds no agent data, text stays text, and nothing is downloaded."""
 
 import asyncio
+import base64
 import json
+import os
+from pathlib import Path
+
+import pytest
 
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
 from test_mission import CHROME, WORKING, key, needs_reply, open_mission, open_with, station, voice_on
@@ -771,3 +776,112 @@ async def test_a_long_update_without_words_rings_until_it_ends(stack):
     assert await js("window.gl.last.u_word") == 0
     await asyncio.sleep(1)
     assert await js("window.gl.last.u_word") == 0  # and none starts once the speech is over
+
+
+# ---- the budget, and screenshots for the eye -------------------------------------------------------------------------
+
+FRAMES = ("(() => { window.rafFrames = 0; const tick = () => { window.rafFrames += 1; requestAnimationFrame(tick); };"
+          " requestAnimationFrame(tick); })();")
+
+
+@CHROME
+@pytest.mark.skipif(os.environ.get("AIB_PERF") != "1", reason="timing depends on the machine: set AIB_PERF=1")
+async def test_the_budget(stack):
+    stack["script"].write_text(json.dumps(WORKING))
+    stack["server"].agents.max_working = 20  # all of them at work at once, none waiting in line
+    for number in range(20):
+        await stack["server"].agents.create(f"Task number {number}")
+    js = await brain_page(stack, FRAMES, size=(1280, 760))
+    assert await until(js, "document.querySelectorAll('.station[data-state=\"working\"]').length === 20")
+    stack["brain"].broadcast({"type": "brain_activity", "busy": True, "what": "Sorting 2 new messages from Gmail"})
+    assert await until(js, "document.querySelector('.stage').dataset.state === 'thinking'")
+    cdp = stack["cdp"]
+    await cdp.send("Performance.enable", session_id=js.session)
+    await asyncio.sleep(1.5)
+
+    async def metrics():
+        values = (await cdp.send("Performance.getMetrics", session_id=js.session))["metrics"]
+        return {metric["name"]: metric["value"] for metric in values}
+
+    before, frames, cloud = await metrics(), await js("window.rafFrames"), await js("window.gl.cloud")
+    await asyncio.sleep(3)
+    after = await metrics()
+    frames = await js("window.rafFrames") - frames
+    cloud = await js("window.gl.cloud") - cloud
+    spent = {name: round(after[name] - before[name], 4)
+             for name in ("LayoutCount", "RecalcStyleCount", "RecalcStyleDuration", "TaskDuration", "ScriptDuration")}
+    await js("window.gl.timing = 60; true")  # now the GPU timer: it stalls the GPU, so only after the 3 s
+    assert await until(js, "window.gl.gpu.length >= 60", 10)
+    gpu = await js("window.gl.gpu.reduce((sum, ms) => sum + ms, 0) / window.gl.gpu.length")
+    contexts = await js("window.gl.contexts")
+    points = await js("document.querySelector('.stage').dataset.points")
+    print(f"\nthe budget over 3 s: {spent}, rAF frames {frames}, cloud draws {cloud}, WebGL contexts {contexts},"
+          f" points {points}, the Brain's GPU time {gpu:.2f} ms a frame")
+    assert spent["LayoutCount"] < 10
+    assert spent["RecalcStyleCount"] <= frames and spent["RecalcStyleDuration"] <= 0.060
+    assert spent["TaskDuration"] <= 0.250
+    assert cloud <= 92 and contexts == 1
+    assert gpu <= 1.5
+
+
+SHOTS = os.environ.get("AIB_SHOTS")
+
+
+async def shoot(stack, js, name, clip=None):
+    params = {"format": "png", **({"clip": {**clip, "scale": 1}} if clip else {})}
+    shot = await stack["cdp"].send("Page.captureScreenshot", params, session_id=js.session)
+    Path(SHOTS, f"{name}.png").write_bytes(base64.b64decode(shot["data"]))
+
+
+async def brain_clip(js):
+    return await js("(() => { const r = document.querySelector('.stage').getBoundingClientRect();"
+                    " return {x: r.left - 20, y: r.top - 20, width: r.width + 40, height: r.height + 40}; })()")
+
+
+@CHROME
+@pytest.mark.skipif(not SHOTS, reason="screenshots for the eye: set AIB_SHOTS to a folder")
+async def test_screenshots_for_the_eye(stack):
+    Path(SHOTS).mkdir(parents=True, exist_ok=True)
+    brain = stack["brain"]
+    js = await brain_page(stack, speaking([], 4000), size=(1280, 760))
+    await asyncio.sleep(1)
+    await shoot(stack, js, "brain-idle", await brain_clip(js))
+    brain.broadcast({"type": "brain_activity", "busy": True, "what": "Sorting 2 new messages from Gmail"})
+    await asyncio.sleep(1.5)
+    await shoot(stack, js, "brain-thinking", await brain_clip(js))
+    needs_reply(brain)
+    brain.broadcast({"type": "brain_activity", "busy": False, "what": ""})
+    await asyncio.sleep(1.5)
+    await shoot(stack, js, "brain-alert", await brain_clip(js))
+    await voice_on(js)
+    needs_reply(brain, raw_id="t2", sender="Ben", summary="asks about staging")
+    assert await until(js, "document.querySelector('.stage').dataset.state === 'speaking'")
+    await asyncio.sleep(1.5)
+    await shoot(stack, js, "brain-speaking", await brain_clip(js))
+    for _ in range(3):
+        await js(key("ArrowLeft"))
+    await asyncio.sleep(0.5)
+    await shoot(stack, js, "brain-turned")
+    await js(key("0"))
+    stack["script"].write_text(json.dumps(WORKING))
+    agents = stack["server"].agents
+    for total in (1, 6, 14, 20):
+        while len(agents.agents) < total:
+            await agents.create(f"Task number {len(agents.agents) + 1}")
+        assert await until(js, f"document.querySelectorAll('.station').length === {total}")
+        await asyncio.sleep(2.5)
+        await shoot(stack, js, f"room-{total}")
+    await agents.create("One more task")
+    await asyncio.sleep(0.4)
+    await shoot(stack, js, "arrival")
+    poses_page = await poses(stack)
+    await asyncio.sleep(0.5)
+    await shoot(stack, poses_page, "poses")
+    await reduce_motion(stack, js)
+    await front(stack, js)
+    await asyncio.sleep(1)
+    await shoot(stack, js, "reduced")
+    flat = await open_with(stack, NO_WEBGL, size=(1280, 760))
+    await front(stack, flat)
+    await asyncio.sleep(0.5)
+    await shoot(stack, flat, "dotted", await brain_clip(flat))
