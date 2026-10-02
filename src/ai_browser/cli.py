@@ -21,7 +21,8 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("mcp", help="run the MCP server on stdio (Claude Code starts this)")
     commands.add_parser("build", help=f"build the sandbox image {IMAGE}")
     doctor = commands.add_parser("doctor", help="check Docker, the image, a sandbox, page reading, screenshots, skills, live view")
-    doctor.add_argument("--chrome", action="store_true", help="check your own Chrome instead of the sandbox")
+    doctor.add_argument("--own", "--chrome", dest="own", action="store_true",
+                        help="check your own browser (Brave or Chrome) instead of the sandbox")
     bench = commands.add_parser("bench", help="measure speed on local test pages against the budgets")
     bench.add_argument("--runs", type=int, default=15, help="repetitions per measurement (default 15)")
     live = commands.add_parser("live", help="start a sandbox and print its live-view link, to log in to sites yourself")
@@ -33,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
     app = commands.add_parser("app", help="open AI Browser: a Chrome of its own with a Claude chat side panel")
     app.add_argument("--model", choices=["sonnet", "opus", "haiku"], default="sonnet",
                      help="Claude model for the chat (default: sonnet; it can be changed in the panel)")
+    app.add_argument("--browser", choices=["brave", "app"], default=None,
+                     help="where agents browse: your Brave (the default when it is installed) or AI Browser")
     app.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)  # for tests
     args = parser.parse_args(argv)
 
@@ -54,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         return _stop(args.profile, args.all)
     try:
         if args.command == "doctor":
-            return asyncio.run(_doctor_chrome() if args.chrome else _doctor())
+            return asyncio.run(_doctor_own() if args.own else _doctor())
         if args.command == "bench":
             return asyncio.run(_bench(args.runs))
         if args.command == "live":
@@ -62,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "app":
             from .app.run import run_app
 
-            return asyncio.run(run_app(home(), args.model, args.headless))
+            return asyncio.run(run_app(home(), args.model, args.headless, browser=args.browser))
     except KeyboardInterrupt:
         return 130
     return 2
@@ -149,18 +152,20 @@ async def _doctor() -> int:
 
 
 
-async def _doctor_chrome() -> int:
-    """Check that the engine can drive the user's own Chrome (Chrome may ask them to click Allow)."""
+async def _doctor_own() -> int:
+    """Check that the engine can drive the user's own browser (Brave or Chrome; it may ask them to click Allow)."""
     from . import testpages
-    from .chrome import ChromeError, default_chrome_dir, find_ws_url
+    from .chrome import ChromeError, browser_name, find_ws_url, own_browser_dir
     from .engine import Engine
 
+    folder = own_browser_dir()
+    name = browser_name(folder)
     try:
-        find_ws_url(default_chrome_dir(), timeout=3)  # Chrome may have just been opened
+        find_ws_url(folder, timeout=3)  # the browser may have just been opened
     except ChromeError as exc:
-        print(f"✗ Chrome      {exc}")
+        print(f"✗ {name:<11} {exc}")
         return 1
-    print("✓ Chrome      remote debugging allowed (click Allow if Chrome asks now)")
+    print(f"✓ {name:<11} remote debugging allowed (click Allow if {name} asks now)")
     engine = Engine()
     base, _, stop_pages = testpages.serve_host()
     failed = False

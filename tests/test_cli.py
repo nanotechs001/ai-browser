@@ -65,3 +65,20 @@ def test_bench_prints_every_measurement(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     for row in BENCH_ROWS:
         assert any(line.startswith(row + " ") for line in out.splitlines()), out
+
+
+def test_doctor_own_names_brave(tmp_path, monkeypatch, capsys):
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
+    monkeypatch.setenv("AIB_HOME", str(tmp_path / "home"))
+    assert main(["doctor", "--own"]) == 1
+    out = capsys.readouterr().out
+    assert "✗ Brave" in out and "brave://inspect/#remote-debugging" in out
+
+
+def test_app_takes_the_browser_choice(capsys):
+    with pytest.raises(SystemExit):
+        main(["app", "--help"])
+    out = capsys.readouterr().out
+    assert "--browser" in out and "{brave,app}" in out

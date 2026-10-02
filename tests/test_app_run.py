@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import socket
 import time
 
@@ -283,3 +284,95 @@ async def test_scheduled_workflows_tick_while_the_app_runs(fake_claude, tmp_path
     code = await asyncio.wait_for(run.run_app(home, headless=True, claude=str(runner), ready=ready,
                                               out=lambda *args: None), 60)
     assert code == 0 and seen["users"][0]["message"]["content"].startswith("Check the sites and tell me what changed")
+
+
+def test_the_app_picks_brave_when_its_folder_exists(tmp_path, monkeypatch):  # Review Focus 5
+    from ai_browser.app.run import app_browser, brave_env
+
+    monkeypatch.delenv("AIB_APP_BROWSER")
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
+    assert app_browser() == "app"  # no browser folder: AI Browser, as before
+    folder.mkdir(parents=True)
+    assert app_browser() == "brave"
+    assert app_browser("app") == "app" and app_browser(" Brave ") == "brave"
+    monkeypatch.setenv("AIB_APP_BROWSER", "APP")
+    assert app_browser() == "app"
+    with pytest.raises(ValueError, match="--browser must be brave or app"):
+        app_browser("firefox")
+    assert brave_env(folder) == {"AIB_BROWSER": "chrome", "AIB_CHROME_DIR": str(folder)}
+
+
+@CHROME
+async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_claude, tmp_path, monkeypatch):
+    from websockets.asyncio.client import connect
+
+    from ai_browser.app import run
+
+    runner, _, _ = fake_claude
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    folder.mkdir(parents=True)  # Brave is installed; its switch is off
+    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
+    home, lines, seen = tmp_path / "home", [], {}
+
+    async def ready(url, app):
+        link = home / "app" / "link.json"
+        seen["mode"] = link.stat().st_mode & 0o777
+        seen["link"] = json.loads(link.read_text(encoding="utf-8"))
+        seen["url"] = url
+        token = json.loads((home / "app" / "extension" / "config.json").read_text())["token"]
+        async with connect(url.replace("http", "ws") + "/ws?token=" + token,
+                           origin=f"chrome-extension://{app.extension_id}") as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            await ws.send(json.dumps({"type": "new_task", "text": "look around", "request": "r"}))
+            while "created" not in seen:
+                message = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if message["type"] == "snapshot":
+                    seen["browser"] = message["browser"]
+                elif message["type"] == "created":
+                    seen["created"] = True
+        mcp = home / "app" / "agents" / "a1" / "mcp.json"
+        for _ in range(100):
+            if mcp.exists():
+                break
+            await asyncio.sleep(0.1)
+        seen["env"] = json.loads(mcp.read_text())["mcpServers"]["ai-browser"]["env"]
+        app.process.kill()
+
+    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=str(runner), ready=ready,
+                                              out=lines.append, browser="brave"), 60)
+    printed = "\n".join(lines)
+    assert code == 0 and seen["mode"] == 0o600
+    assert seen["link"] == {"events": seen["url"] + "/agent-events", "session_token": seen["link"]["session_token"],
+                            "pid": os.getpid()} and seen["link"]["session_token"]
+    assert seen["browser"] == {"kind": "brave", "name": "Brave", "state": "off", "groups": "no_watcher"}
+    assert seen["env"]["AIB_BROWSER"] == "chrome" and seen["env"]["AIB_CHROME_DIR"] == str(folder)
+    assert "brave://inspect/#remote-debugging" in printed
+    assert "any program on this computer can reach your Brave" in printed
+    assert not (home / "app" / "link.json").exists()  # removed at exit
+
+
+async def test_a_bad_browser_choice_is_refused(tmp_path):
+    from ai_browser.app.run import run_app
+
+    lines = []
+    assert await run_app(tmp_path / "home", browser="firefox", out=lines.append) == 1
+    assert lines == ["error: --browser must be brave or app, not 'firefox'"]
+
+
+@CHROME
+async def test_first_start_in_brave_mode_names_the_extension_folder(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import run
+
+    runner, _, _ = fake_claude
+    brave = tmp_path / "BraveSoftware" / "Brave-Browser"
+    brave.mkdir(parents=True)  # Brave is installed; its switch is off
+    monkeypatch.setenv("AIB_CHROME_DIR", str(brave))
+    lines, shown, stop = [], [], asyncio.Event()
+    monkeypatch.setattr(run, "reveal", shown.append)
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=str(runner),
+                                              ready=lambda url, app: stop.set(), stop=stop, out=lines.append,
+                                              browser="brave"), 60)
+    extension = str((tmp_path / "home" / "app" / "extension").resolve())
+    assert code == 0 and shown == [extension]  # the extension's folder in Finder, never the user's Brave folder
+    assert extension in "\n".join(lines)
