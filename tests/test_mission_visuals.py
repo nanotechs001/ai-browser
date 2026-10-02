@@ -5,8 +5,8 @@ The art holds no agent data, text stays text, and nothing is downloaded."""
 import asyncio
 import json
 
-from test_home import stack, until  # noqa: F401  (fixtures)
-from test_mission import CHROME, WORKING, needs_reply, open_mission, open_with
+from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
+from test_mission import CHROME, WORKING, needs_reply, open_mission, open_with, station
 
 
 async def shape(stack, body):
@@ -512,3 +512,111 @@ async def test_with_reduced_motion_nothing_moves(stack):
     await reduce_motion(stack, js)
     await asyncio.sleep(1)
     assert await js("document.getAnimations().filter(animation => animation.playState === 'running').length") == 0
+
+
+# ---- the workers, in the room ----------------------------------------------------------------------------------------
+
+async def wait_for_permissions(agents, ids):
+    """Until each of these agents (on the fake claude's ClickUp request) waits for the user's answer."""
+    for _ in range(80):
+        if all(agents.agents[agent_id].permission for agent_id in ids if agent_id in agents.agents):
+            return
+        await asyncio.sleep(0.1)
+
+
+@CHROME
+async def test_every_station_has_a_worker_with_the_agents_tie(stack):
+    js = await open_with(stack)
+    agents = stack["server"].agents
+    stack["script"].write_text(json.dumps(WORKING))
+    for name in ("Fix the footer", HOSTILE, "QA my-site.com"):
+        await agents.create(name)
+    assert await until(js, "document.querySelectorAll('.station').length === 3")
+    assert await js("[...document.querySelectorAll('.station')].every(node => node.querySelectorAll('.worker').length"
+                    " === 1)")
+    assert await js(f"getComputedStyle({station('a1', '.worker .tie')}).fill") == "rgb(76, 141, 246)"  # blue
+    assert await js(f"getComputedStyle({station('a2', '.worker .tie')}).fill") == "rgb(63, 178, 107)"  # green
+    assert await js(f"[{station('a1', '.worker')}.dataset.hair, {station('a1', '.worker')}.dataset.skin]") == ["1", "1"]
+    assert "mc-skin-1" in await js(f"getComputedStyle({station('a1', '.worker .head .skin')}).fill")  # from data-skin
+    assert await js("(() => { const defs = document.getElementById('mc-defs'); return [defs.querySelectorAll("
+                    "'radialGradient, linearGradient').length, getComputedStyle(defs).display !== 'none',"
+                    " defs.getAttribute('aria-hidden')]; })()") == [7, True, "true"]  # once, and never undisplayed
+    assert "<img" in await js(f"{station('a2', '.nameplate')}.textContent")
+    assert await js("[...document.images].filter(img => !img.closest('.monitor')).length") == 0
+    assert await js("document.title") != "pwned"
+
+
+@CHROME
+async def test_a_station_is_a_200_by_156_desk(stack):
+    js = await open_with(stack)
+    await stack["server"].agents.create("Fix the footer")
+    assert await until(js, f"{station('a1')} !== null")
+    assert await js(f"[{station('a1', '.card')}.offsetWidth, {station('a1', '.card')}.offsetHeight]") == [200, 156]
+    assert await js(f"[{station('a1', '.monitor')}.offsetWidth, {station('a1', '.monitor')}.offsetHeight]") == [132, 84]
+    assert await js(f"{station('a1', '.desk .ticker')} !== null && {station('a1', '.desk .nameplate')} !== null")
+
+
+@CHROME
+async def test_a_station_that_needs_the_user_raises_a_hand(stack, tmp_path):
+    from test_ai_home_phase2 import ask_for_clickup
+
+    ask_for_clickup(stack, tmp_path)
+    agents = stack["server"].agents
+    await agents.create("make a ClickUp task")
+    await wait_for_permissions(agents, ["a1"])
+    js = await open_with(stack)
+    assert await until(js, f"{station('a1')}?.dataset.state === 'needs_you'")
+    assert await until(js, f"getComputedStyle({station('a1', '.worker .arm-up')}).opacity === '1'")
+
+
+@CHROME
+async def test_twenty_working_agents_cause_no_layout(stack):
+    stack["script"].write_text(json.dumps(WORKING))
+    stack["server"].agents.max_working = 20  # all of them at work at once, none waiting in line
+    for number in range(20):
+        await stack["server"].agents.create(f"Task number {number}")
+    js = await open_with(stack, size=(1280, 760))
+    await front(stack, js)
+    assert await until(js, "document.querySelectorAll('.station[data-state=\"working\"]').length === 20")
+    cdp = stack["cdp"]
+    await cdp.send("Performance.enable", session_id=js.session)
+
+    async def layouts():
+        metrics = (await cdp.send("Performance.getMetrics", session_id=js.session))["metrics"]
+        return next(metric["value"] for metric in metrics if metric["name"] == "LayoutCount")
+
+    await asyncio.sleep(1.5)
+    before = await layouts()
+    await asyncio.sleep(2)
+    assert await layouts() - before < 10
+
+
+PERF_ROOM = """(async () => {
+  // PERF_ROOM: 20 working stand-in stations in a second room over Mission Control, for DevTools' Performance panel.
+  // They are only drawn: nothing is sent to the app, and a reload removes them.
+  const { createScene } = await import(chrome.runtime.getURL('scene.js'));
+  const root = document.createElement('div');
+  root.className = 'scene';
+  root.id = 'perf-room';
+  document.body.append(root);
+  const room = createScene(root);
+  const colors = ['blue', 'green', 'cyan', 'pink', 'yellow', 'red', 'grey'];
+  for (let index = 1; index <= 20; index += 1) {
+    room.upsert({ id: `p${index}`, name: `Stand-in ${index}`, state: 'working', color: colors[index % colors.length],
+                  created: index });
+  }
+  return document.querySelectorAll('#perf-room .station').length;
+})()"""
+
+
+@CHROME
+async def test_perf_room_adds_twenty_working_stand_ins(stack):
+    stack["script"].write_text(json.dumps(WORKING))
+    await stack["server"].agents.create("Fix the footer")
+    js = await open_with(stack)
+    assert await until(js, "document.querySelectorAll('#scene .station').length === 1")
+    assert await js(PERF_ROOM) == 20
+    assert await js("[...document.querySelectorAll('#perf-room .station')].every(node => node.dataset.state"
+                    " === 'working' && node.querySelectorAll('.worker').length === 1)")
+    assert await js("document.querySelectorAll('#scene .station').length") == 1  # the page's own room is as it was
+    assert len(stack["server"].agents.agents) == 1  # nothing was sent

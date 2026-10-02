@@ -47,7 +47,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .ring { position: absolute; width: 360px; height: 360px; margin: -180px 0 0 -180px; border-radius: 50%;
         pointer-events: none; border: 2px solid rgba(130, 150, 255, 0.45);
         box-shadow: 0 0 40px var(--glow), inset 0 0 40px rgba(110, 130, 255, 0.25); }
-.shadow { position: absolute; width: 220px; height: 90px; margin: -45px 0 0 -110px; border-radius: 50%;
+.shadow { position: absolute; width: 240px; height: 90px; margin: -45px 0 0 -120px; border-radius: 50%;
           pointer-events: none; background: radial-gradient(closest-side, rgba(0, 0, 0, 0.55), transparent);
           transition: left 0.6s ease, top 0.6s ease; }
 .billboard { position: absolute; transform-style: preserve-3d; transform-origin: 50% 100%;
@@ -93,39 +93,34 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
                  border-bottom: 0; border-top-color: rgba(240, 241, 250, 0.96); }
 .drawer-brain { display: flex; flex-direction: column; gap: 8px; }
 
-/* ---- a station ---------------------------------------------------------------------------------------------------- */
-.station { width: 176px; border: 0; background: none; color: inherit; padding: 0; cursor: pointer; font: inherit;
+/* ---- a station: a little desk diorama (the monitor, the worker, the desk's front with the name and the ticker) ---- */
+.station { width: 200px; border: 0; background: none; color: inherit; padding: 0; cursor: pointer; font: inherit;
            transition: left 0.6s ease, top 0.6s ease, opacity 0.3s ease; }
 .station:hover:not(:disabled) { background: none; }
 .station.arriving, .station.leaving { opacity: 0; }
 .station.placing { transition: opacity 0.3s ease; }
 .shadow.placing { transition: none; }
 .station.leaving { pointer-events: none; }
-.station .card { background: linear-gradient(180deg, rgba(38, 42, 64, 0.94), rgba(22, 24, 38, 0.94));
-                 border: 1px solid rgba(140, 150, 220, 0.25); border-radius: 14px; padding: 10px;
+.station .card { position: relative; width: 200px; height: 156px; padding: 10px; overflow: hidden; /* scene.js CARD */
+                 background: linear-gradient(180deg, rgba(38, 42, 64, 0.94), rgba(22, 24, 38, 0.94));
+                 border: 1px solid rgba(140, 150, 220, 0.25); border-radius: 14px;
                  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45); transition: border-color 0.3s, box-shadow 0.3s; }
 .station:hover .card, .station.selected .card { border-color: rgba(160, 175, 255, 0.6); }
 .station:focus-visible { outline: none; }
 .station:focus-visible .card { outline: 2px solid var(--accent); outline-offset: 2px; }
-.monitor { height: 92px; border-radius: 8px; overflow: hidden; position: relative; border: 1px solid rgba(255, 255, 255, 0.08);
+.monitor { width: 132px; height: 84px; border-radius: 8px; overflow: hidden; position: relative; z-index: 0;
+           border: 1px solid rgba(255, 255, 255, 0.08);
            background: linear-gradient(135deg, color-mix(in srgb, var(--c, #4c8df6) 35%, #1a1e33), #1a1e33); }
 .monitor .shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; }
 .monitor .scan { position: absolute; left: 0; right: 0; top: 0; height: 30%; opacity: 0; transform: translateY(-100%);
                  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.14), transparent); }
 .station[data-state="working"] .scan { opacity: 1; animation: scan 2.6s linear infinite; }
-.head { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.robot { width: 26px; height: 26px; border-radius: 50%; position: relative; flex: none;
-         background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.55), transparent 40%), var(--c, #4c8df6);
-         box-shadow: 0 0 12px var(--c, #4c8df6); }
-.robot .eye { position: absolute; top: 9px; width: 4px; height: 6px; border-radius: 2px; background: #10121c; }
-.robot .eye:first-child { left: 7px; }
-.robot .eye:nth-child(2) { right: 7px; }
-.robot .arm { position: absolute; right: -3px; bottom: 14px; width: 5px; height: 15px; border-radius: 3px;
-              background: var(--c, #4c8df6); display: none; transform-origin: 50% 100%; transform: rotate(18deg); }
-.robot .arm::after { content: ""; position: absolute; top: -4px; left: -2px; width: 9px; height: 9px; border-radius: 50%;
-                     background: var(--c, #4c8df6); }
-.station[data-state="working"] .robot { animation: bob 0.9s ease-in-out infinite; }
-.station[data-state="needs_you"] .robot .arm { display: block; animation: wave 1.2s ease-in-out infinite; }
+.stand { position: absolute; left: 65px; top: 94px; width: 22px; height: 12px; z-index: 0; border-radius: 0 0 4px 4px;
+         background: linear-gradient(90deg, #2c3046, #3a3f58, #2c3046); }
+.desk { position: absolute; left: 0; right: 0; bottom: 0; height: 50px; z-index: 2; padding: 9px 10px 0;
+        background: linear-gradient(180deg, #3a3550 0 3px, #2a2740 3px, #201e31);
+        box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.06); }
+.plate { display: flex; align-items: center; gap: 8px; }
 .nameplate { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
              text-align: left; }
 .light { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--done); }
@@ -263,7 +258,6 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .task-bar .note { position: absolute; left: 14px; top: -24px; }
 
 @keyframes scan { from { transform: translateY(-100%); } to { transform: translateY(334%); } }
-@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
 @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
 @keyframes rise { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
 @keyframes breathe { 0%, 100% { transform: scale(0.96); } 50% { transform: scale(1.04); } }
@@ -271,7 +265,6 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 @keyframes beat { 0%, 14%, 20%, 34%, 100% { transform: scale(1); } 6% { transform: scale(1.06); }
                   26% { transform: scale(1.03); } }
 @keyframes talk { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
-@keyframes wave { 0%, 100% { transform: rotate(18deg); } 50% { transform: rotate(-8deg); } }
 @keyframes mc-tap { from { transform: translateY(0); } to { transform: translateY(-2px); } }
 @keyframes mc-nod { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-2deg) translateY(0.6px); } }
 @keyframes mc-blink { 0%, 96.99% { opacity: 0; } 97%, 100% { opacity: 1; } }
