@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import socket
 from pathlib import Path
@@ -6,10 +7,10 @@ from pathlib import Path
 import pytest
 
 from ai_browser.cdp import CDP, CDPError
-from ai_browser.chrome import ChromeError, chrome_binary, default_chrome_dir, find_ws_url, launch
+from ai_browser.chrome import (ChromeError, chrome_binary, find_ws_url, launch, own_browser_dir,
+                               own_browser_dirs)
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
-REAL_CHROME = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
 
 
 def free_port() -> int:
@@ -18,10 +19,81 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-def test_tests_never_reach_the_real_chrome():
-    # AIB_BROWSER=chrome or the default folder would make the user's own Chrome ask "Allow remote debugging?"
-    assert "AIB_BROWSER" not in os.environ
-    assert default_chrome_dir() != REAL_CHROME
+def test_tests_never_reach_the_real_browsers():
+    # With AIB_BROWSER unset the engine would use the user's own Brave, which would ask "Allow remote debugging?"
+    assert os.environ["AIB_BROWSER"] == "sandbox" and os.environ["AIB_APP_BROWSER"] == "app"
+    assert own_browser_dir() not in own_browser_dirs()
+
+
+@pytest.mark.parametrize("platform, parts", [
+    ("darwin", ["Library/Application Support/BraveSoftware/Brave-Browser", "Library/Application Support/Google/Chrome"]),
+    ("linux", [".config/BraveSoftware/Brave-Browser", ".config/google-chrome"]),
+])
+def test_own_browser_folders_brave_first(monkeypatch, tmp_path, platform, parts):
+    from ai_browser import chrome
+
+    monkeypatch.setattr(chrome.sys, "platform", platform)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert chrome.own_browser_dirs() == [tmp_path / part for part in parts]
+
+
+def test_windows_folders_are_under_local_app_data(monkeypatch):
+    from ai_browser import chrome
+
+    monkeypatch.setattr(chrome.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", "/fake/local")
+    assert chrome.own_browser_dirs() == [Path("/fake/local/BraveSoftware/Brave-Browser/User Data"),
+                                         Path("/fake/local/Google/Chrome/User Data")]
+
+
+def test_own_browser_dir_order(monkeypatch, tmp_path):
+    from ai_browser import chrome
+
+    brave, google = tmp_path / "brave", tmp_path / "google"
+    monkeypatch.setattr(chrome, "own_browser_dirs", lambda: [brave, google])
+    monkeypatch.delenv("AIB_CHROME_DIR")
+    assert chrome.own_browser_dir() == brave  # none exists: the first, so an error can name it
+    google.mkdir()
+    assert chrome.own_browser_dir() == google  # the first that exists
+    brave.mkdir()
+    assert chrome.own_browser_dir() == brave
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        (google / "DevToolsActivePort").write_text(f"{listener.getsockname()[1]}\n/devtools/browser/x\n",
+                                                   encoding="utf-8")
+        assert chrome.switch_on(google) and not chrome.switch_on(brave)
+        assert chrome.own_browser_dir() == google  # a switch that is on wins
+    monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path / "set"))
+    assert chrome.own_browser_dir() == tmp_path / "set"  # the setting wins over everything
+    assert chrome.default_chrome_dir is chrome.own_browser_dir
+
+
+def test_every_hint_names_the_browser(tmp_path):
+    from ai_browser.chrome import browser_name, inspect_address
+
+    brave = tmp_path / "BraveSoftware" / "Brave-Browser"
+    brave.mkdir(parents=True)
+    assert (browser_name(brave), inspect_address(brave)) == ("Brave", "brave://inspect/#remote-debugging")
+    google = tmp_path / "Google" / "Chrome"
+    assert (browser_name(google), inspect_address(google)) == ("Chrome", "chrome://inspect/#remote-debugging")
+    with pytest.raises(ChromeError) as raised:
+        find_ws_url(brave)
+    text = str(raised.value)
+    assert text.startswith("Brave doesn't allow remote debugging yet: open brave://inspect/#remote-debugging in Brave")
+    (brave / "DevToolsActivePort").write_text(f"{free_port()}\n/devtools/browser/x\n", encoding="utf-8")
+    with pytest.raises(ChromeError, match="^Brave isn't running"):
+        find_ws_url(brave)
+
+
+def test_launch_refuses_every_real_browser_folder(monkeypatch):
+    from ai_browser import chrome
+
+    monkeypatch.setattr(chrome, "chrome_binary", lambda: "/usr/bin/false")
+    for folder in chrome.own_browser_dirs():
+        monkeypatch.setenv("AIB_CHROME_DIR", str(folder))  # whatever AIB_CHROME_DIR says
+        with pytest.raises(ChromeError, match="refusing to launch a browser on the user's own profile folder"):
+            chrome.launch(folder)
 
 
 def test_missing_folder_explains_the_fix(tmp_path):

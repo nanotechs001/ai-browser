@@ -20,10 +20,12 @@ def _docker_unavailable() -> str | None:
 
 
 @pytest.fixture(autouse=True)
-def _never_the_users_chrome(monkeypatch, tmp_path_factory):
-    """No test may reach the user's own Chrome: AIB_BROWSER=chrome in their shell, or the default Chrome folder,
-    would make their real browser ask "Allow remote debugging?" (tests that need a Chrome launch a throwaway one)."""
-    monkeypatch.delenv("AIB_BROWSER", raising=False)
+def _never_the_users_browsers(monkeypatch, tmp_path_factory):
+    """No test may reach the user's own Brave or Chrome. With AIB_BROWSER unset the engine uses the user's browser,
+    which would ask "Allow remote debugging?", so every test runs with the sandbox and the app with AI Browser. Tests
+    of the new defaults change these with monkeypatch, and tests that need a browser launch a throwaway one."""
+    monkeypatch.setenv("AIB_BROWSER", "sandbox")
+    monkeypatch.setenv("AIB_APP_BROWSER", "app")
     monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path_factory.getbasetemp() / "no-chrome-here"))
 
 

@@ -1,4 +1,5 @@
-"""Connect to the user's own running Google Chrome (remote debugging must be allowed by the user)."""
+"""Connect to the user's own running browser, Brave or Google Chrome (its remote-debugging switch must be on: the user
+turns it on themselves), and launch separate throwaway Chromes for tests and AI Browser."""
 
 from __future__ import annotations
 
@@ -6,24 +7,82 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 MAC_CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-ALLOW_HINT = ('open chrome://inspect/#remote-debugging in Chrome and tick "Allow remote debugging for this '
-              'browser instance", then try again')
+TICK = 'tick "Allow remote debugging for this browser instance"'
 
 
 class ChromeError(RuntimeError):
-    """Chrome cannot be reached; the message says how to fix it."""
+    """The browser cannot be reached; the message says how to fix it."""
 
 
-def default_chrome_dir() -> Path:
-    """The user's Chrome profile folder ($AIB_CHROME_DIR overrides it)."""
+def own_browser_dirs() -> list[Path]:
+    """Where the user's own browsers keep their profiles on this platform, Brave first."""
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+        return [base / "BraveSoftware" / "Brave-Browser", base / "Google" / "Chrome"]
+    if sys.platform == "win32":
+        local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+        return [local / "BraveSoftware" / "Brave-Browser" / "User Data", local / "Google" / "Chrome" / "User Data"]
+    config = Path.home() / ".config"
+    return [config / "BraveSoftware" / "Brave-Browser", config / "google-chrome"]
+
+
+def _port_of(folder: Path) -> tuple[int, str] | None:
+    """(port, path) from the folder's DevToolsActivePort, or None."""
+    try:
+        lines = (Path(folder) / "DevToolsActivePort").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:  # missing, or the browser removed it as we read it (it is closing or restarting)
+        return None
+    if len(lines) >= 2 and lines[0].strip().isdigit():
+        return int(lines[0].strip()), lines[1].strip()
+    return None
+
+
+def _listening(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def switch_on(folder: Path) -> bool:
+    """Whether the browser's remote-debugging switch is on: its DevToolsActivePort names a port that accepts a TCP
+    connection. A TCP check only: no debugging session is opened, so the browser never asks the user anything."""
+    found = _port_of(folder)
+    return found is not None and _listening(found[0])
+
+
+def own_browser_dir() -> Path:
+    """The user's browser folder: $AIB_CHROME_DIR; else the first candidate whose switch is on; else the first that
+    exists (Brave before Chrome); else the first, so an error can name it."""
     configured = os.environ.get("AIB_CHROME_DIR")
     if configured:
         return Path(configured).expanduser()
-    return Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
+    candidates = own_browser_dirs()
+    return next((folder for folder in candidates if switch_on(folder)), None) \
+        or next((folder for folder in candidates if folder.is_dir()), candidates[0])
+
+
+default_chrome_dir = own_browser_dir  # its earlier name
+
+
+def browser_name(folder: Path) -> str:
+    """ "Brave" for a Brave folder, else "Chrome": the word every hint uses."""
+    return "Brave" if "bravesoftware" in Path(folder).as_posix().lower() else "Chrome"
+
+
+def inspect_address(folder: Path) -> str:
+    """Where the user turns the remote-debugging switch on."""
+    return f"{'brave' if browser_name(folder) == 'Brave' else 'chrome'}://inspect/#remote-debugging"
+
+
+def allow_hint(folder: Path) -> str:
+    return f"open {inspect_address(folder)} in {browser_name(folder)} and {TICK}, then try again"
 
 
 def chrome_binary() -> str | None:
@@ -36,51 +95,37 @@ def chrome_binary() -> str | None:
     return None
 
 
-def _listening(port: int) -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-            return True
-    except OSError:
-        return False
-
-
 def find_ws_url(user_data_dir: Path, timeout: float = 0) -> str:
     """The browser websocket URL from DevToolsActivePort, waiting up to `timeout` seconds for it."""
     folder = Path(user_data_dir)
-    port_file = folder / "DevToolsActivePort"
+    name, hint = browser_name(folder), allow_hint(folder)
     deadline = time.monotonic() + timeout
     while True:
         problem = "missing"
-        if port_file.is_file():
-            try:
-                lines = port_file.read_text(errors="replace").splitlines()
-            except OSError:  # Chrome removed it as we read it (it is closing or restarting)
-                lines = []
-            if len(lines) >= 2 and lines[0].strip().isdigit():
-                port, path = int(lines[0].strip()), lines[1].strip()
-                if _listening(port):
-                    return f"ws://127.0.0.1:{port}{path}"
-                problem = "stale"
+        found = _port_of(folder)
+        if found is not None:
+            if _listening(found[0]):
+                return f"ws://127.0.0.1:{found[0]}{found[1]}"
+            problem = "stale"
         if time.monotonic() >= deadline:
             break
         time.sleep(0.1)
     if problem == "stale":
-        raise ChromeError("Chrome isn't running (or was restarted without remote debugging): open Chrome; "
-                          f"if it still fails, {ALLOW_HINT}")
+        raise ChromeError(f"{name} isn't running (or was restarted without remote debugging): open {name}; if it "
+                          f"still fails, {hint}")
     if not folder.is_dir():
-        raise ChromeError(f"no Chrome profile folder at {folder}: install or open Google Chrome, then {ALLOW_HINT}")
-    raise ChromeError(f"Chrome doesn't allow remote debugging yet: {ALLOW_HINT}")
+        raise ChromeError(f"no {name} profile folder at {folder}: install or open {name}, then {hint}")
+    raise ChromeError(f"{name} doesn't allow remote debugging yet: {hint}")
 
 
 def launch(user_data_dir: Path, headless: bool = True, extra_args: tuple[str, ...] = ()) -> subprocess.Popen:
-    """Start a separate, throwaway Chrome with its own profile folder (never the user's default profile)."""
+    """Start a separate, throwaway Chrome with its own profile folder (never one of the user's own browsers')."""
     binary = chrome_binary()
     if binary is None:
         raise ChromeError("Google Chrome is not installed")
     folder = Path(user_data_dir)
-    real_profile = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
-    if folder.resolve() == real_profile.resolve():  # never the user's real profile, whatever AIB_CHROME_DIR says
-        raise ChromeError("refusing to launch Chrome on the user's own profile folder")
+    if folder.resolve() in {real.resolve() for real in own_browser_dirs()}:  # whatever AIB_CHROME_DIR says
+        raise ChromeError("refusing to launch a browser on the user's own profile folder")
     folder.mkdir(parents=True, exist_ok=True)
     args = [binary, f"--user-data-dir={folder}", "--remote-debugging-port=0", "--no-first-run",
             "--no-default-browser-check", "--disable-search-engine-choice-screen", "--window-size=1440,960"]
