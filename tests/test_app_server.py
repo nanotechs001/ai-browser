@@ -1093,3 +1093,61 @@ async def test_stopping_the_app_cancels_a_download(fake_claude, tmp_path):
         assert store.part.exists()
     await server.stop()
     assert not store.part.exists() and not store.folder.exists()
+
+
+async def test_the_setup_page_shows_the_path_the_id_is_hashed_from(fake_claude, tmp_path):
+    import html
+
+    from conftest import symlink_or_skip
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.appbrowser import extension_id_for, extension_path
+
+    real = tmp_path / "real"
+    real.mkdir()
+    symlink_or_skip(real, tmp_path / "link")
+    home = tmp_path / "link" / "home"  # a home reached through a link
+    server = AppServer(home, AgentManager(home))
+    revealed = []
+    server.reveal = lambda path: revealed.append(path) or True  # True: a folder window opened (Task 16 reads it)
+    url = await server.start()
+    try:
+        async with httpx.AsyncClient() as client:
+            page = (await client.get(url + "/setup")).text
+            key = page.split('data-key="', 1)[1].split('"', 1)[0]
+            await client.post(url + "/setup/reveal", headers={"X-AIB-Setup": key})
+        shown = extension_path(home / "app" / "extension")
+        assert html.escape(shown) in page and revealed == [shown]
+        assert extension_id_for(home / "app" / "extension") == extension_id_for(shown)
+        if os.name != "nt":  # on POSIX, the real path (Chrome resolves the link too)
+            assert shown == os.path.realpath(home / "app" / "extension")
+    finally:
+        await server.stop()
+
+
+@pytest.mark.windows_only
+async def test_a_home_through_a_junction_keeps_the_path_chrome_sees(tmp_path):
+    import _winapi
+    import html
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.appbrowser import extension_path
+
+    real = tmp_path / "real-home"
+    real.mkdir()
+    link = tmp_path / "home-link"
+    _winapi.CreateJunction(str(real), str(link))
+    folder = link / "app" / "extension"
+    folder.mkdir(parents=True)
+    assert extension_path(folder) == str(folder)  # not the resolved path
+    server = AppServer(link, AgentManager(link))
+    assert server._extension_folder() == str(folder)
+    url = await server.start()
+    try:
+        async with httpx.AsyncClient() as client:
+            page = (await client.get(url + "/setup")).text
+        assert html.escape(str(folder)) in page  # the page shows the junction's path too
+    finally:
+        await server.stop()

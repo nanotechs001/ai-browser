@@ -12,7 +12,6 @@ import contextlib
 import hmac
 import html
 import json
-import os
 import re
 import secrets
 import subprocess
@@ -27,6 +26,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from ..appbrowser import extension_path
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.tools import ToolsConfig
@@ -232,10 +232,10 @@ class AppServer:
         return JSONResponse({"ok": True})
 
     def _extension_folder(self) -> str:
-        return os.path.realpath(self.home / "app" / "extension")
+        return extension_path(self.home / "app" / "extension")
 
     def _watcher_folder(self) -> str:
-        return os.path.realpath(self.watcher_folder or self.home / "app" / "watcher")
+        return extension_path(self.watcher_folder or self.home / "app" / "watcher")
 
     async def _setup(self, request: Request) -> HTMLResponse:
         page = SETUP_PAGE.read_text().replace("{{FOLDER}}", html.escape(self._extension_folder()))

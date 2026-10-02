@@ -413,3 +413,39 @@ async def test_the_app_can_hear_with_its_models_folder(fake_claude, tmp_path):
     assert code == 0 and status["folder"] == str(tmp_path / "home" / "models" / "faster-whisper-base.en")
     assert status["size_bytes"] == 147_769_510 and status["model"] == "Whisper base.en"
     assert status["state"] in ("no_engine", "no_model")  # never ready by itself: the model comes only on Download
+
+
+@CHROME
+async def test_the_setup_steps_show_the_path_the_id_is_hashed_from(fake_claude, tmp_path, monkeypatch):
+    import os
+
+    from conftest import symlink_or_skip
+
+    from ai_browser.app import run
+    from ai_browser.appbrowser import extension_id_for, extension_path
+
+    runner, _, _ = fake_claude
+    real = tmp_path / "real"
+    real.mkdir()
+    if os.name == "nt":  # a junction needs no rights; Chrome doesn't resolve it
+        import _winapi
+
+        _winapi.CreateJunction(str(real), str(tmp_path / "link"))
+    else:
+        symlink_or_skip(real, tmp_path / "link")
+    home = tmp_path / "link" / "home"
+    folder = home / "app" / "extension"
+    lines, shown = [], []
+    stop = asyncio.Event()
+
+    async def ready(url, app):
+        stop.set()
+
+    monkeypatch.setattr(run, "reveal", shown.append)
+    code = await asyncio.wait_for(run.run_app(home, headless=True, pipe_install=False, claude=str(runner),
+                                              ready=ready, stop=stop, out=lines.append), 60)
+    expected = extension_path(folder)
+    assert code == 0 and shown == [expected] and expected in "\n".join(lines)
+    assert extension_id_for(expected) == extension_id_for(folder)
+    if os.name == "nt":
+        assert expected == str(folder)  # the junction's path, as Chrome sees it, not the resolved one

@@ -224,3 +224,58 @@ def test_already_open_says_how_to_quit_on_each_computer(monkeypatch):
     assert "(⌘Q in its window)" in ALREADY_OPEN.format("/p", _quit_hint())
     monkeypatch.setattr(sys, "platform", "win32")
     assert "(close its window)" in ALREADY_OPEN.format("C:\\p", _quit_hint())
+
+
+EXT = "C:\\Users\\me\\.ai-browser\\app\\extension"
+WATCH = "C:\\Users\\me\\.ai-browser\\app\\watcher"
+JOSE = "C:\\Users\\José & Ana\\.ai-browser\\app\\extension"
+DEV = "C:\\dev\\aib-home\\app\\extension"
+
+
+@pytest.mark.parametrize("folder, shown, expected", [
+    (EXT, EXT, "jjdpkibincdinfnjejbcmmghdbgfjpph"),
+    ("c:\\Users\\me\\.ai-browser\\app\\extension", EXT, "jjdpkibincdinfnjejbcmmghdbgfjpph"),  # a lower-case drive
+    (WATCH, WATCH, "ncapijkcfmdajdlhdhbgnnmkgejiggeg"),
+    ("C:/Users/me/.ai-browser/app/extension", EXT, "jjdpkibincdinfnjejbcmmghdbgfjpph"),  # forward slashes
+    ("C:\\Users\\me\\.ai-browser\\app\\extension\\", EXT, "jjdpkibincdinfnjejbcmmghdbgfjpph"),  # a trailing separator
+    ("c:/dev/aib-home/app/extension/", DEV, "nhhpnkhncgedihejcoolkhbhmnklfgik"),  # all three at once
+    (DEV, DEV, "nhhpnkhncgedihejcoolkhbhmnklfgik"),
+    (JOSE, JOSE, "lfcipbofoccnodmlbinbgmflefkkgomp"),  # UTF-16LE of the exact path, not UTF-8
+])
+def test_windows_extension_ids_follow_chromium(folder, shown, expected):
+    from ai_browser.appbrowser import extension_id_for, extension_path
+
+    assert extension_id_for(folder, system="win32") == expected
+    assert extension_path(folder, system="win32") == shown  # one string: hashed, shown, pasted
+
+
+def test_the_old_utf8_hash_was_wrong_on_windows():
+    from ai_browser.appbrowser import extension_id_for
+
+    assert extension_id_for(EXT, system="win32") != "mkeihmjkgdgccikkejdhgpoikkjpilll"  # the old UTF-8 code's ID
+
+
+def test_the_posix_id_is_unchanged(tmp_path):
+    import hashlib
+    import os
+
+    from ai_browser.appbrowser import extension_id_for, extension_path
+
+    folder = tmp_path / "ext"
+    folder.mkdir()
+    digest = hashlib.sha256(os.path.realpath(folder).encode("utf-8")).hexdigest()[:32]
+    assert extension_id_for(folder, system="darwin") == "".join(chr(ord("a") + int(c, 16)) for c in digest)
+    assert extension_path(folder, system="darwin") == os.path.realpath(folder)
+
+
+def test_the_install_check_ignores_case_on_windows(tmp_path):
+    from ai_browser.appbrowser import extension_id_for, extension_installed
+
+    folder = "C:\\Users\\Me\\.ai-browser\\app\\extension"
+    recorded = "c:\\users\\ME\\.AI-BROWSER\\app\\extension"  # the same folder, as Chrome may record it
+    for system, installed in (("win32", True), ("darwin", False)):  # elsewhere, paths keep their case
+        prefs = tmp_path / system / "Default" / "Secure Preferences"
+        prefs.parent.mkdir(parents=True)
+        key = extension_id_for(folder, system=system)  # the right key for that system: only the path differs
+        prefs.write_text(json.dumps({"extensions": {"settings": {key: {"path": recorded}}}}), encoding="utf-8")
+        assert extension_installed(tmp_path / system, folder, system=system) is installed

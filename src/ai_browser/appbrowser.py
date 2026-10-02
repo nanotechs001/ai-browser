@@ -15,10 +15,12 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import ntpath
 import os
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -61,21 +63,42 @@ def prepare_extension(home: Path, server_url: str, token: str) -> Path:
     return folder
 
 
-def extension_id_for(folder: Path) -> str:
-    """The ID Chrome gives an unpacked extension: from its folder's absolute path (SHA-256, 0-f mapped to a-p)."""
-    digest = hashlib.sha256(os.path.realpath(folder).encode()).hexdigest()[:32]
+def extension_path(folder: Path | str, system: str | None = None) -> str:
+    """The folder's path as Chrome sees it: the string that is hashed into the ID, and the one the user sees, pastes
+    and gets revealed. Windows: the absolute path as written (Chrome resolves neither junctions nor OneDrive's
+    redirection), with the drive letter upper-cased as Chromium's MaybeNormalizePath does. Elsewhere: the real
+    path."""
+    if (system or sys.platform) == "win32":
+        path = ntpath.abspath(str(folder))
+        return path[0].upper() + path[1:] if path[1:2] == ":" else path
+    return os.path.realpath(folder)
+
+
+def extension_id_for(folder: Path | str, system: str | None = None) -> str:
+    """The ID Chrome gives an unpacked extension: SHA-256 of its folder's path, 0-f mapped to a-p. Windows hashes the
+    path as UTF-16LE (Chromium's id_util.cc, GenerateIdForPath); extension_path already upper-cased its drive."""
+    path = extension_path(folder, system)
+    data = path.encode("utf-16-le" if (system or sys.platform) == "win32" else "utf-8")
+    digest = hashlib.sha256(data).hexdigest()[:32]
     return "".join(chr(ord("a") + int(char, 16)) for char in digest)
 
 
-def extension_installed(profile: Path, extension_dir: Path) -> bool:
+def extension_installed(profile: Path, extension_dir: Path | str, system: str | None = None) -> bool:
     """Whether the user loaded our extension into this profile: Chrome records it in its Preferences files."""
-    wanted, key = os.path.realpath(extension_dir), extension_id_for(extension_dir)
+    windows = (system or sys.platform) == "win32"
+
+    def same(path) -> str:  # Windows paths ignore case
+        shown = extension_path(path, system)
+        return ntpath.normcase(shown) if windows else shown
+
+    wanted, key = same(extension_dir), extension_id_for(extension_dir, system)
     for name in ("Secure Preferences", "Preferences"):
         try:
-            path = json.loads((Path(profile) / "Default" / name).read_text())["extensions"]["settings"][key]["path"]
+            data = json.loads((Path(profile) / "Default" / name).read_text(encoding="utf-8"))
+            path = data["extensions"]["settings"][key]["path"]
         except (OSError, ValueError, KeyError, TypeError):
             continue
-        if isinstance(path, str) and os.path.realpath(path) == wanted:
+        if isinstance(path, str) and same(path) == wanted:
             return True
     return False
 

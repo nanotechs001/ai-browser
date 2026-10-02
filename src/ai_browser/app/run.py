@@ -15,8 +15,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .. import platforms
-from ..appbrowser import (AppBrowserError, app_profile, extension_id_for, extension_installed, launch_app_browser,
-                          prepare_extension)
+from ..appbrowser import (AppBrowserError, app_profile, extension_id_for, extension_installed, extension_path,
+                          launch_app_browser, prepare_extension)
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillWriter
 from ..brain.store import BrainStore
@@ -175,7 +175,7 @@ async def _run(home: Path, model: str, headless: bool, claude: str | None, ready
             url = await server.start()
             folder = prepare_extension(home, url, server.token)
             watcher, server.watcher_build = prepare_watcher(home, url, server.token)  # Brave's watcher, updated
-            server.watcher_folder = os.path.realpath(watcher)
+            server.watcher_folder = extension_path(watcher)
             pipe = headless if pipe_install is None else pipe_install
             # Installed (over the pipe now, or by the user before): the extension's worker opens AI Home itself.
             installed = pipe or extension_installed(app_profile(home), folder)
@@ -207,8 +207,8 @@ async def _run(home: Path, model: str, headless: bool, claude: str | None, ready
             installed = False
             await _open(app.ws_url, _setup_pages(url))
         if not installed:
-            reveal(os.path.realpath(folder))
-        out(READY if installed else SETUP.format(folder=os.path.realpath(folder)))
+            reveal(extension_path(folder))
+        out(READY if installed else SETUP.format(folder=extension_path(folder)))
         if brave is not None:
             if brave.state == "off":
                 out(SWITCH.format(name=brave.name, inspect=inspect_address(brave.folder)))
