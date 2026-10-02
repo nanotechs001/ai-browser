@@ -209,7 +209,13 @@ class CheckGate:
             if skipped is not None:
                 return skipped
         if url and tool == "qa":
-            return self.cooling(_host(url))
+            from .qa.polite import big_site  # here, not at the top: qa/polite imports this module
+
+            host = _host(url)
+            if big_site(host):
+                return (f"⛔ {host} is a big site, and qa never crawls one (they refuse or rate-limit automated "
+                        "checks); open single pages with open")
+            return self.cooling(host)
         return None
 
     def skipped_for(self, url: str) -> str | None:

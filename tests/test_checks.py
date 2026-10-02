@@ -158,3 +158,11 @@ def test_qa_cools_down_on_a_host_it_stopped_on():
     assert gate.refusal("open", url="https://shop.example.com/pricing") is None  # single pages stay allowed
     now[0] += 121
     assert gate.refusal("qa", url="https://shop.example.com/") is None and gate.qa_stopped == {}
+
+
+def test_qa_never_starts_on_a_big_site():
+    gate = CheckGate()
+    refused = gate.refusal("qa", url="https://www.youtube.com/@someone")
+    assert refused.startswith("⛔ www.youtube.com is a big site, and qa never crawls one")
+    assert gate.refusal("open", url="https://www.youtube.com/@someone") is None  # single pages stay allowed
+    assert gate.refusal("qa", url="https://shop.example.com/") is None

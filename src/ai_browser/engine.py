@@ -536,12 +536,15 @@ class Engine:
     async def js(self, code: str) -> ToolResult:
         return await self._with_browser("js", {"code": code}, lambda browser: browser.js(code))
 
-    async def qa(self, url: str, max_pages: int = 30, progress=None) -> ToolResult:
-        """Website QA of a whole site in this session's browser; returns the summary (the report is in the work folder)."""
+    async def qa(self, url: str, max_pages: int = 30, progress=None, ignore_robots: bool = False) -> ToolResult:
+        """Website QA of a whole site in this session's browser, politely; returns the summary (the report is in the
+        work folder). A bot check QA finds holds the session like any other, and a host that refused cools down."""
         async def action(browser):
-            return await run_qa(browser, self.work, url, max_pages, progress=progress, on_tabs=self._register)
-        return await self._with_browser("qa", {"url": url, "max_pages": max_pages}, action,
-                                        lambda: self.gate.refusal("qa", url=url))
+            return await run_qa(browser, self.work, url, max_pages, progress=progress, on_tabs=self._register,
+                                ignore_robots=ignore_robots, on_check=self._on_check,
+                                on_host_stopped=self.gate.qa_stop)
+        return await self._with_browser("qa", {"url": url, "max_pages": max_pages, "ignore_robots": ignore_robots},
+                                        action, lambda: self.gate.refusal("qa", url=url))
 
     # ---- shell and files --------------------------------------------------------------------------------
 

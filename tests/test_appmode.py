@@ -394,3 +394,17 @@ async def test_a_bot_check_comes_forward_and_is_reported_to_the_app(app_engine, 
     assert checks[0] == {"agent": "a1", "kind": "check", "target": tab.target, "adopted": False, "check": "traffic",
                          "site": "localhost", "token": "tok"}
     assert (checks[-1]["kind"], checks[-1]["how"], checks[-1]["target"]) == ("check_cleared", "solved", tab.target)
+
+
+@CHROME
+async def test_qa_holds_its_check_tab_in_ai_browser(app_engine, receiver, monkeypatch):
+    engine, base, _ = app_engine
+    url, events = receiver
+    as_agent(monkeypatch, url)
+    text = (await engine.qa(base + "qa2/check.html")).text
+    held = engine.gate.held
+    assert text.startswith(f"⛔ bot check in tab {held.tab_key}") and held.where == "session"
+    assert engine.browser.current.key == held.tab_key
+    assert (await engine.open(base + "form.html")).text.startswith("⏸ waiting for the user")
+    await engine._link.flush()
+    assert any(event["kind"] == "check" and event["target"] == held.target for event in events)

@@ -315,3 +315,42 @@ async def test_the_shell_refuses_the_crawl_pattern_before_anything_starts(tmp_pa
     engine.gate.skipped.add("google.com")
     result = await engine.shell("curl -s https://www.google.com/search?q=flights")
     assert result.text.startswith("⛔ the shell doesn't reach google.com") and engine.browser is None
+
+
+async def test_a_refused_qa_starts_nothing(tmp_path, monkeypatch):
+    from ai_browser.engine import Engine
+    from ai_browser.skills import Catalog
+
+    never_starts(monkeypatch)
+    engine = Engine(home=tmp_path / "home", catalog=Catalog([], set()))
+    assert (await engine.qa("https://www.google.com/search?q=flights")).text.startswith(
+        "⛔ www.google.com is a big site")
+    engine.gate.qa_stop("shop.example.com", time.time() + 60, "429, it asked for 1 minute")
+    assert (await engine.qa("https://shop.example.com/")).text.startswith("QA stopped on shop.example.com at ")
+    assert engine.browser is None and engine.sandboxes is None
+
+
+@CHROME
+async def test_qa_holds_the_session_at_a_check_it_finds(chrome_engine):
+    engine, base = await started(chrome_engine)
+    text = (await engine.qa(base + "qa2/check.html")).text
+    held = engine.gate.held
+    assert held is not None and held.where == "session" and held.check == Check("traffic", "localhost")
+    assert text.startswith(f"⛔ bot check in tab {held.tab_key} (localhost)") and "\n\nqa " in text
+    assert engine.browser.current.key == held.tab_key and held.tab_key in engine.browser.owned
+    assert (await engine.open(base + "form.html")).text.startswith("⏸ waiting for the user")
+    assert "is gone: carrying on" in await solve(engine, base)
+
+
+@CHROME
+async def test_qa_waits_out_a_hosts_pause_and_can_ignore_robots_when_asked(chrome_engine):
+    engine, base = await started(chrome_engine)
+    busy = (await engine.qa(base + "qa2/busy.html")).text
+    assert "stopped early: localhost answered 429 Too Many Requests" in busy
+    again = (await engine.qa(base + "qa-robots/index.html", ignore_robots=True)).text
+    assert again.startswith("QA stopped on localhost at ") and \
+        "(429, it asked for 2 minutes): qa can run there again from " in again
+    assert 'page  "Counter"' in (await engine.open(base + "checks/counter.html")).text  # single pages stay allowed
+    engine.gate.qa_stopped.clear()  # as if the two minutes had passed
+    ignored = (await engine.qa(base + "qa-robots/index.html", ignore_robots=True)).text
+    assert "robots.txt: ignored at the user's request" in ignored
