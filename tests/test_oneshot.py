@@ -76,7 +76,6 @@ async def test_thinking_is_off_unless_asked_for(fake_claude, tmp_path, monkeypat
 
 async def test_a_cancelled_call_ends_its_claude(fake_claude, tmp_path):
     import asyncio
-    import os
 
     import pytest
 
@@ -93,8 +92,9 @@ async def test_a_cancelled_call_ends_its_claude(fake_claude, tmp_path):
     call.cancel()  # the app stopping, or the user's Stop
     with pytest.raises(asyncio.CancelledError):
         await call
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
+    from ai_browser import platforms
+
+    assert not platforms.pid_alive(pid)
 
 
 async def test_text_with_half_an_emoji_still_reaches_claude(fake_claude, tmp_path):

@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config
+from . import config, platforms
 from .agentlink import GROUPS_TTL, AgentLink
 from .browser import Browser, BrowserError, Tab
 from .cdp import CDP, CDPError
@@ -69,15 +69,8 @@ def _message(exc: BaseException) -> str:
 
 
 def _alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    """Whether a process still runs: platforms.pid_alive, looked up at call time (safe on Windows too)."""
+    return platforms.pid_alive(pid)
 
 
 def _clean(text: str) -> str:
@@ -340,7 +333,11 @@ class Engine:
                 data = json.loads(record.read_text())
             except (OSError, ValueError):
                 data = {"pid": 0, "targets": []}
-            if _alive(int(data.get("pid", 0))):
+            try:
+                alive = _alive(int(data.get("pid", 0)))
+            except (OSError, TypeError, ValueError):  # a record it can't judge is left alone: its tabs stay open
+                continue
+            if alive:
                 continue
             for target in data.get("targets", []):
                 with contextlib.suppress(CDPError):

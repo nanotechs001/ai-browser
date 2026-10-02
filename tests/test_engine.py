@@ -501,3 +501,31 @@ def test_the_readme_opens_with_the_default_browser_not_the_sandbox():
     assert "in the sandbox and list its links" not in text  # the first example no longer assumes the sandbox
     assert "with no `AIB_BROWSER` set, that chooses the sandbox up front" in text  # what AIB_PROFILE does now
     assert "starts one right there, in your tab" not in text.split("With `--browser app`")[0].split("## AI Browser")[1]
+
+
+async def test_a_session_record_that_cant_be_judged_is_left_alone(tmp_path, monkeypatch):
+    import sys
+
+    from ai_browser import platforms
+    from ai_browser.sandbox import SandboxInfo
+
+    engine = Engine(home=tmp_path, catalog=Catalog([], set()))
+    engine.info = SandboxInfo("aib-chrome", "chrome", "", tmp_path / "work", False, False, chrome=True)
+    dead = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True,
+                          encoding="utf-8").stdout.strip()
+    record = engine._sessions_dir() / "old-task.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"pid": int(dead), "targets": ["T-orphan"]}), encoding="utf-8")
+    sent = []
+
+    class Recorder:
+        async def send(self, method, params=None):
+            sent.append(method)
+
+    def cannot_tell(pid):
+        raise OSError("OpenProcess failed")
+
+    engine.cdp = Recorder()
+    monkeypatch.setattr(platforms, "pid_alive", cannot_tell)
+    await engine._close_orphans()
+    assert sent == [] and record.exists()  # its tabs are not closed

@@ -10,6 +10,8 @@ Every macOS-only path of the project is written here and nowhere else (tests/tes
 
 from __future__ import annotations
 
+import ctypes
+import functools
 import os
 import shutil
 import subprocess
@@ -145,3 +147,49 @@ def unlink(path, missing_ok: bool = False) -> None:
 
 def rmtree(path) -> None:
     _retrying(lambda: shutil.rmtree(path))
+
+
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+STILL_ACTIVE = 259
+ERROR_ACCESS_DENIED = 5
+
+
+@functools.cache
+def _kernel32():
+    """kernel32 with the prototypes used here (Windows only: ctypes.WinDLL exists nowhere else)."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle, dword, boolean = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int
+    kernel32.OpenProcess.argtypes, kernel32.OpenProcess.restype = (dword, boolean, dword), handle
+    kernel32.GetExitCodeProcess.argtypes = (handle, ctypes.POINTER(dword))
+    kernel32.GetExitCodeProcess.restype = boolean
+    kernel32.CloseHandle.argtypes, kernel32.CloseHandle.restype = (handle,), boolean
+    return kernel32
+
+
+def pid_alive(pid: int) -> bool:
+    """Whether a process still runs. Never a signal: on Windows, os.kill(pid, 0) sends Ctrl-C to a console group."""
+    if pid <= 0:
+        return False
+    if WINDOWS:
+        return _windows_pid_alive(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # it runs, as another user
+        return True
+    return True
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    kernel32 = _kernel32()
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == ERROR_ACCESS_DENIED  # it exists, but isn't ours to look at
+    try:
+        code = ctypes.c_uint32()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)

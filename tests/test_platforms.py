@@ -151,3 +151,13 @@ def test_unlink_and_rmtree_wait_out_a_short_hold(tmp_path, monkeypatch):
     platforms.unlink(tmp_path / "file", missing_ok=True)  # already gone: fine
     assert holds == ["unlink", "rmtree"]
     assert not (tmp_path / "file").exists() and not (tmp_path / "folder").exists()
+
+
+def test_pid_alive():
+    import subprocess
+
+    assert platforms.pid_alive(os.getpid())
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait(timeout=30)
+    assert not platforms.pid_alive(child.pid)  # exited and waited for
+    assert not platforms.pid_alive(0) and not platforms.pid_alive(-1)
