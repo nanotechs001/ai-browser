@@ -22,6 +22,9 @@ const PITCH = 0.22; // the user looks down onto it a little
 const STILL = { yaw: YAW, pitch: PITCH, scale: 1, bright: 0, motion: 0 }; // reduced motion: no drift, sway or beat
 const BEAT_S = 1.1; // alert: a double heartbeat this often
 const FADE_S = 0.7; // reduced motion: a change of state, or a new agent's flash, is a straight fade this long
+const LOW = 2500; // adaptive detail: never fewer points than this
+const SLOW_MS = 45; // drawn frames further apart than this, on average over 2 s, halve the points
+const GAP_MS = 250; // a longer gap (a hidden tab, a still Brain) isn't a slow machine: the window starts again
 const CLOUD = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_bright", "u_flow",
                "u_flash", "u_wave", "u_size", "u_word"];
 const LINKS = ["u_mix", "u_yaw", "u_pitch", "u_scale", "u_dpr", "u_motion", "u_focus", "u_burst", "u_travel", "u_pulse",
@@ -147,6 +150,7 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
   const clock = { flow: 0, flash: 0, travel: 0, sway: 0, wave: 0, breath: 0, beat: 0 };
   // a new agent's flash (and the side it fires toward), the alert's aim, a spoken word's ring
   const effects = { burst: 0, burstDir: [0, 0], focus: [0, 0], word: 0 };
+  const pace = { start: 0, frames: 0, last: 0 }; // adaptive detail: the drawn frames of the current window
   const pending = { frame: 0, timer: 0 }; // the points are made after the first paint
   let gl = null;
   let cloud = null;
@@ -274,6 +278,15 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
     return changing;
   }
 
+  function measure(now) { // adaptive detail: frames that come too far apart halve the points (never grown back)
+    if (!pace.last || now - pace.last > GAP_MS) Object.assign(pace, { start: now, frames: 0 });
+    else pace.frames += 1;
+    pace.last = now;
+    if (now - pace.start < 2000) return;
+    if ((now - pace.start) / pace.frames > SLOW_MS && n > LOW) setCount(Math.max(LOW, Math.floor(n / 2)));
+    Object.assign(pace, { start: now, frames: 0 });
+  }
+
   function attribute(index, size, stride, offset) {
     gl.enableVertexAttribArray(index);
     gl.vertexAttribPointer(index, size, gl.FLOAT, false, stride, offset);
@@ -299,6 +312,7 @@ export function createBlob(canvas, orb, { reduced = matchMedia("(prefers-reduced
     }
     const step = last ? Math.min(0.1, (now - last) / 1000) : 1 / 30;
     last = now;
+    measure(now);
     const still = reduced.matches;
     const changing = ease(step, still);
     const view = still ? STILL : advance(step);

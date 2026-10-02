@@ -329,3 +329,41 @@ async def test_with_reduced_motion_the_brain_is_still(stack):
     assert await until(js, "document.getElementById('brain-what').textContent === 'Drafting a reply to Maria'")
     await asyncio.sleep(1)
     assert await js("window.gl.cloud") == settled  # news in the same state isn't a change: nothing is drawn
+
+
+SLOW_FRAMES = ("(() => { const real = window.requestAnimationFrame.bind(window);"
+               " window.requestAnimationFrame = (callback) => real(() => setTimeout(() => callback(performance.now()),"
+               " 80)); })();")
+
+
+@CHROME
+async def test_a_slow_machine_draws_fewer_points(stack):
+    js = await open_with(stack, HOOKS + SLOW_FRAMES)  # every frame 80 ms late
+    await front(stack, js)
+    points = "document.querySelector('.stage').dataset.points"
+    assert await until(js, f"{points} === '2500'", 10)
+    await asyncio.sleep(3)
+    assert await js(points) == "2500"  # never below
+
+
+@CHROME
+async def test_a_fast_machine_keeps_every_point(stack):
+    js = await brain_page(stack)
+    for _ in range(4):
+        await asyncio.sleep(1)
+        assert await js("document.querySelector('.stage').dataset.points") == "8000"
+
+
+@CHROME
+async def test_a_tab_hidden_for_a_while_keeps_every_point(stack):
+    js = await brain_page(stack)
+    cdp = stack["cdp"]
+    other = (await cdp.send("Target.createTarget", {"url": "about:blank"}))["targetId"]
+    session = (await cdp.send("Target.attachToTarget", {"targetId": other, "flatten": True}))["sessionId"]
+    await cdp.send("Page.bringToFront", session_id=session)
+    assert await until(js, "document.visibilityState === 'hidden'")
+    await asyncio.sleep(3)  # no frames while hidden: a long gap, not a slow machine
+    await front(stack, js)
+    for _ in range(4):
+        await asyncio.sleep(1)
+        assert await js("document.querySelector('.stage').dataset.points") == "8000"
