@@ -106,3 +106,55 @@ def test_site_keys_and_matching():
     assert not on_site("https://google.com.evil.example/", "google.com")
     assert on_site("http://localhost:8123/checks/counter.html", "localhost")
     assert not on_site("", "google.com") and not on_site("https://google.com/", "")
+
+
+import time  # noqa: E402  (the hold's tests)
+
+from ai_browser.checks import CheckGate  # noqa: E402
+
+GOOGLE = Check("google", "www.google.com")
+WAITING = "⏸ waiting for the user: tab t2 (www.google.com) shows a bot check."
+
+
+def test_while_held_only_reading_and_the_held_tab_go_through():
+    gate = CheckGate()
+    assert gate.refusal("open", url="https://example.com") is None
+    gate.hold("t2", "TARGET", GOOGLE, adopted=False)
+    for tool in ("open", "act", "screenshot", "extract", "js", "qa", "shell", "sandbox_start", "sandbox_stop"):
+        assert gate.refusal(tool).startswith(WAITING), tool
+    for action, tab in (("new", None), ("switch", "t1"), ("close", "t1")):
+        assert gate.refusal("tabs", action=action, tab=tab).startswith(WAITING), action
+    for tool in ("observe", "sandbox_status", "page_log", "read_file", "write_file", "find_skills", "load_skill",
+                 "read_skill_file"):
+        assert gate.refusal(tool) is None, tool
+    assert gate.refusal("tabs", action="list") is None and gate.refusal("tabs", action="close", tab="t2") is None
+    assert gate.waiting() == (WAITING + " Nothing runs until they've dealt with it. Tell the user and stop; when they "
+                              "say it's done, call observe.")
+    assert gate.solved().tab_key == "t2" and gate.held is None and gate.skipped == set()
+    assert gate.refusal("js") is None
+
+
+def test_a_closed_check_tab_skips_its_site_everywhere():
+    gate = CheckGate()
+    gate.hold("t2", "TARGET", GOOGLE, adopted=False)
+    assert gate.closed() == "google.com" and gate.held is None and gate.skipped == {"google.com"}
+    refused = ("⛔ google.com is off-limits in this task: the user skipped it after a bot check. Ask the user if you "
+               "need it.")
+    for tool, action in (("open", None), ("act", None), ("qa", None), ("tabs", "new")):
+        assert gate.refusal(tool, action=action, url="https://maps.google.com/x") == refused, tool
+    assert gate.skipped_for("https://www.google.com/") == refused
+    assert gate.refusal("open", url="https://notgoogle.com/") is None
+    assert gate.refusal("open", url="https://www.bing.com/") is None
+
+
+def test_qa_cools_down_on_a_host_it_stopped_on():
+    now = [1_800_000_000.0]
+    gate = CheckGate(clock=lambda: now[0])
+    gate.qa_stop("shop.example.com", now[0] + 120, "429, it asked for 2 minutes")
+    at = time.strftime("%H:%M", time.localtime(now[0]))
+    again = time.strftime("%H:%M", time.localtime(now[0] + 120))
+    assert gate.refusal("qa", url="https://shop.example.com/pricing") == (
+        f"QA stopped on shop.example.com at {at} (429, it asked for 2 minutes): qa can run there again from {again}.")
+    assert gate.refusal("open", url="https://shop.example.com/pricing") is None  # single pages stay allowed
+    now[0] += 121
+    assert gate.refusal("qa", url="https://shop.example.com/") is None and gate.qa_stopped == {}

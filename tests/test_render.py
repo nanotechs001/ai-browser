@@ -166,3 +166,28 @@ def test_render_diff_includes_text_only_when_changed():
 )
 def test_is_risky(name, expected):
     assert is_risky(name, RISKY_WORDS) is expected
+
+
+def test_a_bot_check_box_is_the_users_to_tick():
+    box = {"label": "a-1", "url": "https://www.google.com/recaptcha/api2/anchor?size=normal", "cross": True,
+           "box": True}
+    out = render_page(state(frames=[box]))
+    assert "frames: [bot check box: the user ticks it]" in out.splitlines()[1]
+
+
+def test_the_hand_off_has_nothing_to_click():
+    from ai_browser.checks import Check
+    from ai_browser.render import render_check
+
+    text = render_check(Check("google", "www.google.com"), "t2")
+    assert text.splitlines() == [
+        "⛔ bot check in tab t2 (www.google.com): Google's \"unusual traffic\" check (\"I'm not a robot\").",
+        "It is for the user to solve, never you. Stop and tell the user. Don't reload, retry, wait it out, or reach "
+        "the site another way (another tab, browser, profile, tool or the shell).",
+        "The tab is now in front.",
+        "When the user says it's done, call observe. If they'd rather skip this site, they close the tab, or ask you "
+        "to (tabs close t2): the site is then off-limits for the rest of this task.",
+    ]
+    live = render_check(Check("captcha", "shop.example.com"), "t3", "http://127.0.0.1:8770/live?token=abc")
+    assert live.splitlines()[2] == ("The tab is now in front. The user can solve it in the live view: "
+                                    "http://127.0.0.1:8770/live?token=abc")

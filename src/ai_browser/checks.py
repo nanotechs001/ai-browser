@@ -1,4 +1,4 @@
-"""Bot checks: what the page reader's signals amount to (and, from Task 2 on, the session's hold).
+"""Bot checks: what the page reader's signals amount to, and the session's hold while the user deals with one.
 
 The reader (reader.js, in its own isolated world) collects a few facts about the top page, its signals; the small
 rules here decide, and the first matching rule wins. Detection only ever stops the agent: nothing here clicks, solves
@@ -7,8 +7,11 @@ or gets around a check, and the reader never looks inside a check frame."""
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit
+
+from .render import render_check
 
 KINDS: dict[str, str] = {
     "google": "Google's \"unusual traffic\" check (\"I'm not a robot\")",
@@ -144,3 +147,103 @@ def detect(url: str, signals: dict) -> Check | None:
     if title.strip().lower() == "access denied" and "reference #" in text.lower():
         return Check("akamai", host)
     return None
+
+
+# ---- the hold: while a check waits, the whole session waits for the user ---------------------------------------------
+
+ALLOWED_WHILE_HELD = frozenset({"observe", "sandbox_status", "page_log", "read_file", "write_file", "find_skills",
+                                "load_skill", "read_skill_file"})
+SITE_TOOLS = frozenset({"open", "tabs", "act", "qa"})  # the tools that take an address: a skipped site is refused
+
+
+@dataclass
+class Held:
+    tab_key: str
+    target: str
+    check: Check
+    adopted: bool  # the user's own tab: the app never closes it
+    where: str = "session"  # "session" (this session's browser) or "qa" (QA's own browser: the everyday-Brave spec)
+
+
+class CheckGate:
+    """The session's hold at a bot check, the sites the user skipped, and the hosts QA leaves alone for a while. It
+    lives in the Engine, so it outlasts a reconnect, a sandbox_stop and a new sandbox_start."""
+
+    def __init__(self, clock=time.time):
+        self.held: Held | None = None
+        self.skipped: set[str] = set()  # site keys: hosts without www.
+        self.qa_stopped: dict[str, tuple[float, str]] = {}  # host -> (until, why)
+        self._clock = clock
+
+    def hold(self, tab_key: str, target: str, check: Check, adopted: bool, where: str = "session") -> Held:
+        self.held = Held(tab_key, target, check, adopted, where)
+        return self.held
+
+    def solved(self) -> Held | None:
+        """A read found the check gone: the hold ends."""
+        held, self.held = self.held, None
+        return held
+
+    def closed(self) -> str | None:
+        """The held tab was closed: the hold ends and its site is off-limits for the rest of the session."""
+        held, self.held = self.held, None
+        if held is None:
+            return None
+        key = site_key(held.check.site)
+        if key:
+            self.skipped.add(key)
+        return key
+
+    def refusal(self, tool: str, action: str | None = None, url: str | None = None,
+                tab: str | None = None) -> str | None:
+        """The text for a call that must not run, or None."""
+        held = self.held
+        if held is not None:
+            if tool in ALLOWED_WHILE_HELD:
+                return None
+            if tool == "tabs" and (action == "list" or (action == "close" and tab == held.tab_key)):
+                return None
+            return self.waiting()
+        if url and tool in SITE_TOOLS:
+            skipped = self.skipped_for(url)
+            if skipped is not None:
+                return skipped
+        if url and tool == "qa":
+            return self.cooling(_host(url))
+        return None
+
+    def skipped_for(self, url: str) -> str | None:
+        """The refusal for an address on a skipped site, or None."""
+        key = next((key for key in sorted(self.skipped) if on_site(url, key)), None)
+        return None if key is None else self.skipped_text(key)
+
+    def qa_stop(self, host: str, until: float, why: str) -> None:
+        """QA stopped on a host (a 429, a 403 or a bot check): a new qa there waits until `until`."""
+        when = time.strftime("%H:%M", time.localtime(self._clock()))
+        self.qa_stopped[host.lower()] = (until, f"at {when} ({why})")
+
+    def cooling(self, host: str) -> str | None:
+        entry = self.qa_stopped.get(host)
+        if entry is None:
+            return None
+        until, why = entry
+        if until <= self._clock():
+            del self.qa_stopped[host]
+            return None
+        again = time.strftime("%H:%M", time.localtime(until))
+        return f"QA stopped on {host} {why}: qa can run there again from {again}."
+
+    @staticmethod
+    def handoff(check: Check, tab_key: str, live_url: str | None = None) -> str:
+        return render_check(check, tab_key, live_url)
+
+    def waiting(self) -> str:
+        held = self.held
+        where = f"tab {held.tab_key} ({held.check.site})" if held is not None else "a tab"
+        return (f"⏸ waiting for the user: {where} shows a bot check. Nothing runs until they've dealt with it. "
+                "Tell the user and stop; when they say it's done, call observe.")
+
+    @staticmethod
+    def skipped_text(site: str) -> str:
+        return (f"⛔ {site} is off-limits in this task: the user skipped it after a bot check. Ask the user if you "
+                "need it.")

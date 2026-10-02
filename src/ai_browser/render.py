@@ -8,6 +8,7 @@ from functools import lru_cache
 
 NO_ROWS_HINT = '(no interactive elements in view — scroll, use observe find="…", or take a screenshot)'
 DIFF_TEXT_LIMIT = 500
+BOX_TAG = "[bot check box: the user ticks it]"  # a reCAPTCHA, hCaptcha or Turnstile box in a form: never the agent's
 
 
 def _quote(text: str) -> str:
@@ -62,6 +63,7 @@ def _header(state: dict) -> list[str]:
     frames = state.get("frames") or []
     if frames:
         tags = [
+            BOX_TAG if frame.get("box") else
             f"[{frame['label']} (cross-site, not readable)]" if frame.get("cross") else f"[{frame['label']}]"
             for frame in frames
         ]
@@ -125,3 +127,19 @@ def risky_regex(words: list[str]) -> re.Pattern:
 
 def is_risky(name: str, words: list[str]) -> bool:
     return bool(name) and bool(risky_regex(words).search(name))
+
+
+def render_check(check, tab_key: str, live_url: str | None = None) -> str:
+    """The hand-off when a page is a bot check (`check` is a checks.Check): no elements, no page text, nothing to
+    click. The live view is named only in the sandbox, where the user can't see the tab otherwise."""
+    front = "The tab is now in front."
+    if live_url:
+        front += f" The user can solve it in the live view: {live_url}"
+    return "\n".join([
+        f"⛔ bot check in tab {tab_key} ({check.site}): {check.what}.",
+        "It is for the user to solve, never you. Stop and tell the user. Don't reload, retry, wait it out, or reach "
+        "the site another way (another tab, browser, profile, tool or the shell).",
+        front,
+        "When the user says it's done, call observe. If they'd rather skip this site, they close the tab, or ask "
+        f"you to (tabs close {tab_key}): the site is then off-limits for the rest of this task.",
+    ])
