@@ -812,3 +812,18 @@ async def test_take_back_leaves_an_agents_own_tab_its_own(fake_claude, tmp_path)
         assert brave.owners["T1"]["kind"] == "agent"  # still its own, so no one can hand it to another agent
     finally:
         await server.stop()
+
+
+async def test_the_setup_page_has_the_switch_and_its_warning(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        async with httpx.AsyncClient() as client:
+            page = " ".join((await client.get(url + "/setup")).text.split())
+        assert 'id="switch"' in page and "brave://inspect/#remote-debugging" in page
+        assert "Allow remote debugging for this browser instance" in page
+        assert "While this switch is on, any program on this Mac can reach your Brave, not only AI Browser." in page
+        assert "Turn it off when agents aren't working: untick the same box." in page
+        assert "If Brave asks at any other time, click Deny." in page
+        assert "That is Brave telling you the truth; AI Browser never hides it." in page
+    finally:
+        await server.stop()

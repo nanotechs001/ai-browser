@@ -33,6 +33,8 @@
   #status, #watcher-status { margin-top: 22px; color: var(--muted); }
   .alt { color: var(--muted); font-size: 14px; margin: 10px 0 0; }
   #status.done, #watcher-status.done { color: var(--ok); font-weight: 600; }
+  .warning { margin: 12px 0 0; }
+  .warning strong { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -69,6 +71,24 @@
     <li>Click the watcher's icon to open the Brain, and switch on the sites to watch.</li>
   </ol>
   <p id="watcher-status">Waiting for the watcher…</p>
+
+  <h2 id="switch">Let agents use your Brave</h2>
+  <p class="lead">Agents browse in Brave, your everyday browser, where you are already signed in: in background tabs of
+    their own, grouped and named after their task. Brave's own remote-debugging switch lets them in. You turn it on
+    yourself, and Brave asks before it lets a connection in.</p>
+  <ol>
+    <li>In Brave, open <strong>brave://inspect/#remote-debugging</strong>.</li>
+    <li>Tick <strong>Allow remote debugging for this browser instance</strong>.</li>
+    <li>When Brave asks <strong>Allow remote debugging?</strong>, click <strong>Allow</strong>. Brave may ask when AI
+      Browser starts and again when each agent first uses the browser, and it asks again after it restarts.</li>
+  </ol>
+  <p class="warning"><strong>While this switch is on, any program on this Mac can reach your Brave, not only AI
+    Browser.</strong> That includes the sites you are signed in to.</p>
+  <p class="warning">Turn it off when agents aren't working: untick the same box.</p>
+  <p class="warning">Only click Allow right after you started AI Browser or gave an agent a task. If Brave asks at any
+    other time, click Deny.</p>
+  <p class="warning">While an agent is connected, Brave may show a bar saying it is being controlled by automated
+    software. That is Brave telling you the truth; AI Browser never hides it.</p>
 </main>
 <script>
   "use strict";
