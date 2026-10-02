@@ -146,3 +146,74 @@ def test_write_bytes_never_follows_links(work, tmp_path, monkeypatch):
         work.write_bytes("shot.jpg", b"new")
     assert target.read_bytes() == b"original"
     assert work.write_bytes("shots/a.jpg", b"\xff\xd8") == "/work/t1/shots/a.jpg"
+
+
+@pytest.mark.parametrize("name", ["CON", "con", "nul.txt", "NUL .txt", "COM1", "lpt3.log", "COM¹", "CONIN$", "a:b",
+                                  "x?", 'say"hi"', "a<b", "pipe|", "star*", "back\\slash", "tab\tname", "end.", "end "])
+def test_names_windows_cant_hold(name):
+    from ai_browser.winfs import windows_name_problem
+
+    assert windows_name_problem(name)
+
+
+@pytest.mark.parametrize("name", ["report.html", "Ünïcode.txt", "COM10", "console.log", "con-notes.md", ".shell",
+                                  "a b.txt", "日本語.md"])
+def test_ordinary_names_pass(name):
+    from ai_browser.winfs import windows_name_problem
+
+    assert windows_name_problem(name) is None
+
+
+def test_a_deep_folder_reads_and_writes(work):
+    deep = "/".join(f"folder-{number:02d}-name" for number in range(24)) + "/page.html"
+    assert len(str(work.host_task / deep)) > 300  # past Windows' old 260-character limit
+    assert work.write_text(deep, "<p>deep</p>") == f"/work/t1/{deep}"
+    assert work.read_text(deep, 100) == "<p>deep</p>"
+
+
+@pytest.mark.windows_only
+def test_a_junction_to_outside_is_refused_on_windows(work, tmp_path):
+    import _winapi
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_bytes(b"TOP SECRET")
+    before = secret.stat()
+    _winapi.CreateJunction(str(outside), str(work.host_task / "out"))  # needs no admin rights
+    with pytest.raises(PathError, match="symbolic link"):
+        work.read_text("out/secret.txt", 100)
+    with pytest.raises(PathError, match="symbolic link"):
+        work.write_text("out/secret.txt", "replaced")
+    with pytest.raises(PathError, match="symbolic link"):
+        work.write_text("out/new.txt", "x")
+    after = secret.stat()
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+    assert not (outside / "new.txt").exists()
+
+
+@pytest.mark.windows_only
+def test_a_symbolic_link_file_is_refused_on_windows(work, tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_bytes(b"TOP SECRET")
+    symlink_or_skip(secret, work.host_task / "notes.txt")  # the CI runner is an admin, so it can make one
+    with pytest.raises(PathError, match="symbolic link"):
+        work.read_text("notes.txt", 100)
+    with pytest.raises(PathError, match="symbolic link"):
+        work.write_text("notes.txt", "x")
+    assert secret.read_bytes() == b"TOP SECRET"
+
+
+@pytest.mark.windows_only
+def test_windows_writes_new_folders_and_reads_exact_bytes(work):
+    assert work.write_bytes("fresh/sub/ten.bin", b"0123456789") == "/work/t1/fresh/sub/ten.bin"
+    assert (work.host_task / "fresh" / "sub" / "ten.bin").read_bytes() == b"0123456789"
+    assert work.read_text("fresh/sub/ten.bin", 100) == "0123456789"
+    work.write_bytes("fresh/sub/ten.bin", b"1")  # a write truncates, after the checks
+    assert (work.host_task / "fresh" / "sub" / "ten.bin").read_bytes() == b"1"
+    with pytest.raises(IsADirectoryError):
+        work.read_text("fresh", 100)
+    with pytest.raises(PathError, match="not a valid file name on Windows"):
+        work.write_text("CON", "x")
+    with pytest.raises(PathError, match="not a valid file name on Windows"):
+        work.write_text("notes:hidden", "x")  # also an alternate data stream

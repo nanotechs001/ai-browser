@@ -13,8 +13,10 @@ import stat
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
+from . import platforms
+
 SANDBOX_ROOT = "/work"
-_FOLDER = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+_FOLDER = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)  # Windows Python has neither
 
 
 class PathError(ValueError):
@@ -60,6 +62,10 @@ class WorkDir:
         if not name:
             raise IsADirectoryError(errno.EISDIR, "is a folder", path)
         writing = bool(flags & os.O_WRONLY)
+        if platforms.WINDOWS:  # no dir_fd there: winfs holds each folder open instead (and NTFS has no FIFOs)
+            from . import winfs
+
+            return os.fdopen(winfs.open_in(self.host_root, folders, name, writing, path), "wb" if writing else "rb")
         fd = os.open(self.host_root, os.O_RDONLY | os.O_DIRECTORY)
         try:
             for folder in folders:
