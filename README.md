@@ -544,7 +544,7 @@ slower, so 30 pages of a typical site take about three minutes.
 ```bash
 uv run ai-browser app [--browser brave|app]  # AI Browser; agents browse in your Brave (default) or in AI Browser
 uv run ai-browser doctor [--own]             # health check (the sandbox, or your own Brave or Chrome)
-uv run ai-browser doctor --setup             # quick check, no Docker: Python, Claude Code, Chrome, Brave, ports
+uv run ai-browser doctor --setup             # quick check, no Docker: Python, Claude Code, Chrome, Brave, ports, config
 uv run ai-browser bench                      # speed vs budgets
 uv run ai-browser live [--profile P]         # watch / log in
 uv run ai-browser stop [P | --all]           # stop containers (logins kept); `stop chrome` = own-Chrome shell
@@ -559,6 +559,8 @@ uv run ai-browser build                      # rebuild the image
 - To change the defaults, edit `~/.ai-browser/config.json`:
   - the risky word list: `"risky_words": […]`
   - skills to block: `"blocked_skills": ["ecc:some-skill"]`
+  - A file that can't be read (a typo, or an encoding other than UTF-8 or UTF-16) is ignored and the defaults apply.
+    `uv run ai-browser doctor --setup` tells you when that happens.
 - Each profile runs as **two containers** on a network where containers can't reach each other:
   - the **browser** (`aib-<profile>`), which alone holds the logged-in profile;
   - the **shell** (`aib-<profile>-sh`), where Claude's commands and skill scripts run. It sees only the work folder and the skills (read-only).

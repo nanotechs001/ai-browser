@@ -1,3 +1,4 @@
+import codecs
 import json
 from pathlib import Path
 
@@ -33,6 +34,27 @@ def test_load_config_reads_blocked_and_risky(tmp_path):
 def test_load_config_invalid_json_falls_back(tmp_path):
     (tmp_path / "config.json").write_text("{not json", encoding="utf-8")
     assert config.load_config(tmp_path) == config.Config()
+
+
+def test_load_config_reads_files_saved_by_windows_editors(tmp_path):
+    """Notepad's "UTF-8 with BOM" and PowerShell 5.1's `Set-Content -Encoding UTF8` start with a BOM, and its `>`
+    writes UTF-16: none of them may silently unblock the user's blocked skills."""
+    text = json.dumps({"blocked_skills": ["ecc:x"], "risky_words": ["löschen"]})
+    for data in (codecs.BOM_UTF8 + text.encode("utf-8"), text.encode("utf-16"), text.encode("utf-16-be")):
+        (tmp_path / "config.json").write_bytes(data)
+        cfg = config.load_config(tmp_path)
+        assert (cfg.blocked_skills, cfg.risky_words) == (["ecc:x"], ["löschen"]), data[:4]
+        assert config.config_problem(tmp_path) is None
+
+
+def test_a_config_that_cant_be_used_is_reported(tmp_path):
+    assert config.config_problem(tmp_path) is None  # no file: the defaults, nothing to report
+    for text in ('{"blocked_skills": ["ecc:x"],}', '["ecc:x"]'):
+        (tmp_path / "config.json").write_text(text, encoding="utf-8")
+        problem = config.config_problem(tmp_path)
+        assert problem and str(tmp_path / "config.json") in problem and "defaults" in problem, text
+    (tmp_path / "config.json").write_bytes("{\"risky_words\": [\"löschen\"]}".encode("cp1252"))  # an "ANSI" save
+    assert "defaults" in config.config_problem(tmp_path)
 
 
 def test_project_root_points_at_repo():

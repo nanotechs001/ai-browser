@@ -128,13 +128,13 @@ def _first_free(ports: range) -> int | None:
 
 def _doctor_setup() -> int:
     """What `ai-browser app` needs, checked without Docker and without opening a DevTools connection, so no browser
-    asks Allow. Python, Claude Code and Chrome must pass; the rest is information."""
+    asks Allow. Python, Claude Code, Chrome and a config.json that is there must pass; the rest is information."""
     import platform
 
     from .app.server import APP_PORTS
     from .chrome import brave_binary, browser_name, chrome_binary, inspect_address, own_browser_dir, switch_on
     from .claudecli import ClaudeNotUsable, claude_argv
-    from .config import LIVE_PORTS
+    from .config import LIVE_PORTS, config_problem
 
     failed = False
 
@@ -181,6 +181,9 @@ def _doctor_setup() -> int:
         report("✓", "ports", f"{ranges} have free ports")
     else:
         report("✗", "ports", f"no free port in {ranges}: see \"no free port\" in the README")
+    problem = config_problem(home())
+    if problem:  # the skills the user blocked would load again, with no other sign
+        report("✗", "config", problem, True)
     report("-", "Docker", "not checked here: run `uv run ai-browser doctor`")
     print("some checks failed" if failed else "all good")
     return 1 if failed else 0

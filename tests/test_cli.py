@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from ai_browser.cli import main
@@ -128,7 +130,8 @@ def _setup_env(tmp_path, monkeypatch, port) -> dict:
     chrome.write_bytes(b"")
     profile.mkdir()
     (profile / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/x\n", encoding="utf-8")
-    env = {"AIB_CLAUDE": str(claude), "AIB_CHROME_BINARY": str(chrome), "AIB_CHROME_DIR": str(profile)}
+    env = {"AIB_CLAUDE": str(claude), "AIB_CHROME_BINARY": str(chrome), "AIB_CHROME_DIR": str(profile),
+           "AIB_HOME": str(tmp_path / "aib-home")}  # never the user's own config.json
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return env
@@ -159,6 +162,22 @@ def test_doctor_setup_checks_without_docker_or_a_browser_connection(tmp_path, mo
     assert lines[6] == "- Docker      not checked here: run `uv run ai-browser doctor`"
     assert lines[-1] == "all good"
     assert seen["connections"] >= 1 and seen["bytes"] == b""  # a TCP check only: no DevTools request, so no Allow
+
+
+def test_doctor_setup_says_when_config_json_cant_be_used(tmp_path, monkeypatch, capsys):
+    server, _ = _browser_port_stand_in()
+    try:
+        env = _setup_env(tmp_path, monkeypatch, server.getsockname()[1])
+        Path(env["AIB_HOME"]).mkdir()
+        (Path(env["AIB_HOME"]) / "config.json").write_text('{"blocked_skills": ["ecc:x"],}', encoding="utf-8")
+        code = main(["doctor", "--setup"])
+    finally:
+        server.close()
+    out = capsys.readouterr().out
+    assert code == 1, out  # the skills the user blocked aren't blocked: not "all good"
+    line = next((line for line in out.splitlines() if line.startswith("✗ config")), out)
+    assert str(Path(env["AIB_HOME"]) / "config.json") in line and "defaults" in line
+    assert out.splitlines()[-1] == "some checks failed"
 
 
 def test_doctor_setup_fails_without_claude_code_or_chrome(tmp_path, monkeypatch, capsys):

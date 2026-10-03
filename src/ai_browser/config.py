@@ -46,15 +46,35 @@ class Config:
     risky_words: list[str] = field(default_factory=lambda: list(RISKY_WORDS))
 
 
-def load_config(root: Path) -> Config:
-    """Read root/config.json; a missing or invalid file gives the defaults."""
+def _read(path: Path) -> dict:
+    """config.json's object. Read as bytes: json finds UTF-8 with or without a BOM (Notepad's "UTF-8 with BOM",
+    PowerShell 5.1's `Set-Content -Encoding UTF8`) and UTF-16 (PowerShell 5.1's `>`). OSError or ValueError when
+    it can't be used."""
+    data = json.loads(path.read_bytes())
+    if isinstance(data, dict):
+        return data
+    raise ValueError("not a JSON object {...}")  # caught with json's own errors
+
+
+def config_problem(root: Path) -> str | None:
+    """Why root/config.json is ignored (the defaults apply then), or None when it is fine or there is none."""
+    path = root / "config.json"
     try:
-        data = json.loads((root / "config.json").read_text(encoding="utf-8"))
+        _read(path)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        return f"{path} can't be used ({exc}), so the defaults apply: fix it, or save it as UTF-8"
+    return None
+
+
+def load_config(root: Path) -> Config:
+    """Read root/config.json; a missing or invalid file gives the defaults (config_problem says why)."""
+    try:
+        data = _read(root / "config.json")
     except (OSError, ValueError):
         return Config()
     cfg = Config()
-    if not isinstance(data, dict):
-        return cfg
     blocked = data.get("blocked_skills")
     if isinstance(blocked, list):
         cfg.blocked_skills = [str(item) for item in blocked]
