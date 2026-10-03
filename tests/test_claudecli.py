@@ -67,3 +67,11 @@ async def test_the_panel_the_brain_and_the_probe_say_why(tmp_path, monkeypatch):
 def test_the_fake_claude_is_an_argv_prefix(fake_claude):
     runner, _, _ = fake_claude
     assert runner[0] == sys.executable and runner[1].endswith("fake_claude.py") and os.path.isfile(runner[1])
+
+
+def test_claude_code_gets_its_own_process_group_on_windows(monkeypatch):
+    from ai_browser import claudecli, platforms
+
+    assert claudecli.spawn_options() == ({"creationflags": 0x00000200} if os.name == "nt" else {})
+    monkeypatch.setattr(platforms, "WINDOWS", True)  # only the options change: nothing is started
+    assert claudecli.spawn_options() == {"creationflags": 0x00000200}  # CREATE_NEW_PROCESS_GROUP

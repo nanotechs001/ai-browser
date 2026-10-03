@@ -16,8 +16,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .. import platforms
 from ..brain.tools import ToolsConfig, server_of
-from ..claudecli import ClaudeNotUsable, claude_argv
+from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
 from ..syncdir import write_atomic
 
 DENIED = "The user said no"
@@ -51,6 +52,7 @@ PAGE_LIMIT = 6000  # characters of a page read kept for the panel's Page view
 PAGE_TOOLS = {"open", "observe", "act", "tabs"}
 STDOUT_LIMIT = 32 * 1024 * 1024  # one stream-json line can carry a whole page read
 STOP_GRACE = 5  # seconds Claude Code gets to end a stopped answer before its process is ended
+CLEAN_EXIT = 3  # seconds Claude Code gets on Windows to exit by itself, closing its own MCP server
 _SKILL_NAME = re.compile(r"^[A-Za-z0-9_.:-]+$")  # a skill reference, nothing that could carry other words
 _TIMING = re.compile(r"⏱ (\d+) ms\s*$")  # the engine ends every tool result with its time
 RESTARTED = ("(Claude Code had stopped and was started again: tabs you opened before may be gone and element numbers "
@@ -332,7 +334,8 @@ class ClaudeBridge:
         self._stderr = []
         self._process = await asyncio.create_subprocess_exec(
             *self._command(), cwd=chat, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, limit=STDOUT_LIMIT)
+            stderr=asyncio.subprocess.PIPE, limit=STDOUT_LIMIT, **spawn_options())
+        track(self._process)
         self._process_model = self.model
         self._stderr_task = asyncio.ensure_future(self._collect_stderr(self._process))
 
@@ -347,6 +350,14 @@ class ClaudeBridge:
             return
         with contextlib.suppress(Exception):
             process.stdin.close()
+        if platforms.WINDOWS:
+            # terminate() there is TerminateProcess, which never ends a process's children. Claude Code sees its
+            # stdin close and exits by itself, closing its ai-browser MCP server on the way out. (On POSIX,
+            # terminate() is SIGTERM, which is already graceful.)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(process.wait(), CLEAN_EXIT)
+            if process.returncode is not None:
+                return
         process.terminate()
         try:
             await asyncio.wait_for(process.wait(), 5)

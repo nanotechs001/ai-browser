@@ -3,6 +3,8 @@
 import asyncio
 import json
 
+import pytest
+
 from conftest import file_mode
 
 EVENTS = [
@@ -277,3 +279,41 @@ async def test_the_agents_mcp_server_gets_utf8_as_a_backstop(fake_claude, tmp_pa
     argv = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
     config = json.loads(Path(argv[argv.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
     assert config["mcpServers"]["ai-browser"]["env"]["PYTHONUTF8"] == "1"
+
+
+async def test_on_windows_claude_code_gets_to_exit_by_itself_first(fake_claude, tmp_path, monkeypatch):
+    from ai_browser import platforms
+    from ai_browser.app.bridge import ClaudeBridge
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    bridge = ClaudeBridge(tmp_path / "home", claude=runner)
+    [event async for event in bridge.send("hi")]
+    process, ended = bridge._process, []
+    monkeypatch.setattr(process, "terminate", lambda: ended.append("terminate"))
+    monkeypatch.setattr(platforms, "WINDOWS", True)  # only the wait changes: no Win32 call is made
+    await bridge._end_process()
+    assert ended == [] and process.returncode == 0  # it saw stdin close and exited, closing its MCP server itself
+
+
+@pytest.mark.windows_only
+async def test_the_job_ends_what_claude_code_started(fake_claude, tmp_path, monkeypatch):
+    from ai_browser import claudecli, platforms
+    from ai_browser.app.bridge import ClaudeBridge
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([{"spawn": 60}, *EVENTS]), encoding="utf-8")
+    job = platforms.KillOnCloseJob()  # a fresh one in place of the app's
+    monkeypatch.setattr(claudecli, "_job", job)
+    bridge = ClaudeBridge(tmp_path / "home", claude=runner)
+    [event async for event in bridge.send("hi")]
+    child = next(json.loads(line)["child"] for line in log.read_text(encoding="utf-8").splitlines()
+                 if line.startswith('{"child"'))
+    await bridge.close()  # the fake claude exits; ending a process on Windows doesn't end its children
+    assert platforms.pid_alive(child)
+    job.close()
+    for _ in range(50):
+        if not platforms.pid_alive(child):
+            break
+        await asyncio.sleep(0.1)
+    assert not platforms.pid_alive(child)

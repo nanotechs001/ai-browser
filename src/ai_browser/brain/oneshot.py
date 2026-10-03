@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..claudecli import ClaudeNotUsable, claude_argv
+from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
 
 NO_SERVERS = json.dumps({"mcpServers": {}})
 
@@ -46,12 +46,13 @@ async def ask_claude(prompt: str, model: str = "haiku", claude: str | Sequence[s
     try:
         process = await asyncio.create_subprocess_exec(
             *command(claude, model), cwd=folder, env=env, stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **spawn_options())
     except ClaudeNotUsable as exc:
         return OneShot(error=str(exc))
     except OSError as exc:
         return OneShot(error=f"Claude Code isn't available ({exc.strerror or exc}): install Claude Code and sign in "
                              "once with `claude`")
+    track(process)
     try:
         out, err = await asyncio.wait_for(process.communicate(prompt.encode(errors="replace")), timeout)
     except TimeoutError:

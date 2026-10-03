@@ -165,6 +165,10 @@ def _kernel32():
     kernel32.GetExitCodeProcess.argtypes = (handle, ctypes.POINTER(dword))
     kernel32.GetExitCodeProcess.restype = boolean
     kernel32.CloseHandle.argtypes, kernel32.CloseHandle.restype = (handle,), boolean
+    kernel32.CreateJobObjectW.argtypes, kernel32.CreateJobObjectW.restype = (ctypes.c_void_p, ctypes.c_wchar_p), handle
+    kernel32.SetInformationJobObject.argtypes = (handle, ctypes.c_int, ctypes.c_void_p, dword)
+    kernel32.SetInformationJobObject.restype = boolean
+    kernel32.AssignProcessToJobObject.argtypes, kernel32.AssignProcessToJobObject.restype = (handle, handle), boolean
     return kernel32
 
 
@@ -241,3 +245,65 @@ def lock_file(path) -> IO | _WindowsLock | None:
         handle.close()
         return None
     return handle
+
+
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+PROCESS_TERMINATE, PROCESS_SET_QUOTA = 0x0001, 0x0100
+
+
+class _BasicLimits(ctypes.Structure):  # JOBOBJECT_BASIC_LIMIT_INFORMATION
+    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t), ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32)]
+
+
+class _IoCounters(ctypes.Structure):  # IO_COUNTERS
+    _fields_ = [(name, ctypes.c_uint64) for name in ("ReadOperationCount", "WriteOperationCount",
+                                                     "OtherOperationCount", "ReadTransferCount",
+                                                     "WriteTransferCount", "OtherTransferCount")]
+
+
+class _ExtendedLimits(ctypes.Structure):  # JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    _fields_ = [("BasicLimitInformation", _BasicLimits), ("IoInfo", _IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+class KillOnCloseJob:
+    """A Windows job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: when its handle closes (the app's process
+    ending, even by a crash), Windows ends every process in it, and the ones they started. Windows only."""
+
+    def __init__(self):
+        kernel32 = _kernel32()
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        limits = _ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(handle, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits),
+                                                ctypes.sizeof(limits)):
+            error = ctypes.get_last_error()
+            kernel32.CloseHandle(handle)
+            raise ctypes.WinError(error)
+        self._handle = handle
+
+    def add(self, pid: int) -> None:
+        """Put a running process in the job; OSError when it can't (for example, it has already exited)."""
+        kernel32 = _kernel32()
+        process = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
+        if not process:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            if not kernel32.AssignProcessToJobObject(self._handle, process):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            kernel32.CloseHandle(process)
+
+    def close(self) -> None:
+        """End every process in the job now. Tests call it; the app never does, its handle closes with the app."""
+        if self._handle:
+            _kernel32().CloseHandle(self._handle)
+            self._handle = None

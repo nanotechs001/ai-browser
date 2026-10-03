@@ -1,13 +1,13 @@
 """A stand-in for `claude -p --input-format stream-json --output-format stream-json`, for the app tests.
 
-It logs its arguments (one JSON line) and every stdin line to $FAKE_CLAUDE_LOG, and answers each user message with
-the events listed in $FAKE_CLAUDE_SCRIPT: events are printed as JSON lines, {"sleep": s} pauses and {"exit": n} exits
-with that code. The script is a JSON list, or a dict {"default": [...], "<word>": [...]} where the first key found in
-the user's message picks the list. Control requests get a success response at once, even mid-answer. An interrupt
-ends the answer in progress the way Claude Code 2.1.263 does (a result with subtype error_during_execution), unless
-the script starts with {"ignore_interrupt": true}. {"ask_permission": {"tool_name", "input"}} asks for a tool the way
-Claude Code does (a can_use_tool control request) and waits for the app's answer. Without --input-format (a probe), the
-prompt comes from the command line.
+It logs its arguments (one JSON line) and every stdin line to $FAKE_CLAUDE_LOG, and answers each user message with the
+events listed in $FAKE_CLAUDE_SCRIPT: events are printed as JSON lines, {"sleep": s} pauses, {"spawn": s} starts a
+child that sleeps s seconds and logs {"child": pid}, and {"exit": n} exits with that code. The script is a JSON list,
+or a dict {"default": [...], "<word>": [...]} where the first key found in the user's message picks the list. Control
+requests get a success response at once, even mid-answer. An interrupt ends the answer in progress the way Claude Code
+2.1.263 does (a result with subtype error_during_execution), unless the script starts with {"ignore_interrupt": true}.
+{"ask_permission": {"tool_name", "input"}} asks for a tool the way Claude Code does (a can_use_tool control request)
+and waits for the app's answer. Without --input-format (a probe), the prompt comes from the command line.
 
 One-shot mode (`--output-format json` without `--input-format`, as the Brain calls it): the whole of stdin is the
 prompt, logged as {"oneshot": prompt, "argv": [...]}. The script's list (or the dict's list picked by a key found in
@@ -17,6 +17,7 @@ marks it failed, {"sleep": s} waits first, {"exit": n} exits without an answer."
 import json
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -122,6 +123,10 @@ with open(os.environ["FAKE_CLAUDE_LOG"], "a", buffering=1, encoding="utf-8") as 
         interrupted.clear()
         for event in events:
             if "ignore_interrupt" in event:
+                continue
+            if "spawn" in event:  # a child of its own, as Claude Code starts its MCP servers
+                child = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep({float(event['spawn'])})"])
+                log.write(json.dumps({"child": child.pid}) + "\n")
                 continue
             if "ask_permission" in event:
                 behavior = ask_permission(event["ask_permission"])

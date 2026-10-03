@@ -15,7 +15,7 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
-from ..claudecli import claude_argv
+from ..claudecli import claude_argv, spawn_options, track
 from ..syncdir import write_atomic
 
 CONNECTOR = "claude_ai_"  # how Claude Code names a claude.ai connector's tools: mcp__claude_ai_<Name>__<tool>
@@ -151,9 +151,11 @@ class ToolsConfig:
                 *claude_argv(claude), "-p", PROBE_PROMPT, "--model", "haiku", "--tools", "", "--setting-sources",
                 "local", "--no-session-persistence", "--output-format", "stream-json", "--verbose", cwd=folder, env=env,
                 stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, limit=32 * 1024 * 1024)
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, limit=32 * 1024 * 1024,
+                **spawn_options())
         except OSError:
             return False
+        track(process)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         try:

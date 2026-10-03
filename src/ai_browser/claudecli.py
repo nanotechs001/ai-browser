@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+
+from . import platforms
 
 NPM_SCRIPT = ("Claude Code was found at {path}, a script from the npm install. AI Browser needs the native claude.exe: "
               "install it with `irm https://claude.ai/install.ps1 | iex` in PowerShell, or set AIB_CLAUDE to the full "
@@ -50,3 +53,29 @@ def _find(windows: bool, env: Mapping) -> str:
     if found:
         return found
     return str(Path.home() / ".local" / "bin" / ("claude.exe" if windows else "claude"))
+
+
+CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)  # Windows' value
+_job = None  # the app's KillOnCloseJob, made on first use on Windows; its handle closes only with the app
+
+
+def spawn_options() -> dict:
+    """Claude Code in a process group of its own on Windows. Windows turns Ctrl-C off for a new group, and its
+    children inherit that, so a Ctrl-C in the console ends only the app, which then closes the agents in order."""
+    return {"creationflags": CREATE_NEW_PROCESS_GROUP} if platforms.WINDOWS else {}
+
+
+def track(process) -> None:
+    """Put a Claude Code process in the app's kill-on-close job (Windows; a no-op elsewhere), so it and the MCP
+    servers it starts end with the app, even after a crash. It is called right after the process starts, in the same
+    event-loop step: Claude Code takes hundreds of milliseconds to start its children, so in practice none starts
+    first. asyncio can't start a process suspended."""
+    global _job
+    if not platforms.WINDOWS or not getattr(process, "pid", None):
+        return
+    try:
+        if _job is None:
+            _job = platforms.KillOnCloseJob()
+        _job.add(process.pid)
+    except OSError:  # it has already exited, or no job could be made: the clean exit still ends it
+        pass
