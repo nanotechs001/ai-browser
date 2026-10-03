@@ -2,78 +2,13 @@
 every WebSocket session and every CDP method), and a throwaway Chrome at the end."""
 
 import asyncio
-import base64
-import json
 
 import pytest
-from websockets.asyncio.server import serve
 
 from ai_browser.chrome import chrome_binary
+from fake_brave import FakePort, until
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
-
-
-class FakePort:
-    """Brave's debugging port, faked: a DevToolsActivePort file, and a WebSocket answering a few CDP methods.
-    answer: "accept"; "refuse" (a 403 instead of the WebSocket, as when the user clicks Deny); "silent" (no answer)."""
-
-    def __init__(self, folder, answer="accept", pages=()):
-        self.folder, self.answer, self.pages = folder, answer, list(pages)
-        self.sessions, self.methods, self.attached = 0, [], []
-        self.server, self.release = None, asyncio.Event()
-
-    async def start(self):
-        self.server = await serve(self._handler, "127.0.0.1", 0, process_request=self._process)
-        port = self.server.sockets[0].getsockname()[1]
-        self.folder.mkdir(parents=True, exist_ok=True)
-        (self.folder / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/fake\n", encoding="utf-8")
-
-    async def _process(self, connection, request):
-        self.sessions += 1  # a debugging session asked for: the moment the real Brave would ask "Allow?"
-        if self.answer == "refuse":
-            return connection.respond(403, "Denied\n")
-        if self.answer == "silent":
-            await asyncio.wait_for(self.release.wait(), 30)
-        return None
-
-    def infos(self):
-        return [{"targetId": page["target"], "type": "page", "url": page["url"], "title": page["title"]}
-                for page in self.pages]
-
-    async def _handler(self, ws):
-        async for raw in ws:
-            message = json.loads(raw)
-            method = message["method"]
-            self.methods.append(method)
-            result = {}
-            if method == "Target.getTargets":
-                result = {"targetInfos": self.infos()}
-            elif method == "Target.attachToTarget":
-                self.attached.append(message["params"]["targetId"])
-                result = {"sessionId": "S1"}
-            elif method == "Page.getLayoutMetrics":
-                result = {"cssVisualViewport": {"clientWidth": 800, "clientHeight": 600, "pageX": 0, "pageY": 0}}
-            elif method == "Page.captureScreenshot":
-                result = {"data": base64.b64encode(b"\xff\xd8jpeg").decode()}
-            elif method == "Runtime.evaluate":
-                result = {"result": {"value": "page text"}}
-            await ws.send(json.dumps({"id": message["id"], "result": result}))
-            if method == "Target.setDiscoverTargets":
-                for info in self.infos():
-                    await ws.send(json.dumps({"method": "Target.targetCreated", "params": {"targetInfo": info}}))
-
-    async def stop(self):
-        self.release.set()
-        self.server.close()
-        await self.server.wait_closed()
-
-
-async def until(check, seconds=5):
-    for _ in range(int(seconds * 20)):
-        if check():
-            return True
-        await asyncio.sleep(0.05)
-    return check()
 
 
 AGENT = {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"}

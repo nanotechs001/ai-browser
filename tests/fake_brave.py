@@ -1,7 +1,230 @@
-"""Test stand-ins: the user's Brave as the app sees it (app/bravelink.BraveLink), and an agent with no Claude Code
-process behind it."""
+"""Test stand-ins: the user's Brave as the app sees it (app/bravelink.BraveLink), Brave's debugging port itself
+(FakePort, which counts handshakes the way Brave counts its "Allow remote debugging?" questions), the relay served on
+a uvicorn of its own, and an agent with no Claude Code process behind it."""
 
 from __future__ import annotations
+
+import asyncio
+import base64
+import contextlib
+import json
+from pathlib import Path
+
+from websockets.asyncio.server import serve
+
+async def until(check, seconds=5):
+    for _ in range(int(seconds * 20)):
+        if check():
+            return True
+        await asyncio.sleep(0.05)
+    return check()
+
+
+class FakePort:
+    """Brave's debugging port, faked: a DevToolsActivePort file, and a WebSocket answering the CDP methods the relay
+    and the engines use, the way Chrome does in flatten mode. answer: "accept"; "refuse" (a 403 instead of the
+    WebSocket, as when the user clicks Deny); "silent" (no answer until `release` is set, then as `answer` says then).
+    `sessions` counts handshakes: each is a moment the real Brave would ask "Allow remote debugging?". `received`
+    records every command as (method, sessionId, params, id); `hold` names methods it never answers."""
+
+    def __init__(self, folder, answer="accept", pages=()):
+        self.folder, self.answer = Path(folder), answer
+        self.pages = [dict(page) for page in pages]  # {"target", "url", "title", optional "type", "opener", "context"}
+        self.sessions, self.methods, self.attached, self.received = 0, [], [], []
+        self.hold: set[str] = set()
+        self.held: list[dict] = []  # commands in `hold`, unanswered until answer_held()
+        self.server, self.release, self.socket = None, asyncio.Event(), None
+        self.bound: dict[str, str] = {}  # session id -> target id
+        self._targets = self._sessions = 0
+
+    async def start(self):
+        self.server = await serve(self._handler, "127.0.0.1", 0, process_request=self._process, max_size=None)
+        port = self.server.sockets[0].getsockname()[1]
+        self.folder.mkdir(parents=True, exist_ok=True)
+        (self.folder / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/fake\n", encoding="utf-8")
+
+    async def _process(self, connection, request):
+        self.sessions += 1  # a debugging session asked for: the moment the real Brave would ask "Allow?"
+        if self.answer == "silent":
+            await asyncio.wait_for(self.release.wait(), 30)
+        if self.answer == "refuse":
+            return connection.respond(403, "Denied\n")
+        return None
+
+    def page(self, target):
+        return next((page for page in self.pages if page["target"] == target), None)
+
+    @staticmethod
+    def info(page):
+        info = {"targetId": page["target"], "type": page.get("type", "page"), "url": page["url"],
+                "title": page.get("title", ""), "attached": False, "canAccessOpener": False,
+                "browserContextId": page.get("context", "C1")}
+        if page.get("opener"):
+            info["openerId"] = page["opener"]
+        return info
+
+    def infos(self):
+        return [self.info(page) for page in self.pages]
+
+    async def emit(self, method, params, session=None):
+        """An event from "Brave"."""
+        message = {"method": method, "params": params}
+        if session:
+            message["sessionId"] = session
+        await self.socket.send(json.dumps(message))
+
+    async def popup(self, opener, url="https://popup.example/"):
+        """A page `opener` opened (window.open), announced as Chrome announces it; returns its target id."""
+        self._targets += 1
+        page = {"target": f"P{self._targets}", "url": url, "title": "", "opener": opener}
+        self.pages.append(page)
+        await self.emit("Target.targetCreated", {"targetInfo": self.info(page)})
+        return page["target"]
+
+    async def flood(self, session, megabytes):
+        chunk = "x" * (1024 * 1024)
+        for _ in range(megabytes):
+            await self.emit("Page.screencastFrame", {"data": chunk, "sessionId": 1, "metadata": {}}, session)
+
+    async def drop(self):
+        """Brave quits: the connection goes (the port file stays, like a crashed browser's)."""
+        if self.socket is not None:
+            await self.socket.close()
+
+    async def _handler(self, ws):
+        self.socket = ws
+        async for raw in ws:
+            message = json.loads(raw)
+            method, params, session = message["method"], message.get("params") or {}, message.get("sessionId")
+            self.methods.append(method)
+            self.received.append((method, session, params, message["id"]))
+            if method in self.hold:
+                self.held.append(message)
+                continue
+            await self._reply(ws, message)
+
+    async def answer_held(self):
+        """Answer the commands `hold` kept waiting, as the browser would have."""
+        held, self.held = self.held, []
+        for message in held:
+            await self._reply(self.socket, message)
+
+    async def _reply(self, ws, message):
+        method, params, session = message["method"], message.get("params") or {}, message.get("sessionId")
+        result, error, before, after = {}, None, [], []
+        target, missing = params.get("targetId"), {"code": -32602, "message": "No target with given id found"}
+        if method == "Target.getTargets":
+            result = {"targetInfos": self.infos()}
+        elif method == "Target.getBrowserContexts":
+            result = {"browserContextIds": ["C2"], "defaultBrowserContextId": "C1"}
+        elif method == "Target.getTargetInfo":
+            page = self.page(target)
+            error, result = (missing, {}) if page is None else (None, {"targetInfo": self.info(page)})
+        elif method == "Target.createTarget":
+            self._targets += 1
+            page = {"target": f"T{self._targets}", "url": params.get("url", ""), "title": ""}
+            self.pages.append(page)
+            before.append(("Target.targetCreated", {"targetInfo": self.info(page)}, None))  # as Chrome may
+            result = {"targetId": page["target"]}
+        elif method == "Target.attachToTarget":
+            page = self.page(target)
+            if page is None:
+                error = missing
+            else:
+                self.attached.append(target)
+                self._sessions += 1
+                sid = f"S{self._sessions}"
+                self.bound[sid] = target
+                before.append(("Target.attachedToTarget", {"sessionId": sid, "waitingForDebugger": False,
+                                                           "targetInfo": {**self.info(page), "attached": True}},
+                               None))
+                before.append(("Page.lifecycleEvent", {"name": "init", "frameId": target}, sid))
+                result = {"sessionId": sid}
+        elif method == "Target.detachFromTarget":
+            sid = params.get("sessionId")
+            after.append(("Target.detachedFromTarget", {"sessionId": sid, "targetId": self.bound.pop(sid, "")},
+                          None))
+        elif method == "Target.closeTarget":
+            page = self.page(target)
+            if page is None:
+                error = missing
+            else:
+                self.pages.remove(page)
+                for sid in [sid for sid, bound in self.bound.items() if bound == target]:
+                    del self.bound[sid]
+                    after.append(("Target.detachedFromTarget", {"sessionId": sid, "targetId": target}, None))
+                after.append(("Target.targetDestroyed", {"targetId": target}, None))
+                result = {"success": True}
+        elif method == "Page.getLayoutMetrics":
+            result = {"cssVisualViewport": {"clientWidth": 800, "clientHeight": 600, "pageX": 0, "pageY": 0}}
+        elif method == "Page.captureScreenshot":
+            result = {"data": base64.b64encode(b"\xff\xd8jpeg").decode()}
+        elif method == "Page.getFrameTree":
+            result = {"frameTree": {"frame": {"id": f"F-{self.bound.get(session, '')}", "url": "about:blank"}}}
+        elif method == "Runtime.evaluate":
+            result = {"result": {"value": "page text"}}
+        elif method == "Browser.getVersion":
+            result = {"product": "FakeBrave/1"}
+        for name, event_params, event_session in before:
+            await self.emit(name, event_params, event_session)
+        reply = {"id": message["id"], **({"error": error} if error else {"result": result})}
+        if session:
+            reply["sessionId"] = session
+        await ws.send(json.dumps(reply))
+        for name, event_params, event_session in after:
+            await self.emit(name, event_params, event_session)
+        if method == "Target.setDiscoverTargets" and params.get("discover"):
+            for info in self.infos():
+                await self.emit("Target.targetCreated", {"targetInfo": info})
+
+    async def stop(self):
+        self.release.set()
+        self.server.close()
+        await self.server.wait_closed()
+
+
+async def serve_relay(relay):
+    """The relay's /cdp on a uvicorn of its own, served as AppServer serves it (the sans-I/O websockets it pins):
+    (its ws:// address, stop)."""
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import WebSocketRoute
+
+    from ai_browser.live import _bind, _QuietServer, _serve
+
+    sock = _bind("127.0.0.1", 0)
+    server = _QuietServer(uvicorn.Config(Starlette(routes=[WebSocketRoute("/cdp", relay.serve)]), log_level="warning",
+                                         lifespan="off", ws="websockets-sansio"))
+    task = asyncio.create_task(_serve(server, sock))
+    assert await until(lambda: server.started, 5), "the relay's server did not start"
+    relay.port = sock.getsockname()[1]
+
+    async def stop():
+        server.should_exit = True
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(task, 5)
+
+    return f"ws://127.0.0.1:{relay.port}/cdp", stop
+
+
+async def relay_client(url, token, open_timeout=10):
+    """An engine's connection to the relay: plain CDP, its token in the header."""
+    from ai_browser.cdp import CDP
+
+    return await CDP.connect(url, open_timeout=open_timeout, headers={"X-AIB-Agent-Token": token})
+
+
+async def raw_handshake(port, host, token) -> int:
+    """The HTTP status a /cdp handshake with this Host header gets (a raw socket: any Host at all)."""
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write((f"GET /cdp HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                  "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
+                  f"X-AIB-Agent-Token: {token}\r\n\r\n").encode())
+    await writer.drain()
+    try:
+        return int((await asyncio.wait_for(reader.readline(), 5)).split()[1])
+    finally:
+        writer.close()
 
 
 class FakeBrave:
