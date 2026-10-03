@@ -5,6 +5,7 @@ import asyncio
 import inspect
 import json
 import os
+from pathlib import Path
 
 import pytest
 from websockets.asyncio.client import connect
@@ -458,3 +459,15 @@ def test_only_the_role_reads_the_watchers_origins():
     readers = sorted(name for name, member in vars(AppServer).items()
                      if inspect.isfunction(member) and "_watcher_origins" in inspect.getsource(member))
     assert readers == ["__init__", "_mismatch", "_role", "_socket", "allow_origin"]  # the rest asks _role
+
+
+def test_the_readme_says_what_ai_home_lists_and_where_always_allow_is():
+    text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    assert ("**Tabs:** the web tabs of the Brave profile the watcher is in (without the watcher, the profile you used "
+            "last), each marked with whose it is") in text
+    assert "Other profiles and private windows are only counted, never listed." in text
+    assert ("The watcher's Brain page in Brave shows them with **Allow once** and **Deny** only, because Always "
+            "allow is kept for AI Home's Tools.") in text
+    assert "and the watcher's Brain page all show the tool" not in text
+    assert ("AI Home shows the ones in the agents' profile (other profiles and private windows only as a count)"
+            in text)
