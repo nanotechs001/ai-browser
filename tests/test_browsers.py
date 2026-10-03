@@ -620,3 +620,126 @@ def test_watcher_places_fail_safely(tmp_path, contents):
     (data / "Default" / "Secure Preferences").write_bytes(
         written if isinstance(written, bytes) else json.dumps(written).encode("utf-8"))
     assert browsers.watcher_places(data, {WATCHER_ID: watcher}) == []
+
+
+# Running, the switch and the state (Task 9)
+
+
+def test_running_reads_the_lock_on_mac_and_linux(tmp_path):
+    lock = tmp_path / "SingletonLock"
+    assert browsers.running(tmp_path, "darwin") is False  # no lock: not running
+    symlink_or_skip(f"{socket.gethostname()}-{os.getpid()}", lock)
+    assert browsers.running(tmp_path, "darwin") is True
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait(timeout=30)
+    for target, expected in ((f"{socket.gethostname()}-{child.pid}", False),  # exited and waited for
+                             (f"elsewhere.local-{os.getpid()}", None), ("garbage", None),
+                             (f"{socket.gethostname()}-99999999999", None)):  # too big for os.kill: no OverflowError
+        lock.unlink()
+        os.symlink(target, lock)
+        assert browsers.running(tmp_path, "darwin") is expected, target
+    lock.unlink()
+    lock.write_bytes(b"not a link")
+    assert browsers.running(tmp_path, "darwin") is None
+
+
+def test_a_host_name_with_dashes(tmp_path, monkeypatch):
+    monkeypatch.setattr(browsers.socket, "gethostname", lambda: "Alexs-Mac-Book.local")
+    lock = tmp_path / "SingletonLock"
+    symlink_or_skip(f"Alexs-Mac-Book.local-{os.getpid()}", lock)
+    assert browsers.running(tmp_path, "darwin") is True  # split at the last dash
+    lock.unlink()
+    os.symlink("Alexs-Mac-Book.local-", lock)
+    assert browsers.running(tmp_path, "darwin") is None
+
+
+def test_running_on_windows_only_looks_for_the_lockfile(tmp_path, monkeypatch):
+    import builtins
+
+    lock = tmp_path / "lockfile"
+    assert browsers.running(tmp_path, "win32") is False
+    lock.write_bytes(b"")
+    if os.name != "nt":
+        lock.chmod(0)
+
+    def refusing(real):
+        def opener(file, *args, **kwargs):
+            if isinstance(file, (str, os.PathLike)) and Path(file).name == "lockfile":
+                pytest.fail(f"the lockfile was opened: {file}")
+            return real(file, *args, **kwargs)
+        return opener
+
+    monkeypatch.setattr(builtins, "open", refusing(builtins.open))
+    monkeypatch.setattr(platforms, "open_shared", refusing(platforms.open_shared))
+    try:
+        assert browsers.running(tmp_path, "win32") is True
+    finally:
+        lock.chmod(0o600)
+
+
+def test_the_switch_check_sends_nothing(tmp_path):
+    server = socket.create_server(("127.0.0.1", 0))
+    port, received = server.getsockname()[1], []
+
+    def serve():
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(5)
+            received.append(connection.recv(1024))
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        (tmp_path / "DevToolsActivePort").write_bytes(f"{port}\n/devtools/browser/x\n".encode("utf-8"))
+        assert browsers.devtools_port(tmp_path) == port
+        assert browsers.listening(port) is True
+        thread.join(timeout=10)
+    finally:
+        server.close()
+    assert received == [b""]  # connected and closed: no HTTP request, no websocket
+
+
+def open_port() -> tuple[socket.socket, int]:
+    server = socket.create_server(("127.0.0.1", 0))
+    return server, server.getsockname()[1]
+
+
+@pytest.mark.parametrize("alive, answers, expected", [
+    (False, True, "not_running"), (True, True, "switch_on"), (True, False, "switch_off"), (None, True, "switch_on"),
+    (None, False, "not_running")])
+def test_state_combines_the_lock_and_the_switch(tmp_path, monkeypatch, alive, answers, expected):
+    monkeypatch.setattr(browsers, "running", lambda data_dir, system=None: alive)
+    server, port = open_port()
+    try:
+        if not answers:
+            server.close()
+        (tmp_path / "DevToolsActivePort").write_bytes(f"{port}\n/devtools/browser/x\n".encode("utf-8"))
+        assert browsers.state(tmp_path) == expected
+    finally:
+        server.close()
+
+
+@pytest.mark.parametrize("contents", [None, b"abc\n/x\n", b"0\n/x\n", b"70000\n/x\n", "²\n/x\n".encode("utf-8"),
+                                      b""], ids=["no port file", "abc", "0", "70000", "superscript two", "empty"])
+def test_a_running_browser_without_a_usable_port_has_its_switch_off(tmp_path, monkeypatch, contents):
+    monkeypatch.setattr(browsers, "running", lambda data_dir, system=None: True)
+    if contents is not None:
+        (tmp_path / "DevToolsActivePort").write_bytes(contents)
+    assert browsers.devtools_port(tmp_path) is None
+    assert browsers.state(tmp_path) == "switch_off"
+
+
+def test_the_port_file_may_end_its_lines_with_crlf(tmp_path):
+    (tmp_path / "DevToolsActivePort").write_bytes(b"9222\r\n/devtools/browser/x\r\n")
+    assert browsers.devtools_port(tmp_path) == 9222
+
+
+def test_a_missing_data_folder_is_not_running(tmp_path):
+    assert browsers.state(tmp_path / "missing") == "not_running" and browsers.state(None) == "not_running"
+
+
+def test_a_stale_port_of_a_stopped_browser_is_never_checked(tmp_path, monkeypatch):
+    (tmp_path / "DevToolsActivePort").write_bytes(b"9222\n/devtools/browser/old\n")
+    monkeypatch.setattr(browsers, "running", lambda data_dir, system=None: False)
+    monkeypatch.setattr(browsers, "listening", lambda port, timeout=0.5: pytest.fail("a stopped browser's port"))
+    assert browsers.state(tmp_path) == "not_running"

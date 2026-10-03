@@ -377,3 +377,65 @@ def watcher_places(data_dir, watchers: Mapping[str, str | Path], system: str | N
                     and _watcher_key(entry["path"], system) == key and _enabled(entry)):
                 places.append(WatcherPlace(profile.folder, extension_id))
     return places
+
+
+STATES = ("not_running", "switch_off", "switch_on")
+
+
+def devtools_port(data_dir) -> int | None:
+    """The port in the data folder's DevToolsActivePort (its first line: 1 to 5 ASCII digits, 1 to 65535), or None.
+    The file stays behind after the browser exits, so the port alone says nothing about the browser running."""
+    data = _read(Path(data_dir) / "DevToolsActivePort")
+    lines = data.decode("utf-8", errors="replace").splitlines() if data is not None else []
+    first = lines[0].strip() if lines else ""
+    if not re.fullmatch(r"[0-9]{1,5}", first):
+        return None
+    port = int(first)
+    return port if 1 <= port <= 65535 else None
+
+
+def listening(port, timeout: float = 0.5) -> bool:
+    """Whether something accepts a TCP connection on 127.0.0.1:port. It connects and closes at once, sending no
+    bytes: no HTTP request and no websocket, so no DevTools session and no "Allow remote debugging?" question."""
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        return False
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def running(data_dir, system: str | None = None) -> bool | None:
+    """Whether the browser of this data folder runs, from its own lock: True, False, or None when it can't tell.
+    macOS and Linux: SingletonLock is a link to "<host>-<pid>" (read, never followed). Windows: the lockfile exists
+    while the browser runs; it is never opened, since the browser holds it without sharing delete access."""
+    system = _system(system)
+    lock = os.path.join(data_dir, platforms.lock_name(system))
+    if system == "win32":
+        return os.path.exists(lock)
+    if not os.path.lexists(lock):
+        return False
+    try:
+        target = os.readlink(lock)
+        host_name = socket.gethostname()
+    except (OSError, ValueError):
+        return None  # a regular file, or a link that can't be read
+    host, dash, pid = target.rpartition("-")  # the host name may hold dashes itself
+    if not dash or not re.fullmatch(r"[1-9][0-9]{0,8}", pid) or host != host_name:
+        return None
+    return platforms.pid_alive(int(pid))
+
+
+def state(data_dir, system: str | None = None) -> str:
+    """One of STATES. The lock tells "not running" from "switch off"; only DevToolsActivePort and the silent TCP
+    check say the switch is on. A browser that isn't running gets no TCP check, so a stale port is never touched."""
+    if data_dir is None or not os.path.isdir(data_dir):
+        return "not_running"
+    alive = running(data_dir, system)
+    if alive is False:
+        return "not_running"
+    port = devtools_port(data_dir)
+    if port is not None and listening(port):
+        return "switch_on"
+    return "switch_off" if alive else "not_running"  # can't tell: today's rule, the port alone
