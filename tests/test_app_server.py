@@ -753,6 +753,43 @@ async def test_the_watcher_may_not_hand_tabs_or_connect(fake_claude, tmp_path):
         await server.stop()
 
 
+async def test_the_tab_list_carries_its_scope(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    server.allow_origin(WATCHER, watcher=True)
+    brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"}])
+    brave.set_scope("watcher", 2)
+    server.attach_brave(brave)
+    try:
+        async with (connect(socket_url(server, url), origin=ORIGIN) as page,
+                    connect(socket_url(server, url), origin=WATCHER) as watcher):
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
+            assert (await recv(page))["tab_scope"] == {"profile": "watcher", "elsewhere": 2}
+            trimmed = await recv(watcher)
+            assert trimmed["type"] == "snapshot" and "tab_scope" not in trimmed and "tabs" not in trimmed
+            brave.set_scope("last_used", 3)
+            message = (await until(page, lambda m: m["type"] == "tabs"))[-1]
+            assert message["tab_scope"] == {"profile": "last_used", "elsewhere": 3}
+            assert [tab["target"] for tab in message["tabs"]] == ["U1"]
+            assert not [m for m in await quiet(watcher, 1.0) if m["type"] == "tabs" or "tab_scope" in m]
+            brave.state, brave.pages = "lost", []  # BraveLink's order: the state, the empty list, then the card
+            brave.set_scope("none", 0)
+            lost = (await until(page, lambda m: m["type"] == "tabs"))[-1]
+            assert lost["tabs"] == [] and "tab_scope" not in lost  # while Brave isn't connected: no scope at all
+        async with connect(socket_url(server, url), origin=ORIGIN) as late:
+            await late.send(json.dumps({"type": "hello", "view": "home"}))
+            assert (await recv(late))["tab_scope"] is None
+    finally:
+        await server.stop()
+    plain, plain_url = await started(fake_claude, tmp_path / "plain", EVENTS, tabs=StubTabs())
+    try:
+        async with connect(socket_url(plain, plain_url), origin=ORIGIN) as page:
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            assert (await recv(page))["tab_scope"] is None  # AI Browser's own TabWatch lists every tab
+    finally:
+        await plain.stop()
+
+
 async def test_an_agents_turn_connects_a_brave_that_is_ready(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     brave = FakeBrave([], state="off")

@@ -313,6 +313,15 @@ class FakeBrave:
     def tabs(self):
         return [{**page, "owner": dict(self.owners.get(page["target"], {"kind": "you"}))} for page in self.pages]
 
+    tab_scope = {"profile": "watcher", "elsewhere": 0}  # what BraveLink.scope() answers (watcher-safety)
+
+    def scope(self):
+        return dict(self.tab_scope)
+
+    def set_scope(self, profile, elsewhere):
+        self.tab_scope = {"profile": profile, "elsewhere": elsewhere}
+        self.changed()
+
     def changed(self):
         for callback in list(self._changes):
             callback(self.tabs())

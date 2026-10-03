@@ -297,9 +297,22 @@ class AppServer:
         return self.tokens.mint(agent_id)
 
     def attach_tabs(self, tabs) -> None:
-        """The TabWatch, once AI Browser is open: the tab list, Watch and thumbnails."""
+        """The tab source (AI Browser's TabWatch, or BraveLink in brave mode): the tab list, Watch and thumbnails."""
         self.tabs = tabs
-        tabs.on_change(lambda listing: self._send_all({"type": "tabs", "tabs": listing}))
+        tabs.on_change(lambda listing: self._send_all(self._tabs_message(listing)))
+
+    def _tab_scope(self) -> dict | None:
+        """BraveLink's {"profile", "elsewhere"}: which profile the list shows, and how many of the user's tabs it
+        leaves out (a number only). None for AI Browser's own TabWatch, which lists every tab, and while Brave isn't
+        connected: then the list is empty and claims nothing (BraveLink sends that list before the browser card)."""
+        scope = getattr(self.tabs, "scope", None)
+        if not callable(scope) or getattr(self.tabs, "state", "connected") != "connected":
+            return None
+        return scope()
+
+    def _tabs_message(self, listing: list[dict]) -> dict:
+        scope = self._tab_scope()
+        return {"type": "tabs", "tabs": listing, **({"tab_scope": scope} if scope is not None else {})}
 
     async def start(self) -> str:
         app = Starlette(routes=[Route("/health", self._health), Route("/setup", self._setup),
@@ -622,7 +635,7 @@ class AppServer:
         relay.on_change(self._clients_changed)
         brave.on_state(lambda state: self._browser_changed())
         self._browser_changed()
-        self._send_all({"type": "tabs", "tabs": brave.tabs()})  # pages already open see Brave's list at once
+        self._send_all(self._tabs_message(brave.tabs()))  # pages already open see Brave's list at once
 
     def _handed_to(self, identity: str) -> set[str]:
         """The tabs the user handed this agent now (Hand over, or a task started in a tab): read live."""
@@ -1158,6 +1171,7 @@ class AppServer:
     def _snapshot(self) -> dict:
         return {"type": "snapshot", "agents": self.agents.snapshot()["agents"],
                 "tabs": self.tabs.tabs() if self.tabs is not None else [],
+                "tab_scope": self._tab_scope(),
                 "skills_summary": self._skills_summary(), "max_working": self.agents.max_working,
                 "default_model": self.default_model, "browser": self._browser_info(),
                 "sessions": self._session_list(), "browser_clients": self._browser_clients()}
