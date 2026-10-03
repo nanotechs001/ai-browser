@@ -742,9 +742,40 @@ def test_the_switch_check_sends_nothing(tmp_path):
     assert received == [b""]  # connected and closed: no HTTP request, no websocket
 
 
-def open_port() -> tuple[socket.socket, int]:
-    server = socket.create_server(("127.0.0.1", 0))
-    return server, server.getsockname()[1]
+class Listener:
+    """A port on 127.0.0.1 that accepts in a thread and keeps what each connection sent before it closed: the switch
+    check may connect, but must send nothing (no HTTP request and no websocket, so no "Allow remote debugging?")."""
+
+    def __init__(self):
+        self.server = socket.create_server(("127.0.0.1", 0))
+        self.server.settimeout(0.2)
+        self.port, self.received, self._stop = self.server.getsockname()[1], [], threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self):
+        while True:
+            try:
+                connection, _ = self.server.accept()
+            except TimeoutError:
+                if self._stop.is_set():
+                    return  # every connection made before close() has been read
+                continue
+            except OSError:
+                return
+            with connection:
+                connection.settimeout(5)
+                try:
+                    self.received.append(connection.recv(1024))
+                except OSError as error:  # still open after 5 s: it waits for an answer
+                    self.received.append(repr(error))
+
+    def close(self) -> list:
+        """Stop listening once every waiting connection is read; what each connection sent."""
+        self._stop.set()
+        self._thread.join(timeout=10)
+        self.server.close()
+        return self.received
 
 
 @pytest.mark.parametrize("alive, answers, expected", [
@@ -752,14 +783,15 @@ def open_port() -> tuple[socket.socket, int]:
     (None, False, "not_running")])
 def test_state_combines_the_lock_and_the_switch(tmp_path, monkeypatch, alive, answers, expected):
     monkeypatch.setattr(browsers, "running", lambda data_dir, system=None: alive)
-    server, port = open_port()
+    listener = Listener()
     try:
         if not answers:
-            server.close()
-        (tmp_path / "DevToolsActivePort").write_bytes(f"{port}\n/devtools/browser/x\n".encode("utf-8"))
+            listener.close()
+        (tmp_path / "DevToolsActivePort").write_bytes(f"{listener.port}\n/devtools/browser/x\n".encode("utf-8"))
         assert browsers.state(tmp_path) == expected
     finally:
-        server.close()
+        received = listener.close()
+    assert received == ([b""] if answers and alive is not False else [])  # one check that sent nothing, or none
 
 
 @pytest.mark.parametrize("contents", [None, b"abc\n/x\n", b"0\n/x\n", b"70000\n/x\n", "\u00b2\n/x\n".encode("utf-8"),
@@ -833,25 +865,27 @@ EXPECTED = [
 
 
 def test_detect_lists_installed_browsers_with_their_state_profiles_and_watchers(fake, monkeypatch):
-    server, port = open_port()
+    listener = Listener()
     try:
-        mac = fake_mac(fake, port)
+        mac = fake_mac(fake, listener.port)
         seen, real_read = [], browsers._read
         monkeypatch.setattr(browsers, "_read", lambda path: seen.append(Path(path)) or real_read(path))
         found = browsers.detect(mac.watchers, system="darwin")
     finally:
-        server.close()
+        received = listener.close()
+    assert received == [b""]  # one switch check, Brave's, and it sent nothing
     assert browsers.public(found, connected=()) == EXPECTED
     assert seen and not any(path.is_relative_to(mac.edge) for path in seen)  # agents can't use Edge: not read
     assert browsers.detect(mac.watchers, system="linux") == []
 
 
 def test_public_has_no_paths_or_emails(fake, tmp_path):
-    server, port = open_port()
+    listener = Listener()
     try:
-        found = browsers.detect(fake_mac(fake, port).watchers, system="darwin")
+        found = browsers.detect(fake_mac(fake, listener.port).watchers, system="darwin")
     finally:
-        server.close()
+        received = listener.close()
+    assert received == [b""]  # the switch check sent nothing
     text = json.dumps(browsers.public(found))
     for secret in (str(tmp_path), tmp_path.as_posix(), "@", "Library", "Alex", "123456789012345678901", WATCHER_ID,
                    "152.1"):
@@ -887,19 +921,22 @@ def test_the_same_watcher_in_two_profiles_is_reported():
 
 READ_NAMES = {"Info.plist", "Local State", "Secure Preferences", "Preferences", "DevToolsActivePort",
               "com.apple.launchservices.secure.plist"}
+WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 _OPENED: list | None = None
 _HOOKED: list = []
 
 
 def _note_open(event, args):
+    """The "open" audit event's path and flags (open() and os.open() both raise it with the OS flags they ask for)."""
     if _OPENED is not None and event == "open" and args and isinstance(args[0], (str, bytes, os.PathLike)):
-        _OPENED.append(os.fsdecode(args[0]))
+        flags = args[2] if len(args) > 2 and isinstance(args[2], int) else None
+        _OPENED.append((os.fsdecode(args[0]), flags))
 
 
 @contextlib.contextmanager
 def recording_opens():
-    """Every file opened in the block, by any code (an audit hook: it can't be removed, so it records only while
-    the block runs)."""
+    """(path, flags) of every file opened in the block, by any code (an audit hook: it can't be removed, so it
+    records only while the block runs)."""
     global _OPENED
     if not _HOOKED:
         sys.addaudithook(_note_open)
@@ -923,9 +960,9 @@ def snapshot(root: Path) -> dict:
 
 
 def test_detection_reads_only_its_files_and_writes_nothing(fake, tmp_path, monkeypatch):
-    server, port = open_port()
+    listener = Listener()
     try:
-        mac = fake_mac(fake, port)
+        mac = fake_mac(fake, listener.port)
         shared, real = [], platforms.open_shared
         monkeypatch.setattr(platforms, "open_shared", lambda path: shared.append(os.fspath(path)) or real(path))
         before = snapshot(tmp_path)
@@ -933,11 +970,15 @@ def test_detection_reads_only_its_files_and_writes_nothing(fake, tmp_path, monke
             browsers.detect(mac.watchers, system="darwin")
         after = snapshot(tmp_path)
     finally:
-        server.close()
-    inside = {Path(path).name for path in [*opened, *shared] if Path(path).is_relative_to(tmp_path)}
-    assert "Local State" in {Path(path).name for path in opened}  # the audit hook sees every open
-    assert inside <= READ_NAMES, inside - READ_NAMES  # never Cookies, Login Data, History or Web Data
+        received = listener.close()
+    inside = [(Path(path), flags) for path, flags in opened if Path(path).is_relative_to(tmp_path)]
+    names = {path.name for path, _ in inside} | {Path(path).name for path in shared
+                                                 if Path(path).is_relative_to(tmp_path)}
+    assert "Local State" in {Path(path).name for path, _ in opened}  # the audit hook sees every open
+    assert names <= READ_NAMES, names - READ_NAMES  # never Cookies, Login Data, History or Web Data
+    assert [path.name for path, flags in inside if flags is None or flags & WRITE_FLAGS] == []  # each open: read only
     assert after == before  # nothing written, touched or created
+    assert received == [b""]  # and the one switch check sent nothing
 
 
 @pytest.mark.parametrize("name", [
