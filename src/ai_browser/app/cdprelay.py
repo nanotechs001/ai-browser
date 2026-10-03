@@ -32,6 +32,7 @@ from websockets.asyncio.client import connect
 
 from ..cdp import CDP, CDPError
 from ..chrome import ChromeError, browser_name, find_ws_url, inspect_address, switch_on
+from .agents import agent_number  # one rule for an agent's number (a3 is 3), the same on every list
 
 log = logging.getLogger(__name__)
 
@@ -262,7 +263,8 @@ def _command_of(text) -> dict | None:
 
 
 def _order(identity: str) -> tuple:
-    return (0, int(identity[1:]), "") if _AGENT_ID.match(identity) else (1, 0, identity)
+    number = agent_number(identity)  # the agents' own rule: a3 is 3
+    return (0, number, "") if number is not None else (1, 0, identity)
 
 
 async def _shut(ws, code: int) -> None:
@@ -1130,7 +1132,7 @@ class Relay:
         for identity in sorted(connected | owners, key=_order):
             agent = _AGENT_ID.match(identity) is not None
             rows.append({"id": identity, "kind": "agent" if agent else "session",
-                         "number": int(identity[1:]) if agent else None, "tabs": len(self.own_targets(identity)),
+                         "number": agent_number(identity), "tabs": len(self.own_targets(identity)),
                          "connected": identity in connected, "cut_off": identity in self._cut_off})
         return rows
 

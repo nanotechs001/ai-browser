@@ -396,3 +396,14 @@ async def test_rows_carry_a_fixed_number_and_a_queued_count(fake_claude, tmp_pat
         assert AgentManager(tmp_path / "other", env={"AIB_BROWSER": "chrome"}).in_users_browser is True
     finally:
         await manager.close_all()
+
+
+def test_the_relays_client_list_numbers_agents_the_one_way():
+    import inspect
+    import re
+
+    from ai_browser.app import cdprelay, server
+
+    source = inspect.getsource(cdprelay) + inspect.getsource(server)
+    assert "agent_number(" in source  # the relay's rows take the agents' own rule
+    assert not re.search(r"int\(\s*[\w.\"'\[\]]+\[1:\]\s*\)", source)  # and no second way to number an agent

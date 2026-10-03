@@ -312,6 +312,20 @@ async def test_ai_home_shows_numbers_on_rows_and_give_to(home):
 
 
 @CHROME
+async def test_the_connected_list_names_agents_like_every_other_list(home):
+    from fake_brave import FakeBrave
+
+    js, _, stack = home
+    stack["server"].attach_brave(FakeBrave([]))
+    stack["server"]._send_all({"type": "browser_clients", "clients": [
+        {"id": "a3", "kind": "agent", "number": None, "name": "Fix the footer", "color": "blue", "tabs": 2,
+         "connected": True, "cut_off": False}]})
+    listed = "document.getElementById('browser-clients').textContent"
+    assert await until(js, f"{listed}.includes('3 · Fix the footer')")  # agentLabel: the id's digits, if need be
+    assert "null" not in await js(listed)
+
+
+@CHROME
 async def test_the_browser_card_follows_brave(home):
     from fake_brave import FakeBrave
 

@@ -258,7 +258,7 @@ function renderBrowser() {
 function clientLabel(row) {
   if (row.kind === "app") return "AI Browser · the tab list and pictures";
   const tabs = `${row.tabs} tab${row.tabs === 1 ? "" : "s"}`;
-  const who = row.kind === "agent" ? `${row.number} · ${row.name}` : "Claude Code";
+  const who = row.kind === "agent" ? agentLabel(row) : "Claude Code";
   return `${who} · ${tabs}${row.cut_off ? ` · cut off from ${browser?.name || "Brave"}` : ""}`;
 }
 
