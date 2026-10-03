@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 
 class App:
@@ -117,6 +118,23 @@ async def test_status_is_cached():
         app.stop()
 
 
+async def test_status_reads_handed_ttl_when_called(monkeypatch):
+    """The handed tabs' cache length is read at each call, so a longer one set later takes effect (tests rely on it
+    to show that only the relay's cut tells an engine about Take back)."""
+    import ai_browser.agentlink as agentlink
+
+    app = App({"/agent-status": {"groups": True, "handed": []}})
+    try:
+        monkeypatch.setattr(agentlink, "HANDED_TTL", 60)
+        link = agentlink.AgentLink(app.url + "/agent-events", "tok", "a3")
+        await link.status()
+        await asyncio.sleep(1.1)
+        await link.status()
+        assert len(app.requests) == 1  # the 60 s cache still serves
+    finally:
+        app.stop()
+
+
 def test_discover_needs_a_link_file_a_live_app_and_this_computer(tmp_path):
     from ai_browser.agentlink import AgentLink
 
@@ -180,3 +198,21 @@ async def test_a_session_reads_link_json_again_when_the_app_comes_and_goes(monke
     placer = grouping.Placer(None, rediscover=lambda: found.pop(0))
     assert (await placer.create_params())[1] is not None and placer.link is joined and joined.hellos == 1
     assert (await placer.create_params())[1] is None and placer.link is None  # link.json gone: a window of its own
+
+
+def test_discover_reads_a_local_cdp_only(tmp_path):
+    from ai_browser.agentlink import AgentLink
+
+    (tmp_path / "app").mkdir()
+    link_file = tmp_path / "app" / "link.json"
+    base = {"events": "http://127.0.0.1:8792/agent-events", "session_token": "s", "pid": os.getpid(),
+            "browser_dir": "/x/BraveSoftware/Brave-Browser"}
+    link_file.write_text(json.dumps({**base, "cdp": "ws://127.0.0.1:8792/cdp"}), encoding="utf-8")
+    found = AgentLink.discover(tmp_path, "t1")
+    assert (found.cdp, found.browser_dir, found.pid) == ("ws://127.0.0.1:8792/cdp",
+                                                        Path("/x/BraveSoftware/Brave-Browser"), os.getpid())
+    for bad in ("ws://127.0.0.1:80@evil/cdp", "wss://127.0.0.1:1/cdp", "ws://localhost:1/cdp",
+                "ws://127.0.0.1:1/other", "ws://127.0.0.1:1/cdp?x=1", "ws://127.0.0.1/cdp", 7):
+        link_file.write_text(json.dumps({**base, "cdp": bad}), encoding="utf-8")
+        found = AgentLink.discover(tmp_path, "t1")
+        assert found is not None and found.cdp is None, bad  # ignored: never a connection anywhere else

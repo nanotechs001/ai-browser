@@ -2,78 +2,13 @@
 every WebSocket session and every CDP method), and a throwaway Chrome at the end."""
 
 import asyncio
-import base64
-import json
 
 import pytest
-from websockets.asyncio.server import serve
 
 from ai_browser.chrome import chrome_binary
+from fake_brave import FakePort, relay_client, serve_relay, until
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
-
-
-class FakePort:
-    """Brave's debugging port, faked: a DevToolsActivePort file, and a WebSocket answering a few CDP methods.
-    answer: "accept"; "refuse" (a 403 instead of the WebSocket, as when the user clicks Deny); "silent" (no answer)."""
-
-    def __init__(self, folder, answer="accept", pages=()):
-        self.folder, self.answer, self.pages = folder, answer, list(pages)
-        self.sessions, self.methods, self.attached = 0, [], []
-        self.server, self.release = None, asyncio.Event()
-
-    async def start(self):
-        self.server = await serve(self._handler, "127.0.0.1", 0, process_request=self._process)
-        port = self.server.sockets[0].getsockname()[1]
-        self.folder.mkdir(parents=True, exist_ok=True)
-        (self.folder / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/fake\n", encoding="utf-8")
-
-    async def _process(self, connection, request):
-        self.sessions += 1  # a debugging session asked for: the moment the real Brave would ask "Allow?"
-        if self.answer == "refuse":
-            return connection.respond(403, "Denied\n")
-        if self.answer == "silent":
-            await asyncio.wait_for(self.release.wait(), 30)
-        return None
-
-    def infos(self):
-        return [{"targetId": page["target"], "type": "page", "url": page["url"], "title": page["title"]}
-                for page in self.pages]
-
-    async def _handler(self, ws):
-        async for raw in ws:
-            message = json.loads(raw)
-            method = message["method"]
-            self.methods.append(method)
-            result = {}
-            if method == "Target.getTargets":
-                result = {"targetInfos": self.infos()}
-            elif method == "Target.attachToTarget":
-                self.attached.append(message["params"]["targetId"])
-                result = {"sessionId": "S1"}
-            elif method == "Page.getLayoutMetrics":
-                result = {"cssVisualViewport": {"clientWidth": 800, "clientHeight": 600, "pageX": 0, "pageY": 0}}
-            elif method == "Page.captureScreenshot":
-                result = {"data": base64.b64encode(b"\xff\xd8jpeg").decode()}
-            elif method == "Runtime.evaluate":
-                result = {"result": {"value": "page text"}}
-            await ws.send(json.dumps({"id": message["id"], "result": result}))
-            if method == "Target.setDiscoverTargets":
-                for info in self.infos():
-                    await ws.send(json.dumps({"method": "Target.targetCreated", "params": {"targetInfo": info}}))
-
-    async def stop(self):
-        self.release.set()
-        self.server.close()
-        await self.server.wait_closed()
-
-
-async def until(check, seconds=5):
-    for _ in range(int(seconds * 20)):
-        if check():
-            return True
-        await asyncio.sleep(0.05)
-    return check()
 
 
 AGENT = {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"}
@@ -179,28 +114,77 @@ async def test_the_brain_is_marked_only_when_one_tab_matches(tmp_path):
         await port.stop()
 
 
+async def test_the_tab_list_and_an_agent_share_one_connection(tmp_path):
+    from ai_browser.app.bravelink import BraveLink
+
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder, pages=[{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
+    await port.start()
+    link = BraveLink(folder, every=0.1)
+    url, stop = await serve_relay(link.relay)
+    await link.start()
+    try:
+        await link.connect()
+        assert link.state == "connected"
+        assert await until(lambda: [tab["target"] for tab in link.tabs()] == ["U1"])
+        agent = await relay_client(url, link.relay.tokens.mint("a1"))
+        tab = (await agent.send("Target.createTarget", {"url": "https://shop.example/"}))["targetId"]
+        assert await until(lambda: tab in [listed["target"] for listed in link.tabs()])
+        link.set_owner(tab, AGENT)
+        assert await link.thumbnail(tab) == b"\xff\xd8jpeg"
+        await link.close_targets([tab])  # closing an agent closes its own tabs, through the same connection
+        assert await until(lambda: tab not in [listed["target"] for listed in link.tabs()])
+        assert port.sessions == 1 and link.relay.upstream_opens == 1
+        await agent.close()
+    finally:
+        await link.close()
+        await stop()
+        await port.stop()
+
+
+async def test_a_session_that_connects_first_starts_the_tab_list_too(tmp_path):
+    from ai_browser.app.bravelink import BraveLink
+
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder, pages=[{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
+    await port.start()
+    link = BraveLink(folder, every=0.1)
+    url, stop = await serve_relay(link.relay)
+    await link.start()
+    try:
+        session = await relay_client(url, link.relay.tokens.mint("cc-1"))  # its call asks Brave (Decision 10)
+        assert link.state == "connected"
+        assert await until(lambda: [tab["target"] for tab in link.tabs()] == ["U1"])
+        assert port.sessions == 1
+        await session.close()
+    finally:
+        await link.close()
+        await stop()
+        await port.stop()
+
+
 @CHROME
 async def test_brave_link_in_a_throwaway_chrome(throwaway_chrome):
     from ai_browser import testpages
     from ai_browser.app.bravelink import BraveLink
-    from ai_browser.cdp import CDP
-    from ai_browser.chrome import find_ws_url
 
     base, _, stop_pages = testpages.serve_host()
     link = BraveLink(throwaway_chrome, every=0.1)
+    url, stop = await serve_relay(link.relay)
     await link.start()
-    cdp = await CDP.connect(find_ws_url(throwaway_chrome, timeout=20))
     try:
         assert link.state == "ready"
         await link.connect()
         assert link.state == "connected"
-        target = (await cdp.send("Target.createTarget", {"url": base + "privacy.html"}))["targetId"]
+        agent = await relay_client(url, link.relay.tokens.mint("a1"))
+        target = (await agent.send("Target.createTarget", {"url": base + "privacy.html"}))["targetId"]
         assert await until(lambda: any(tab["target"] == target and tab["title"] == "Privacy" for tab in link.tabs()))
         link.set_owner(target, AGENT)
         assert (await link.thumbnail(target))[:2] == b"\xff\xd8"
         await link.close_targets([target, "no-such-target"])  # closing an agent closes its own tabs
         assert await until(lambda: not any(tab["target"] == target for tab in link.tabs()))
+        await agent.close()
     finally:
-        await cdp.close()
         await link.close()
+        await stop()
         stop_pages()

@@ -9,6 +9,7 @@ from ai_browser import engine as engine_module
 from ai_browser import testpages
 from ai_browser.engine import Engine, ToolResult
 from ai_browser.skills import Catalog, SkillSource
+from fake_brave import BraveApp, FakePort, add_agent, until
 
 DOCKER = pytest.mark.docker
 
@@ -529,3 +530,149 @@ async def test_a_session_record_that_cant_be_judged_is_left_alone(tmp_path, monk
     monkeypatch.setattr(platforms, "pid_alive", cannot_tell)
     await engine._close_orphans()
     assert sent == [] and record.exists()  # its tabs are not closed
+
+
+def no_direct(*args, **kwargs):
+    raise AssertionError("connected directly")  # find_ws_url runs in a thread: a plain function that raises
+
+
+def brave_folder(tmp_path):
+    return tmp_path / "BraveSoftware" / "Brave-Browser"
+
+
+def ok(result):
+    assert not result.text.startswith("error"), result.text
+    return result.text
+
+
+async def test_an_app_agent_always_uses_the_relay(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine_module, "find_ws_url", no_direct)  # never a direct connection
+    app = await BraveApp(tmp_path / "home", brave_folder(tmp_path)).start()
+    app.agent_env(monkeypatch)
+    engine = Engine(home=tmp_path / "engine", catalog=Catalog([], set()))
+    try:
+        ok(await engine.tabs("list"))
+        assert app.port.sessions == 1 and app.brave.relay.upstream_opens == 1  # the app's one question
+        assert "a1" in [row["id"] for row in app.brave.relay.clients()]
+    finally:
+        await engine.close()
+        await app.stop()
+    idle = await BraveApp(tmp_path / "home2", tmp_path / "two" / "BraveSoftware" / "Brave-Browser").start(
+        connect=False)  # ready, and a1 isn't in a turn: the relay may not ask for it
+    idle.agent_env(monkeypatch)
+    engine = Engine(home=tmp_path / "engine2", catalog=Catalog([], set()))
+    try:
+        text = (await engine.tabs("list")).text
+        assert text.startswith("error: AI Browser isn't connected to Brave: ask the user to click Connect in AI Home")
+        assert idle.port.sessions == 0
+    finally:
+        await engine.close()
+        await idle.stop()
+
+
+async def test_a_session_goes_through_a_running_app(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine_module, "find_ws_url", no_direct)
+    monkeypatch.setattr(Engine, "_close_orphans", must_not)
+    app = await BraveApp(tmp_path / "home", brave_folder(tmp_path)).start()
+    app.write_link()
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.delenv("AIB_CHROME_DIR")  # unset: the app's browser
+    engine = Engine(home=app.home, catalog=Catalog([], set()))
+    try:
+        ok(await engine.tabs("list"))
+        status = ok(await engine.sandbox_status())
+        assert status.startswith("browser: your Brave, through AI Browser's connection · only tabs this session")
+        assert f"cc-{engine.task_id}" in app.server.sessions and app.port.sessions == 1
+    finally:
+        await engine.close()
+        await app.stop()
+
+
+async def test_a_session_never_falls_back_while_the_app_is_up(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine_module, "find_ws_url", no_direct)
+    app = await BraveApp(tmp_path / "home", brave_folder(tmp_path), answer="refuse").start()  # the user said Deny
+    link = app.write_link()
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(app.folder))
+    engine = Engine(home=app.home, catalog=Catalog([], set()))
+    try:
+        assert app.brave.state == "refused"
+        text = (await engine.tabs("list")).text
+        assert text.startswith("error: Brave said no to AI Browser's connection: ask the user to click Try again")
+        data = json.loads(link.read_text(encoding="utf-8"))
+        link.write_text(json.dumps({**data, "events": "http://127.0.0.1:9/agent-events",
+                                    "cdp": "ws://127.0.0.1:9/cdp"}), encoding="utf-8")  # alive, but silent
+        text = (await engine.tabs("list")).text
+        assert text.startswith("error: AI Browser didn't answer, so this session can't use your Brave through it")
+        link.write_text(json.dumps(data), encoding="utf-8")
+        await app.brave.relay.disconnect(f"cc-{engine.task_id}")  # AI Home's Disconnect
+        text = (await engine.tabs("list")).text
+        assert text.startswith("error: The user disconnected this Claude Code session from Brave in AI Home")
+        assert app.port.sessions == 1  # the app's own attempt only
+    finally:
+        await engine.close()
+        await app.stop()
+
+
+async def test_a_session_whose_app_stopped_asks_first(monkeypatch, tmp_path):
+    app = await BraveApp(tmp_path / "home", brave_folder(tmp_path)).start()
+    link = app.write_link()
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(app.folder))
+    engine = Engine(home=app.home, catalog=Catalog([], set()))
+    try:
+        ok(await engine.tabs("list"))
+        link.unlink()
+        await app.server.stop()  # the app quits: the session's connection closes
+        await app.brave.close()
+        before = app.port.sessions
+        text = (await engine.tabs("list")).text
+        assert text.startswith("error: AI Browser stopped, so this session lost its connection to your Brave.")
+        assert "call sandbox_start(chrome=true)" in text and app.port.sessions == before  # it connected nowhere
+        ok(await engine.sandbox_start(chrome=True))  # the user's choice: directly, Brave asks
+        assert app.port.sessions == before + 1
+    finally:
+        await engine.close()
+        await app.port.stop()
+
+
+async def test_aib_chrome_dir_naming_another_browser_goes_direct(monkeypatch, tmp_path):
+    app = await BraveApp(tmp_path / "home", brave_folder(tmp_path)).start()
+    app.write_link()
+    chrome = FakePort(tmp_path / "Google" / "Chrome")
+    await chrome.start()
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(chrome.folder))
+    engine = Engine(home=app.home, catalog=Catalog([], set()))
+    try:
+        ok(await engine.tabs("list"))
+        status = ok(await engine.sandbox_status())
+        assert status.startswith("browser: your Chrome · not through AI Browser: AIB_CHROME_DIR names your Chrome")
+        assert chrome.sessions == 1 and app.port.sessions == 1 and f"cc-{engine.task_id}" not in app.server.sessions
+    finally:
+        await engine.close()
+        await chrome.stop()
+        await app.stop()
+
+
+async def test_take_back_reaches_the_engine_through_the_relay_at_once(monkeypatch, tmp_path):
+    import ai_browser.agentlink as agentlink
+
+    monkeypatch.setattr(agentlink, "HANDED_TTL", 60)  # the status answer still says "handed" after Take back
+    app = await BraveApp(tmp_path / "home", brave_folder(tmp_path),
+                         pages=[{"target": "U1", "url": "https://shop.example/", "title": "Shop"}]).start()
+    add_agent(app.agents, "a1", adopted=["U1"])
+    app.agent_env(monkeypatch)
+    engine = Engine(home=tmp_path / "engine", catalog=Catalog([], set()))
+    try:
+        assert "h1" in ok(await engine.tabs("list"))
+        await engine.tabs("switch", "h1")  # taken on (the fake can't draw the page the switch then reads)
+        assert engine.browser.current is not None and engine.browser.current.handed
+        had = app.agents.take_back("U1")
+        await app.brave.relay.cut(had, "U1")  # what the server's take_back does
+        assert await until(lambda: engine.browser.current.detached)  # the browser's detach note reached the engine
+        assert ok(await engine.tabs("list")).startswith("(the user took back tab t1)")
+        assert app.port.page("U1") is not None  # let go of, never closed
+    finally:
+        await engine.close()
+        await app.stop()

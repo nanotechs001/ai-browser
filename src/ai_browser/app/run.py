@@ -76,11 +76,15 @@ BROWSERS = ("brave", "app")
 SWITCH = """Agents browse in your {name}, but its remote-debugging switch is off, so nothing reaches it yet. Once:
   1. In {name}, open {inspect}.
   2. Tick "Allow remote debugging for this browser instance".
-  3. When {name} asks "Allow remote debugging?", click Allow. {name} may ask when AI Browser starts and again when
-     each agent first uses the browser, and it asks again after it restarts.
+  3. When {name} asks "Allow remote debugging?", click Allow. AI Browser holds one connection for all its agents
+     and Claude Code sessions, so {name} asks once each time AI Browser starts, and again after {name} restarts.
 While this switch is on, any program on this computer can reach your {name}, not only AI Browser. That includes the
-sites you are signed in to. Turn it off when agents aren't working: untick the same box. Only click Allow right after
-you started AI Browser or gave an agent a task; if {name} asks at any other time, click Deny.
+sites you are signed in to. While AI Browser is connected, a program that can read AI Browser's files can also use
+your {name} through it without a new question; AI Home lists everything connected, with Disconnect. Turn the switch
+off when agents aren't working: untick the same box. Only click Allow right after you started AI Browser, clicked
+Connect, gave an agent a task, asked Claude Code to browse, or opened {name} again while an agent was working. If
+{name} asks at any other time, it isn't AI Browser: click Deny, unless you just started another browser tool
+yourself.
 Once the switch is on, AI Home's browser card has a Connect button."""
 reveal = reveal_folder  # a file manager window with the extension folder selected (tests replace it)
 
@@ -107,12 +111,14 @@ def brave_env(folder: Path) -> dict[str, str]:
     return {"AIB_BROWSER": "chrome", "AIB_CHROME_DIR": str(folder)}
 
 
-def write_link(home: Path, url: str, token: str) -> Path:
-    """<home>/app/link.json (mode 0600): how Claude Code sessions in the user's Brave find this app."""
+def write_link(home: Path, url: str, token: str, cdp: str | None = None, browser_dir: Path | None = None) -> Path:
+    """<home>/app/link.json (mode 0600): how Claude Code sessions find this app, and its relay to the user's Brave."""
     path = Path(home) / "app" / "link.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = json.dumps({"events": f"{url}/agent-events", "session_token": token, "pid": os.getpid()}).encode("utf-8")
-    write_atomic(path, data, 0o600)  # holds the session token
+    data = {"events": f"{url}/agent-events", "session_token": token, "pid": os.getpid()}
+    if cdp is not None and browser_dir is not None:
+        data.update({"cdp": cdp, "browser_dir": str(browser_dir)})
+    write_atomic(path, json.dumps(data).encode("utf-8"), 0o600)  # holds the session token
     return path
 
 
@@ -205,14 +211,15 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
         server.allow_origin(f"chrome-extension://{app.extension_id}")
         server.allow_origin(f"chrome-extension://{extension_id_for(watcher)}", watcher=True)
         agents.env.update({"AIB_APP_PROFILE": str(app.profile), "AIB_APP_EXTENSION": app.extension_id,
-                           "AIB_APP_EVENTS": f"{url}/agent-events", "AIB_APP_AGENT_TOKEN": server.agent_token})
+                           "AIB_APP_EVENTS": f"{url}/agent-events"})  # each agent's own token comes from create()
         if where == "brave":  # agents browse in the user's own Brave; AI Browser is the control room
             own = own_browser_dir()  # not `folder`: that is the extension's, which the setup steps name
-            brave = BraveLink(own)
-            agents.env.update(brave_env(own))
+            brave = BraveLink(own, tokens=server.tokens)  # its relay: the one connection every agent shares
+            relay = url.replace("http://", "ws://", 1) + "/cdp"
+            agents.env.update({**brave_env(own), "AIB_APP_CDP": relay})
             server.attach_brave(brave)
             agents.close_tabs = brave.close_targets
-            link_file = write_link(home, url, server.session_token)
+            link_file = write_link(home, url, server.session_token, relay, own)
             await brave.start()  # looks at the switch; it never connects by itself
         watch = TabWatch(app.ws_url, app.extension_id)  # AI Browser's own tabs: its last window closing ends the app
         await watch.start()
@@ -231,7 +238,7 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
             if brave.state == "off":
                 out(SWITCH.format(name=brave.name, inspect=inspect_address(brave.folder)))
             else:
-                server.connect_brave()  # once, as the app starts: Brave asks "Allow remote debugging?"
+                server.connect_brave("start")  # once, as the app starts: Brave asks "Allow remote debugging?"
         if not brain.store.watcher_seen:  # the Brain's watcher isn't in Brave yet: its steps, until it is
             out(brave_text(server.watcher_folder))
             if installed and not brain.store.watcher_prompted:  # one Finder window at a time, and only once
@@ -261,9 +268,9 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
         if link_file is not None:
             with contextlib.suppress(OSError):
                 platforms.unlink(link_file, missing_ok=True)
+        await server.stop()  # every agent's Claude Code process ends, then their connections (1001)
         if brave is not None:
-            await brave.close()  # the agents' tabs and groups stay in Brave: nothing they left for the user is lost
-        await server.stop()  # every agent's Claude Code process ends too
+            await brave.close()  # then the one connection: the agents' tabs and groups stay in Brave
         if watch is not None:
             await watch.close()
         if app is not None:

@@ -12,6 +12,7 @@ import contextlib
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -23,8 +24,10 @@ NO_APP = {"grouped": False, "reason": "no_app"}
 
 
 class AgentLink:
-    def __init__(self, url: str, token: str, agent: str):
+    def __init__(self, url: str, token: str, agent: str, cdp: str | None = None, browser_dir: Path | None = None,
+                 pid: int = 0):
         self.url, self.token, self.agent = url, token, agent
+        self.cdp, self.browser_dir, self.pid = cdp, browser_dir, pid  # the app's relay, its browser, its process
         self.base = url.rsplit("/agent-events", 1)[0]  # the app's address: its other routes sit beside /agent-events
         self._queue: asyncio.Queue[dict] = asyncio.Queue()
         self._sender: asyncio.Task | None = None
@@ -65,9 +68,11 @@ class AgentLink:
         answer = await asyncio.to_thread(self._request, "POST", "/agent-claim", body)
         return answer if isinstance(answer, dict) and "grouped" in answer else dict(NO_APP)
 
-    async def status(self, max_age: float = HANDED_TTL) -> dict:
-        """{"groups": tab groups on?, "handed": tabs the user handed us}, no older than `max_age` seconds. When the
-        app doesn't answer, the last answer stands (a moment's silence must not take a handed tab away)."""
+    async def status(self, max_age: float | None = None) -> dict:
+        """{"groups": tab groups on?, "handed": tabs the user handed us}, no older than `max_age` seconds (by default
+        HANDED_TTL, read now). When the app doesn't answer, the last answer stands (a moment's silence must not take a
+        handed tab away)."""
+        max_age = HANDED_TTL if max_age is None else max_age
         if self._status is not None and time.monotonic() - self._status_at < max_age:
             return self._status
         answer = await asyncio.to_thread(self._request, "GET", f"/agent-status?agent={quote(self.agent)}", None)
@@ -80,9 +85,30 @@ class AgentLink:
         self._status_at = time.monotonic()
         return self._status
 
-    async def hello(self) -> None:
-        """A Claude Code session joins the running app (its tabs then show in AI Home, grouped "Claude Code")."""
-        await asyncio.to_thread(self._request, "POST", "/agent-hello", {"agent": self.agent, "pid": os.getpid()})
+    async def hello(self) -> dict | None:
+        """A Claude Code session joins the running app (its tabs then show in AI Home, grouped "Claude Code"). The
+        app's answer: {"cdp_token": …} when it relays the browser connection, {} without a relay (204), {"cut_off":
+        True} when the user disconnected this session in AI Home (410), None when it didn't answer."""
+        return await asyncio.to_thread(self._hello)
+
+    def _hello(self) -> dict | None:
+        data = json.dumps({"agent": self.agent, "pid": os.getpid()}).encode("utf-8")
+        request = urllib.request.Request(self.base + "/agent-hello", data=data, method="POST", headers={
+            "Content-Type": "application/json", "X-AIB-Agent-Token": self.token})
+        try:
+            with _DIRECT.open(request, timeout=2) as response:
+                status, raw = response.status, response.read()
+        except urllib.error.HTTPError as exc:
+            return {"cut_off": True} if exc.code == 410 else None
+        except (OSError, ValueError):
+            return None
+        if status == 204 or not raw:
+            return {}
+        try:
+            answer = json.loads(raw)
+        except ValueError:
+            return None
+        return answer if isinstance(answer, dict) else None
 
     async def bye(self) -> None:
         await asyncio.to_thread(self._request, "POST", "/agent-bye", {"agent": self.agent})
@@ -110,11 +136,14 @@ class AgentLink:
         try:
             data = json.loads((Path(home) / "app" / "link.json").read_text(encoding="utf-8"))
             events, token, pid = data["events"], data["session_token"], int(data["pid"])
-        except (OSError, ValueError, KeyError, TypeError):
+            cdp, folder = data.get("cdp"), data.get("browser_dir")
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             return None
         if not (isinstance(events, str) and isinstance(token, str) and _local_events(events)):
             return None
-        return cls(events, token, f"cc-{task_id}") if _alive(pid) else None
+        cdp = cdp if isinstance(cdp, str) and _local_cdp(cdp) else None  # anything else is ignored
+        folder = Path(folder) if isinstance(folder, str) and folder else None
+        return cls(events, token, f"cc-{task_id}", cdp=cdp, browser_dir=folder, pid=pid) if _alive(pid) else None
 
 
 def _local_events(url: str) -> bool:
@@ -127,4 +156,17 @@ def _local_events(url: str) -> bool:
         return False
     return (parts.scheme == "http" and parts.hostname == "127.0.0.1" and port is not None
             and parts.username is None and parts.password is None and parts.path == "/agent-events"
+            and not parts.query and not parts.fragment)
+
+
+def _local_cdp(url: str) -> bool:
+    """Whether `url` is the app's relay on this computer: ws, 127.0.0.1 itself (no user part), a port, the path /cdp,
+    no query or fragment. A session's browser connection, and the token in its header, may go nowhere else."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    return (parts.scheme == "ws" and parts.hostname == "127.0.0.1" and port is not None
+            and parts.username is None and parts.password is None and parts.path == "/cdp"
             and not parts.query and not parts.fragment)

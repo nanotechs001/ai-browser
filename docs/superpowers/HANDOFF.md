@@ -18,23 +18,22 @@ work ledgers (`.superpowers/`) are git-ignored and stayed on the Mac.
   - `docs/superpowers/specs/2026-10-03-app-as-an-app-overview.md`: the design brief and the user's answers;
   - `docs/superpowers/specs/2026-10-03-app-as-an-app-investigation.json`: the investigators' findings, with evidence;
   - seven specs, `docs/superpowers/specs/2026-10-03-*-design.md`.
-- **Plans, six of seven** (`docs/superpowers/plans/2026-10-03-*.md`):
-  - written **and reviewed**: `brain-delegation`, `watcher-safety`, `browser-detection`;
+- **Plans, all seven** (`docs/superpowers/plans/2026-10-03-*.md`):
+  - written **and reviewed**: `cdp-relay`, `brain-delegation`, `watcher-safety`, `browser-detection`;
   - written, **not yet reviewed** (their reviewers hit a session limit): `app-window`, `browser-profile-choice`,
-    `side-chat`;
-  - **not written yet**: `cdp-relay` (its planner hit the session limit before saving anything).
+    `side-chat`.
+- **The shared connection (cdp-relay), built and merged** (2026-10-03, on the Mac): Brave asks "Allow remote
+  debugging?" once per app run, and a closed automation bar stays closed. Report:
+  `docs/superpowers/reports/2026-10-03-cdp-relay.md` (its rulings, deferred minors, and the user's hand check).
 
 ## Next, in this order
 
-1. **The shared connection first.** The user's words: "it should only ask once and display once": one "Allow remote
-   debugging?" per app run, and the automation bar stays closed once the user closes it.
-   - Write `docs/superpowers/plans/2026-10-03-cdp-relay.md` from `docs/superpowers/specs/2026-10-03-cdp-relay-design.md`
-     (superpowers:writing-plans), review it, then build it test-first on its own branch.
-   - **Ruling already taken:** the relay lands *before* brain-delegation (1A) and watcher-safety (1B). Where its spec
-     uses 1B's `MESSAGE_RULES` / `WATCHER_RECEIVES` or 1A's agent numbers, use today's structures instead:
-     `BRAVE_MESSAGES` and the watcher-origin check in `app/server.py`, and an agent's number as `int(id[1:])`.
-     1A and 1B fold them into their tables when they land (their plans already say so).
-   - Re-read every file at HEAD: the spec's line numbers assumed wave 1 had landed.
+1. **The shared connection: done** (see above). It landed *before* brain-delegation (1A) and watcher-safety (1B), so
+   it uses today's structures: `BRAVE_MESSAGES` (with `browser_disconnect` added) and the watcher-origin check in
+   `app/server.py`, and an agent's number as `int(id[1:])`. 1A and 1B fold them into their tables when they land:
+   `browser_disconnect` is an app-only row, and `browser_clients` stays out of the watcher's messages. Their plans
+   predate the relay: re-read every file at HEAD (tokens are now per agent: `server.token_for(id)`, not
+   `server.agent_token`).
 2. **Review the three unreviewed plans** against their specs and the code: coverage, no placeholders, consistent
    names, anchors that exist, tests that fail first.
 3. **Wave A, in parallel branches:** `brain-delegation`, `watcher-safety`, `browser-detection`. Merge rule from the

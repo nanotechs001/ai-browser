@@ -182,6 +182,7 @@ async def test_chrome_mode_reads_and_acts(chrome_browser):
 
 
 @CHROME
+@pytest.mark.direct_only  # tests the Browser alone over one shared connection
 async def test_chrome_mode_leaves_the_users_tabs_alone(chrome_browser):
     browser, base, before = chrome_browser
     await browser.open(base + "privacy.html")
@@ -317,30 +318,35 @@ async def chrome_pages(cdp) -> set[str]:
 
 
 @pytest.fixture
-async def own_browser(throwaway_chrome, tmp_path):
-    """(make(**options) -> a started Browser in chrome mode, base URL, the test's own CDP connection)."""
+async def own_browser(throwaway_chrome, tmp_path, route):
+    """(make(**options) -> a started Browser in chrome mode, base URL, the test's own CDP connection). The Browsers'
+    connection is the test's own (direct) or goes through the app's relay (`route`)."""
     from ai_browser import testpages
     from ai_browser.browser import Browser
     from ai_browser.config import Config
     from ai_browser.workfs import WorkDir
+    from conftest import browser_connection
 
     base, _, stop_pages = testpages.serve_host()
     cdp = await CDP.connect(find_ws_url(throwaway_chrome, timeout=20))
     made = []
+    # direct: the Browsers share the test's own connection, as they always did (some tests spy on it)
+    routed = contextlib.nullcontext(cdp) if route == "direct" else browser_connection(throwaway_chrome, route,
+                                                                                         tmp_path / "relay-home")
+    async with routed as browsers:
+        async def make(**options):
+            browser = Browser(browsers, WorkDir(tmp_path / "work", f"t{len(made)}"), Config(), mode="chrome",
+                              **options)
+            await browser.start()
+            made.append(browser)
+            return browser
 
-    async def make(**options):
-        browser = Browser(cdp, WorkDir(tmp_path / "work", f"t{len(made)}"), Config(), mode="chrome", **options)
-        await browser.start()
-        made.append(browser)
-        return browser
-
-    yield make, base, cdp
-    for browser in made:
-        with contextlib.suppress(Exception):
-            await browser.close()
+        yield make, base, cdp
+        for browser in made:
+            with contextlib.suppress(Exception):
+                await browser.close()
     await cdp.close()
     stop_pages()
-
 
 @CHROME
 async def test_the_users_browser_gets_no_tab_until_the_first_open(own_browser):
@@ -621,6 +627,7 @@ async def test_a_throwaway_chrome_answers(throwaway_chrome):
 
 
 @CHROME
+@pytest.mark.direct_only  # tests the Browser alone over one shared connection
 async def test_a_handed_tab_is_listed_taken_on_and_given_back(own_browser):  # Review Focus 3
     from ai_browser.browser import BrowserError
 
@@ -671,6 +678,7 @@ async def test_a_handed_tab_is_listed_taken_on_and_given_back(own_browser):  # R
 
 
 @CHROME
+@pytest.mark.direct_only  # tests the Browser alone over one shared connection
 async def test_a_tab_the_agent_opens_from_a_handed_tab_is_its_own_and_take_back_ends_the_handed_one(own_browser):
     """Review (final), Important 2: the agent's click in a handed tab opens a new tab. That tab is the agent's own
     (its steps opened it: reported as not the user's, grouped with the agent, closed with it), never a second handed

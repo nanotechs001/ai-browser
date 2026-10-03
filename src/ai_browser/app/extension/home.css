@@ -125,3 +125,8 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .tab .menu { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; padding: 6px 0 2px; }
 .tab .menu button { text-align: left; }
 .tab .menu .note { margin: 2px 0 0; font-size: 12px; }
+.clients { list-style: none; margin: 4px 0; padding: 0; }
+.clients li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.clients li::before { content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--client-color, transparent); }
+.clients li span { flex: 1; }

@@ -21,7 +21,7 @@ from pathlib import Path
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -39,6 +39,7 @@ from ..hearing.service import HearingService, unavailable_status
 from ..live import _bind, _QuietServer, _serve
 from ..skills import Catalog
 from .agents import Agent, AgentManager
+from .cdprelay import Tokens
 from .groups import GroupKeeper
 
 APP_PORTS = range(8792, 8812)
@@ -58,7 +59,7 @@ HEARING_MESSAGES = {"hearing", "hearing_download", "hearing_cancel", "listen_sta
 TALK_MESSAGES = {"brain_ask", "brain_confirm", "brain_dismiss"}  # the talk with the Brain: the same
 _TALK_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 CHECK_MESSAGES = {"check_continue", "check_skip"}  # a bot check's buttons; the watcher may Continue, never Skip
-BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back"}  # only AI Browser's own pages send these
+BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back", "browser_disconnect"}  # only AI Browser's own pages
 CHECK_SITE = re.compile(r"[a-z0-9.-]{1,253}")  # a host name, nothing else
 CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{1,64}")  # an engine's live view
 WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "schedule", "run", "tools", "skills",
@@ -67,6 +68,7 @@ WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabl
 SETUP_PAGE = Path(__file__).with_name("setup.html")
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
 SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (cc-<task id>)
+AGENT_ID = re.compile(r"^a[0-9]{1,9}$")  # an agent's id (a<number>)
 SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
 YOU = {"kind": "you"}
 
@@ -145,7 +147,7 @@ class AppServer:
         self.host = host
         self.ports = ports
         self.token = secrets.token_urlsafe(24)  # AI Home, the panel and the worker (in the extension's config.json)
-        self.agent_token = secrets.token_urlsafe(24)  # the agents' engines (in each agent's mcp.json)
+        self.tokens = Tokens()  # each agent's own token (and each session's for /cdp), new every run
         self.session_token = secrets.token_urlsafe(24)  # Claude Code sessions (in <home>/app/link.json, mode 0600)
         self.groups = GroupKeeper(self._to_watcher, on_change=self._browser_changed)  # tab groups, through the watcher
         self.brave = None  # BraveLink in brave mode (attach_brave): the user's Brave
@@ -153,6 +155,7 @@ class AppServer:
         self._thread_urls: dict[str, str] = {}  # open_thread request -> its address (the Brain's group in AI Home)
         self._sweeper: asyncio.Task | None = None
         self.url: str | None = None
+        self.port = 0
         self.extension_seen = False  # the extension has connected: the one-time setup is done
         self.origin_mismatch: str | None = None  # an extension with our token, from an origin we didn't compute
         self.out: Callable[[str], None] = print  # where the app's one-line notes go (run_app passes its own)
@@ -171,7 +174,8 @@ class AppServer:
         self._task: asyncio.Task | None = None
         agents.on_action = self._on_action
         agents.ungroup = self._ungroup  # a handed tab taken back, or let go when its agent closes
-        agents.on_turn = lambda agent: self.connect_brave()  # an agent's turn: right after the user's task
+        agents.on_turn = lambda agent: self.connect_brave("turn", agent.id)  # right after the user's task
+        agents.mint_token = self.tokens.mint
         if tabs is not None:
             self.attach_tabs(tabs)
 
@@ -193,6 +197,10 @@ class AppServer:
         self.out(f"An AI Browser extension connected as {origin}, but the app expected {app} (AI Browser) or "
                  f"{watcher} (the watcher): please report this")
 
+    def token_for(self, agent_id: str) -> str:
+        """An agent's own token (minted when it is created): its engine's key to the reports and to /cdp."""
+        return self.tokens.mint(agent_id)
+
     def attach_tabs(self, tabs) -> None:
         """The TabWatch, once AI Browser is open: the tab list, Watch and thumbnails."""
         self.tabs = tabs
@@ -207,7 +215,7 @@ class AppServer:
                                 Route("/agent-status", self._agent_status),
                                 Route("/agent-hello", self._agent_hello, methods=["POST"]),
                                 Route("/agent-bye", self._agent_bye, methods=["POST"]),
-                                WebSocketRoute("/ws", self._socket)])
+                                WebSocketRoute("/ws", self._socket), WebSocketRoute("/cdp", self._cdp)])
         self._fanout = asyncio.create_task(self._forward())
         self._sweeper = asyncio.create_task(self._sweep_sessions())
         if self.brain is not None:
@@ -216,8 +224,9 @@ class AppServer:
             sock = _bind(self.host, port)
             if sock is None:
                 continue
+            # websockets-sansio: no handshake timeout, so the relay can hold one while the user answers Allow
             self._server = _QuietServer(uvicorn.Config(app, host=self.host, port=port, log_level="warning",
-                                                       access_log=False, lifespan="off"))
+                                                       access_log=False, lifespan="off", ws="websockets-sansio"))
             self._task = asyncio.create_task(_serve(self._server, sock))
             for _ in range(200):
                 if self._server.started or self._task.done():
@@ -225,6 +234,9 @@ class AppServer:
                 await asyncio.sleep(0.01)
             if self._server.started:
                 self.url = f"http://{self.host}:{port}"
+                self.port = port
+                if self.brave is not None:
+                    self.brave.relay.port = port
                 return self.url
             sock.close()
         raise RuntimeError(f"no free port for the AI Browser app server ({self.ports.start}-{self.ports.stop - 1})")
@@ -235,6 +247,9 @@ class AppServer:
         if self.brain is not None:
             await self.brain.stop()
         await self.agents.close_all()  # every agent's Claude Code process ends with the app
+        if self.brave is not None:  # the agents have ended: their sockets close (1001) before uvicorn stops
+            with contextlib.suppress(Exception):
+                await self.brave.relay.close_clients(1001)
         for task in [self._fanout, self._sweeper, *self._jobs, *(state["task"] for state in self._thumbs.values())]:
             if task is not None:
                 task.cancel()
@@ -278,10 +293,6 @@ class AppServer:
         return JSONResponse(answer)
 
     async def _agent_events(self, request: Request) -> Response:
-        given = request.headers.get("x-aib-agent-token", "").encode()
-        if not (hmac.compare_digest(given, self.agent_token.encode())
-                or hmac.compare_digest(given, self.session_token.encode())):
-            return Response(status_code=403)
         try:
             report = await request.json()
         except ValueError:
@@ -291,20 +302,46 @@ class AppServer:
         agent = report["agent"]
         if not self._token_ok(request, agent):
             return Response(status_code=403)
+        if self._relay_drops(report):  # brave mode: only tabs the relay gives this agent or session
+            return Response(status_code=204)
         if SESSION_ID.match(agent):  # first: a session's tabs; its check reports are dropped (it has no row)
             self._session_report(agent, report)
-            return Response(status_code=204)
-        if self._hands_a_tab(report):  # in Brave only the user's Hand over hands a tab, never a report
             return Response(status_code=204)
         self._agent_report(report)  # wave 1: check reports, then tab_event
         self._after_agent_report(report)
         return Response(status_code=204)
 
     def _token_ok(self, request: Request, agent: str) -> bool:
-        """The session token only for a session's id, the agents' token only for an agent's."""
-        given = request.headers.get("x-aib-agent-token", "").encode()
-        wanted = self.session_token if SESSION_ID.match(agent) else self.agent_token
-        return hmac.compare_digest(given, wanted.encode())
+        """The session token for a session's id; for an agent's id, that agent's own token and no other."""
+        given = request.headers.get("x-aib-agent-token", "")
+        if SESSION_ID.match(agent):
+            return hmac.compare_digest(given.encode("utf-8", "replace"), self.session_token.encode())
+        return self.tokens.check(agent, given)
+
+    def _granted(self, owner_id: str, target) -> str | None:
+        """Brave mode (Decision 5): "own" when the relay says the agent or session opened `target`, "handed" when the
+        user handed it to the agent, else None."""
+        if not isinstance(target, str) or not target:
+            return None
+        if self.brave.relay.grants(owner_id, target):
+            return "own"
+        agent = self.agents.agents.get(owner_id)
+        return "handed" if agent is not None and target in agent.adopted else None
+
+    def _relay_drops(self, report: dict) -> bool:
+        """A tab report about a tab the relay doesn't give this agent or session is dropped; a kept one's `adopted`
+        is the relay's answer, never the engine's. So no report can hand a tab, or put a handed one among the tabs
+        closing the agent closes."""
+        if self.brave is None or report.get("kind") not in ("tab_opened", "working_tab", "check"):
+            return False
+        if report.get("kind") == "check" and report.get("live") and _valid_check(report):
+            report["adopted"] = False  # a bot check in QA's own sandbox (its live view): no tab of the user's Brave
+            return False
+        granted = self._granted(report["agent"], report.get("target"))
+        if granted is None:
+            return True
+        report["adopted"] = granted == "handed"
+        return False
 
     async def _engine_body(self, request: Request) -> tuple[dict | None, Response | None]:
         try:
@@ -360,16 +397,6 @@ class AppServer:
                 self._sessions_changed()
             self._own(target, None)
 
-    def _hands_a_tab(self, report: dict) -> bool:
-        """Whether a tab report from an agent's engine would make a tab of the user's Brave that isn't handed to it now
-        "handed": a report that arrived after Take back (the engine's answer is cached 1 s), or one about a tab the
-        user never handed. In brave mode only Hand over (or a task started in a tab) hands a tab; such a report is
-        dropped. (In AI Browser the engine's report is how the app learns of a tab the agent adopted.)"""
-        if self.brave is None or not report.get("adopted") or report.get("kind") not in ("tab_opened", "working_tab"):
-            return False
-        agent = self.agents.agents.get(report["agent"])
-        return agent is not None and report.get("target") not in agent.adopted
-
     def _after_agent_report(self, report: dict) -> None:
         """AI Home's chips follow an agent's tabs; a tab one of its pages opened joins its group."""
         agent_id, kind, target = report["agent"], report.get("kind"), report.get("target")
@@ -406,6 +433,8 @@ class AppServer:
             return Response(status_code=404)
         if not isinstance(target, str) or not target:
             return Response(status_code=400)
+        if self.brave is not None and self._granted(agent_id, target) is None:
+            return JSONResponse({"grouped": False, "reason": "not_yours"})
         self._record_tab(agent_id, target)  # whatever happens to its group, the tab is this agent's or session's
         self._own(target, owner)
         if isinstance(body.get("marker"), str) and MARKER.match(body["marker"]):
@@ -441,21 +470,24 @@ class AppServer:
         session_id, pid = body["agent"], body.get("pid")
         if not SESSION_ID.match(session_id) or not isinstance(pid, int):
             return Response(status_code=404)
+        relay = self.brave.relay if self.brave is not None else None
+        if relay is not None and relay.is_cut_off(session_id):
+            return Response(status_code=410)  # the user disconnected it in AI Home: not listed again this run
         known = self.sessions.get(session_id)
         self.sessions[session_id] = {"id": session_id, "name": "Claude Code", "color": "orange",
                                      "tabs": known["tabs"] if known else [], "pid": pid}
         self._sessions_changed()
+        if relay is not None:  # its key to /cdp, for this session id only
+            return JSONResponse({"cdp_token": self.tokens.mint(session_id)})
         return Response(status_code=204)
 
     async def _agent_bye(self, request: Request) -> Response:
         body, refused = await self._engine_body(request)
         if refused is not None:
             return refused
-        if self.sessions.pop(body["agent"], None) is None:
+        if body["agent"] not in self.sessions:
             return Response(status_code=404)
-        if self.brave is not None:
-            self.brave.release(body["agent"])
-        self._sessions_changed()
+        await self._session_gone(body["agent"])
         return Response(status_code=204)
 
     async def _sweep_sessions(self) -> None:
@@ -463,10 +495,17 @@ class AppServer:
         while True:
             await asyncio.sleep(SESSION_SWEEP)
             for session_id in [key for key, session in self.sessions.items() if not _alive(session["pid"])]:
-                self.sessions.pop(session_id, None)
-                if self.brave is not None:
-                    self.brave.release(session_id)
-                self._sessions_changed()
+                await self._session_gone(session_id)
+
+    async def _session_gone(self, session_id: str) -> None:
+        """A session said bye or its process ended: its own tabs still open close (Decision 11), it leaves the
+        lists."""
+        self.sessions.pop(session_id, None)
+        if self.brave is not None:
+            self.brave.release(session_id)
+            with contextlib.suppress(Exception):
+                await self.brave.relay.forget(session_id, close_tabs=True)
+        self._sessions_changed()
 
     def _session_list(self) -> list[dict]:
         return [dict(session, tabs=list(session["tabs"])) for session in self.sessions.values()]
@@ -475,17 +514,58 @@ class AppServer:
         self._send_all({"type": "sessions", "sessions": self._session_list()})
 
     def attach_brave(self, brave) -> None:
-        """Brave mode: the tab list, Watch, thumbnails and the browser card come from the user's Brave (BraveLink)."""
+        """Brave mode: the tab list, Watch, thumbnails and the browser card come from the user's Brave (BraveLink),
+        and its relay carries every agent's and session's connection to it."""
         self.brave = brave
         self.attach_tabs(brave)
+        relay = brave.relay
+        relay.port = self.port
+        relay.handed = self._handed_to
+        relay.may_open = lambda identity: bool(SESSION_ID.match(identity)) or self.agents.working(identity)
+        self.agents.own_tabs = relay.own_targets
+        relay.on_grant(lambda identity, target: self._own(target, self._owner_of(identity)))
+        relay.on_change(self._clients_changed)
         brave.on_state(lambda state: self._browser_changed())
         self._browser_changed()
         self._send_all({"type": "tabs", "tabs": brave.tabs()})  # pages already open see Brave's list at once
 
-    def connect_brave(self) -> None:
+    def _handed_to(self, identity: str) -> set[str]:
+        """The tabs the user handed this agent now (Hand over, or a task started in a tab): read live."""
+        agent = self.agents.agents.get(identity)
+        return set(agent.adopted) if agent is not None else set()
+
+    def connect_brave(self, why: str = "connect", identity: str = "") -> None:
         """Connect to Brave now (Brave asks the user): only right after something the user did."""
         if self.brave is not None and self.brave.state in ("ready", "refused", "lost"):
-            self._job(self.brave.connect())
+            self._job(self.brave.connect(why, identity))
+
+    async def _cdp(self, ws: WebSocket) -> None:
+        """Brave mode: every agent's and session's connection to the user's Brave goes through the relay."""
+        relay = getattr(self.brave, "relay", None)
+        if relay is None or not hasattr(relay, "serve"):
+            with contextlib.suppress(Exception):
+                await ws.send_denial_response(PlainTextResponse("not found", status_code=404))
+            return
+        await relay.serve(ws)
+
+    def _browser_clients(self) -> list[dict]:
+        """AI Home's list of what uses the user's Brave through the app (the relay's rows, with names and colours).
+        No token is in it."""
+        if self.brave is None:
+            return []
+        rows = []
+        for row in self.brave.relay.clients():
+            if row.get("kind") == "app":
+                rows.append({**row, "name": "AI Browser", "color": ""})
+                continue
+            owner = self._owner_of(row["id"]) or {}
+            session = row.get("kind") == "session"
+            rows.append({**row, "name": owner.get("name") or ("Claude Code" if session else row["id"]),
+                         "color": owner.get("color") or ("orange" if session else "grey")})
+        return rows
+
+    def _clients_changed(self) -> None:
+        self._send_all({"type": "browser_clients", "clients": self._browser_clients()})
 
     def _browser_info(self) -> dict:
         if self.brave is None:
@@ -505,7 +585,7 @@ class AppServer:
 
     async def _brave_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
         if kind == "brave_connect":
-            self.connect_brave()
+            self.connect_brave("connect")
         elif kind == "hand_tab":
             error = await self._hand(str(message.get("id", "")), message.get("target"))
             if error:
@@ -514,6 +594,14 @@ class AppServer:
             had = self.agents.take_back(message["target"])  # the agent it was handed to, or None
             if had is not None:  # only a handed tab: an agent's own tab is never the user's to take back
                 self._own(message["target"], None)
+                if self.brave is not None:  # its session on that tab ends now (Decision 6)
+                    await self.brave.relay.cut(had, message["target"])
+        elif kind == "browser_disconnect":
+            client = message.get("id")
+            if self.brave is not None and isinstance(client, str) and (AGENT_ID.match(client)
+                                                                       or SESSION_ID.match(client)):
+                await self.brave.relay.disconnect(client)  # a session stays listed until it ends (bye, the sweep)
+                self._clients_changed()
 
     async def _hand(self, agent_id: str, target) -> str:
         """Hand over: the user's click gives one of their tabs to an agent; "" when done, else why not."""
@@ -619,9 +707,13 @@ class AppServer:
         while True:
             message = await self._feed.get()
             if message.get("type") == "agent_closed":
-                self._thumbs.pop(str(message.get("id")), None)
+                agent_id = str(message.get("id"))
+                self._thumbs.pop(agent_id, None)
+                self.tokens.revoke(agent_id)  # its engine's next connect hears "disconnected" (410)
                 if self.brave is not None:
-                    self.brave.release(str(message.get("id")))
+                    self.brave.release(agent_id)
+                    with contextlib.suppress(Exception):
+                        await self.brave.relay.forget(agent_id)
             self._send_all(message)
             if message.get("type") in ("permission_request", "check_request"):
                 self._to_watcher(message)  # a Brave notification too
@@ -946,7 +1038,7 @@ class AppServer:
                 "tabs": self.tabs.tabs() if self.tabs is not None else [],
                 "skills_summary": self._skills_summary(), "max_working": self.agents.max_working,
                 "default_model": self.default_model, "browser": self._browser_info(),
-                "sessions": self._session_list()}
+                "sessions": self._session_list(), "browser_clients": self._browser_clients()}
 
     # ---- skills -----------------------------------------------------------------------------------------------
 

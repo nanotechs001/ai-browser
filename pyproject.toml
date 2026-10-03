@@ -9,7 +9,7 @@ dependencies = [
   "websockets>=15",
   "pyyaml>=6",
   "starlette>=0.40",
-  "uvicorn>=0.30",
+  "uvicorn>=0.38",
 ]
 
 [project.optional-dependencies]
@@ -41,4 +41,5 @@ markers = [
   "docker: needs Docker and the sandbox image",
   "posix_only: needs macOS or Linux (file descriptors 3 and 4, or the DevTools pipe)",
   "windows_only: Windows behaviour (junctions, msvcrt, Win32 APIs)",
+  "direct_only: tests the Browser alone over one shared connection (never through the app's relay)",
 ]

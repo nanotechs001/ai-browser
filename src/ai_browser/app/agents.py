@@ -94,6 +94,8 @@ class AgentManager:
         self.on_action = on_action  # after each action: the app takes a thumbnail
         self.ungroup: Callable[[list[str]], None] | None = None  # set by the app: take tabs out of their group
         self.on_turn: Callable[[Agent], None] | None = None  # set by the app: an agent starts a turn
+        self.mint_token: Callable[[str], str] | None = None  # set by the app: each agent's own token
+        self.own_tabs: Callable[[str], list[str]] | None = None  # set by the app in brave mode: the relay's table
         self.tools = None  # the user's MCP servers (ToolsConfig), set by the app: agents ask before using them
         self._asks: dict[str, asyncio.Future] = {}  # agent id -> its tool request waiting for the user
         self.agents: dict[str, Agent] = {}
@@ -141,6 +143,8 @@ class AgentManager:
         self._seq += 1
         agent_id = f"a{self._seq}"
         env = {**self.env, "AIB_APP_AGENT": agent_id, **({"AIB_APP_ADOPT": adopt} if adopt else {})}
+        if self.mint_token is not None:  # its own token: the app knows who reports, claims and connects
+            env["AIB_APP_AGENT_TOKEN"] = self.mint_token(agent_id)
         bridge = ClaudeBridge(self.home, model=model, claude=self.claude, env=env, agent_id=agent_id,
                               tools=self.tools, servers=servers,
                               on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request))
@@ -200,9 +204,13 @@ class AgentManager:
             turn.cancel()
         await agent.bridge.close()
         self.agents.pop(agent_id, None)
-        if not keep_tabs and agent.tabs and self.close_tabs is not None:
+        own = list(agent.tabs)
+        if self.own_tabs is not None:  # tabs the relay says it opened, reported or not
             with contextlib.suppress(Exception):
-                await self.close_tabs(list(agent.tabs))
+                own += [target for target in self.own_tabs(agent_id) if target not in own]
+        if not keep_tabs and own and self.close_tabs is not None:
+            with contextlib.suppress(Exception):
+                await self.close_tabs(own)
         if not keep_tabs and agent.adopted and self.ungroup is not None:  # handed tabs: let go, never closed
             with contextlib.suppress(Exception):
                 self.ungroup(list(agent.adopted))
@@ -245,6 +253,10 @@ class AgentManager:
         if answer == "always" and self.tools is not None:
             self.tools.allow_always(agent.permission["tool"])
         future.set_result(answer)
+
+    def working(self, agent_id: str) -> bool:
+        """Whether the agent is in a turn now: its engine may then open the browser connection (Decision 10)."""
+        return agent_id in self._turns
 
     def set_model(self, agent_id: str, model: str) -> None:
         agent = self.agents.get(agent_id)

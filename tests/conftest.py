@@ -1,3 +1,4 @@
+import contextlib
 import os
 import shutil
 import subprocess
@@ -83,9 +84,60 @@ def throwaway_chrome(tmp_path):
     process.wait(timeout=15)
 
 
+RELAYED_MODULES = {"test_chrome", "test_checks_browser", "test_isolation"}  # their own-mode tests run both ways
+
+
+def pytest_generate_tests(metafunc):
+    """The own-mode browser tests also run through the app's relay (the cdp-relay spec, Testing): `route` is "direct"
+    or "relay" for chrome_browser and own_browser, except in tests marked direct_only (they test the Browser alone,
+    over one shared connection)."""
+    if "route" in metafunc.fixturenames and metafunc.module.__name__ in RELAYED_MODULES \
+            and metafunc.definition.get_closest_marker("direct_only") is None:
+        metafunc.parametrize("route", ["direct", "relay"], indirect=True)
+
+
 @pytest.fixture
-async def chrome_browser(throwaway_chrome, tmp_path):
-    """(Browser in chrome mode, base URL of the host-served test pages, the Chrome's page targets before)."""
+def route(request):
+    return getattr(request, "param", "direct")
+
+
+@contextlib.asynccontextmanager
+async def browser_connection(folder, route, home):
+    """The Browser's CDP connection to a throwaway Chrome: direct, or through an app's relay (an AppServer in brave
+    mode with a BraveLink on that Chrome, and agent a1's token), as an app agent connects."""
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.bravelink import BraveLink
+    from ai_browser.app.server import AppServer
+    from ai_browser.cdp import CDP
+    from ai_browser.chrome import find_ws_url
+
+    if route == "direct":
+        cdp = await CDP.connect(find_ws_url(folder, timeout=20))
+        try:
+            yield cdp
+        finally:
+            await cdp.close()
+        return
+    server = AppServer(home, AgentManager(home))
+    url = await server.start()
+    brave = BraveLink(folder, tokens=server.tokens)
+    server.attach_brave(brave)
+    await brave.start()
+    await brave.connect()
+    cdp = await CDP.connect(url.replace("http://", "ws://", 1) + "/cdp",
+                            headers={"X-AIB-Agent-Token": server.token_for("a1")})
+    try:
+        yield cdp
+    finally:
+        await cdp.close()
+        await server.stop()
+        await brave.close()
+
+
+@pytest.fixture
+async def chrome_browser(throwaway_chrome, tmp_path, route):
+    """(Browser in chrome mode, base URL of the host-served test pages, the Chrome's page targets before). The
+    Browser's connection is direct, or through the app's relay (`route`)."""
     from ai_browser import testpages
     from ai_browser.browser import Browser
     from ai_browser.cdp import CDP
@@ -94,13 +146,14 @@ async def chrome_browser(throwaway_chrome, tmp_path):
     from ai_browser.workfs import WorkDir
 
     base, _, stop_pages = testpages.serve_host()
-    cdp = await CDP.connect(find_ws_url(throwaway_chrome, timeout=20))
-    before = {t["targetId"] for t in (await cdp.send("Target.getTargets"))["targetInfos"] if t["type"] == "page"}
-    browser = Browser(cdp, WorkDir(tmp_path / "work", "chrome-task"), Config(), mode="chrome")
-    await browser.start()
-    yield browser, base, before
-    await browser.close()
-    await cdp.close()
+    own = await CDP.connect(find_ws_url(throwaway_chrome, timeout=20))
+    before = {t["targetId"] for t in (await own.send("Target.getTargets"))["targetInfos"] if t["type"] == "page"}
+    await own.close()
+    async with browser_connection(throwaway_chrome, route, tmp_path / "relay-home") as cdp:
+        browser = Browser(cdp, WorkDir(tmp_path / "work", "chrome-task"), Config(), mode="chrome")
+        await browser.start()
+        yield browser, base, before
+        await browser.close()
     stop_pages()
 
 

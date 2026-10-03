@@ -431,17 +431,22 @@ that blocked another browser.
 
 1. Once: in Brave, open `brave://inspect/#remote-debugging` and tick **Allow remote debugging for this browser
    instance**.
-2. When Brave asks **Allow remote debugging?**, click **Allow**. Brave may ask when `ai-browser app` starts and when
-   each agent or Claude Code session first uses the browser, and again after Brave restarts.
+2. When Brave asks **Allow remote debugging?**, click **Allow**. Brave asks once when `ai-browser app` connects, and
+   again after Brave restarts. While the app runs, agents and Claude Code sessions share its one connection; without
+   it, each Claude Code session asks once.
 3. Check it any time with `uv run ai-browser doctor --own`.
 
 **While this switch is on, any program on this computer can reach your Brave, not only ai-browser.** That includes
 the sites you are signed in to.
+- While AI Browser is connected, a program that can read AI Browser's files can also use your Brave through it without
+  a new question. AI Home lists everything connected, with Disconnect.
 - Turn it off when agents aren't working: untick the same box.
-- Only click Allow right after you started AI Browser or gave an agent a task; if Brave asks at any other time, click
-  Deny.
-- While an agent is connected, Brave may show a bar saying it is being controlled by automated software. That is
-  Brave telling you the truth; ai-browser never hides it.
+- Only click Allow right after you started AI Browser, clicked Connect, gave an agent a task, asked Claude Code to
+  browse, or opened Brave again while an agent was working. If Brave asks at any other time, it isn't AI Browser:
+  click Deny, unless you just started another browser tool yourself.
+- While AI Browser is connected, Brave shows a bar saying it is being controlled by automated test software. That is
+  Brave telling you the truth; AI Browser never hides or closes it. If you close it yourself, it comes back only when
+  AI Browser or Brave restarts.
 
 What happens in your Brave:
 - **Background tabs only:**

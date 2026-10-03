@@ -118,7 +118,7 @@ async def home(stack):
 
 async def post_tab(stack, agent, kind, target):
     async with httpx.AsyncClient() as client:
-        await client.post(stack["url"] + "/agent-events", headers={"X-AIB-Agent-Token": stack["server"].agent_token},
+        await client.post(stack["url"] + "/agent-events", headers={"X-AIB-Agent-Token": stack["server"].token_for(agent)},
                           json={"agent": agent, "kind": kind, "target": target, "adopted": False})
 
 
@@ -330,3 +330,53 @@ async def test_the_browser_card_follows_brave(home):
 async def test_ai_browser_mode_says_so(home):
     js, _, _ = home
     assert await until(js, "document.getElementById('browser-title').textContent === 'Agents browse in AI Browser'")
+
+
+@CHROME
+async def test_ai_home_lists_connected_clients_with_disconnect(home):
+    from fake_brave import FakeBrave
+
+    js, _, stack = home
+    brave = FakeBrave([], state="connected")
+    stack["server"].attach_brave(brave)
+    rows = [
+        {"id": "app", "kind": "app", "number": None, "name": "AI Browser", "color": "", "tabs": 0,
+         "connected": True, "cut_off": False},
+        {"id": "a3", "kind": "agent", "number": 3, "name": "Fix the footer", "color": "blue", "tabs": 2,
+         "connected": True, "cut_off": False},
+        {"id": "cc-x", "kind": "session", "number": None, "name": "Claude Code", "color": "orange", "tabs": 1,
+         "connected": True, "cut_off": False},
+        {"id": "a4", "kind": "agent", "number": 4, "name": "<img src=x onerror=alert(1)>", "color": "red",
+         "tabs": 0, "connected": True, "cut_off": False}]
+    stack["server"]._send_all({"type": "browser_clients", "clients": rows})
+    labels = "Array.from(document.querySelectorAll('#browser-clients li span')).map(span => span.textContent)"
+    assert await until(js, f"{labels}.length === 4")
+    assert await js(labels) == ["AI Browser · the tab list and pictures", "3 · Fix the footer · 2 tabs",
+                                "Claude Code · 1 tab", "4 · <img src=x onerror=alert(1)> · 0 tabs"]
+    assert await js("document.querySelectorAll('#browser-clients img').length") == 0  # text stays text
+    buttons = "Array.from(document.querySelectorAll('#browser-clients li')).map(li => !!li.querySelector('button'))"
+    assert await js(buttons) == [False, True, True, True]
+    assert "without a new question until AI Browser quits" in await js(
+        "document.getElementById('browser-clients-note').textContent")
+    assert await js("document.getElementById('browser-using-title').textContent") == \
+        "Using your Brave through AI Browser"
+    await js("document.querySelectorAll('#browser-clients li')[1].querySelector('button').click(); true")
+    for _ in range(50):
+        if brave.relay.disconnected:
+            break
+        await asyncio.sleep(0.1)
+    assert brave.relay.disconnected == ["a3"]
+
+
+@CHROME
+async def test_the_browser_card_says_one_question(home):
+    from fake_brave import FakeBrave
+
+    js, _, stack = home
+    brave = FakeBrave([], state="ready")
+    stack["server"].attach_brave(brave)
+    note = "document.getElementById('browser-note').textContent"
+    ready = json.dumps('Brave will ask "Allow remote debugging?" once for AI Browser: click Allow')
+    assert await until(js, f"{note} === {ready}")
+    brave.set_state("asking")
+    assert await until(js, f"{note}.includes('Everything waiting for Brave shares this one question.')")
