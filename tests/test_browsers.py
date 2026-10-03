@@ -743,3 +743,187 @@ def test_a_stale_port_of_a_stopped_browser_is_never_checked(tmp_path, monkeypatc
     monkeypatch.setattr(browsers, "running", lambda data_dir, system=None: False)
     monkeypatch.setattr(browsers, "listening", lambda port, timeout=0.5: pytest.fail("a stopped browser's port"))
     assert browsers.state(tmp_path) == "not_running"
+
+
+# All together (Task 10)
+
+
+def fake_mac(fake, port: int) -> SimpleNamespace:
+    """Brave (running, its switch on, the watcher in Profile 1), Chrome (not running) and Edge on the fake Mac."""
+    mac_app(fake.apps, "Brave Browser.app", sample("brave-info.plist"), "Brave Browser")
+    mac_app(fake.apps, "Google Chrome.app", sample("chrome-info.plist"), "Google Chrome")
+    mac_app(fake.apps, "Microsoft Edge.app", info_plist("com.microsoft.edgemac", "Microsoft Edge"), "Microsoft Edge")
+    brave = data_folder(browsers.data_dir(browsers.by_id("brave"), "darwin"), sample("brave-local-state.json"),
+                        BRAVE_FOLDERS)
+    symlink_or_skip(f"{socket.gethostname()}-{os.getpid()}", brave / "SingletonLock")
+    (brave / "DevToolsActivePort").write_bytes(f"{port}\n/devtools/browser/x\n".encode("utf-8"))
+    watcher = fake.home / ".ai-browser" / "app" / "watcher"
+    watcher.mkdir(parents=True)
+    preferences(brave / "Profile 1", "Secure Preferences", watcher)
+    chrome = data_folder(browsers.data_dir(browsers.by_id("chrome"), "darwin"), sample("chrome-local-state.json"),
+                         ["Default"])
+    edge = data_folder(browsers.data_dir(browsers.by_id("edge"), "darwin"), sample("brave-local-state.json"),
+                       ["Default"])
+    record = platforms.launch_services_file()
+    record.parent.mkdir(parents=True)
+    record.write_bytes(sample("launchservices.plist"))
+    for profile in [*(brave / name for name in BRAVE_FOLDERS), chrome / "Default", edge / "Default"]:
+        for decoy in ("Cookies", "Login Data", "History", "Web Data"):
+            (profile / decoy).write_bytes(b"SQLite format 3\x00decoy")
+    return SimpleNamespace(brave=brave, chrome=chrome, edge=edge, watchers={WATCHER_ID: watcher})
+
+
+def shown_profile(folder, name, color, last_used, watcher=False, shared_watcher=False) -> dict:
+    return {"folder": folder, "name": name, "color": color, "last_used": last_used, "watcher": watcher,
+            "shared_watcher": shared_watcher}
+
+
+EXPECTED = [
+    {"id": "brave", "name": "Brave", "agents": True, "default": True, "state": "switch_on",
+     "profiles": [shown_profile("Default", "Personal", "#3f51b5", False),
+                  shown_profile("Profile 1", "Work", "#1b5e20", True, watcher=True),
+                  shown_profile("Profile 2", "Profile 2", None, False)]},
+    {"id": "chrome", "name": "Chrome", "agents": True, "default": False, "state": "not_running",
+     "profiles": [shown_profile("Default", "Your Chrome", None, True)]},
+    {"id": "edge", "name": "Edge", "agents": False, "default": False, "state": None, "profiles": []},
+]
+
+
+def test_detect_lists_installed_browsers_with_their_state_profiles_and_watchers(fake, monkeypatch):
+    server, port = open_port()
+    try:
+        mac = fake_mac(fake, port)
+        seen, real_read = [], browsers._read
+        monkeypatch.setattr(browsers, "_read", lambda path: seen.append(Path(path)) or real_read(path))
+        found = browsers.detect(mac.watchers, system="darwin")
+    finally:
+        server.close()
+    assert browsers.public(found, connected=()) == EXPECTED
+    assert seen and not any(path.is_relative_to(mac.edge) for path in seen)  # agents can't use Edge: not read
+    assert browsers.detect(mac.watchers, system="linux") == []
+
+
+def test_public_has_no_paths_or_emails(fake, tmp_path):
+    server, port = open_port()
+    try:
+        found = browsers.detect(fake_mac(fake, port).watchers, system="darwin")
+    finally:
+        server.close()
+    text = json.dumps(browsers.public(found))
+    for secret in (str(tmp_path), tmp_path.as_posix(), "@", "Library", "Alex", "123456789012345678901", WATCHER_ID,
+                   "152.1"):
+        assert secret not in text
+    shown = browsers.public(found, connected=("brave",))
+    assert [browser["state"] for browser in shown] == ["connected", "not_running", None]
+    assert all(set(browser) == {"id", "name", "agents", "default", "state", "profiles"} for browser in shown)
+    assert all(set(profile) == {"folder", "name", "color", "last_used", "watcher", "shared_watcher"}
+               for browser in shown for profile in browser["profiles"])
+    assert [browser["state"] for browser in browsers.public(found, connected=("edge", "firefox"))] == [
+        "switch_on", "not_running", None]  # Edge has no state to replace, and an unknown id adds nothing
+
+
+def found_for(browser_id: str, folders, places) -> "browsers.Found":
+    """A Found with these profile folders, and the watcher enabled in `places`."""
+    browser = browsers.Installed(browsers.by_id(browser_id), Path("program"), None, None, Path("data"))
+    return browsers.Found(browser, "not_running", tuple(browsers.Profile(f, f, None, False) for f in folders),
+                          tuple(browsers.WatcherPlace(f, WATCHER_ID) for f in places), False)
+
+
+def test_the_same_watcher_in_two_profiles_is_reported():
+    def marks(*found):
+        return [[(profile["folder"], profile["watcher"], profile["shared_watcher"]) for profile in browser["profiles"]]
+                for browser in browsers.public(list(found))]
+
+    assert marks(found_for("brave", ["Default", "Profile 1"], ["Default", "Profile 1"])) == [
+        [("Default", True, True), ("Profile 1", True, True)]]
+    assert marks(found_for("brave", ["Default"], ["Default"]), found_for("chrome", ["Default"], ["Default"])) == [
+        [("Default", True, True)], [("Default", True, True)]]  # Chrome gives the same folder the same id
+    assert marks(found_for("brave", ["Default", "Profile 1"], ["Profile 1"]), found_for("chrome", ["Default"], [])) == [
+        [("Default", False, False), ("Profile 1", True, False)], [("Default", False, False)]]
+
+
+READ_NAMES = {"Info.plist", "Local State", "Secure Preferences", "Preferences", "DevToolsActivePort",
+              "com.apple.launchservices.secure.plist"}
+_OPENED: list | None = None
+_HOOKED: list = []
+
+
+def _note_open(event, args):
+    if _OPENED is not None and event == "open" and args and isinstance(args[0], (str, bytes, os.PathLike)):
+        _OPENED.append(os.fsdecode(args[0]))
+
+
+@contextlib.contextmanager
+def recording_opens():
+    """Every file opened in the block, by any code (an audit hook: it can't be removed, so it records only while
+    the block runs)."""
+    global _OPENED
+    if not _HOOKED:
+        sys.addaudithook(_note_open)
+        _HOOKED.append(_note_open)
+    _OPENED = opened = []
+    try:
+        yield opened
+    finally:
+        _OPENED = None
+
+
+def snapshot(root: Path) -> dict:
+    """Every file, folder and link under root: its mtime, and its bytes or link target. Links are not followed."""
+    tree = {}
+    for folder, folders, files in os.walk(root):
+        for name in [*folders, *files]:
+            path = Path(folder, name)
+            content = os.readlink(path) if path.is_symlink() else path.read_bytes() if path.is_file() else None
+            tree[path.relative_to(root).as_posix()] = (path.lstat().st_mtime_ns, content)
+    return tree
+
+
+def test_detection_reads_only_its_files_and_writes_nothing(fake, tmp_path, monkeypatch):
+    server, port = open_port()
+    try:
+        mac = fake_mac(fake, port)
+        shared, real = [], platforms.open_shared
+        monkeypatch.setattr(platforms, "open_shared", lambda path: shared.append(os.fspath(path)) or real(path))
+        before = snapshot(tmp_path)
+        with recording_opens() as opened:
+            browsers.detect(mac.watchers, system="darwin")
+        after = snapshot(tmp_path)
+    finally:
+        server.close()
+    inside = {Path(path).name for path in [*opened, *shared] if Path(path).is_relative_to(tmp_path)}
+    assert "Local State" in {Path(path).name for path in opened}  # the audit hook sees every open
+    assert inside <= READ_NAMES, inside - READ_NAMES  # never Cookies, Login Data, History or Web Data
+    assert after == before  # nothing written, touched or created
+
+
+@pytest.mark.parametrize("name", [
+    "brave-local-state.json", "chrome-local-state.json", "secure-preferences-watcher.json",
+    "preferences-watcher-disabled.json", "brave-info.plist", "chrome-info.plist", "launchservices.plist",
+    "launchservices.plist (binary)"])
+def test_every_read_survives_a_truncated_file(fake, name):
+    data = sample(name.removesuffix(" (binary)"))
+    if name.endswith("(binary)"):
+        data = plistlib.dumps(plistlib.loads(data), fmt=plistlib.FMT_BINARY)
+    mac_app(fake.apps, "Brave Browser.app", sample("brave-info.plist"), "Brave Browser")
+    brave = data_folder(browsers.data_dir(browsers.by_id("brave"), "darwin"), sample("brave-local-state.json"),
+                        BRAVE_FOLDERS)
+    record = platforms.launch_services_file()
+    record.parent.mkdir(parents=True)
+    record.write_bytes(sample("launchservices.plist"))
+    watchers = {SAMPLE_ID: "/Users/Alex/.ai-browser/app/watcher"}
+    for size in sorted({0, *range(1, len(data), 37)}):
+        piece = data[:size]
+        if name.endswith("local-state.json"):
+            (brave / "Local State").write_bytes(piece)
+            browsers.profiles(brave)
+        elif "preferences" in name:
+            (brave / "Default" / "Secure Preferences").write_bytes(piece)
+            browsers.watcher_places(brave, watchers)
+        elif "info" in name:
+            mac_app(fake.apps, "Brave Browser.app", piece, "Brave Browser")
+            browsers.installed(system="darwin")
+        else:
+            record.write_bytes(piece)
+            browsers.os_default("darwin")
+        browsers.public(browsers.detect(watchers, system="darwin"))  # and the whole detection, with that piece

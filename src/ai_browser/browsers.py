@@ -439,3 +439,56 @@ def state(data_dir, system: str | None = None) -> str:
     if port is not None and listening(port):
         return "switch_on"
     return "switch_off" if alive else "not_running"  # can't tell: today's rule, the port alone
+
+
+@dataclass(frozen=True)
+class Found:
+    """One installed browser with what detection knows of it. A browser agents can't use has no state, no profiles
+    and no watchers: nothing in its data folder is read."""
+
+    browser: Installed
+    state: str | None
+    profiles: tuple[Profile, ...]
+    watchers: tuple[WatcherPlace, ...]
+    default: bool
+
+
+def detect(watchers: Mapping[str, str | Path] | None = None, system: str | None = None,
+           env: Mapping | None = None) -> list[Found]:
+    """Every installed browser, in the table's order, with its state, profiles and watcher copies (for the ones
+    agents can use) and whether it is the system's default. Reads files only; never connects."""
+    system = _system(system)
+    default = os_default(system, env)
+    found = []
+    for browser in installed(system, env):
+        if not browser.agents:
+            found.append(Found(browser, None, (), (), browser.id == default))
+            continue
+        found.append(Found(browser, state(browser.data_dir, system), tuple(profiles(browser.data_dir)),
+                           tuple(watcher_places(browser.data_dir, watchers or {}, system)), browser.id == default))
+    return found
+
+
+def public(found, connected=()) -> list[dict]:
+    """What pages may see of detect()'s result: no paths, versions, watcher ids or account fields. `connected` holds
+    the ids of browsers the app's own link is connected to; one with a known state shows "connected"."""
+    connected = {browser_id for browser_id in connected if isinstance(browser_id, str)}
+    copies: dict[str, int] = {}  # extension id -> how many profiles, in any browser, hold an enabled copy
+    for item in found:
+        for place in item.watchers:
+            copies[place.extension_id] = copies.get(place.extension_id, 0) + 1
+    shown = []
+    for item in found:
+        ids = {}
+        for place in item.watchers:
+            ids.setdefault(place.profile, set()).add(place.extension_id)
+        state_shown = "connected" if item.state is not None and item.browser.id in connected else item.state
+        shown.append({
+            "id": item.browser.id, "name": item.browser.name, "agents": item.browser.agents,
+            "default": item.default, "state": state_shown,
+            "profiles": [{"folder": profile.folder, "name": profile.name, "color": profile.color,
+                          "last_used": profile.last_used, "watcher": bool(ids.get(profile.folder)),
+                          "shared_watcher": any(copies[extension_id] > 1
+                                                for extension_id in ids.get(profile.folder, ()))}
+                         for profile in item.profiles]})
+    return shown
