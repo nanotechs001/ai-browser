@@ -32,6 +32,15 @@ SKIP_TEXT = ("Skip the site with the bot check: I closed its tab. Carry on witho
              "do.")
 _SCHEME = re.compile(r"\bhttps?://(?:www\.)?", re.IGNORECASE)
 _FILLER = {"and", "or", "then", "to", "the", "a", "an", "of", "in", "on", "with", "for", "from"}
+_AGENT_ID = re.compile(r"a([0-9]{1,9})")  # the ids the server and the relay accept: ^a[0-9]{1,9}$
+
+
+def agent_number(agent_id) -> int | None:
+    """The number the user sees for an agent ("1 · Fix the footer"): its id without the "a" (a12 is 12). It is fixed
+    for the app's run, and numbers start at 1 again after a restart, as ids do. None for any other id (the app's own,
+    a Claude Code session's). One rule, used by the agents' rows and the relay's list of what is connected."""
+    match = _AGENT_ID.fullmatch(agent_id) if isinstance(agent_id, str) else None
+    return int(match.group(1)) if match else None
 
 
 def _name(text: str) -> str:
@@ -75,7 +84,17 @@ class Agent:
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
-                                         "permission", "check")
+                                         "permission", "check", "number", "queued")
+
+    @property
+    def number(self) -> int:
+        """The number the user sees, fixed for the app's run: a3 is 3."""
+        return agent_number(self.id) or 0
+
+    @property
+    def queued(self) -> int:
+        """Messages the agent hasn't read yet: each waits for its current answer to end."""
+        return len(self.pending)
 
     def public(self) -> dict:
         return {key: list(value) if isinstance(value, list) else value
@@ -107,8 +126,14 @@ class AgentManager:
     # ---- views --------------------------------------------------------------------------------------------
 
     def snapshot(self) -> dict:
-        newest_first = sorted(self.agents.values(), key=lambda agent: int(agent.id[1:]), reverse=True)
+        newest_first = sorted(self.agents.values(), key=lambda agent: agent.number, reverse=True)
         return {"agents": [agent.public() for agent in newest_first]}
+
+    @property
+    def in_users_browser(self) -> bool:
+        """The agents work in the user's own browser (brave mode: run.py's brave_env sets AIB_BROWSER=chrome), so the
+        user can hand them one of their tabs."""
+        return self.env.get("AIB_BROWSER") == "chrome"
 
     def events_of(self, agent_id: str) -> list[dict]:
         agent = self.agents.get(agent_id)
@@ -159,18 +184,21 @@ class AgentManager:
         self._pump()
         return agent
 
-    async def send(self, agent_id: str, text: str, tab: dict | None = None) -> None:
+    async def send(self, agent_id: str, text: str, tab: dict | None = None) -> bool:
+        """The user's message: now, or after the agent's current answer. False when the agent has closed."""
         agent = self.agents.get(agent_id)
         if agent is None:
-            return
+            return False
         agent.pending.append((text, tab or {}, []))
         if agent_id in self._turns or agent_id in self._line:  # it gets its turn after the current one
             self._record(agent, {"type": "queued", "text": text})
-            return
+            self._changed(agent)  # the row's queued count
+            return True
         agent.state = "waiting"
         self._changed(agent)
         self._line.append(agent_id)
         self._pump()
+        return True
 
     async def stop(self, agent_id: str) -> None:
         """Stop the agent's answer (its process and tabs stay), or take it out of the line."""
@@ -401,6 +429,7 @@ class AgentManager:
         try:
             while agent.pending and agent.id in self.agents:
                 text, tab, skills = agent.pending.pop(0)
+                self._changed(agent)  # one fewer waiting: the row's queued count drops
                 self._record(agent, {"type": "user", "text": text})
                 async for event in agent.bridge.send(text, tab.get("url", ""), tab.get("title", ""), skills,
                                                      tab.get("label", "panel")):
