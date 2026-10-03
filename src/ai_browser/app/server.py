@@ -16,6 +16,7 @@ import re
 import secrets
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
@@ -71,6 +72,69 @@ SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (
 AGENT_ID = re.compile(r"^a[0-9]{1,9}$")  # an agent's id (a<number>)
 SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
 YOU = {"kind": "you"}
+
+
+@dataclass(frozen=True)
+class Rule:
+    """Who may send one message type: AI Browser's own pages ("app"), and Brave's watcher ("watcher"), which may send
+    it never, always, or when the check on the message passes."""
+    app: bool = True
+    watcher: bool | Callable[[dict], bool] = False
+
+
+def _has_item(message: dict) -> bool:
+    """The inbox's "Run <workflow>" on a message: never a bare run, which stays in AI Home."""
+    return isinstance(message.get("item"), str) and message["item"] != ""
+
+
+def _once_or_deny(message: dict) -> bool:
+    """A tool request allowed once, or denied: a lasting Always allow stays in AI Home's Tools."""
+    return message.get("answer") in ("once", "deny")
+
+
+APP_ONLY, BOTH, WATCHER_ONLY = Rule(), Rule(watcher=True), Rule(app=False, watcher=True)
+
+# Every message type a page may send, and who may send it (watcher-safety Decision 1). A type missing here is dropped
+# for everyone, with no answer. tests/test_watcher_rules.py holds a copy: a row added here fails there until the copy
+# says the same. A row may allow the watcher only if it can't give an agent a tab of the user's, save a lasting allow,
+# connect to Brave, talk or listen, skip a check or close a tab.
+MESSAGE_RULES: dict[str, Rule] = {
+    "hello": BOTH,
+    # the watcher's reports: they count only from the socket that said hello as the watcher (_handle)
+    "items": WATCHER_ONLY, "replied": WATCHER_ONLY, "thread": WATCHER_ONLY, "filled": WATCHER_ONLY,
+    "reader_status": WATCHER_ONLY, "watcher_caps": WATCHER_ONLY, "tab_grouped": WATCHER_ONLY,
+    # the Brain's inbox, in AI Home and on the watcher's Brain page
+    "brain": BOTH, "draft": BOTH, "approve": BOTH, "hand": BOTH, "done": BOTH, "tell": BOTH, "watch_set": BOTH,
+    "watch_remove": BOTH, "pause": BOTH, "style": BOTH,
+    "workflow_run": Rule(watcher=_has_item),
+    "workflows": APP_ONLY, "workflow_save": APP_ONLY, "workflow_delete": APP_ONLY,
+    "permission": Rule(watcher=_once_or_deny),
+    "tools": APP_ONLY, "tool_set": APP_ONLY, "tool_allow": APP_ONLY, "tool_forget": APP_ONLY,
+    "skills": APP_ONLY, "skill_draft": APP_ONLY, "skill_save": APP_ONLY,
+    "hearing": APP_ONLY, "hearing_download": APP_ONLY, "hearing_cancel": APP_ONLY, "listen_start": APP_ONLY,
+    "listen_chunk": APP_ONLY, "listen_end": APP_ONLY, "listen_cancel": APP_ONLY,
+    "brain_ask": APP_ONLY, "brain_confirm": APP_ONLY, "brain_dismiss": APP_ONLY,
+    "check_continue": BOTH, "check_skip": APP_ONLY, "check_show": BOTH,  # Skip closes a tab: never the watcher's
+    "brave_connect": APP_ONLY, "hand_tab": APP_ONLY, "take_back": APP_ONLY,
+    "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in AI Home's list of connected clients
+    "new_task": APP_ONLY,  # with or without adopt
+    "send": APP_ONLY, "stop": APP_ONLY, "close": APP_ONLY, "model": APP_ONLY,
+    "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
+}
+
+
+def may_send(role: str, message: dict) -> bool:
+    """Whether a page of this role ("app" or "watcher") may send this message. An unknown type, a message without
+    one, or a type that isn't a string is never allowed, for anyone."""
+    kind = message.get("type")
+    rule = MESSAGE_RULES.get(kind) if isinstance(kind, str) else None
+    if rule is None:
+        return False
+    if role == "app":
+        return rule.app
+    if role == "watcher":
+        return bool(rule.watcher(message)) if callable(rule.watcher) else rule.watcher is True
+    return False
 
 
 reveal_folder = platforms.reveal  # a file manager window with the folder selected; False when none could open
