@@ -788,3 +788,86 @@ async def test_a_send_card_runs_once_and_never_empty(fake_claude, tmp_path):  # 
     again = (await brain.respond("k1", words))["proposal"]
     await brain.confirm("k1", again["id"], task="  \n ")  # the box emptied: the card's own words go
     assert agents.sent[-1] == ("a1", f"{RELAY}\n{words}")
+
+
+FOOTER_WORDS = "tell the footer agent to also check the mobile layout"
+ANY = {"say": "Which one?", "action": "message_agent", "agent": ""}
+WHICH = "Which agent: 1 · fix the footer (blue), or 2 · check flights (green)? Say its number."
+
+
+def state_block(call):
+    """The state Claude was given, without the prompt's own words (which name "asking_which_agent" too)."""
+    prompt = call["oneshot"]
+    return prompt[prompt.index(STATE):prompt.index(END)]
+
+
+async def test_which_agent_is_asked_back_then_the_first_words_are_sent(fake_claude, tmp_path):
+    agents = Recorder([footer(), flights()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, ANY, agents=agents)
+    for answer in ("agent 1", "the footer one", "one"):
+        assert await brain.respond("k1", FOOTER_WORDS) == {"say": WHICH}
+        calls = len(talk_calls(log))
+        card = (await brain.respond("k1", answer))["proposal"]
+        assert (card["agent"], card["task"]) == ("a1", FOOTER_WORDS), answer  # the first words, not the answer
+        assert len(talk_calls(log)) == calls, answer  # picked with no Claude call
+    assert await brain.respond("k1", FOOTER_WORDS) == {"say": WHICH}
+    assert await brain.respond("k1", "agent 7") == {
+        "say": "There's no agent 7 now. Open ones: 1 · fix the footer (blue), or 2 · check flights (green)."}
+    card = (await brain.respond("k1", "one"))["proposal"]  # the question stayed open
+    assert (card["agent"], card["task"]) == ("a1", FOOTER_WORDS)
+    agents.rows.append(agent_row("a3", "check the shop", state="your_turn", created=3.0, color="cyan"))
+    brain.talks.ask_which("k1", FOOTER_WORDS, ("a1", "a2"))
+    card = (await brain.respond("k1", "agent 3"))["proposal"]  # an open agent the question didn't list
+    assert (card["agent"], card["task"]) == ("a3", FOOTER_WORDS)
+    calls = len(talk_calls(log))
+    answer = await brain.respond("k1", "one")  # no question pending: a bare "one" is a question for Claude
+    assert len(talk_calls(log)) == calls + 1 and "proposal" not in answer
+    assert agents.sent == [] and agents.created == []
+
+
+async def test_it_means_the_last_agent(fake_claude, tmp_path):
+    agents = Recorder([footer(), flights()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path,
+                                        {"say": "x", "action": "message_agent", "agent": "a1"}, ANY,
+                                        {"say": "x", "action": "start_agent"}, ANY, agents=agents)
+    first = (await brain.respond("k1", "tell the footer agent to check the header"))["proposal"]
+    await brain.confirm("k1", first["id"])
+    card = (await brain.respond("k1", "tell it to also check the mobile layout"))["proposal"]
+    assert (card["agent"], card["task"]) == ("a1", "tell it to also check the mobile layout")
+    start = (await brain.respond("k1", "check the shop"))["proposal"]
+    assert (await brain.confirm("k1", start["id"]))["agent"] == "a3"
+    agents.rows.append(agent_row("a3", "check the shop", state="working", created=3.0, color="cyan"))
+    assert (await brain.respond("k1", "tell it to stop"))["proposal"]["agent"] == "a3"
+    assert '"last_agent": "a3"' in state_block(talk_calls(log)[-1])  # Claude sees it too
+
+
+async def test_a_which_agent_question_expires_and_clears(fake_claude, tmp_path):
+    none = {"say": "OK.", "action": "none"}
+    agents = Recorder([footer(), flights()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, ANY, none, ANY, none, ANY, agents=agents)
+    brain.talks.proposal_ttl = 0.05
+    assert await brain.respond("k1", FOOTER_WORDS) == {"say": WHICH}
+    await asyncio.sleep(0.1)
+    assert await brain.respond("k1", "agent 1") == {"say": "OK."}  # it had expired: Claude answered
+    assert len(talk_calls(log)) == 2
+    brain.talks.proposal_ttl = 120
+    await brain.respond("k1", FOOTER_WORDS)
+    assert await brain.respond("k1", "what else is going on?") == {"say": "OK."}  # other words: a new question
+    assert '"asking_which_agent"' in state_block(talk_calls(log)[-1])  # Claude saw the question it answered
+    assert brain.talks.asking("k1") is None
+    await brain.respond("k1", FOOTER_WORDS)
+    assert '"asking_which_agent"' not in state_block(talk_calls(log)[-1])  # the ended question is gone
+    assert await brain.respond("k1", "yes") == {"say": WHICH}  # a yes doesn't say which: the question again
+    assert await brain.respond("k1", "no") == {"say": "OK, I won't."}
+    assert brain.talks.asking("k1") is None and len(talk_calls(log)) == 5
+
+
+async def test_an_agent_that_closes_while_asked_about_is_no_longer_a_pick(fake_claude, tmp_path):  # Review Focus 3
+    agents = Recorder([footer(), flights()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, ANY, agents=agents)
+    assert await brain.respond("k1", FOOTER_WORDS) == {"say": WHICH}
+    agents.rows = [flights()]  # a1 closes while the question waits
+    assert await brain.respond("k1", "one") == {"say": "There's no agent 1 now. Open ones: 2 · check flights (green)."}
+    card = (await brain.respond("k1", "two"))["proposal"]  # the question stayed: the first words still go
+    assert (card["agent"], card["task"]) == ("a2", FOOTER_WORDS)
+    assert len(talk_calls(log)) == 1 and agents.sent == []

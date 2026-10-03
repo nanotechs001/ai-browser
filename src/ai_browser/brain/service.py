@@ -18,8 +18,8 @@ from .store import BrainStore, Item, WatchEntry, built_in
 from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HIDDEN, NO_AGENT_SAY, NO_SUCH_SAY, NOTHING_OPEN,
                    NOTHING_OPEN_WAITING, PRESSED, QUEUED_LINE_SAY, QUEUED_PERMISSION_SAY, QUEUED_WORKING_SAY, RELAY,
                    SECRET_ANSWER, SEND_SAY, SENT_SAY, START_SAY, STARTED_SAY, WHICH_SAY, Pick, Talks, check_say,
-                   choices, is_no, is_yes, label, number_of, parse_answer, resolve_agent, secret_like, state_summary,
-                   tab_hint, talk_prompt, target_state)
+                   choices, is_no, is_yes, label, number_of, parse_answer, resolve_agent, resolve_among, secret_like,
+                   shown_rows, state_summary, tab_hint, talk_prompt, target_state)
 
 KINDS = {"needs_reply", "new", "skip"}
 SUGGESTIONS = {"draft", "agent", "tell"}
@@ -612,11 +612,13 @@ class BrainService:
 
     async def _respond(self, talk: str, text: str, proposal_id: str | None, task: str | None,
                        model: str | None) -> dict:
+        """In this order: the open card, a bare yes or no, a secret, a pending "which agent?" question, then
+        Claude."""
         if not text:
             return {"say": ""}
         card = self.talks.proposal(talk)
         if card is not None and card.id == proposal_id:
-            if is_yes(text):  # the card runs as Start would, as it now reads: no Claude call
+            if is_yes(text):  # the card runs as Send (Start, Draft it) would, as it now reads: no Claude call
                 return await self.confirm(talk, proposal_id, task=task, model=model, said=text)
             if is_no(text):
                 self.dismiss(talk, proposal_id)
@@ -624,36 +626,54 @@ class BrainService:
                 return {"say": NOTHING_DONE}
         self.talks.drop(talk)  # any other words close the card: they are a new question
         rows = self._rows()
+        asking = self.talks.asking(talk)
         if is_yes(text) or is_no(text):  # a yes or no with no card to run: never Claude, and never a card
-            reply = self._bare(talk, text, proposal_id, rows)
+            reply = self._bare(talk, text, proposal_id, asking, rows)
         elif secret_like(text):  # never sent to Claude, and not kept in the talk either
+            self.talks.clear_asking(talk)
             self.talks.add(talk, HIDDEN, SECRET_ANSWER)
             return {"say": SECRET_ANSWER, "hidden": True}
+        elif asking is not None and (pick := resolve_among(text, rows, asking.candidates)).outcome != "none":
+            reply = self._answer_pick(talk, pick, asking.words, rows)  # the first words, with no Claude call
         else:
-            reply = await self._ask_claude(talk, text, rows)
+            reply = await self._ask_claude(talk, text, rows, asking)
             if "error" in reply:
                 return reply
         self.talks.add(talk, text, reply["say"])
         return reply
 
-    def _bare(self, talk: str, text: str, proposal_id: str | None, rows: list[dict]) -> dict:
+    def _bare(self, talk: str, text: str, proposal_id: str | None, asking, rows: list[dict]) -> dict:
         """A plain yes or no that matched no open card (Decision 7): a fixed line, never Claude, never a card."""
         if is_no(text):
+            self.talks.clear_asking(talk)
             return {"say": NOTHING_DONE}
         if proposal_id:  # its card is past its two minutes, or the app restarted
             return {"say": EXPIRED}
+        if asking is not None:
+            listed = [row for row in rows if row["id"] in asking.candidates]
+            if listed:  # a yes doesn't say which: the same question again
+                return {"say": WHICH_SAY.format(choices=choices(listed))}
+            self.talks.clear_asking(talk)
         waiting = any(row.get("permission") or row.get("check") for row in rows)
         return {"say": NOTHING_OPEN_WAITING if waiting else NOTHING_OPEN}
 
-    async def _ask_claude(self, talk: str, text: str, rows: list[dict]) -> dict:
+    async def _ask_claude(self, talk: str, text: str, rows: list[dict], asking=None) -> dict:
+        ids = {row["id"] for row in rows}
+        last = self.talks.last_agent(talk)
         items = [item.public() for item in self.store.items()]
-        state = state_summary(rows, items, self.store.others, self._working[-1] if self._working else "")
+        state = state_summary(rows, items, self.store.others, self._working[-1] if self._working else "",
+                              last_agent=last if last in ids else None,
+                              asking=asking.candidates if asking is not None else None)
         with self._busy("Thinking about what you said"):
             answer = await self.ask(talk_prompt(text, self.talks.history(talk), state), model="haiku",
                                     claude=self.claude, cwd=self.store.folder / "calls", timeout=TALK_TIMEOUT)
         if answer.error:
             return {"say": "", "error": f"The Brain couldn't answer: {answer.error}"}
-        parsed = parse_answer(answer.text, {row["id"] for row in rows}, {item["id"] for item in items})
+        parsed = parse_answer(answer.text, ids, {item["id"] for item in items})
+        if asking is not None:  # the question ends, unless Claude picked one of the agents it named
+            self.talks.clear_asking(talk)
+            if parsed.action == "message_agent" and parsed.agent in asking.candidates:
+                return self._send_card(talk, self._row(rows, parsed.agent), asking.words)
         return self._dispatch(talk, text, parsed, rows)
 
     def _dispatch(self, talk: str, text: str, parsed, rows: list[dict]) -> dict:
@@ -694,11 +714,17 @@ class BrainService:
 
     def _answer_pick(self, talk: str, pick: Pick, words: str, rows: list[dict]) -> dict:
         """The agent the words picked (Decision 4), for a send card holding `words`."""
-        if pick.outcome == "missing":  # a number or colour that names no open agent: no card
+        if pick.outcome == "missing":  # a number or colour that names no open agent: no card (a question stays open)
             return {"say": NO_SUCH_SAY.format(said=pick.said, choices=choices(rows))}
         if pick.outcome == "ask":
-            return {"say": WHICH_SAY.format(choices=choices([row for row in rows if row["id"] in pick.ids]))}
+            return self._which(talk, words, [row for row in rows if row["id"] in pick.ids])
         return self._send_card(talk, self._row(rows, pick.ids[0]), words)
+
+    def _which(self, talk: str, words: str, rows: list[dict]) -> dict:
+        """Ask which agent, keeping the words that asked for the send (Decision 5)."""
+        listed = shown_rows(rows)
+        self.talks.ask_which(talk, words, tuple(row["id"] for row in listed))
+        return {"say": WHICH_SAY.format(choices=choices(listed))}
 
     @staticmethod
     def _row(rows: list[dict], agent_id: str) -> dict:
@@ -751,9 +777,13 @@ class BrainService:
         words = task.strip() if isinstance(task, str) and task.strip() else card.task  # the box as the user left it
         if card.kind == "start_agent" and self.agents is not None:
             agent = await self.agents.create(words, model=model if model in AGENT_MODELS else self.agent_model)
+            self.talks.set_last(talk, agent.id)
             return {"say": STARTED_SAY.format(label=label({"id": agent.id, "name": agent.name})), "agent": agent.id}
         if card.kind == "message_agent" and self.agents is not None:
-            return await self._send(card, f"{RELAY}\n{words}")
+            answer = await self._send(card, f"{RELAY}\n{words}")
+            if answer.get("sent"):
+                self.talks.set_last(talk, card.agent)
+            return answer
         if card.kind == "draft_reply":
             item = self.store.get(card.item)
             if item is None:
