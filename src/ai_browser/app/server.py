@@ -137,6 +137,37 @@ def may_send(role: str, message: dict) -> bool:
     return False
 
 
+# What a socket from Brave's watcher's origin may get (watcher-safety Decision 5): never a tab list, a session, a
+# picture, an agent's conversation or the Tools, workflow and skill messages, and never a tab's target id.
+WATCHER_RECEIVES = frozenset({
+    "ping", "error", "watcher_hello", "watch_list", "notify", "permission_request", "check_request", "group_tab",
+    "ungroup_tabs", "open_thread", "fill_reply",  # for the worker
+    "snapshot", "agent", "agent_closed", "brain_snapshot", "brain_item", "brain_item_gone", "brain_state",  # Brain page
+})
+WATCHER_AGENT_FIELDS = ("id", "name", "color", "state", "permission")  # what the Brain page reads of an agent
+
+
+def _watcher_row(agent) -> dict:
+    return {key: agent[key] for key in WATCHER_AGENT_FIELDS if key in agent} if isinstance(agent, dict) else {}
+
+
+def for_watcher(message: dict) -> dict | None:
+    """What a watcher-origin socket may get: the message, a trimmed copy, or None. It never changes its input,
+    because _send_all puts one dict in every queue."""
+    kind = message.get("type")
+    if not isinstance(kind, str) or kind not in WATCHER_RECEIVES:
+        return None  # a type added later is dropped too, until it is written down here
+    if kind == "snapshot":
+        agents = message.get("agents")
+        return {"type": "snapshot", "agents": [_watcher_row(agent) for agent in agents]
+                if isinstance(agents, list) else []}
+    if kind == "agent":
+        return {"type": "agent", "agent": _watcher_row(message.get("agent"))}
+    if kind == "check_request":
+        return {key: value for key, value in message.items() if key != "target"}  # Show me asks by agent id
+    return message
+
+
 reveal_folder = platforms.reveal  # a file manager window with the folder selected; False when none could open
 GOTO_MAC = "press ⌘⇧G, paste the path and press Enter"
 GOTO_OTHER = "click the address bar at the top of the folder window, paste the path and press Enter"
@@ -736,9 +767,17 @@ class AppServer:
             self._unsubscribe(ws)
 
     async def _write(self, ws: WebSocket, queue: asyncio.Queue) -> None:
+        """Every message to a socket passes here (answers, _send_all, _to_watcher), so a path added later is covered:
+        a watcher-origin socket gets only for_watcher's part of each."""
+        watcher = self._role(ws) == "watcher"  # read once: the socket's origin is set before this task starts
         with contextlib.suppress(Exception):
             while True:
-                await ws.send_json(await queue.get())
+                message = await queue.get()
+                if watcher:
+                    message = for_watcher(message)
+                    if message is None:
+                        continue
+                await ws.send_json(message)
 
     def _unsubscribe(self, ws: WebSocket) -> None:
         self._sockets.pop(ws, None)

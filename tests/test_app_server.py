@@ -439,9 +439,12 @@ async def test_check_reports_are_checked_then_reach_pages_and_the_watcher(fake_c
         agent = await server.agents.create("Flights to Manila")
         good = {**CHECK_REPORT, "agent": agent.id}
         headers = agent_headers(server, agent.id)
-        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
+        async with (connect(socket_url(server, url), origin=WATCHER) as watcher,
+                    connect(socket_url(server, url), origin=ORIGIN) as page):
             await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
             await until(watcher, lambda message: message["type"] == "watch_list")
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            await until(page, lambda message: message["type"] == "snapshot")
             async with httpx.AsyncClient() as client:
                 for bad in ({**good, "check": "dragon"}, {**good, "site": "www.google.com <b>"}, {**good, "site": "a b"},
                             {**good, "site": "www.google.com\n"}, {**good, "live": "http://evil.example/live?token=x"},
@@ -451,7 +454,9 @@ async def test_check_reports_are_checked_then_reach_pages_and_the_watcher(fake_c
                 await client.post(url + "/agent-events", json=good, headers=headers)
                 request = (await until(watcher, lambda message: message["type"] == "check_request"))[-1]
                 assert request == {"type": "check_request", "agent": agent.id, "name": "Flights to Manila",
-                                   "site": "www.google.com", "what": KINDS["google"], "target": "T1", "live": None}
+                                   "site": "www.google.com", "what": KINDS["google"], "live": None}  # no tab id
+                shown = (await until(page, lambda message: message["type"] == "check_request"))[-1]
+                assert shown["target"] == "T1"  # AI Home's own check card still has it (its Watch sends it)
                 assert agent.state == "needs_you" and agent.check["check"] == "google"
                 cleared = {"agent": agent.id, "kind": "check_cleared", "target": "T1", "adopted": False,
                            "how": "solved"}

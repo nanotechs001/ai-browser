@@ -4,6 +4,7 @@ app/server.py and here), and Brave's watcher held to them over real sockets."""
 import asyncio
 import inspect
 import json
+import os
 
 import pytest
 from websockets.asyncio.client import connect
@@ -356,3 +357,103 @@ async def test_show_me_with_no_tab_source_does_nothing(fake_claude, tmp_path):  
             await wait_for(lambda: agents.agents["a1"].check is None)
     finally:
         await server.stop()
+
+
+RECEIVES = {"ping", "error", "watcher_hello", "watch_list", "notify", "permission_request", "check_request",
+            "group_tab", "ungroup_tabs", "open_thread", "fill_reply",  # the worker's
+            "snapshot", "agent", "agent_closed", "brain_snapshot", "brain_item", "brain_item_gone",
+            "brain_state"}  # the Brain page's
+NEVER = {"tabs", "thumb", "thumbs", "sessions", "browser", "agent_event", "agent_events", "created", "brain_activity",
+         "brain_answer", "hearing_status", "heard", "tools_snapshot", "workflows_snapshot", "workflow_saved", "skills",
+         "skill_drafted", "skill_diff", "skill_saved",
+         "browser_clients",  # cdp-relay's list of connected clients
+         "a_type_added_later"}
+AGENT_ROW = {"id": "a1", "name": "Fix the footer", "color": "blue", "model": "sonnet", "state": "needs_you",
+             "status": "", "last_action": "", "tabs": ["T1"], "adopted": ["U2"], "working_tab": "T1",
+             "loaded_skills": [], "seconds": 0, "cost": 0, "created": 1.0,
+             "permission": {"request": "r1", "server": "clickup", "tool": "mcp__clickup__create_task", "input": {}},
+             "check": {"target": "T1", "live": None}}
+
+
+def test_what_the_watcher_receives_is_a_fixed_list():
+    from ai_browser.app.server import WATCHER_AGENT_FIELDS, WATCHER_RECEIVES, for_watcher
+
+    assert WATCHER_RECEIVES == RECEIVES and len(RECEIVES) == 18
+    assert WATCHER_AGENT_FIELDS == ("id", "name", "color", "state", "permission")
+    for kind in RECEIVES | NEVER:
+        assert (for_watcher({"type": kind}) is not None) is (kind in RECEIVES), kind
+    row = {key: AGENT_ROW[key] for key in WATCHER_AGENT_FIELDS}
+    snapshot = {"type": "snapshot", "agents": [AGENT_ROW], "tabs": [{"target": "U1"}], "sessions": [],
+                "browser": {"kind": "brave"}, "skills_summary": {}, "max_working": 3, "default_model": "sonnet",
+                "browser_clients": [], "tab_scope": {"profile": "watcher", "elsewhere": 1}}
+    agent = {"type": "agent", "agent": AGENT_ROW}
+    check = {"type": "check_request", "agent": "a1", "name": "Fix the footer", "site": "www.google.com",
+             "what": "a check", "target": "T1", "live": None}
+    before = json.dumps([snapshot, agent, check])
+    assert for_watcher(snapshot) == {"type": "snapshot", "agents": [row]}
+    assert for_watcher(agent) == {"type": "agent", "agent": row}
+    assert for_watcher(check) == {key: value for key, value in check.items() if key != "target"}
+    assert json.dumps([snapshot, agent, check]) == before  # _send_all puts one dict in every queue
+    for kind in ("watcher_hello", "watch_list", "notify", "open_thread", "fill_reply", "group_tab", "ungroup_tabs",
+                 "permission_request", "check_request"):  # everything _to_watcher sends
+        assert for_watcher({"type": kind}) is not None, kind
+    assert for_watcher({"type": ["agent"]}) is None and for_watcher({}) is None
+    assert for_watcher({"type": "snapshot"}) == {"type": "snapshot", "agents": []}
+
+
+async def test_watcher_sockets_get_no_target_ids(fake_claude, tmp_path):
+    from ai_browser.app.server import WATCHER_RECEIVES
+
+    server, url, _ = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
+    brave = FakeBrave([{"target": "U1-7f3a", "url": "https://shop.example/", "title": "Shop"},
+                       {"target": "U2-7f3a", "url": "https://mail.example/", "title": "Mail"}])
+    server.attach_brave(brave)
+    agents = server.agents
+    agent = add_agent(agents, adopted=["U2-7f3a"])
+    agents.tab_event("a1", "working_tab", "T1-7f3a")
+    server.sessions["cc-x"] = {"id": "cc-x", "name": "Claude Code", "color": "orange", "tabs": ["S1-7f3a"],
+                               "pid": os.getpid()}
+    brave.relay.rows = [{"id": "a1", "kind": "agent", "number": 1, "tabs": 1, "connected": True, "cut_off": False}]
+    try:
+        async with (connect(socket_url(server, url), origin=WATCHER) as worker,
+                    connect(socket_url(server, url), origin=WATCHER) as page,
+                    connect(socket_url(server, url), origin=ORIGIN) as home):
+            await worker.send(json.dumps({"type": "hello", "view": "watcher"}))
+            got = {"worker": await until(worker, lambda m: m["type"] == "watch_list")}
+            await page.send(json.dumps({"type": "hello", "view": "brain"}))
+            got["page"] = await until(page, lambda m: m["type"] == "snapshot")
+            await home.send(json.dumps({"type": "hello", "view": "home"}))
+            got["home"] = await until(home, lambda m: m["type"] == "snapshot")
+            agents.check_event("a1", {**CHECK_REPORT, "target": "T1-7f3a"})
+            agent.permission = {"request": "r1", "server": "clickup", "tool": "mcp__clickup__create_task",
+                                "input": {"name": "Fix footer"}}
+            agents._changed(agent)
+            agents._broadcast({"type": "permission_request", "agent": "a1", **agent.permission})
+            brave.changed()
+            server._sessions_changed()
+            server._clients_changed()  # cdp-relay's list of what uses Brave: AI Home's only
+            server._send_all({"type": "thumb", "id": "a1", "jpeg": "eHh4"})
+            for name, ws in (("worker", worker), ("page", page), ("home", home)):
+                got[name] += await quiet(ws, 1.0)
+        for name in ("worker", "page"):
+            assert "-7f3a" not in json.dumps(got[name]), name
+            assert {m["type"] for m in got[name]} <= WATCHER_RECEIVES, name
+            assert not any(m["type"] == "browser_clients" for m in got[name]), name
+        assert "browser_clients" not in next(m for m in got["page"] if m["type"] == "snapshot")
+        rows = [m["agent"] for m in got["page"] if m["type"] == "agent" and m["agent"].get("id") == "a1"]
+        assert rows and rows[-1]["permission"]["request"] == "r1"  # the Brain page's card still works
+        assert {"check_request", "permission_request"} <= {m["type"] for m in got["worker"]}
+        assert any(m["type"] == "tabs" and any(tab["target"] == "U1-7f3a" for tab in m["tabs"])
+                   for m in got["home"])  # AI Home still gets the list
+        assert "browser_clients" in next(m for m in got["home"] if m["type"] == "snapshot")
+        assert any(m["type"] == "browser_clients" and m["clients"] for m in got["home"])  # and the clients
+    finally:
+        await server.stop()
+
+
+def test_only_the_role_reads_the_watchers_origins():
+    from ai_browser.app.server import AppServer
+
+    readers = sorted(name for name, member in vars(AppServer).items()
+                     if inspect.isfunction(member) and "_watcher_origins" in inspect.getsource(member))
+    assert readers == ["__init__", "_mismatch", "_role", "_socket", "allow_origin"]  # the rest asks _role
