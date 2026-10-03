@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import unicodedata
 from pathlib import Path
 from types import SimpleNamespace
@@ -500,10 +501,22 @@ def test_each_profile_is_listed_once(tmp_path):
                  ["Default:A"], id="invalid UTF-8"),
     pytest.param(lambda: b'{"profile": {"profiles_order": ' + b"[" * 10000 + b"]" * 10000 + b"}}", [],
                  id="10,000 nested lists"),
+    pytest.param(lambda: many_profiles(48000), [], id="48,000 profiles under the size cap"),
 ])
 def test_profiles_fail_safely(tmp_path, contents, shown):
     data = data_folder(tmp_path / "Brave", contents(), ["Default", "Profile 1"])
-    assert [f"{profile.folder}:{profile.name}" for profile in browsers.profiles(data)] == shown
+    started = time.perf_counter()
+    found = browsers.profiles(data)
+    assert time.perf_counter() - started < 2  # linear: a hostile file under the cap never hangs Settings
+    assert [f"{profile.folder}:{profile.name}" for profile in found] == shown
+
+
+def many_profiles(count: int) -> bytes:
+    """A Local State under the size cap: `count` profiles in info_cache and `count` other folders in profiles_order,
+    names of one length, none on disk. Matching the two lists pair by pair takes seconds; with a set, milliseconds."""
+    return json.dumps({"profile": {"info_cache": {f"Profile {number:08d}a": {} for number in range(count)},
+                                   "profiles_order": [f"Profile {number:08d}b" for number in range(count)]}}
+                      ).encode("utf-8")
 
 
 def test_profiles_fail_safely_on_odd_files(tmp_path, monkeypatch):
@@ -613,6 +626,8 @@ def test_watcher_paths_ignore_case_only_on_windows(tmp_path):
                  id="path holds a NUL"),
     pytest.param(lambda folder: {"extensions": {"settings": {WATCHER_ID: ["path", str(folder)]}}},
                  id="the entry is a list"),
+    pytest.param(lambda folder: {"extensions": {"settings": {WATCHER_ID: {"path": "/x/" + "a/" * 320000}}}},
+                 id="a path of 320,000 parts under the size cap"),
 ])
 def test_watcher_places_fail_safely(tmp_path, contents):
     data, watcher = brave_data(tmp_path), tmp_path / "watcher"
@@ -620,7 +635,9 @@ def test_watcher_places_fail_safely(tmp_path, contents):
     written = contents(watcher)
     (data / "Default" / "Secure Preferences").write_bytes(
         written if isinstance(written, bytes) else json.dumps(written).encode("utf-8"))
+    started = time.perf_counter()
     assert browsers.watcher_places(data, {WATCHER_ID: watcher}) == []
+    assert time.perf_counter() - started < 2  # linear: a hostile path never hangs Settings
 
 
 # Running, the switch and the state (Task 9)

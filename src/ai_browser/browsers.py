@@ -309,7 +309,9 @@ def profiles(data_dir) -> list[Profile]:
         return []
     order = profile.get("profiles_order")
     order = [folder for folder in order if isinstance(folder, str)] if isinstance(order, list) else []
-    rest = sorted((folder for folder in cache if folder not in order), key=lambda folder: (folder != "Default", folder))
+    listed = set(order)  # a set: a hostile file's thousands of entries are matched in linear time, never pair by pair
+    rest = sorted((folder for folder in cache if folder not in listed),
+                  key=lambda folder: (folder != "Default", folder))
     last_used = profile.get("last_used")
     found, seen = [], set()
     for folder in [*order, *rest]:
@@ -340,13 +342,20 @@ def _extension_settings(path) -> dict:
     return settings if isinstance(settings, dict) else {}
 
 
+_MAX_PATH = 4096  # characters: no watcher folder is longer, and resolving a hostile path costs time in its square
+
+
 def _watcher_key(path, system: str) -> str | None:
     """A watcher folder as compared with the path a browser recorded: on Windows the absolute path without regard
-    to case and with no link resolved (as Chrome records it), elsewhere the real path, exactly."""
+    to case and with no link resolved (as Chrome records it), elsewhere the real path, exactly. None for a path that
+    can't be compared: over 4096 characters, or holding a NUL."""
+    text = str(path)
+    if len(text) > _MAX_PATH:
+        return None
     try:
         if system == "win32":
-            return ntpath.normcase(ntpath.abspath(str(path)))
-        return os.path.realpath(path)
+            return ntpath.normcase(ntpath.abspath(text))
+        return os.path.realpath(text)
     except (OSError, ValueError):
         return None
 
