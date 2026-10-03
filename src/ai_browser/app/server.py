@@ -334,6 +334,9 @@ class AppServer:
         closing the agent closes."""
         if self.brave is None or report.get("kind") not in ("tab_opened", "working_tab", "check"):
             return False
+        if report.get("kind") == "check" and report.get("live") and _valid_check(report):
+            report["adopted"] = False  # a bot check in QA's own sandbox (its live view): no tab of the user's Brave
+            return False
         granted = self._granted(report["agent"], report.get("target"))
         if granted is None:
             return True
@@ -597,9 +600,7 @@ class AppServer:
             client = message.get("id")
             if self.brave is not None and isinstance(client, str) and (AGENT_ID.match(client)
                                                                        or SESSION_ID.match(client)):
-                await self.brave.relay.disconnect(client)
-                if self.sessions.pop(client, None) is not None:
-                    self._sessions_changed()
+                await self.brave.relay.disconnect(client)  # a session stays listed until it ends (bye, the sweep)
                 self._clients_changed()
 
     async def _hand(self, agent_id: str, target) -> str:

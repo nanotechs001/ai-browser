@@ -204,6 +204,7 @@ NO_DOWNLOAD = (-32602, "No download with given guid found")
 NO_CONTEXT = (-32602, "Failed to find browser context with given id")
 SPECIAL_TAB = (-32000, "hidden, focused or special tabs don't open through AI Browser's connection")
 NOT_FLAT = (-32000, "AI Browser's connection needs flatten: true")
+CREATE_PARAMS = frozenset({"url", "newWindow", "background", "browserContextId"})  # what an engine sends
 CUT_OFF_TEXT = "The user disconnected this client in AI Home."
 _SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")
 _AGENT_ID = re.compile(r"^a[0-9]{1,9}$")
@@ -382,6 +383,7 @@ class Relay:
         self._waiting: dict[int, asyncio.Future] = {}  # upstream id -> the relay's own command's future
         self._unbound: dict[str, list] = {}  # session id -> [(message, raw)] that came before its attach answer
         self._cut_off: set[str] = set()
+        self._forgotten: set[str] = set()  # closed agents and ended sessions, until they connect again
         self._states: list[Callable[[str], None]] = []
         self._changes: list[Callable[[], None]] = []
         self._grant_hooks: list[Callable[[str, str], None]] = []
@@ -569,6 +571,7 @@ class Relay:
         except Exception:
             return  # it gave up while the browser was asking
         client = _Socket(identity, ws)
+        self._forgotten.discard(identity)  # a session that said bye and came back is itself again
         self._clients.append(client)
         client.writer = asyncio.ensure_future(client.write())
         self._changed()
@@ -660,7 +663,7 @@ class Relay:
             problem = address_problem(params.get("url"), self.port)
             if problem:
                 return -32000, problem
-            if any(params.get(key) for key in ("hidden", "focus", "forTab", "enableBeginFrameControl")):
+            if set(params) - CREATE_PARAMS:  # hidden, focused, minimized, off-screen or special: never
                 return SPECIAL_TAB
             context = params.get("browserContextId")
             if context is not None and context not in self._contexts_of(identity):
@@ -806,7 +809,7 @@ class Relay:
         if error is not None:
             reply = {"id": client_id, "error": error}
         else:
-            result = self._after(client, method, params, result)
+            result = self._after(client, client_id, method, params, result)
             if result is None:
                 return
             reply = {"id": client_id, "result": result}
@@ -814,11 +817,14 @@ class Relay:
             reply["sessionId"] = session_id
         self._to(client, reply)
 
-    def _after(self, client, method: str, params: dict, result: dict) -> dict | None:
+    def _after(self, client, client_id, method: str, params: dict, result: dict) -> dict | None:
         """An answer's effects before it goes back: a new tab becomes its creator's (and is announced to it first), an
         attach binds the session (its early events go first), a target list keeps what the client may see."""
         if method == "Target.createTarget" and isinstance(result.get("targetId"), str):
             target = result["targetId"]
+            if client.identity in self._forgotten:  # its agent closed while the tab was being made: nobody's
+                self._job(self._quietly("Target.closeTarget", {"targetId": target}))
+                return result
             if not client.app:
                 self._grant(client.identity, target, "own")
             info = self._targets.get(target)
@@ -829,6 +835,10 @@ class Relay:
             queued = self._unbound.pop(session_id, [])
             if client.closed:  # it left meanwhile: nobody will use this session
                 self._job(self._quietly("Target.detachFromTarget", {"sessionId": session_id}))
+                return None
+            if not client.app and not self.visible(client.identity, target):  # taken back while it attached
+                self._job(self._quietly("Target.detachFromTarget", {"sessionId": session_id}))
+                self._error(client, client_id, NOT_FOUND)
                 return None
             self._sessions[session_id] = _Session(client, str(target))
             client.sessions.add(session_id)
@@ -1066,6 +1076,7 @@ class Relay:
     async def forget(self, identity: str, close_tabs: bool = False) -> None:
         """An agent closed or a session ended (Decision 11): its sockets close and, with close_tabs, its own tabs still
         open close too. Its grants go; the cut-off list stays for the run."""
+        self._forgotten.add(identity)
         for client in [client for client in self._clients if client.identity == identity]:
             self._release(client)
             self._end(client, 1000)
@@ -1095,6 +1106,8 @@ class Relay:
     async def close_clients(self, code: int = QUITTING) -> None:
         """The app is quitting, its agents have ended: every client socket closes. The upstream stays for close()."""
         self._quitting = True
+        if self._attempt is not None and not self._attempt.done():
+            self._attempt.cancel()  # a handshake waiting for Brave's question hears "AI Browser is quitting" now
         for client in [client for client in self._clients if not client.app]:
             self._end(client, code)
         self._changed()

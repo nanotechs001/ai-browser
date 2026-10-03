@@ -695,3 +695,77 @@ async def test_a_client_that_gives_up_during_the_question_leaves_nothing(tmp_pat
         await relay.close()
         await stop()
         await port.stop()
+
+
+# ---- plan review ---------------------------------------------------------------------------------------------
+
+async def test_an_attach_that_lands_after_take_back_is_refused(rig):
+    """Plan review, Important 3: an attach under way when the user clicks Take back is not bound when it lands."""
+    await rig.relay.open("start")
+    rig.handed["a1"] = {"U1"}
+    a1 = await rig.client("a1")
+    rig.port.hold = {"Target.attachToTarget"}
+    attaching = asyncio.ensure_future(a1.send("Target.attachToTarget", {"targetId": "U1", "flatten": True}))
+    assert await until(lambda: len(rig.port.held) == 1)
+    await rig.relay.cut("a1", "U1")  # no session yet
+    rig.handed["a1"] = set()
+    rig.port.hold = set()
+    await rig.port.answer_held()
+    with pytest.raises(CDPError, match="No target with given id found"):
+        await attaching
+    assert await until(lambda: len(rig.sent("Target.detachFromTarget")) == 1)  # the browser's session ended too
+
+
+async def test_create_target_takes_only_the_params_the_engine_uses(rig):
+    """Plan review, Minor 7: no minimized or off-screen window; the AI's tabs stay in plain sight."""
+    await rig.relay.open("start")
+    a1 = await rig.client("a1")
+    for extra in ({"windowState": "minimized"}, {"left": -5000}, {"width": 1}, {"hidden": False}):
+        with pytest.raises(CDPError):
+            await a1.send("Target.createTarget", {"url": "about:blank", "newWindow": True, **extra})
+    assert "Target.createTarget" not in rig.port.methods
+    await a1.send("Target.createTarget", {"url": "about:blank", "newWindow": True, "background": True})
+    assert len(rig.sent("Target.createTarget")) == 1
+
+
+async def test_a_tab_created_after_its_agent_was_forgotten_is_closed(rig):
+    """Plan review, Minor 8: an agent closed while its new tab was being made leaves no tab and no row behind."""
+    await rig.relay.open("start")
+    a5 = await rig.client("a5")
+    rig.port.hold = {"Target.createTarget"}
+    creating = asyncio.ensure_future(a5.send("Target.createTarget", {"url": "about:blank"}))
+    assert await until(lambda: len(rig.port.held) == 1)
+    await rig.relay.forget("a5")  # the agent closed meanwhile
+    rig.port.hold = set()
+    await rig.port.answer_held()
+    assert await until(lambda: len(rig.sent("Target.closeTarget")) == 1)
+    assert rig.relay.own_targets("a5") == [] and "a5" not in [row["id"] for row in rig.relay.clients()]
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(creating, 1)
+
+
+async def test_quitting_while_brave_asks_answers_the_waiting_handshakes(tmp_path):
+    """Plan review, Minor 10: a handshake held for Brave's question gets "AI Browser is quitting" at once."""
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder, answer="silent")
+    await port.start()
+    tokens = Tokens()
+    relay = Relay(folder, tokens, allow_wait=30, every=0.1)
+    url, stop = await serve_relay(relay)
+    await relay.start()
+    try:
+        asking = asyncio.ensure_future(relay.open("connect"))
+        assert await until(lambda: relay.state == "asking")
+        waiting = asyncio.ensure_future(relay_client(url, tokens.mint("cc-1"), open_timeout=20))
+        await asyncio.sleep(0.3)
+        started = time.monotonic()
+        await relay.close_clients(1001)
+        with pytest.raises(InvalidStatus) as refused:
+            await waiting
+        assert refused.value.response.status_code == 409
+        assert b"AI Browser is quitting" in bytes(refused.value.response.body) and time.monotonic() - started < 2
+        assert not await asking
+    finally:
+        await relay.close()
+        await stop()
+        await port.stop()

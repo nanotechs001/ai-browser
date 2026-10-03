@@ -1260,10 +1260,13 @@ async def test_hello_returns_a_cdp_token_only_with_a_relay(fake_claude, tmp_path
                 await page.send(json.dumps({"type": "hello", "view": "home"}))
                 await recv(page)
                 await page.send(json.dumps({"type": "browser_disconnect", "id": "cc-20261003-1"}))
-                await until(page, lambda message: message["type"] == "sessions" and message["sessions"] == [])
+                await until(page, lambda message: message["type"] == "browser_clients")
             assert brave.relay.disconnected == ["cc-20261003-1"]
+            bye = await client.post(url + "/agent-bye", headers=session_headers(server),
+                                    json={"agent": "cc-20261003-1"})
+            assert bye.status_code == 204 and ("cc-20261003-1", True) in brave.relay.forgot  # its tabs close at its end
             again = await client.post(url + "/agent-hello", headers=session_headers(server), json=hello)
-            assert again.status_code == 410 and "cc-20261003-1" not in server.sessions
+            assert again.status_code == 410 and "cc-20261003-1" not in server.sessions  # not listed again
     finally:
         await server.stop()
 
@@ -1437,5 +1440,26 @@ async def test_an_agents_turn_asks_for_the_turn_with_its_id(fake_claude, tmp_pat
                 break
             await asyncio.sleep(0.02)
         assert brave.connect_calls[0] == ("turn", agent.id)
+    finally:
+        await server.stop()
+
+
+async def test_a_bot_check_qa_meets_in_its_sandbox_reaches_ai_home_in_brave_mode(fake_claude, tmp_path):
+    """Plan review, Critical 1: QA's sandbox tab is no tab of the user's Brave, so the relay never grants it; its bot
+    check (with the live-view link) must still reach AI Home. A check about a Brave tab the relay doesn't grant
+    stays dropped."""
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    brave = FakeBrave([])
+    server.attach_brave(brave)
+    agent = add_agent(server.agents)
+    qa = {**CHECK_REPORT, "agent": "a1", "target": "QA-TARGET", "live": "http://127.0.0.1:8799/live?token=abc"}
+    try:
+        async with httpx.AsyncClient() as client:
+            stray = await client.post(url + "/agent-events", headers=agent_headers(server),
+                                      json={**CHECK_REPORT, "agent": "a1", "target": "T-NOT-ITS-OWN"})
+            assert stray.status_code == 204 and agent.check is None
+            answer = await client.post(url + "/agent-events", headers=agent_headers(server), json=qa)
+        assert answer.status_code == 204 and agent.check is not None and agent.check["live"] == qa["live"]
+        assert agent.check["target"] == "QA-TARGET" and agent.check["adopted"] is False
     finally:
         await server.stop()
