@@ -55,10 +55,10 @@ in place of an open one.
 **What this plan uses from the relay, by name.** Read the merged code before each task that touches these files. Find
 every edit by the text it quotes, never by a line number:
 - **`app/cdprelay.py`:**
-  - `Relay.clients()` gives rows `{"id", "kind": "app" | "agent" | "session", "number", "name", "color", "tabs",
-    "connected", "cut_off"}`. Their `number` is the relay's own `int(id[1:])` (Task 12 replaces it with
-    `agent_number`);
-  - the server broadcasts those rows as `browser_clients {"clients": [...]}`, and puts them in the snapshot.
+  - `Relay.clients()` gives rows `{"id", "kind": "app" | "agent" | "session", "number", "tabs", "connected",
+    "cut_off"}`. Their `number` is the relay's own `int(id[1:])` (Task 12 replaces it with `agent_number`);
+  - `AppServer._browser_clients()` adds `"name"` and `"color"` to each row (pre-flight ruling: the merged code's
+    shape), then the server broadcasts them as `browser_clients {"clients": [...]}`, and puts them in the snapshot.
 - **`app/extension/home.js`:** the relay's function that draws `browser_clients` into `<ul id="browser-clients">`
   under `#browser-card` (Task 12 makes its agent rows use `agentLabel`).
 - **`app/server.py`:**
@@ -142,7 +142,8 @@ Copied from the spec and the project's safety rules. Every task's requirements i
 
 **No new path:**
 - "The Brain still has no path to `stop`, `close`, `hand_tab`, `take_back`, `check_continue`, `check_skip`,
-  `answer_permission`, `approve` or `fill_reply`. Voice can't stop or close an agent."
+  `answer_permission`, `approve` or `fill_reply`. Voice can't stop or close an agent." Nor to the relay's
+  `brave_connect` and `browser_disconnect` (pre-flight ruling): the Brain and voice never send them.
 - "Messages go only to AI Browser agents, never to Claude Code sessions."
 
 **The watcher:** "The watcher can't confirm a card, neither by click (`tell_confirm` and `tell_dismiss` are app-only)
@@ -3977,7 +3978,7 @@ git commit -m "docs: the Brain sends your words to an open agent; numbers, Your 
 Then:
 1. **The final review.** A fresh reviewer checks the branch against the Global Constraints and the Review Focus.
    - It confirms that the Brain still has no path to `stop`, `close`, `hand_tab`, `take_back`, `check_continue`,
-     `check_skip`, `answer_permission`, `approve` or `fill_reply`.
+     `check_skip`, `answer_permission`, `approve`, `fill_reply`, `brave_connect` or `browser_disconnect`.
    - It confirms that every new text on a page is set with `textContent`.
    - One fix pass follows, test-first. Minor findings go to the ledger.
 2. **No by-hand check.** The spec needs none for this work, and nothing here touches the user's real Brave or the
