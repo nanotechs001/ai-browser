@@ -603,4 +603,16 @@ install the voice extra (no model is downloaded). It uses your Actions minutes o
 cost more than Linux ones, macOS the most. The test report is kept for 7 days, inside the private repo. Tests that
 need macOS or Linux (the DevTools pipe) show as skipped, with that reason.
 
+**Browser detection** (`src/ai_browser/browsers.py`): finds which browsers are installed (Brave and Chrome with their
+other channels, and Chromium; Edge, Arc and Vivaldi are listed as not supported yet), whether each one runs with its
+remote-debugging switch on, its profiles by name and colour, and which profile holds the Brain's watcher. It only
+reads files, and for each running browser opens a TCP connection to 127.0.0.1 that sends nothing, so it never makes
+your browser ask "Allow remote debugging?". It never opens cookies, saved passwords or history, and never reads your
+account's email. Nothing in the app uses it yet. To see what it finds on your computer (it only reads, and opens no
+DevTools session):
+
+```bash
+uv run python -c "import json; from ai_browser import browsers; from ai_browser.appbrowser import extension_id_for; from ai_browser.config import home; w = home() / 'app' / 'watcher'; print(json.dumps(browsers.public(browsers.detect({extension_id_for(w): w})), indent=1))"
+```
+
 Layout: `src/ai_browser/` (engine), `docker/` (sandbox image), `src/ai_browser/pages/` (local test pages), `tests/`.

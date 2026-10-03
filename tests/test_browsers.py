@@ -927,3 +927,17 @@ def test_every_read_survives_a_truncated_file(fake, name):
             record.write_bytes(piece)
             browsers.os_default("darwin")
         browsers.public(browsers.detect(watchers, system="darwin"))  # and the whole detection, with that piece
+
+
+# The README (Task 11)
+
+
+def test_the_readme_says_what_detection_reads():
+    from ai_browser.config import project_root
+
+    text = (project_root() / "README.md").read_text(encoding="utf-8")
+    development = " ".join(text.split("## Development", 1)[1].split())
+    assert "**Browser detection** (`src/ai_browser/browsers.py`)" in development
+    assert 'so it never makes your browser ask "Allow remote debugging?"' in development
+    assert "It never opens cookies, saved passwords or history, and never reads your account's email." in development
+    assert "browsers.public(browsers.detect({extension_id_for(w): w})" in development
