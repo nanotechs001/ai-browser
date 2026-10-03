@@ -53,6 +53,7 @@ HAND_OVER_APP_SAY = ("Agents here can't take your tabs: tell {label} the page's 
                      "its own.")
 NOTHING_OPEN = "There's nothing open to say yes to."
 NOTHING_OPEN_WAITING = NOTHING_OPEN + " Allow, Deny and Continue are clicks on the agent's card."
+NOTHING_TO_CANCEL = "Nothing is open to cancel. To stop an agent, press Stop in its drawer."  # never "OK, I won't"
 PRESSED = {"start_agent": "(pressed Start)", "message_agent": "(pressed Send)", "draft_reply": "(pressed Draft it)"}
 # the inbox's Tell the Brain
 TELL_START = "I can start a NEW agent with your words and this message. Press Start, or type yes."
@@ -63,6 +64,7 @@ WATCHER_CARD = "Press Start or Send on this card in AI Browser: the watcher can'
 DEFAULT_SAY = {"none": "I don't have an answer for that.", "message_agent": "I can pass that on.",
                "start_agent": "I can start an agent on that.", "draft_reply": "I can draft that reply.",
                "open": "Here it is."}
+SEND = frozenset({"send", "send it"})  # a yes to a send card only: "send it", "yes, send it"
 YES = frozenset({"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "go ahead", "do it", "start it", "draft it",
                  "confirm"})
 NO = frozenset({"no", "nope", "cancel", "stop", "never mind", "don't"})
@@ -290,6 +292,11 @@ def is_yes(text) -> bool:
     return _only(text, YES)
 
 
+def is_send_yes(text) -> bool:
+    """A yes to a send card: every plain yes, and "send it", "send", "yes, send it"."""
+    return _only(text, YES | SEND)
+
+
 def is_no(text) -> bool:
     return _only(text, NO)
 
@@ -343,10 +350,26 @@ BACK_REFERENCES = ("it", "them", "that agent", "that one", "the same one", "the 
 NOT_NAME_WORDS = frozenset({"agent", "station", "that", "this", "with", "from", "which", "about", "please", "thanks"})
 TAB_WORDS = ("this tab", "this page", "my tab", "my page", "that tab", "current tab", "open tab", "the page i'm on")
 CHOICES_LIMIT = 6  # agents a "which agent?" question lists: the newest
-_NUMBER = r"(\d+|" + "|".join(sorted(NUMBER_WORDS, key=len, reverse=True)) + r")"
-_AGENT_NUMBER = re.compile(r"\bagent\s*(?:number\s*|#\s*)?" + _NUMBER + r"\b")  # agent 2, agent #2, agent two
+_WORD_NUMBER = "|".join(sorted(NUMBER_WORDS, key=len, reverse=True))
+_NUMBER = r"(\d+|" + _WORD_NUMBER + r")"
+_AGENT_DIGITS = re.compile(r"\bagent\s*(?:number\s*|#\s*)?(\d+)\b")  # agent 2, agent #2, agent number 2
+# A number word names an agent only where the reference ends ("agent two", "agent one, …", "agent two to …", "agent one
+# and …", "agent two's"), never inside the task ("give the agent one of my tabs", "agent two questions about it").
+_AGENT_WORD = re.compile(r"\bagent\s*(?:number\s*|#\s*)?(" + _WORD_NUMBER + r")"
+                         r"(?='s\b|\s*(?:[^\w\s']|$)|\s+(?:to|and)\b)")
 _BARE_NUMBER = re.compile(r"(?:number\s+)?" + _NUMBER)  # 1, one, number one: only as the whole answer
-_COLOR = re.compile(r"\b(" + "|".join(COLOR_WORDS) + r")\s+(?:agent|one|station)\b")  # the blue one
+_COLOR_NAMES = "|".join(COLOR_WORDS)
+# A colour names an agent only next to "agent" ("the blue agent", "agent blue"): "pick the blue one" is the task's.
+_COLOR = re.compile(r"\b(" + _COLOR_NAMES + r")\s+agent\b|\bagent\s+(" + _COLOR_NAMES + r")\b")
+_BARE_COLOR = re.compile(r"(?:the\s+)?(" + _COLOR_NAMES + r")(?:\s+(?:one|agent|station))?")  # as the whole answer
+_POLITE = re.compile(r"\b(?:please|thanks|thank you)\b")
+# A reply to a send card that only names another agent ("no, agent 3", "number 3", "to agent 3", "the cyan agent"):
+# the card moves there and keeps its words.
+_REFERENCE = re.compile(
+    r"(?:(?:no|nope|not that one|actually|instead)\s+)*(?:(?:send it|send|give it|give)\s+)?(?:to\s+)?"
+    r"(?:agent\s*(?:number\s*)?(?P<agent>\d+|" + _WORD_NUMBER + r")|number\s+(?P<number>\d+|" + _WORD_NUMBER + r")|"
+    r"(?:the\s+)?(?P<colour>" + _COLOR_NAMES + r")\s+(?:agent|one)|agent\s+(?P<after>" + _COLOR_NAMES + r"))"
+    r"(?:\s+instead)?")
 
 
 @dataclass(frozen=True)
@@ -402,11 +425,24 @@ def _number(token: str) -> int:
 def _numbers(words, bare: bool) -> list[int]:
     """The agent numbers the words name: "agent 2" and the like; with `bare` (the Brain asked which agent), also a
     number that is the whole answer ("1", "one", "#1", "number one")."""
-    found = [_number(match.group(1)) for match in _AGENT_NUMBER.finditer(_lower(words))]
+    text = _POLITE.sub(" ", _lower(words))  # "agent three please" ends where "agent three" does
+    found = [_number(match.group(1)) for match in sorted([*_AGENT_DIGITS.finditer(text), *_AGENT_WORD.finditer(text)],
+                                                          key=lambda match: match.start())]
     if not found and bare:
         whole = _BARE_NUMBER.fullmatch(_plain(words))
         if whole:
             found = [_number(whole.group(1))]
+    return list(dict.fromkeys(found))
+
+
+def _colours(words, bare: bool) -> list[str]:
+    """The colours the words name an agent by ("the blue agent", "agent blue"); with `bare` (the Brain asked which
+    agent), also a colour that is the whole answer ("blue", "the blue one")."""
+    found = [match.group(1) or match.group(2) for match in _COLOR.finditer(_lower(words))]
+    if not found and bare:
+        whole = _BARE_COLOR.fullmatch(_plain(words))
+        if whole:
+            found = [whole.group(1)]
     return list(dict.fromkeys(found))
 
 
@@ -422,7 +458,7 @@ def _explicit(words, rows: list[dict], bare: bool = False) -> Pick | None:
         if named and not missing:
             return Pick("one", (named[0],))
         return Pick("missing", said=f"agent {missing[0]}")
-    colours = list(dict.fromkeys(match.group(1) for match in _COLOR.finditer(_lower(words))))
+    colours = _colours(words, bare)
     if colours:
         wanted = {COLOR_WORDS[colour] for colour in colours}
         named = [row["id"] for row in rows if row.get("color") in wanted]
@@ -447,15 +483,19 @@ def _back_reference(words) -> bool:
 
 
 def resolve_agent(words, rows, picked=None, last=None) -> Pick:
-    """Which open agent the user means (Decision 4): no agent open; the user's number or colour; Claude's pick; "it"
-    for the last agent this talk dealt with; the only one open; else ask among them all."""
+    """Which open agent the user means (Decision 4): no agent open; the user's number or colour (when Claude picked
+    another open agent, or the user's names none while Claude picked one, the user is asked: page text can't steer
+    the pick, and neither guess wins); Claude's pick; "it" for the last agent this talk dealt with; the only one open;
+    else ask among them all."""
     listed = _open_rows(rows)
     if not listed:
         return Pick("none")
+    ids = [row["id"] for row in sorted(listed, key=number_of)]
     explicit = _explicit(words, listed)
     if explicit is not None:
+        if picked in ids and explicit.outcome != "ask" and explicit.ids != (picked,):
+            return Pick("ask", tuple(ids))  # the user's words and Claude's pick differ: the user decides
         return explicit
-    ids = [row["id"] for row in sorted(listed, key=number_of)]
     if picked in ids:
         return Pick("one", (picked,))
     if last in ids and _back_reference(words):
@@ -463,6 +503,17 @@ def resolve_agent(words, rows, picked=None, last=None) -> Pick:
     if len(ids) == 1:
         return Pick("one", (ids[0],))
     return Pick("ask", tuple(ids))
+
+
+def reference_pick(text, rows) -> Pick | None:
+    """A reply to a send card that only names an agent ("no, agent 3", "the cyan agent"): which one it names, among
+    the open agents; None for any other reply."""
+    listed = _open_rows(rows)
+    match = _REFERENCE.fullmatch(_plain(text)) if listed else None
+    if match is None:
+        return None
+    number = match.group("agent") or match.group("number")
+    return _explicit(f"agent {number}" if number else f"{match.group('colour') or match.group('after')} agent", listed)
 
 
 def _name_words(text) -> set[str]:

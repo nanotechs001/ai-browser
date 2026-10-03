@@ -374,6 +374,23 @@ async def test_tell_can_send_to_an_existing_agent_with_the_message_as_page_data(
     assert (after.agent_id, after.state) == ("a1", "agent") and brain.tells.peek("gmail:t1") is None
 
 
+async def test_tell_after_no_such_agent_the_next_number_keeps_the_first_words(fake_claude, tmp_path):  # I2 (b)
+    from ai_browser.brain.talk import TELL_SEND
+
+    agents = FakeAgents([FOOTER_ROW, dict(FOOTER_ROW, id="a3", name="Flights to Manila", color="cyan", created=3.0)])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, dict_script(NEEDS, tell={"action": "send", "agent": ""}),
+                                        agents=agents)
+    await sorted_items(brain)
+    words = "give this to agent 7"
+    await brain.tell("gmail:t1", words)
+    assert brain.store.get("gmail:t1").note.startswith("There's no agent 7 now.")
+    await brain.tell("gmail:t1", "3")
+    card = brain.tells.peek("gmail:t1")
+    assert (card.agent, card.task) == ("a3", words)  # the first words, not "3"
+    assert brain.store.get("gmail:t1").note == TELL_SEND.format(label="3 · Flights to Manila")
+    assert len([call for call in oneshots(log) if call["oneshot"].startswith(TELL_CALL)]) == 1
+
+
 async def test_tell_yes_runs_the_items_card_and_a_yes_with_no_card_does_nothing(fake_claude, tmp_path):
     from ai_browser.brain.talk import NOTHING_OPEN
 

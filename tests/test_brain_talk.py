@@ -175,27 +175,34 @@ def test_resolve_agent_reads_numbers_colours_and_back_references():  # Review Fo
 
     two = [footer(), flights()]
     three = [footer(), flights(), agent_row("a3", "check the shop", color="cyan")]
-    for words in ("agent 2", "agent two", "Agent #2", "agent number 2", "Tell AGENT TWO, please.", "agent 2's tab"):
-        assert resolve_agent(words, two, picked="a1") == Pick("one", ("a2",)), words  # beats Claude's pick
+    for words in ("agent 2", "agent two", "Agent #2", "agent number 2", "Tell AGENT TWO, please.", "agent 2's tab",
+                  "tell agent two to stop", "agent two's tab", "send this to agent two please", "agent two and agent 2"):
+        assert resolve_agent(words, two) == Pick("one", ("a2",)), words  # the user's own reference
+        assert resolve_agent(words, two, picked="a2") == Pick("one", ("a2",)), words  # Claude agrees
+        assert resolve_agent(words, two, picked="a1") == Pick("ask", ("a1", "a2")), words  # they differ: the user picks
     for words in ("fix issue #2", "check that number 2 is in stock"):  # tasks are full of numbers
         assert resolve_agent(words, two, picked="a1") == Pick("one", ("a1",)), words
     greys = [footer(), agent_row("a7", "grey work", color="grey")]
-    assert resolve_agent("the grey one", greys) == Pick("one", ("a7",))
+    assert resolve_agent("the grey agent", greys) == Pick("one", ("a7",))
     assert resolve_agent("the gray agent", greys) == Pick("one", ("a7",))
-    assert resolve_agent("tell the green one to stop", two, picked="a1") == Pick("one", ("a2",))
-    assert resolve_agent("the yellow station", two) == Pick("missing", (), "yellow agent")
+    assert resolve_agent("agent grey, stop", greys) == Pick("one", ("a7",))
+    assert resolve_agent("the grey one", greys) == Pick("ask", ("a1", "a7"))  # "the grey one" alone names no agent
+    assert resolve_agent("tell the green agent to stop", two) == Pick("one", ("a2",))
+    assert resolve_agent("the yellow agent", two) == Pick("missing", (), "yellow agent")
     blues = [footer(), flights(), agent_row("a8", "blue work", color="blue")]
     assert resolve_agent("the blue agent", blues, picked="a2") == Pick("ask", ("a1", "a8"))
     assert resolve_agent("agent 2 and agent 3", three) == Pick("ask", ("a2", "a3"))
     assert resolve_agent("agent 2 and agent 3", two) == Pick("missing", (), "agent 3")
-    assert resolve_agent("agent 7", two, picked="a1") == Pick("missing", (), "agent 7")
+    assert resolve_agent("agent 7", two) == Pick("missing", (), "agent 7")
+    assert resolve_agent("agent 7", two, picked="a1") == Pick("ask", ("a1", "a2"))  # names none, Claude named one
     assert resolve_agent("tell it to stop", two, last="a2") == Pick("one", ("a2",))
     assert resolve_agent("tell it to stop", two, last="a9") == Pick("ask", ("a1", "a2"))  # a9 has closed
     assert resolve_agent("check the cart", [flights()]) == Pick("one", ("a2",))  # one open: the card confirms it
     assert resolve_agent("agent 2", []) == Pick("none") and resolve_agent("hello", []) == Pick("none")
     assert resolve_agent("the footer agent", two) == Pick("ask", ("a1", "a2"))  # fuzzy names are Claude's job
-    for words in ("1", "#1", "number one, please", "One.", "the footer one", "agent 1"):
-        assert resolve_among(words, two, ("a1", "a2")) == Pick("one", ("a1",)), words
+    for words in ("1", "#1", "number one, please", "One.", "the footer one", "agent 1", "the blue one", "Blue.",
+                  "the blue agent"):
+        assert resolve_among(words, two, ("a1", "a2")) == Pick("one", ("a1",)), words  # the whole answer
     assert resolve_among("the flights one", two, ("a1", "a2")) == Pick("one", ("a2",))  # its "one" isn't the answer
     assert resolve_among("footer or flights", two, ("a1", "a2")) == Pick("none")  # name words in two agents
     assert resolve_among("nevermind, the footer is fine", two, ("a1", "a2")) == Pick("none")  # every name word counts
@@ -211,6 +218,23 @@ def test_resolve_agent_reads_numbers_colours_and_back_references():  # Review Fo
     for words in ("send this page to agent 1", "use my tab", "the page I’m on", "check the current tab"):
         assert tab_hint(words), words
     assert not tab_hint("send the shop page to agent 1") and not tab_hint("open a new tab")
+
+
+def test_numbers_and_colours_inside_the_task_are_not_agent_references():  # final review I1
+    from ai_browser.brain.talk import Pick, explicit_pick, resolve_agent
+
+    rows = [agent_row("a1", "Fix the footer", state="your_turn", color="blue"),
+            agent_row("a3", "Flights to Manila", state="working", created=3.0, color="cyan")]
+    for words in ("give the flights agent one of my tabs", "tell the flights agent one more thing: check the return date",
+                  "ask the flights agent two questions about baggage", "tell the flights agent to book the red one",
+                  "tell the flights agent to pick the blue one"):
+        assert resolve_agent(words, rows, picked="a3") == Pick("one", ("a3",)), words  # Claude's pick stands
+    assert explicit_pick("open the flights agent one more time", rows) is None
+    for words in ("tell agent 1 to check the header", "agent one to check the header", "tell the blue agent to stop",
+                  "agent 1's tab is wrong", "Agent one."):
+        assert resolve_agent(words, rows) == Pick("one", ("a1",)), words  # real references still count
+    assert resolve_agent("agent 3's tab is wrong", rows) == Pick("one", ("a3",))
+    assert resolve_agent("tell agent 1 to check the header", rows, picked="a3") == Pick("ask", ("a1", "a3"))
 
 
 def test_talks_hold_a_which_agent_question_and_the_last_agent():
@@ -545,17 +569,34 @@ async def test_card_says_are_fixed_not_claudes(fake_claude, tmp_path):
 
 
 async def test_a_yes_with_no_card_never_becomes_a_task(fake_claude, tmp_path):
-    from ai_browser.brain.talk import NOTHING_OPEN
+    from ai_browser.brain.talk import NOTHING_OPEN, NOTHING_TO_CANCEL
 
     agents = Recorder()
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "Starting it.", "action": "start_agent"},
                                         agents=agents)
     assert await brain.respond("k1", "yes") == {"say": NOTHING_OPEN}
-    assert await brain.respond("k1", "no") == {"say": "OK, I won't."}
+    assert await brain.respond("k1", "no") == {"say": NOTHING_TO_CANCEL}
     assert await brain.respond("k1", "Yes, please.", proposal="p99") == {"say": "This has expired: ask again"}
     assert talk_calls(log) == [] and agents.created == [] and brain.talks.proposal("k1") is None
-    assert brain.talks.history("k1") == [("yes", NOTHING_OPEN), ("no", "OK, I won't."),
+    assert brain.talks.history("k1") == [("yes", NOTHING_OPEN), ("no", NOTHING_TO_CANCEL),
                                          ("Yes, please.", "This has expired: ask again")]
+
+
+async def test_a_bare_stop_with_nothing_open_points_to_the_stop_button(fake_claude, tmp_path):  # final review I4
+    from ai_browser.brain.talk import NOTHING_TO_CANCEL
+
+    assert NOTHING_TO_CANCEL == "Nothing is open to cancel. To stop an agent, press Stop in its drawer."
+    agents = Recorder([footer(state="working"), flights()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "x", "action": "message_agent", "agent": "a1"},
+                                        {"say": "x", "action": "message_agent", "agent": ""}, agents=agents)
+    for words in ("stop", "Cancel.", "don't", "Stop!"):
+        assert await brain.respond("k1", words) == {"say": NOTHING_TO_CANCEL}, words  # never "OK, I won't."
+    assert talk_calls(log) == [] and agents.calls == [] and agents.sent == []
+    card = (await brain.respond("k1", "tell the footer agent to check the header"))["proposal"]
+    assert await brain.respond("k1", "stop", proposal=card["id"]) == {"say": "OK, I won't."}  # a card was open
+    assert await brain.respond("k1", "tell them to check the header") == {"say": WHICH}
+    assert await brain.respond("k1", "cancel") == {"say": "OK, I won't."}  # a question was open
+    assert agents.calls == [] and agents.sent == []
 
 
 async def test_click_confirms_are_remembered_in_the_talk(fake_claude, tmp_path):
@@ -701,21 +742,23 @@ async def test_message_to_an_agent_at_a_bot_check_is_refused(fake_claude, tmp_pa
     assert agents.sent == [] and agents.created == [] and agents.calls == []
 
 
-async def test_number_and_colour_override_claudes_pick(fake_claude, tmp_path):
+async def test_a_number_or_colour_against_claudes_pick_asks_which_agent(fake_claude, tmp_path):  # final review I1
     agents = Recorder([footer(), flights()])
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "To the footer one.",
                                                                 "action": "message_agent", "agent": "a1"},
                                         agents=agents)
-    for words in ("tell agent 2 to stop at the cart", "tell the green one to stop at the cart"):
-        answer = await brain.respond("k1", words)
-        assert (answer["proposal"]["agent"], answer["proposal"]["task"]) == ("a2", words), words
-        assert answer["say"] == "I can send your words to 2 · check flights. Press Send, or say yes."
+    for words in ("tell agent 2 to stop at the cart", "tell the green agent to stop at the cart"):
+        assert await brain.respond("k1", words) == {"say": WHICH}, words  # Claude says a1, the words say a2
+        card = (await brain.respond("k1", "2"))["proposal"]
+        assert (card["agent"], card["task"]) == ("a2", words), words  # the user picked, the words kept
+    card = (await brain.respond("k1", "tell the green one to stop at the cart"))["proposal"]
+    assert card["agent"] == "a1"  # "the green one" is the task's, not an agent: Claude's pick stands
     agents.rows.append(agent_row("a8", "blue work", state="your_turn", created=8.0, color="blue"))
     assert await brain.respond("k1", "tell the blue agent to stop") == {
         "say": "Which agent: 1 · fix the footer (blue), or 8 · blue work (blue)? Say its number."}
-    assert await brain.respond("k1", "tell agent 7 to stop") == {
-        "say": "There's no agent 7 now. Open ones: 1 · fix the footer (blue), 2 · check flights (green), or "
-               "8 · blue work (blue)."}
+    assert await brain.respond("k2", "tell agent 7 to stop") == {
+        "say": "Which agent: 1 · fix the footer (blue), 2 · check flights (green), or 8 · blue work (blue)? Say its "
+               "number."}  # it names no open agent while Claude named one: the user picks
     assert agents.sent == [] and agents.created == []
 
 
@@ -892,3 +935,90 @@ async def test_hand_over_is_a_pointer_never_a_hand(fake_claude, tmp_path):
     assert await brain.respond("k4", "show me agent 7") == {
         "say": "There's no agent 7 now. Open ones: 1 · fix the footer (blue), or 2 · check flights (green)."}
     assert agents.calls == [] and agents.sent == [] and agents.created == []  # never hand_tab or take_back
+
+
+FLIGHTS_ROWS = (("a1", "Fix the footer", "your_turn", 1.0, "blue"), ("a3", "Flights to Manila", "working", 3.0, "cyan"))
+WHICH_13 = "Which agent: 1 · Fix the footer (blue), or 3 · Flights to Manila (cyan)? Say its number."
+
+
+def flights_rows():
+    return [agent_row(agent_id, name, state=state, created=created, color=color)
+            for agent_id, name, state, created, color in FLIGHTS_ROWS]
+
+
+async def test_task_words_never_retarget_claudes_pick(fake_claude, tmp_path):  # final review I1
+    from ai_browser.brain.talk import HAND_OVER_SAY, SEND_SAY
+
+    to_a3 = {"say": "x", "action": "message_agent", "agent": "a3"}
+    agents = Recorder(flights_rows())
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, to_a3, to_a3, to_a3, to_a3,
+                                        {"say": "x", "action": "open", "target": "tabs", "agent": "a3"},
+                                        {"say": "Here.", "action": "open", "target": "agent", "agent": "a3"}, to_a3,
+                                        agents=agents)
+    for words in ("tell the flights agent one more thing: check the return date",
+                  "ask the flights agent two questions about baggage", "tell the flights agent to book the red one",
+                  "tell the flights agent to pick the blue one"):
+        answer = await brain.respond("k1", words)
+        assert answer.get("say") == SEND_SAY.format(label="3 · Flights to Manila"), words
+        assert (answer["proposal"]["agent"], answer["proposal"]["task"]) == ("a3", words), words
+    assert await brain.respond("k1", "give the flights agent one of my tabs") == {
+        "say": HAND_OVER_SAY.format(label="3 · Flights to Manila"), "open": {"agent": "a3", "tabs": True}}
+    assert await brain.respond("k1", "open the flights agent one more time") == {"say": "Here.",
+                                                                                 "open": {"agent": "a3"}}
+    words = "tell agent 1 to check the header"  # Claude says a3, the user's words say agent 1: the user picks
+    assert await brain.respond("k1", words) == {"say": WHICH_13}
+    calls = len(talk_calls(log))
+    card = (await brain.respond("k1", "1"))["proposal"]
+    assert (card["agent"], card["task"]) == ("a1", words) and len(talk_calls(log)) == calls
+    assert agents.sent == [] and agents.created == [] and agents.calls == []
+
+
+async def test_send_it_is_a_yes_for_a_send_card_only(fake_claude, tmp_path):  # final review I2 (a)
+    from ai_browser.brain.talk import RELAY
+
+    to_a1 = {"say": "x", "action": "message_agent", "agent": "a1"}
+    agents = Recorder([footer()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, to_a1, to_a1, {"say": "x", "action": "start_agent"},
+                                        agents=agents)
+    for reply in ("send it", "Yes, send it."):
+        card = (await brain.respond("k1", FOOTER_WORDS))["proposal"]
+        answer = await brain.respond("k1", reply, proposal=card["id"], task=card["task"])
+        assert answer == {"say": "Sent to 1 · fix the footer.", "sent": "a1", "open": {"agent": "a1"}}, reply
+    assert agents.sent == [("a1", f"{RELAY}\n{FOOTER_WORDS}")] * 2 and len(talk_calls(log)) == 2
+    assert await brain.respond("k1", "send", proposal=card["id"]) == {"say": "This has expired: ask again"}
+    start = (await brain.respond("k1", "check the shop"))["proposal"]
+    await brain.respond("k1", "send it", proposal=start["id"])  # not a Start: a new question for Claude
+    assert agents.created == [] and len(talk_calls(log)) == 4
+
+
+async def test_after_no_such_agent_the_next_number_keeps_the_first_words(fake_claude, tmp_path):  # final review I2 (b)
+    agents = Recorder(flights_rows())
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "x", "action": "message_agent", "agent": ""},
+                                        agents=agents)
+    words = "tell agent 7 to check the header"
+    assert await brain.respond("k1", words) == {
+        "say": "There's no agent 7 now. Open ones: 1 · Fix the footer (blue), or 3 · Flights to Manila (cyan)."}
+    card = (await brain.respond("k1", "agent 3"))["proposal"]
+    assert (card["agent"], card["task"]) == ("a3", words) and len(talk_calls(log)) == 1  # no Claude call for it
+
+
+async def test_an_agent_reference_on_a_send_card_moves_it_and_keeps_its_words(fake_claude, tmp_path):  # I2 (c)
+    agents = Recorder(flights_rows())
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "x", "action": "message_agent", "agent": "a1"},
+                                        agents=agents)
+    for reply, target in (("agent 3", "a3"), ("no, agent 3", "a3"), ("number 3", "a3"), ("to agent 3", "a3"),
+                          ("the cyan agent", "a3"), ("No, agent one.", "a1")):
+        card = (await brain.respond("k1", FOOTER_WORDS))["proposal"]
+        calls = len(talk_calls(log))
+        moved = await brain.respond("k1", reply, proposal=card["id"], task=card["task"])
+        assert (moved["proposal"]["agent"], moved["proposal"]["task"]) == (target, FOOTER_WORDS), reply
+        assert len(talk_calls(log)) == calls, reply  # no Claude call: the card moved, its words stayed
+    card = (await brain.respond("k1", FOOTER_WORDS))["proposal"]
+    moved = (await brain.respond("k1", "no, agent 3", proposal=card["id"], task="also check the header"))["proposal"]
+    assert (moved["agent"], moved["task"]) == ("a3", "also check the header")  # the box as the user left it
+    card = (await brain.respond("k1", FOOTER_WORDS))["proposal"]
+    assert (await brain.respond("k1", "no, agent 7", proposal=card["id"], task=card["task"]))["say"].startswith(
+        "There's no agent 7 now.")
+    again = (await brain.respond("k1", "agent 3"))["proposal"]
+    assert (again["agent"], again["task"]) == ("a3", FOOTER_WORDS)
+    assert agents.sent == [] and agents.created == []
