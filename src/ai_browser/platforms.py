@@ -19,19 +19,80 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
 WINDOWS = os.name == "nt"
 O_BINARY = getattr(os, "O_BINARY", 0)  # without it, os.open on Windows turns every "\n" written into "\r\n"
 
-_MAC_DATA = {"chrome": ("Google", "Chrome"), "brave": ("BraveSoftware", "Brave-Browser")}
-_WINDOWS_DATA = {"chrome": ("Google", "Chrome", "User Data"), "brave": ("BraveSoftware", "Brave-Browser", "User Data")}
-_LINUX_DATA = {"chrome": ("google-chrome",), "brave": ("BraveSoftware", "Brave-Browser")}
-_MAC_APPS = {"chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-             "brave": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"}
-_WINDOWS_APPS = {"chrome": ("Google", "Chrome", "Application", "chrome.exe"),
-                 "brave": ("BraveSoftware", "Brave-Browser", "Application", "brave.exe")}
+
+@dataclass(frozen=True)
+class BrowserFacts:
+    """One known browser: its names, where its app and its data folder are on each OS, and what AI Browser may do
+    with it. `agents`: offered under "Where agents browse" (its remote-debugging switch works as measured in Brave
+    and Chrome). `window`: it may draw the app window. `inspect`: the scheme of <scheme>://inspect/#remote-debugging.
+    Paths are tuples of parts: `mac_data` under ~/Library/Application Support, `win_exe` under each Windows app
+    folder, `win_data` under %LOCALAPPDATA%, `linux_data` under ~/.config. None: the browser has none there."""
+
+    id: str
+    name: str
+    agents: bool
+    window: bool
+    inspect: str
+    mac_app: str
+    mac_bundle_id: str
+    mac_data: tuple[str, ...]
+    win_exe: tuple[str, ...] | None
+    win_data: tuple[str, ...] | None
+    win_progid: str | None = None
+    linux_data: tuple[str, ...] | None = None
+
+
+KNOWN_BROWSERS: tuple[BrowserFacts, ...] = (  # display order: Brave, Chrome, Chromium, then the ones agents can't use
+    BrowserFacts("brave", "Brave", True, True, "brave", "Brave Browser.app", "com.brave.Browser",
+                 ("BraveSoftware", "Brave-Browser"), ("BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+                 ("BraveSoftware", "Brave-Browser", "User Data"), win_progid="BraveHTML",
+                 linux_data=("BraveSoftware", "Brave-Browser")),
+    BrowserFacts("brave-beta", "Brave Beta", True, False, "brave", "Brave Browser Beta.app", "com.brave.Browser.beta",
+                 ("BraveSoftware", "Brave-Browser-Beta"),
+                 ("BraveSoftware", "Brave-Browser-Beta", "Application", "brave.exe"),
+                 ("BraveSoftware", "Brave-Browser-Beta", "User Data")),
+    BrowserFacts("brave-nightly", "Brave Nightly", True, False, "brave", "Brave Browser Nightly.app",
+                 "com.brave.Browser.nightly", ("BraveSoftware", "Brave-Browser-Nightly"),
+                 ("BraveSoftware", "Brave-Browser-Nightly", "Application", "brave.exe"),
+                 ("BraveSoftware", "Brave-Browser-Nightly", "User Data")),
+    BrowserFacts("chrome", "Chrome", True, True, "chrome", "Google Chrome.app", "com.google.Chrome",
+                 ("Google", "Chrome"), ("Google", "Chrome", "Application", "chrome.exe"),
+                 ("Google", "Chrome", "User Data"), win_progid="ChromeHTML", linux_data=("google-chrome",)),
+    BrowserFacts("chrome-beta", "Chrome Beta", True, False, "chrome", "Google Chrome Beta.app",
+                 "com.google.Chrome.beta", ("Google", "Chrome Beta"),
+                 ("Google", "Chrome Beta", "Application", "chrome.exe"), ("Google", "Chrome Beta", "User Data")),
+    BrowserFacts("chrome-dev", "Chrome Dev", True, False, "chrome", "Google Chrome Dev.app", "com.google.Chrome.dev",
+                 ("Google", "Chrome Dev"), ("Google", "Chrome Dev", "Application", "chrome.exe"),
+                 ("Google", "Chrome Dev", "User Data")),
+    BrowserFacts("chrome-canary", "Chrome Canary", True, False, "chrome", "Google Chrome Canary.app",
+                 "com.google.Chrome.canary", ("Google", "Chrome Canary"),
+                 ("Google", "Chrome SxS", "Application", "chrome.exe"), ("Google", "Chrome SxS", "User Data")),
+    BrowserFacts("chromium", "Chromium", True, False, "chrome", "Chromium.app", "org.chromium.Chromium",
+                 ("Chromium",), ("Chromium", "Application", "chrome.exe"), ("Chromium", "User Data")),
+    BrowserFacts("edge", "Edge", False, True, "edge", "Microsoft Edge.app", "com.microsoft.edgemac",
+                 ("Microsoft Edge",), ("Microsoft", "Edge", "Application", "msedge.exe"),
+                 ("Microsoft", "Edge", "User Data"), win_progid="MSEdgeHTM"),
+    BrowserFacts("arc", "Arc", False, False, "chrome", "Arc.app", "company.thebrowser.Browser", ("Arc", "User Data"),
+                 None, None),  # on Windows an MSIX package: no program path to look for
+    BrowserFacts("vivaldi", "Vivaldi", False, False, "chrome", "Vivaldi.app", "com.vivaldi.Vivaldi", ("Vivaldi",),
+                 ("Vivaldi", "Application", "vivaldi.exe"), ("Vivaldi", "User Data")),
+)
+
+# The two browsers the older helpers (user_data_dir, browser_candidates) know: views of their rows, as before.
+_ROWS = {row.id: row for row in KNOWN_BROWSERS}
+_MAC_DATA = {name: _ROWS[name].mac_data for name in ("chrome", "brave")}
+_WINDOWS_DATA = {name: _ROWS[name].win_data for name in ("chrome", "brave")}
+_LINUX_DATA = {name: _ROWS[name].linux_data for name in ("chrome", "brave")}
+_MAC_APPS = {name: f"/Applications/{_ROWS[name].mac_app}/Contents/MacOS/{_ROWS[name].mac_app.removesuffix('.app')}"
+             for name in ("chrome", "brave")}
+_WINDOWS_APPS = {name: _ROWS[name].win_exe for name in ("chrome", "brave")}
 
 
 def _system(system: str | None) -> str:
@@ -73,6 +134,43 @@ def browser_candidates(browser: str, system: str | None = None, env: Mapping | N
         roots = [env.get(name) for name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
         return [Path(root, *_WINDOWS_APPS[browser]) for root in roots if root]
     return []
+
+
+def browser_data_dir(facts: BrowserFacts, system: str | None = None, env: Mapping | None = None) -> Path | None:
+    """A known browser's folder of profiles on `system`, installed or not; None when it keeps none there. For brave
+    and chrome it is user_data_dir()'s folder."""
+    system, env = _system(system), _env(env)
+    if system == "darwin":
+        return Path.home().joinpath("Library", "Application Support", *facts.mac_data)
+    if system == "win32":
+        if facts.win_data is None:
+            return None
+        return _windows_folder(env, "LOCALAPPDATA", "AppData", "Local").joinpath(*facts.win_data)
+    if facts.linux_data is None:
+        return None
+    return Path.home().joinpath(".config", *facts.linux_data)
+
+
+def app_folders(system: str | None = None, env: Mapping | None = None) -> list[Path]:
+    """Where apps are installed, in the order to look: /Applications then ~/Applications on macOS; on Windows
+    %ProgramFiles%, %ProgramFiles(x86)% and %LOCALAPPDATA%, the ones that are set; none elsewhere."""
+    system, env = _system(system), _env(env)
+    if system == "darwin":
+        return [Path("/Applications"), Path.home() / "Applications"]
+    if system == "win32":
+        return [Path(env[name]) for name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA") if env.get(name)]
+    return []
+
+
+def launch_services_file() -> Path:
+    """macOS's record of the default app for each URL scheme (its https entry names the default browser)."""
+    return Path.home().joinpath("Library", "Preferences", "com.apple.LaunchServices",
+                                "com.apple.launchservices.secure.plist")
+
+
+def lock_name(system: str | None = None) -> str:
+    """The file a running Chromium browser holds in its data folder."""
+    return "lockfile" if _system(system) == "win32" else "SingletonLock"
 
 
 def claude_desktop_dir(system: str | None = None, env: Mapping | None = None) -> Path:

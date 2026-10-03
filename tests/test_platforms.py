@@ -305,3 +305,42 @@ async def test_the_claude_ai_skills_come_from_the_desktop_apps_folder(tmp_path, 
     monkeypatch.setattr(sys, "platform", "win32")  # %APPDATA%\Claude, where the Claude app keeps them on Windows
     for skills in (engine.catalog.all(), server._skills()):
         assert "anthropic-skills:summarize" in {skill.ref for skill in skills}
+
+
+# platforms' own functions, taken when this file is imported, before any fixture runs. A conftest fixture may replace
+# app_folders, launch_services_file or the registry readers to keep other tests off this computer (wave B does); the
+# tests below check the real ones.
+UNPATCHED = vars(platforms).copy()
+
+
+def test_browser_folders_for_every_known_browser():
+    rows = {row.id: row for row in platforms.KNOWN_BROWSERS}
+    local = "C:\\Users\\me\\AppData\\Local"
+    assert platforms.browser_data_dir(rows["chrome-canary"], "win32", WINDOWS_ENV) == Path(
+        local, "Google", "Chrome SxS", "User Data")
+    assert platforms.browser_data_dir(rows["brave-nightly"], "darwin") == Path.home().joinpath(
+        "Library", "Application Support", "BraveSoftware", "Brave-Browser-Nightly")
+    assert platforms.browser_data_dir(rows["arc"], "win32", WINDOWS_ENV) is None  # an MSIX package there
+    assert platforms.browser_data_dir(rows["brave"], "linux") == platforms.user_data_dir("brave", "linux")
+    assert platforms.browser_data_dir(rows["edge"], "linux") is None
+    for name in ("brave", "chrome"):  # the older helper is a view of the same rows
+        for system, env in (("darwin", None), ("win32", WINDOWS_ENV), ("linux", None)):
+            assert platforms.browser_data_dir(rows[name], system, env) == platforms.user_data_dir(name, system, env)
+    with pytest.raises(ValueError):
+        platforms.user_data_dir("chrome-beta", "darwin")  # still only brave and chrome
+
+
+def test_app_folders():
+    app_folders = UNPATCHED["app_folders"]
+    assert app_folders("darwin") == [Path("/Applications"), Path.home() / "Applications"]
+    assert app_folders("win32", WINDOWS_ENV) == [
+        Path("C:\\Program Files"), Path("C:\\Program Files (x86)"), Path("C:\\Users\\me\\AppData\\Local")]
+    assert app_folders("win32", {"LOCALAPPDATA": "C:\\L", "ProgramFiles": ""}) == [Path("C:\\L")]
+    assert app_folders("linux") == []
+
+
+def test_lock_names_and_the_launch_services_file():
+    assert [platforms.lock_name(s) for s in ("win32", "darwin", "linux")] == ["lockfile", "SingletonLock",
+                                                                              "SingletonLock"]
+    assert UNPATCHED["launch_services_file"]() == Path.home().joinpath(
+        "Library", "Preferences", "com.apple.LaunchServices", "com.apple.launchservices.secure.plist")
