@@ -31,7 +31,7 @@ from ..hearing.service import HearingService
 from ..syncdir import write_atomic
 from .agents import AgentManager
 from .bravelink import BraveLink
-from .server import AppServer, reveal_in_finder
+from .server import AppServer, reveal_folder
 from .tabs import TabWatch
 
 WINDOW_CHECKS = 3  # one second apart: this long without any page means the user closed AI Browser's last window
@@ -62,7 +62,7 @@ While this switch is on, any program on this computer can reach your {name}, not
 sites you are signed in to. Turn it off when agents aren't working: untick the same box. Only click Allow right after
 you started AI Browser or gave an agent a task; if {name} asks at any other time, click Deny.
 Once the switch is on, AI Home's browser card has a Connect button."""
-reveal = reveal_in_finder  # a Finder window with the extension folder selected (tests replace it)
+reveal = reveal_folder  # a file manager window with the extension folder selected (tests replace it)
 
 
 def _max_agents() -> int:

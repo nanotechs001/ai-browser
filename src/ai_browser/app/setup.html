@@ -44,10 +44,9 @@
     from then on.</p>
   <ol>
     <li>In the <strong>chrome://extensions</strong> tab, turn on <strong>Developer mode</strong> (top right).</li>
-    <li>Drag the <strong>extension</strong> folder from the Finder window onto that page.
-      <div class="path"><button id="reveal" type="button" data-key="{{KEY}}">Show the folder in Finder</button></div>
-      <p class="alt">Or click <strong>Load unpacked</strong>, press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>, paste the
-        folder below, press Enter, then <strong>Select</strong>:</p>
+    <li>Drag the <strong>extension</strong> folder from the {{FILE_MANAGER}} window onto that page.
+      <div class="path"><button id="reveal" type="button" data-key="{{KEY}}" data-manager="{{FILE_MANAGER}}">Show the folder in {{FILE_MANAGER}}</button></div>
+      <p class="alt">Or click <strong>Load unpacked</strong>, {{GOTO}}, then <strong>Select</strong>. The folder:</p>
       <div class="path"><code id="folder">{{FOLDER}}</code><button id="copy" type="button">Copy</button></div>
     </li>
     <li>Pin the AI Browser icon from the puzzle-piece menu.</li>
@@ -64,9 +63,8 @@
   <ol>
     <li>In Brave, open <strong>brave://extensions</strong> and turn on <strong>Developer mode</strong>.</li>
     <li>Drag the <strong>watcher</strong> folder onto that page.
-      <div class="path"><button id="reveal-watcher" type="button" data-key="{{KEY}}">Show the folder in Finder</button></div>
-      <p class="alt">Or click <strong>Load unpacked</strong>, press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>, paste the
-        folder below, press Enter, then <strong>Select</strong>:</p>
+      <div class="path"><button id="reveal-watcher" type="button" data-key="{{KEY}}" data-manager="{{FILE_MANAGER}}">Show the folder in {{FILE_MANAGER}}</button></div>
+      <p class="alt">Or click <strong>Load unpacked</strong>, {{GOTO}}, then <strong>Select</strong>. The folder:</p>
       <div class="path"><code id="watcher-folder">{{WATCHER}}</code></div>
     </li>
     <li>Click the watcher's icon to open the Brain, and switch on the sites to watch.</li>
@@ -83,7 +81,7 @@
     <li>When Brave asks <strong>Allow remote debugging?</strong>, click <strong>Allow</strong>. Brave may ask when AI
       Browser starts and again when each agent first uses the browser, and it asks again after it restarts.</li>
   </ol>
-  <p class="warning"><strong>While this switch is on, any program on this Mac can reach your Brave, not only AI
+  <p class="warning"><strong>While this switch is on, any program on {{THIS_COMPUTER}} can reach your Brave, not only AI
     Browser.</strong> That includes the sites you are signed in to.</p>
   <p class="warning">Turn it off when agents aren't working: untick the same box.</p>
   <p class="warning">Only click Allow right after you started AI Browser or gave an agent a task. If Brave asks at any
@@ -110,7 +108,8 @@
       try {
         const answer = await fetch("/setup/reveal" + which,
                                    { method: "POST", headers: { "X-AIB-Setup": button.dataset.key } });
-        button.textContent = answer.ok ? "Shown in Finder" : "Couldn't open Finder";
+        const manager = button.dataset.manager;  // the file manager's name, from the server
+        button.textContent = answer.ok ? "Shown in " + manager : "Couldn't open " + manager;
       } catch {
         button.textContent = "Can't reach ai-browser app";
       }

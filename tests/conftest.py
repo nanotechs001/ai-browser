@@ -62,12 +62,12 @@ def _never_the_users_browsers(monkeypatch, tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _no_finder_windows(monkeypatch):
-    """No test may open a Finder window on the machine running the suite (tests that check it patch it again)."""
+    """No test may open a file manager window on the machine running the suite (tests that check it patch it again)."""
     import ai_browser.app.run as run
     import ai_browser.app.server as server
 
-    monkeypatch.setattr(run, "reveal", lambda path: None)
-    monkeypatch.setattr(server, "reveal_in_finder", lambda path: None)
+    monkeypatch.setattr(run, "reveal", lambda path: True)
+    monkeypatch.setattr(server, "reveal_folder", lambda path: True)
 
 
 @pytest.fixture

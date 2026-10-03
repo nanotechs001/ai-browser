@@ -14,8 +14,6 @@ import html
 import json
 import re
 import secrets
-import subprocess
-import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -27,6 +25,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from .. import platforms
 from ..appbrowser import extension_path
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillError, SkillWriter
@@ -72,11 +71,21 @@ SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
 YOU = {"kind": "you"}
 
 
-def reveal_in_finder(path: str) -> None:
-    """Show a folder in Finder, selected, so it can be dragged onto chrome://extensions (macOS only)."""
-    if sys.platform == "darwin":
-        with contextlib.suppress(OSError):
-            subprocess.Popen(["open", "-R", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+reveal_folder = platforms.reveal  # a file manager window with the folder selected; False when none could open
+GOTO_MAC = "press ⌘⇧G, paste the path and press Enter"
+GOTO_OTHER = "click the address bar at the top of the folder window, paste the path and press Enter"
+
+
+def setup_page(extension: str, watcher: str, key: str, system: str | None = None) -> str:
+    """The one-time setup page, worded for the computer it runs on; every value is escaped."""
+    values = {"{{FILE_MANAGER}}": platforms.file_manager(system),
+              "{{GOTO}}": platforms.shortcut(GOTO_MAC, GOTO_OTHER, system),
+              "{{THIS_COMPUTER}}": platforms.this_computer(system),
+              "{{FOLDER}}": extension, "{{WATCHER}}": watcher, "{{KEY}}": key}
+    page = SETUP_PAGE.read_text(encoding="utf-8")
+    for placeholder, value in values.items():
+        page = page.replace(placeholder, html.escape(value))
+    return page
 
 
 def _first_line(text, limit: int = 200) -> str:
@@ -148,7 +157,7 @@ class AppServer:
         self.origin_mismatch: str | None = None  # an extension with our token, from an origin we didn't compute
         self.out: Callable[[str], None] = print  # where the app's one-line notes go (run_app passes its own)
         self.setup_key = secrets.token_urlsafe(16)  # only the setup page has it: other sites can't open Finder
-        self.reveal = reveal_in_finder
+        self.reveal = reveal_folder
         self.tabs = None
         self._catalog = catalog
         self._origins: set[str] = set()
@@ -252,16 +261,14 @@ class AppServer:
         return extension_path(self.watcher_folder or self.home / "app" / "watcher")
 
     async def _setup(self, request: Request) -> HTMLResponse:
-        page = SETUP_PAGE.read_text(encoding="utf-8").replace("{{FOLDER}}", html.escape(self._extension_folder()))
-        page = page.replace("{{WATCHER}}", html.escape(self._watcher_folder()))
-        return HTMLResponse(page.replace("{{KEY}}", self.setup_key))
+        return HTMLResponse(setup_page(self._extension_folder(), self._watcher_folder(), self.setup_key))
 
     async def _setup_reveal(self, request: Request) -> Response:
         if not hmac.compare_digest(request.headers.get("x-aib-setup", "").encode(), self.setup_key.encode()):
             return Response(status_code=403)
         watcher = request.query_params.get("which") == "watcher"
-        self.reveal(self._watcher_folder() if watcher else self._extension_folder())
-        return Response(status_code=204)
+        shown = self.reveal(self._watcher_folder() if watcher else self._extension_folder())
+        return Response(status_code=204 if shown else 501)  # 501: nothing could show it (no file manager)
 
     async def _setup_status(self, request: Request) -> JSONResponse:
         seen = self.brain is not None and self.brain.store.watcher_seen

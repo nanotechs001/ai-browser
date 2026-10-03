@@ -227,7 +227,7 @@ async def test_new_tasks_use_the_apps_default_model(fake_claude, tmp_path):
 async def test_the_setup_page_can_show_the_folder_in_finder(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     shown = []
-    server.reveal = shown.append
+    server.reveal = lambda path: shown.append(path) or True
     try:
         async with httpx.AsyncClient() as client:
             page = (await client.get(url + "/setup")).text
@@ -362,7 +362,7 @@ def test_prepare_watcher_updates_its_folder_in_place(tmp_path):
 async def test_the_setup_page_has_the_brave_steps(fake_claude, tmp_path):
     server, url, brain = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
     shown = []
-    server.reveal = shown.append
+    server.reveal = lambda path: shown.append(path) or True
     try:
         async with httpx.AsyncClient() as client:
             page = (await client.get(url + "/setup")).text
@@ -861,7 +861,14 @@ async def test_the_setup_page_has_the_switch_and_its_warning(fake_claude, tmp_pa
             page = " ".join((await client.get(url + "/setup")).text.split())
         assert 'id="switch"' in page and "brave://inspect/#remote-debugging" in page
         assert "Allow remote debugging for this browser instance" in page
-        assert "While this switch is on, any program on this Mac can reach your Brave, not only AI Browser." in page
+        from ai_browser.app.server import setup_page
+
+        def words(system):
+            return " ".join(setup_page("/x", "/w", "k", system=system).split())
+
+        sentence = "While this switch is on, any program on {} can reach your Brave, not only AI Browser."
+        assert sentence.format("this Mac") in words("darwin")
+        assert sentence.format("this PC") in words("win32")
         assert "Turn it off when agents aren't working: untick the same box." in page
         assert "If Brave asks at any other time, click Deny." in page
         assert "That is Brave telling you the truth; AI Browser never hides it." in page
@@ -1200,3 +1207,27 @@ def test_the_setup_page_shows_the_mismatch_as_text():
 
     page = SETUP_PAGE.read_text(encoding="utf-8")
     assert 'id="mismatch"' in page and "mismatch.textContent" in page and "innerHTML" not in page
+
+
+def test_the_setup_page_is_worded_for_each_computer():
+    from ai_browser.app.server import setup_page
+
+    windows = setup_page("C:\\Users\\José & Ana\\.ai-browser\\app\\extension", "C:\\w", "k", system="win32")
+    assert "File Explorer" in windows and 'data-manager="File Explorer"' in windows
+    assert "click the address bar at the top of the folder window, paste the path and press Enter" in windows
+    assert "⌘" not in windows and "Finder" not in windows and "{{" not in windows
+    assert "C:\\Users\\José &amp; Ana\\.ai-browser\\app\\extension" in windows  # whole, accents kept, escaped
+    mac = setup_page("/Users/me/.ai-browser/app/extension", "/w", "k", system="darwin")
+    assert "Finder" in mac and "press ⌘⇧G, paste the path and press Enter" in mac and "<kbd>" not in mac
+
+
+async def test_the_reveal_says_when_no_folder_window_opened(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    server.reveal = lambda path: False  # no file manager could start
+    try:
+        async with httpx.AsyncClient() as client:
+            page = (await client.get(url + "/setup")).text
+            key = page.split('data-key="', 1)[1].split('"', 1)[0]
+            assert (await client.post(url + "/setup/reveal", headers={"X-AIB-Setup": key})).status_code == 501
+    finally:
+        await server.stop()
