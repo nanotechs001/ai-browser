@@ -19,7 +19,7 @@ function renderPermissions() {
   for (const agent of waiting.values()) {
     if (!list.querySelector(`[data-agent="${CSS.escape(agent.id)}"]`)) {
       const card = permissionCard({ ...agent.permission, agent: agent.id }, (message) => link.send(message),
-                                  agent.name);
+                                  agent.name, { always: false }); // Always allow stays in AI Home's Tools
       card.dataset.agent = agent.id;
       list.append(card);
     }

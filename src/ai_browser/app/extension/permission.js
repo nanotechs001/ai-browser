@@ -1,8 +1,11 @@
 // A tool request waiting for the user: which agent, the server, the tool and its exact input, shown as text. Allow
 // once, Always allow (remembered in AI Home's Tools) or Deny: only these clicks answer it, never anything a page says.
+// The watcher's Brain page in Brave passes { always: false }: its card has Allow once and Deny only, and a line saying
+// where Always allow is (a lasting allow is given in AI Browser's own pages only).
 "use strict";
 
 const LIMIT = 4000; // characters of the input shown before "Show all"
+const ELSEWHERE = "Always allow is in AI Home's Tools.";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -11,7 +14,7 @@ function el(tag, className, text) {
   return node;
 }
 
-export function permissionCard(request, send, agentName = "") {
+export function permissionCard(request, send, agentName = "", { always = true } = {}) {
   const card = el("div", "permission card");
   card.dataset.request = request.request;
   const tool = String(request.tool || "");
@@ -33,8 +36,10 @@ export function permissionCard(request, send, agentName = "") {
   }
   const buttons = el("div", "row permission-buttons");
   const done = el("span", "muted");
-  for (const [className, label, answer] of [["allow-once primary", "Allow once", "once"],
-                                             ["allow-always", "Always allow", "always"], ["deny", "Deny", "deny"]]) {
+  const choices = [["allow-once primary", "Allow once", "once"],
+                   ...(always ? [["allow-always", "Always allow", "always"]] : []),
+                   ["deny", "Deny", "deny"]];
+  for (const [className, label, answer] of choices) {
     const choice = el("button", className, label);
     choice.addEventListener("click", () => {
       if (!send({ type: "permission", agent: request.agent, request: request.request, answer })) return;
@@ -45,5 +50,6 @@ export function permissionCard(request, send, agentName = "") {
   }
   buttons.append(done);
   card.append(buttons);
+  if (!always) card.append(el("p", "muted always-elsewhere", ELSEWHERE));
   return card;
 }

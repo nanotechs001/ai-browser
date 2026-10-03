@@ -155,7 +155,14 @@ async def test_the_watcher_shows_a_permission_request(watcher, tmp_path):
     _, js = await open_page(watcher.cdp, f"chrome-extension://{watcher.app.extension_id}/brain.html")
     await watcher.server.agents.create("make a ClickUp task")
     assert await until(watcher.worker_js, "chrome.notifications.getAll().then(all => Object.keys(all).length === 1)")
-    assert await until(js, "document.querySelector('#permissions .permission') !== null")
-    assert "create_task" in await js("document.querySelector('#permissions .permission').textContent")
-    await js("document.querySelector('#permissions .deny').click(); true")
+    card = "document.querySelector('#permissions .permission')"
+    assert await until(js, f"{card} !== null")
+    assert "create_task" in await js(f"{card}.textContent")
+    assert await js(f"['.allow-once', '.deny', '.allow-always'].map((s) => {card}.querySelector(s) !== null)") == \
+        [True, True, False]  # no lasting allow from Brave
+    assert "Always allow is in AI Home's Tools." in await js(f"{card}.textContent")
+    full = ("import('./permission.js').then(({permissionCard}) => permissionCard({request: 'r9', agent: 'a9', "
+            "server: 'x', tool: 'mcp__x__y', input: {}}, () => true).querySelector('.allow-always') !== null)")
+    assert await js(full) is True  # AI Home's card, with no options, keeps all three buttons
+    await js(f"{card}.querySelector('.deny').click(); true")
     assert [answer["behavior"] for answer in await answered(watcher.log)] == ["deny"]
