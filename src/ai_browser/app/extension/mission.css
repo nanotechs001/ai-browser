@@ -327,6 +327,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
                       padding: 6px 8px; background: var(--bg); }
 .talk-card progress { width: 100%; }
 .talk-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap; }
+.talk-card .talk-state, .talk-card .talk-hint { font-size: 13px; }
 .talk-card .row { margin-top: 0; }
 .talk-form { display: flex; gap: 8px; }
 .talk-form input { flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;

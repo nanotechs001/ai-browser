@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from ai_browser.chrome import chrome_binary
+from test_bridge import EVENTS
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
 from test_mission import BUBBLES, LOCAL_VOICE, SLOW_VOICE, WORKING, needs_reply, open_with, station, voice_on
 from test_oneshot import oneshots
@@ -278,6 +279,12 @@ def talk_script(stack, *answers, default=WORKING):
 
 def talk_calls(stack):
     return [call["oneshot"] for call in oneshots(stack["log"]) if TALKING in call["oneshot"]]
+
+
+async def ask_typed(js, words):
+    """The Ask the Brain box, typed and sent."""
+    await js(f"document.getElementById('talk-text').value = {json.dumps(words)};"
+             " document.getElementById('talk-form').requestSubmit(); true")
 
 
 async def open_talk(stack, *sources, hearing="ready"):
@@ -633,7 +640,7 @@ async def test_start_runs_the_users_own_words_once(stack):
     box = "document.querySelector('#talk-card .talk-task')"
     assert await until(js, f"{box}?.value === {json.dumps(words)}")  # the user's own words, never Claude's
     card = await js(CARD)
-    assert "Start an agent with this task:" in card and "or say yes" in card
+    assert "Start a NEW agent with your words:" in card and "or say yes" in card
     assert await js("[...document.images].filter((img) => !img.closest('.monitor')).length") == 0
     assert stack["server"].agents.agents == {}  # nothing runs before Start
     await js("const go = document.querySelector('#talk-card .talk-go'); go.click(); go.click(); true")
@@ -892,3 +899,50 @@ async def test_numbers_show_on_stations_the_list_and_the_drawer(stack):
     await agents.close("a1")
     assert await until(js, f"{station('a1')} === null")
     assert await js(f"{station('a2', '.nameplate')}.textContent") == "2 · Check flights"  # numbers never change
+
+
+@CHROME
+async def test_a_spoken_message_goes_to_the_existing_agent(stack):
+    from ai_browser.brain.talk import RELAY
+
+    words = "tell the footer agent to also check the mobile layout"
+    talk_script(stack, {"say": "Sure, I'll pass that on.", "action": "message_agent", "agent": "a1"}, default=EVENTS)
+    agents = stack["server"].agents
+    await agents.create("Fix the footer")
+    assert await eventually(lambda: agents.agents["a1"].state == "your_turn")
+    stack["engine"].answers = [words, "yes"]
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    box = "document.querySelector('#talk-card .talk-task')"
+    assert await until(js, f"{box}?.value === {json.dumps(words)}")  # the user's own words
+    card = await js(CARD)
+    assert "Send to 1 · Fix the footer:" in card and "or say yes" in card
+    assert await js("document.querySelector('#talk-card .talk-go').textContent") == "Send"
+    said = "Brain: I can send your words to 1 · Fix the footer. Press Send, or say yes."  # never Claude's "Sure"
+    assert await until(js, f"{LOG}.includes({json.dumps(said)})")
+    await talk(stack, js)
+    assert await eventually(lambda: {"type": "user", "text": f"{RELAY}\n{words}"} in agents.events_of("a1"))
+    assert list(agents.agents) == ["a1"] and len(talk_calls(stack)) == 1  # no new agent; the yes skipped Claude
+    assert await until(js, f"{box} === null")
+    assert await until(js, f"{LOG}.includes('Brain: Sent to 1 · Fix the footer.')")
+
+
+@CHROME
+async def test_send_click_sends_once_to_a_busy_agent_as_queued(stack):
+    from ai_browser.brain.talk import RELAY
+
+    talk_script(stack, {"say": "OK.", "action": "message_agent", "agent": "a1"})  # agents stay at work (WORKING)
+    agents = stack["server"].agents
+    await agents.create("Fix the footer")
+    assert await eventually(lambda: agents.agents["a1"].state == "working")
+    js = await open_talk(stack, mic())
+    await ask_typed(js, "also check the header")
+    go = "document.querySelector('#talk-card .talk-go')"
+    assert await until(js, f"{go}?.textContent === 'Send'")
+    assert "It's working: it reads your words when it finishes what it's doing now." in await js(CARD)
+    await js(f"{go}.click(); {go}?.click(); true")
+    queued = "Brain: Queued for 1 · Fix the footer: it reads it when it finishes what it's doing now."
+    assert await until(js, f"{LOG}.includes({json.dumps(queued)})")
+    await asyncio.sleep(1)
+    assert [event for event in agents.events_of("a1") if event["type"] == "queued"] == [
+        {"type": "queued", "text": f"{RELAY}\nalso check the header"}]  # one click, one message

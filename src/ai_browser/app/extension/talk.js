@@ -6,6 +6,7 @@
 "use strict";
 
 import { CONSTRAINTS, openMic } from "./mic.js";
+import { agentLabel } from "./chat.js";
 
 const HOLD_MS = 300; // a shorter press of Space is a slip; a shorter press of the mic button is a click (it toggles)
 const LOG_LINES = 6;
@@ -13,6 +14,16 @@ const BYTES_PER_SECOND = 32000; // 16 kHz, 16-bit, mono
 const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
 const CONTROLS = "button, input, textarea, select, a, label, summary, [contenteditable]";
 const MODELS = [["sonnet", "Sonnet · balanced"], ["opus", "Opus · best"], ["haiku", "Haiku · fastest"]];
+const GO = { start_agent: "Start", message_agent: "Send" }; // anything else is a draft card's "Draft it"
+const SEND_STATE = { // what happens to the words, from the agent's state when the card was made
+  working: "It's working: it reads your words when it finishes what it's doing now.",
+  waiting: "It's waiting in line: it reads your words when its turn comes.",
+  permission: "It's waiting for your Allow or Deny: your words wait too, and don't answer it.",
+};
+const START_HINT = "It can't see your tabs. After it starts, open it and use Your tabs → Give to this agent. Or put "
+  + "the page's address in the words.";
+const SEND_HINT = "It can't see your tabs: use Your tabs → Give to this agent. Or put the page's address in the "
+  + "words.";
 
 export function megabytes(bytes) { // the page's sizes: 1 MB is 1,000,000 bytes, rounded to whole MB
   return `${Math.round((Number(bytes) || 0) / 1e6)} MB`;
@@ -226,17 +237,22 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     }
   }
 
-  function showProposal(offer) { // the Brain's proposal: it runs only on Start (Draft it) or a plain yes
+  function wordsBox(value, name) { // the user's own words, which they may edit before Start or Send
+    const text = el("textarea", "talk-task");
+    text.rows = 2;
+    text.value = String(value || "");
+    text.setAttribute("aria-label", name);
+    return text;
+  }
+
+  function showProposal(offer) { // the Brain's proposal: it runs only on Start (Send, Draft it) or a plain yes
     closeProposal();
     const box = el("div", "talk-proposal");
     box.dataset.kind = String(offer.kind || "");
     const entry = { id: String(offer.id || ""), kind: offer.kind, box: null, picker: null, node: box, buttons: [],
                     timer: null };
     if (offer.kind === "start_agent") {
-      const text = el("textarea", "talk-task");
-      text.rows = 2;
-      text.value = String(offer.task || ""); // the user's own words, which they may edit
-      text.setAttribute("aria-label", "The agent's task");
+      const text = wordsBox(offer.task, "The agent's task");
       const picker = el("select", "talk-model");
       picker.setAttribute("aria-label", "Model");
       for (const [value, label] of MODELS) {
@@ -248,13 +264,24 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
       picker.value = MODELS.some(([value]) => value === last) ? last : String(offer.model || "sonnet");
       entry.box = text;
       entry.picker = picker;
-      box.append(el("p", "", "Start an agent with this task:"), text, picker);
+      box.append(el("p", "", "Start a NEW agent with your words:"), text, picker);
+      if (offer.tab_hint) box.append(el("p", "talk-hint muted", START_HINT));
+    } else if (offer.kind === "message_agent") { // an agent that is already open: no model, it keeps its own
+      const agentId = String(offer.agent || "");
+      const text = wordsBox(offer.task, "Your words for this agent");
+      entry.box = text;
+      box.append(el("p", "", `Send to ${agentLabel({ id: agentId, number: offer.number, name: offer.name })}:`), text);
+      if (SEND_STATE[offer.state]) box.append(el("p", "talk-state muted", SEND_STATE[offer.state]));
+      if (offer.tab_hint) { // a view only: Give to this agent stays the user's own click
+        box.append(el("p", "talk-hint muted", SEND_HINT),
+                   row(button("Your tabs…", "ghost talk-tabs", () => openAgent(agentId, { tabs: true }))));
+      }
     } else {
       const who = `${offer.sender || "them"}${offer.subject ? ` (${offer.subject})` : ""}`;
       box.append(el("p", "", `Draft a reply to ${who} that says what you asked:`),
                  el("blockquote", "talk-guidance", String(offer.guidance || "")));
     }
-    const go = button(offer.kind === "start_agent" ? "Start" : "Draft it", "primary talk-go", () => confirm(entry));
+    const go = button(GO[offer.kind] || "Draft it", "primary talk-go", () => confirm(entry));
     const no = button("Cancel", "ghost talk-cancel", () => {
       link.send({ type: "brain_dismiss", talk: talkId, proposal: entry.id });
       closeProposal();
@@ -519,7 +546,9 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
       }
     }
     if (message.open?.brain === true) openBrain();
-    else if (typeof message.open?.agent === "string") openAgent(message.open.agent);
+    else if (typeof message.open?.agent === "string") {
+      openAgent(message.open.agent, { tabs: message.open.tabs === true }); // tabs: the drawer at Your tabs, a view
+    }
   }
 
   function statusChanged(message) {
