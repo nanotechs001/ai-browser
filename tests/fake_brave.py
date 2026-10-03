@@ -25,11 +25,15 @@ class FakePort:
     and the engines use, the way Chrome does in flatten mode. answer: "accept"; "refuse" (a 403 instead of the
     WebSocket, as when the user clicks Deny); "silent" (no answer until `release` is set, then as `answer` says then).
     `sessions` counts handshakes: each is a moment the real Brave would ask "Allow remote debugging?". `received`
-    records every command as (method, sessionId, params, id); `hold` names methods it never answers."""
+    records every command as (method, sessionId, params, id); `hold` names methods it never answers. `workers` are
+    service workers ({"target", "url", "context"}); `default` is the context Target.getBrowserContexts names as the
+    default (the profile used last), and None makes that read fail."""
 
-    def __init__(self, folder, answer="accept", pages=()):
+    def __init__(self, folder, answer="accept", pages=(), workers=(), default="C1"):
         self.folder, self.answer = Path(folder), answer
         self.pages = [dict(page) for page in pages]  # {"target", "url", "title", optional "type", "opener", "context"}
+        self.workers = [dict(worker) for worker in workers]  # {"target", "url", "context"}: service workers
+        self.default = default  # Target.getBrowserContexts' defaultBrowserContextId; None makes it fail
         self.sessions, self.methods, self.attached, self.received = 0, [], [], []
         self.hold: set[str] = set()
         self.held: list[dict] = []  # commands in `hold`, unanswered until answer_held()
@@ -64,7 +68,7 @@ class FakePort:
         return info
 
     def infos(self):
-        return [self.info(page) for page in self.pages]
+        return [self.info(page) for page in self.pages] + [self._worker_info(worker) for worker in self.workers]
 
     async def emit(self, method, params, session=None):
         """An event from "Brave"."""
@@ -116,7 +120,10 @@ class FakePort:
         if method == "Target.getTargets":
             result = {"targetInfos": self.infos()}
         elif method == "Target.getBrowserContexts":
-            result = {"browserContextIds": ["C2"], "defaultBrowserContextId": "C1"}
+            if self.default is None:  # a failed read
+                error = {"code": -32000, "message": "Not available"}
+            else:
+                result = {"browserContextIds": ["C2"], "defaultBrowserContextId": self.default}
         elif method == "Target.getTargetInfo":
             page = self.page(target)
             error, result = (missing, {}) if page is None else (None, {"targetInfo": self.info(page)})
@@ -178,6 +185,33 @@ class FakePort:
         if method == "Target.setDiscoverTargets" and params.get("discover"):
             for info in self.infos():
                 await self.emit("Target.targetCreated", {"targetInfo": info})
+
+    # ---- watcher-safety: profiles, private windows and the watcher's worker --------------------------------------
+
+    def set_default(self, context):
+        """The context Brave would name as its default (the profile used last); None makes the read fail."""
+        self.default = context
+
+    @staticmethod
+    def _worker_info(worker):
+        return {"targetId": worker["target"], "type": "service_worker", "url": worker["url"], "title": "",
+                "attached": False, "canAccessOpener": False, "browserContextId": worker["context"]}
+
+    async def _tell_all(self, method, params):
+        if self.socket is not None:
+            with contextlib.suppress(Exception):  # no connection now: nobody to tell
+                await self.emit(method, params)
+
+    async def destroy(self, target):
+        """A page closes, or a service worker goes to sleep: Target.targetDestroyed."""
+        self.pages = [page for page in self.pages if page["target"] != target]
+        self.workers = [worker for worker in self.workers if worker["target"] != target]
+        await self._tell_all("Target.targetDestroyed", {"targetId": target})
+
+    async def add_worker(self, worker):
+        """A service worker starts (the watcher's worker wakes up): Target.targetCreated."""
+        self.workers.append(dict(worker))
+        await self._tell_all("Target.targetCreated", {"targetInfo": self._worker_info(worker)})
 
     async def stop(self):
         self.release.set()
