@@ -222,7 +222,8 @@ def test_repo_hygiene():
     listing = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
     tracked = [name for name in listing.decode("utf-8").split("\0") if name]
     personal = [name for name in tracked
-                if PurePosixPath(name).name in {".mcp.json", ".DS_Store"} or PurePosixPath(name).name.startswith(".env")
+                if PurePosixPath(name).name in {".mcp.json", ".DS_Store", "Thumbs.db", "desktop.ini"}
+                or PurePosixPath(name).name.startswith(".env")
                 or name.endswith(".log") or name.split("/")[0] in {".venv", ".superpowers", ".pytest_cache", ".claude"}]
     assert not personal, f"personal or generated files are tracked: {personal}"
     home = str(Path.home()).encode("utf-8")
@@ -349,6 +350,24 @@ def test_the_ci_workflow_runs_only_by_hand():
     upload = job["steps"][-1]
     assert upload["if"] == "always()" and upload["with"]["path"] == "pytest.xml"
     assert upload["with"]["retention-days"] == 7
+    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout.get("with", {}).get("persist-credentials") is False  # the run's token isn't left in .git/config
+
+
+def test_windows_explorer_and_ci_files_stay_out_of_the_repo():
+    ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert {"Thumbs.db", "desktop.ini", "pytest.xml"} <= set(ignored)
+
+
+def test_the_fake_claude_runs_on_the_base_python_on_windows(monkeypatch):
+    import sys
+
+    import conftest
+
+    monkeypatch.setattr(sys, "platform", "win32")  # the venv's python.exe is a launcher there: its child could
+    assert conftest.fake_python() == sys._base_executable  # start outside the test's job before the job holds it
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert conftest.fake_python() == sys.executable
 
 
 def test_the_readme_has_the_windows_steps():

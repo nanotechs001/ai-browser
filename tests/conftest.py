@@ -130,15 +130,21 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.skip(reason=reason))
 
 
+def fake_python() -> str:
+    """The Python the fake claude runs on. On Windows a venv's python.exe is a launcher that starts the real one a
+    moment later, which could slip out of the Job the bridge puts it in; the fake needs only the standard library."""
+    import sys
+
+    return sys._base_executable if sys.platform == "win32" else sys.executable
+
+
 @pytest.fixture
 def fake_claude(tmp_path, monkeypatch):
     """The fake `claude`: (runner, log, script). runner is an argv prefix, [python, fake_claude.py], which every
     `claude` parameter accepts, the same on every OS. Write the reply events to `script` as a JSON list."""
-    import sys
-
     script, log = tmp_path / "fake-claude-script.json", tmp_path / "fake-claude.log"
     script.write_text("[]", encoding="utf-8")
-    runner = [sys.executable, str(Path(__file__).with_name("fake_claude.py"))]
+    runner = [fake_python(), str(Path(__file__).with_name("fake_claude.py"))]
     monkeypatch.setenv("FAKE_CLAUDE_SCRIPT", str(script))
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
     return runner, log, script
