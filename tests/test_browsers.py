@@ -1022,8 +1022,11 @@ def test_the_readme_says_what_detection_reads():
     text = (project_root() / "README.md").read_text(encoding="utf-8")
     development = " ".join(text.split("## Development", 1)[1].split())
     assert "**Browser detection** (`src/ai_browser/browsers.py`)" in development
+    assert ("for each browser that runs, or whose lock can't tell, opens a TCP connection to 127.0.0.1 that sends "
+            "nothing") in development
     assert 'so it never makes your browser ask "Allow remote debugging?"' in development
-    assert "It never opens cookies, saved passwords or history, and never reads your account's email." in development
+    assert ("It never opens cookies, saved passwords or history; it reads only what it needs, and never keeps or shows "
+            "your account's email.") in development
     assert "browsers.public(browsers.detect({extension_id_for(w): w})" in development
 
 
