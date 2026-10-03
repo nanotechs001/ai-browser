@@ -124,4 +124,5 @@ async def test_hand_and_run_take_one_click(home):
              "row.querySelector('.hand').click(); row.querySelector('.hand').click();"
              "row.querySelector('.run').click(); row.querySelector('.run').click(); true")
     await asyncio.sleep(1)
-    assert calls == [("hand", "gmail:t1", "check the page"), ("run", "gmail:t1", "site-fix")]
+    # each once, double clicks ignored; their order is the server's (Hand runs as a job, Run inline), not the clicks'
+    assert sorted(calls) == [("hand", "gmail:t1", "check the page"), ("run", "gmail:t1", "site-fix")]
