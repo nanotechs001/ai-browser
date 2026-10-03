@@ -361,3 +361,101 @@ def test_open_shared_lets_the_browser_replace_the_file(tmp_path):
         with open(path, "rb"):
             with pytest.raises(PermissionError):
                 os.rename(path, tmp_path / "again")
+
+
+def test_the_registry_readers_never_raise(monkeypatch):
+    commands_of, progid_of = UNPATCHED["windows_browser_commands"], UNPATCHED["windows_https_progid"]
+    commands, progid = commands_of(), progid_of()
+    if platforms.WINDOWS:  # the real registry, read only
+        assert isinstance(commands, list) and all(isinstance(command, str) for command in commands)
+        assert progid is None or isinstance(progid, str)
+        monkeypatch.setattr(platforms, "WINDOWS", False)
+        commands, progid = commands_of(), progid_of()
+    assert (commands, progid) == ([], None)  # the Mac has no winreg: it is imported only in the Windows branch
+
+
+class FakeWinreg:
+    """A stand-in for winreg: keys are {(root, path in lower case): {value name: value}}. Writing fails the test."""
+
+    HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ = "HKCU", "HKLM", 0x20019
+
+    def __init__(self, keys, broken=()):
+        self.keys = {(root, path.lower()): values for (root, path), values in keys.items()}
+        self.broken = {(root, path.lower()) for root, path in broken}
+        self.access = []
+
+    class Key:
+        def __init__(self, root, path):
+            self.root, self.path = root, path
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def OpenKey(self, root, path, reserved=0, access=None):
+        self.access.append(access)
+        where = (root, path.lower())
+        if where in self.broken:
+            raise PermissionError(5, "Access is denied")
+        if where not in self.keys and not any(r == root and p.startswith(where[1] + "\\") for r, p in self.keys):
+            raise FileNotFoundError(2, "The system cannot find the file specified")
+        return self.Key(root, where[1])
+
+    def EnumKey(self, key, index):
+        children = sorted({p[len(key.path) + 1:].split("\\")[0] for r, p in self.keys
+                           if r == key.root and p.startswith(key.path + "\\")})
+        if index >= len(children):
+            raise OSError(259, "No more data is available")
+        return children[index]
+
+    def QueryValueEx(self, key, name):
+        values = self.keys.get((key.root, key.path), {})
+        if name not in values:
+            raise FileNotFoundError(2, "The system cannot find the file specified")
+        return values[name], 1
+
+    def CreateKey(self, *args):
+        pytest.fail("the registry was written: CreateKey")
+
+    def SetValueEx(self, *args):
+        pytest.fail("the registry was written: SetValueEx")
+
+    def DeleteKey(self, *args):
+        pytest.fail("the registry was written: DeleteKey")
+
+    def DeleteValue(self, *args):
+        pytest.fail("the registry was written: DeleteValue")
+
+
+APP_PATHS = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
+HTTPS = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https"
+
+
+def test_the_registry_readers_with_a_fake_winreg(monkeypatch):
+    fake = FakeWinreg({
+        ("HKCU", APP_PATHS + r"\chrome.exe"): {
+            "": "C:\\Users\\Alex\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe"},
+        ("HKLM", APP_PATHS + r"\chrome.exe"): {"": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\""},
+        ("HKLM", APP_PATHS + r"\msedge.exe"): {"": 42},  # not a string: skipped
+        ("HKLM", r"SOFTWARE\Clients\StartMenuInternet\Brave\shell\open\command"): {
+            "": "\"C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe\""},
+        ("HKLM", r"SOFTWARE\WOW6432Node\Clients\StartMenuInternet\Brave\shell\open\command"): {
+            "": "\"C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe\""},
+        ("HKLM", r"SOFTWARE\Clients\StartMenuInternet\Locked\shell\open\command"): {"": "C:\\locked.exe"},
+    }, broken=[("HKLM", r"SOFTWARE\Clients\StartMenuInternet\Locked\shell\open\command")])
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+    monkeypatch.setattr(platforms, "WINDOWS", True)
+    commands_of, progid_of = UNPATCHED["windows_browser_commands"], UNPATCHED["windows_https_progid"]
+    assert commands_of() == [
+        "C:\\Users\\Alex\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe",
+        "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\"",
+        "\"C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe\"",
+        "\"C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe\""]
+    assert progid_of() is None  # neither key exists
+    fake.keys[("HKCU", (HTTPS + r"\UserChoice").lower())] = {"ProgId": "ChromeHTML"}
+    assert progid_of() == "ChromeHTML"
+    fake.keys[("HKCU", (HTTPS + r"\UserChoiceLatest\ProgId").lower())] = {"ProgId": "BraveHTML"}
+    assert progid_of() == "BraveHTML"  # Windows 11 25H2 no longer updates UserChoice
+    assert fake.access and set(fake.access) == {FakeWinreg.KEY_READ}  # every key opened for reading only

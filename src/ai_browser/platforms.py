@@ -303,6 +303,73 @@ def open_shared(path) -> BinaryIO:
         raise
 
 
+_APP_PATHS = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
+_START_MENU_INTERNET = r"SOFTWARE\Clients\StartMenuInternet"
+_START_MENU_INTERNET_32 = r"SOFTWARE\WOW6432Node\Clients\StartMenuInternet"
+_HTTPS_CHOICE = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https"
+_REGISTERED_PROGRAMS = ("brave.exe", "chrome.exe", "msedge.exe", "vivaldi.exe")
+
+
+def windows_browser_commands() -> list[str]:
+    """Where Windows' registry says browsers are installed, as command strings: App Paths for each known program
+    (current user first), then Windows' own list of registered browsers (StartMenuInternet) in HKCU, HKLM and HKLM's
+    32-bit view. Read only: keys are opened with KEY_READ and nothing is ever created, set or deleted. [] elsewhere."""
+    if not WINDOWS:
+        return []
+    import winreg  # Windows only
+
+    user, machine = winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE
+    found = [_registry_text(winreg, root, rf"{_APP_PATHS}\{program}", "")
+             for program in _REGISTERED_PROGRAMS for root in (user, machine)]
+    for root, key in ((user, _START_MENU_INTERNET), (machine, _START_MENU_INTERNET),
+                      (machine, _START_MENU_INTERNET_32)):
+        found += [_registry_text(winreg, root, rf"{key}\{name}\shell\open\command", "")
+                  for name in _registry_subkeys(winreg, root, key)]
+    return [command for command in found if command]
+
+
+def windows_https_progid() -> str | None:
+    """The ProgId of the user's default browser for https links (Windows 11 25H2 writes UserChoiceLatest, older
+    Windows UserChoice), or None. Read only; None elsewhere."""
+    if not WINDOWS:
+        return None
+    import winreg  # Windows only
+
+    for key in (rf"{_HTTPS_CHOICE}\UserChoiceLatest\ProgId", rf"{_HTTPS_CHOICE}\UserChoiceLatest",
+                rf"{_HTTPS_CHOICE}\UserChoice"):
+        value = _registry_text(winreg, winreg.HKEY_CURRENT_USER, key, "ProgId")
+        if value:
+            return value
+    return None
+
+
+def _registry_text(winreg, root, key: str, name: str) -> str | None:
+    """A string value, stripped, or None: a missing key, an unreadable one or a value of another type."""
+    try:
+        with winreg.OpenKey(root, key, 0, winreg.KEY_READ) as handle:
+            value, _ = winreg.QueryValueEx(handle, name)
+    except OSError:
+        return None
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
+def _registry_subkeys(winreg, root, key: str) -> list[str]:
+    """The names of a key's subkeys (at most 256), or [] when the key can't be opened."""
+    names = []
+    try:
+        with winreg.OpenKey(root, key, 0, winreg.KEY_READ) as handle:
+            for index in range(256):
+                try:
+                    names.append(winreg.EnumKey(handle, index))
+                except OSError:  # no more subkeys
+                    break
+    except OSError:
+        return []
+    return names
+
+
 def pid_alive(pid: int) -> bool:
     """Whether a process still runs. Never a signal: on Windows, os.kill(pid, 0) sends Ctrl-C to a console group."""
     if pid <= 0:
