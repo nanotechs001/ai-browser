@@ -317,3 +317,21 @@ async def test_the_job_ends_what_claude_code_started(fake_claude, tmp_path, monk
             break
         await asyncio.sleep(0.1)
     assert not platforms.pid_alive(child)
+
+
+async def test_an_agents_mcp_json_holds_its_own_token_and_the_relay(fake_claude, tmp_path):
+    from ai_browser.app.agents import AgentManager
+
+    runner, _, _ = fake_claude
+    agents = AgentManager(tmp_path / "home", claude=runner, env={"AIB_APP_CDP": "ws://127.0.0.1:8792/cdp"})
+    agents.mint_token = lambda agent_id: f"token-of-{agent_id}"
+    agent = await agents.create("look around")
+    config = tmp_path / "home" / "app" / "agents" / agent.id / "mcp.json"
+    for _ in range(100):
+        if config.exists():
+            break
+        await asyncio.sleep(0.05)
+    env = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["ai-browser"]["env"]
+    assert env["AIB_APP_CDP"] == "ws://127.0.0.1:8792/cdp" and env["AIB_APP_AGENT_TOKEN"] == "token-of-a1"
+    assert file_mode(config) in (0o600, None)
+    await agents.close_all()

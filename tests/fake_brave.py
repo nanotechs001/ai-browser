@@ -163,6 +163,8 @@ class FakePort:
             result = {"frameTree": {"frame": {"id": f"F-{self.bound.get(session, '')}", "url": "about:blank"}}}
         elif method == "Runtime.evaluate":
             result = {"result": {"value": "page text"}}
+        elif method == "Page.createIsolatedWorld":
+            result = {"executionContextId": 7}
         elif method == "Browser.getVersion":
             result = {"product": "FakeBrave/1"}
         for name, event_params, event_session in before:
@@ -372,3 +374,49 @@ def add_agent(manager, agent_id="a1", name="Fix the footer", color="blue", adopt
     agent.adopted += list(adopted)
     manager.agents[agent_id] = agent
     return agent
+
+
+class BraveApp:
+    """A real app server in brave mode with its BraveLink (and relay) on a FakePort: what an agent's engine or a
+    Claude Code session meets while `ai-browser app` runs."""
+
+    def __init__(self, home, folder, pages=(), answer="accept"):
+        self.home, self.folder, self.pages, self.answer = Path(home), Path(folder), list(pages), answer
+
+    async def start(self, connect=True):
+        from ai_browser.app.agents import AgentManager
+        from ai_browser.app.bravelink import BraveLink
+        from ai_browser.app.server import AppServer
+
+        self.port = FakePort(self.folder, answer=self.answer, pages=self.pages)
+        await self.port.start()
+        self.agents = AgentManager(self.home)
+        self.server = AppServer(self.home, self.agents)
+        self.url = await self.server.start()
+        self.brave = BraveLink(self.folder, allow_wait=2, every=0.1, tokens=self.server.tokens)
+        self.server.attach_brave(self.brave)
+        self.agents.close_tabs = self.brave.close_targets
+        await self.brave.start()
+        if connect:
+            await self.brave.connect()
+        self.cdp = self.url.replace("http://", "ws://", 1) + "/cdp"
+        return self
+
+    def write_link(self):
+        from ai_browser.app.run import write_link
+
+        return write_link(self.home, self.url, self.server.session_token, self.cdp, self.folder)
+
+    def agent_env(self, monkeypatch, agent="a1"):
+        """An app agent's engine environment, as ai-browser app sets it."""
+        monkeypatch.setenv("AIB_BROWSER", "chrome")
+        monkeypatch.setenv("AIB_CHROME_DIR", str(self.folder))
+        monkeypatch.setenv("AIB_APP_AGENT", agent)
+        monkeypatch.setenv("AIB_APP_EVENTS", self.url + "/agent-events")
+        monkeypatch.setenv("AIB_APP_AGENT_TOKEN", self.server.token_for(agent))
+        monkeypatch.setenv("AIB_APP_CDP", self.cdp)
+
+    async def stop(self):
+        await self.server.stop()
+        await self.brave.close()
+        await self.port.stop()

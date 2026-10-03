@@ -77,6 +77,7 @@ class Tab:
     reported: int = 0  # dialogs already shown to the caller
     adopted: bool = False  # a tab the user opened (AI Browser): left open when the session ends
     handed: bool = False  # a tab the user handed this agent in AI Home: let go of when they take it back
+    detached: bool = False  # the relay cut our session on this handed tab (Take back): let go of at the next call
     world: int | None = None  # the reader's isolated-world context in the current document (dropped on navigation)
 
 
@@ -189,6 +190,7 @@ class Browser:
         cdp.on("Page.javascriptDialogOpening", self._on_dialog)
         cdp.on("Target.targetCreated", self._on_target_created)
         cdp.on("Target.targetDestroyed", self._on_target_destroyed)
+        cdp.on("Target.detachedFromTarget", self._on_detached)
         cdp.on("Page.frameStartedLoading", self._on_started)
         cdp.on("Page.frameStoppedLoading", self._on_stopped)
         cdp.on("Page.domContentEventFired", self._on_stopped_any)
@@ -469,6 +471,13 @@ class Browser:
                 if tab is self.current:
                     self.current, self._lost = None, key
 
+    def _on_detached(self, params: dict, session: str | None) -> None:
+        """Our session on a handed tab ended from outside: the user's Take back, cut at once by the app's relay. The
+        next call lets go of the tab without waiting for the app's status answer."""
+        tab = self._tab_for(params.get("sessionId"))
+        if tab is not None and tab.handed:
+            tab.detached = True
+
     async def ensure_tab(self) -> str:
         """Carry on after the tab in use was closed (in another of ours, or a new one); returns a note."""
         if self.current is not None or (self._lost is None and self.mode in ("app", "chrome")):
@@ -594,7 +603,7 @@ class Browser:
         still = {item["target"] for item in await self._handed_now()}
         notes = []
         for tab in mine:
-            if tab.target not in still:
+            if tab.detached or tab.target not in still:
                 await self.close_tab(tab)
                 notes.append(f"(the user took back tab {tab.key})\n")
         if notes and self.current is None:
