@@ -989,3 +989,13 @@ async def test_hand_over_hint_opens_this_agents_tab_list(stack):
     brave.set_state("ready")
     assert await until(js, f"{yours}.textContent.includes(\"Brave isn't connected yet: connect it in AI Home.\")")
     assert await js(f"{yours}.querySelectorAll('.your-tab').length") == 0
+
+
+@CHROME
+async def test_spoken_labels_read_the_dot_as_a_pause(stack):
+    js = await open_with(stack)
+    assert await js(VOICE) is True
+    await js("testVoice.say('Sent to 1 · Fix the footer.', {priority: true}); true")
+    assert await until(js, "window.spoken.length === 1")
+    assert await js("window.spoken") == [["speak", "Sent to 1, Fix the footer."]]
+    assert await js("bubbleNode.textContent") == "Sent to 1 · Fix the footer."  # the bubble and the log keep the dot

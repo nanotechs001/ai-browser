@@ -11,6 +11,10 @@ export function guardMs(text, hold = 5000) { // about 75 ms a character: a 240-c
   return Math.max(hold, GUARD_MS, 75 * String(text || "").length);
 }
 
+export function speakable(text) { // "1 · Fix the footer" is said "1, Fix the footer": no voice reads the symbol aloud
+  return String(text).split(" · ").join(", ");
+}
+
 export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {}, onWord = () => {},
                               hold = 5000 } = {}) {
   let queue = []; // [{text, count}]: count > 1 is a summary of that many updates
@@ -71,7 +75,7 @@ export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {
       timer = setTimeout(next, wait);
     };
     try {
-      const utterance = new SpeechSynthesisUtterance(text);
+      const utterance = new SpeechSynthesisUtterance(speakable(text));
       utterance.voice = voice;
       utterance.lang = voice.lang || "en-US";
       utterance.onend = () => finish();
