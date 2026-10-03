@@ -21,7 +21,6 @@ import json
 import logging
 import re
 import secrets
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,13 +97,30 @@ def address_problem(url, app_port: int) -> str | None:
         return UNREADABLE
     if not host:
         return UNREADABLE
-    host = unicodedata.normalize("NFKC", unquote(host)).lower()
+    host = unquote(host).lower()
     if (port if port is not None else 443 if scheme == "https" else 80) != app_port:
         return None
+    if not _plain(host):
+        return UNREADABLE  # on the app's port only a host Chrome reads as written: never one it maps (IDNA)
     try:
         return APP_PAGE if _loopback(host) else None
     except ValueError:
         return UNREADABLE  # Chrome wouldn't read it either: refused, never guessed
+
+
+_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")
+
+
+def _plain(host: str) -> bool:
+    """A host Chrome reads as written: ASCII labels of letters, digits and hyphens (one trailing dot at most), or an
+    IPv6 literal. Chrome maps anything else through IDNA first (full-width dots, soft hyphens, zero-width characters
+    can all become 127.0.0.1 or localhost), so it is refused rather than mapped here and maybe mapped differently."""
+    if not host.isascii():
+        return False
+    if ":" in host:
+        return True  # IPv6 (urlsplit took the brackets off): _loopback reads it
+    name = host[:-1] if host.endswith(".") else host
+    return bool(name) and all(_LABEL.fullmatch(label) for label in name.split("."))
 
 
 def _loopback(host: str) -> bool:
@@ -544,15 +560,19 @@ class Relay:
         with contextlib.suppress(Exception):
             await self._call(method, params)
 
-    async def _up(self, message: dict) -> None:
+    async def _up(self, message: dict, still: Callable[[], bool] | None = None) -> bool:
+        """Send one message to the browser, in turn; with `still`, only if it is still wanted once its turn comes."""
         ws = self._ws
         if ws is None:
             raise CDPError(LOST[1], LOST[0], message.get("method", ""))
         async with self._lock:
+            if still is not None and not still():
+                return False  # cut, disconnected or gone while it waited: never sent
             try:
                 await ws.send(json.dumps(message))
             except Exception:
                 raise CDPError(LOST[1], LOST[0], message.get("method", "")) from None
+        return True
 
     # ---- the /cdp route (Decision 8) -----------------------------------------------------------------------
 
@@ -713,11 +733,19 @@ class Relay:
         message = {"id": upstream_id, "method": method, "params": params}
         if session_id is not None:
             message["sessionId"] = session_id
+
+        def still() -> bool:  # Take back, Disconnect or a closed socket while it waited its turn: dropped
+            if upstream_id not in self._pending or client.closed:
+                return False
+            session = self._sessions.get(session_id) if session_id is not None else None
+            return session_id is None or (session is not None and session.client is client and not session.cut)
+
         try:
-            await self._up(message)
+            sent, why = await self._up(message, still), NO_SESSION
         except CDPError:
-            if self._pending.pop(upstream_id, None) is not None:
-                self._error(client, client_id, LOST, session_id)
+            sent, why = False, LOST
+        if not sent and self._pending.pop(upstream_id, None) is not None:
+            self._error(client, client_id, why, session_id)
 
     def _answer_to(self, client, client_id, result: dict, session_id: str | None = None) -> None:
         reply = {"id": client_id, "result": result}
@@ -1051,15 +1079,18 @@ class Relay:
     async def cut(self, identity: str, target: str) -> None:
         """Take back (Decision 6): the agent's sessions on that tab end now. Each is refused at once, its pending
         commands fail, and the relay detaches it in the browser; the browser's detach note reaches the agent."""
-        for session_id, session in list(self._sessions.items()):
+        doomed = []
+        for session_id, session in list(self._sessions.items()):  # all of them first, before any await
             client = session.client
             if session.target != target or session.cut or client is None or client.identity != identity:
                 continue
             session.cut = True
+            doomed.append(session_id)
             for upstream_id, entry in list(self._pending.items()):
                 if entry[0] is client and entry[4] == session_id:
                     del self._pending[upstream_id]
                     self._error(client, entry[1], NO_SESSION, session_id)
+        for session_id in doomed:
             with contextlib.suppress(CDPError):
                 await self._call("Target.detachFromTarget", {"sessionId": session_id}, timeout=5)
 

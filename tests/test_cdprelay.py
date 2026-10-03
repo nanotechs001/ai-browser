@@ -67,6 +67,11 @@ def test_the_session_level_list_keeps_to_the_page():
     f"http://user@127.0.0.1:{APP_PORT}/", f"http://%31%32%37.0.0.1:{APP_PORT}/",
     f"http://１２７.0.0.1:{APP_PORT}/", f"http://127.0.0.1:{APP_PORT}\\@example.com/",
     f"http://127.0.0.1:0{APP_PORT}/", f"http://1.2.3.09:{APP_PORT}/", f" http://127.0.0.1:{APP_PORT}/",
+    # final review, Important 1: spellings Chrome maps through IDNA to 127.0.0.1 or localhost (measured in Chrome)
+    f"http://127\u30020\u30020\u30021:{APP_PORT}/setup", f"http://127\uff610\uff610\uff611:{APP_PORT}/",
+    f"http://local\u00adhost:{APP_PORT}/", f"http://127.0.0.1\u00ad:{APP_PORT}/", f"http://127.0.0.1%C2%AD:{APP_PORT}/",
+    f"http://local\u200bhost:{APP_PORT}/", f"http://\ufeff127.0.0.1:{APP_PORT}/", f"http://local\u2060host:{APP_PORT}/",
+    f"http://localhost\ufe0f:{APP_PORT}/", f"http://app\u3002localhost:{APP_PORT}/", f"http://localhost..:{APP_PORT}/",
 ])
 def test_the_address_check_refuses_local_files_browser_pages_and_the_apps_own_origin(url):
     assert address_problem(url, APP_PORT) is not None, url
@@ -75,6 +80,7 @@ def test_the_address_check_refuses_local_files_browser_pages_and_the_apps_own_or
 @pytest.mark.parametrize("url", [
     "about:blank", "about:blank#aib-0123456789abcdef", "https://example.com", f"http://example.com:{APP_PORT}/",
     "data:text/html,hi", f"http://localhost:{APP_PORT + 1}/", "http://127.0.0.1:80/", "http://127.0.0.2.example/",
+    "https://bücher.example/", f"http://bücher.example:{APP_PORT + 1}/",  # names in other scripts, elsewhere
 ])
 def test_the_address_check_lets_web_pages_through(url):
     assert address_problem(url, APP_PORT) is None, url
@@ -357,7 +363,8 @@ async def test_create_target_forces_background_and_checks_the_address(rig):
     a1, app_port = await rig.client("a1"), rig.relay.port
     for url in ("file:///etc/passwd", "chrome://settings", "brave://settings", "javascript:alert(1)",
                 f"http://127.0.0.1:{app_port}/setup", f"http://localhost:{app_port}/", f"http://2130706433:{app_port}/",
-                f"http://0x7f.1:{app_port}/", f"http://[::1]:{app_port}/", f"http://app.localhost:{app_port}/"):
+                f"http://0x7f.1:{app_port}/", f"http://[::1]:{app_port}/", f"http://app.localhost:{app_port}/",
+                f"http://127\u30020\u30020\u30021:{app_port}/setup"):
         with pytest.raises(CDPError):
             await a1.send("Target.createTarget", {"url": url})
     for extra in ({"hidden": True}, {"focus": True}, {"browserContextId": "C-private"}):
@@ -769,3 +776,30 @@ async def test_quitting_while_brave_asks_answers_the_waiting_handshakes(tmp_path
         await relay.close()
         await stop()
         await port.stop()
+
+
+# ---- final review -----------------------------------------------------------------------------------------
+
+async def test_a_command_waiting_its_turn_at_take_back_never_reaches_the_browser(rig):
+    """Final review, Minor 2 graded Important (success criterion 4): a command queued behind another send when the user
+    clicks Take back is dropped, never sent after the agent heard that it failed."""
+    await rig.relay.open("start")
+    rig.handed["a1"] = {"U1"}
+    a1 = await rig.client("a1")
+    session = (await a1.send("Target.attachToTarget", {"targetId": "U1", "flatten": True}))["sessionId"]
+    await rig.relay._lock.acquire()  # another send holds the line (a big write draining)
+    try:
+        clicking = asyncio.ensure_future(a1.send("Input.dispatchMouseEvent",
+                                                 {"type": "mousePressed", "x": 1, "y": 1}, session_id=session))
+        await asyncio.sleep(0.2)  # it waits for its turn
+        cutting = asyncio.ensure_future(rig.relay.cut("a1", "U1"))
+        await asyncio.sleep(0.1)
+    finally:
+        rig.relay._lock.release()
+    with pytest.raises(CDPError, match="Session with given id not found"):
+        await clicking
+    await cutting
+    rig.handed["a1"] = set()
+    await asyncio.sleep(0.2)
+    assert "Input.dispatchMouseEvent" not in rig.port.methods
+
