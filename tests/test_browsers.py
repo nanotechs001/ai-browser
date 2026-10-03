@@ -445,10 +445,19 @@ def test_profiles_never_return_an_email(tmp_path):
     ("\u202eevil\x07", "evil"), ("x" * 200, "x" * 64), ("   ", "Default"), (" Work ", "Work"),
     ("Alex (alex@example.com)", "Default"),  # an email among other words never comes out either
     ("\u200e\u2066\u202e\x1b", "Default"),  # only invisible characters: blank
-    (42, "Default")])
+    (42, "Default"),
+    pytest.param("\ud800", "Default", id="a lone surrogate"),  # dropped: a page's socket can't send one
+    pytest.param("Work\udfff", "Work", id="a lone surrogate after a name"),
+    pytest.param("\u200b\u2060\ufeff", "Default", id="zero-width characters only"),
+    pytest.param("\u200b" * 64 + "Work", "Default", id="nothing visible in the first 64 characters"),
+    pytest.param("\u061cWork", "Work", id="the Arabic letter mark")])  # a bidi control too
 def test_profile_names_are_cleaned(tmp_path, name, shown):
     data = data_folder(tmp_path / "Brave", one_profile({"name": name}), ["Default"])
-    assert [profile.name for profile in browsers.profiles(data)] == [shown]
+    found = browsers.profiles(data)
+    assert [profile.name for profile in found] == [shown]
+    brave = browsers.Installed(browsers.by_id("brave"), Path("program"), None, None, data)
+    page = browsers.public([browsers.Found(brave, "not_running", tuple(found), (), False)])
+    json.dumps(page, ensure_ascii=False).encode("utf-8")  # what a page's socket sends: never a UnicodeEncodeError
 
 
 @pytest.mark.parametrize("value, color", [
@@ -473,6 +482,22 @@ def test_a_profile_folder_name_cannot_leave_the_data_folder(tmp_path):
     if os.name != "nt":
         (data / "C:x").mkdir()  # on Windows "C:x" is a path on drive C:, not a folder name
     assert [profile.folder for profile in browsers.profiles(data)] == ["Profile 1"]
+
+
+# Folder names Chromium never makes and a page can't show safely: a bidi override, an email, nothing visible, a lone
+# surrogate. A profile with no name of its own is labelled with its folder's name.
+UNSHOWABLE_FOLDERS = ["Profile \u202e1gpj.exe", "alex@example.com", "\u200b", " ", "Profile \ud800"]
+
+
+def test_a_profile_folder_a_page_cannot_show_is_skipped(tmp_path):
+    assert not any(browsers.plain_folder(name) for name in UNSHOWABLE_FOLDERS)
+    cache = {name: {"name": ""} for name in [*UNSHOWABLE_FOLDERS, "Profile 1"]}  # blank: the folder's name shows
+    data = data_folder(tmp_path / "Brave", json.dumps({"profile": {"info_cache": cache}}).encode("utf-8"),
+                       ["Profile 1"])
+    for name in UNSHOWABLE_FOLDERS:
+        with contextlib.suppress(OSError, ValueError):  # Windows refuses " ", and no disk takes a lone surrogate
+            (data / name).mkdir()
+    assert [(profile.folder, profile.name) for profile in browsers.profiles(data)] == [("Profile 1", "Profile 1")]
 
 
 def test_each_profile_is_listed_once(tmp_path):

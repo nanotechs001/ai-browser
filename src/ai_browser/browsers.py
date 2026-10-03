@@ -258,27 +258,36 @@ class Profile:
 
 
 _NOT_PROFILES = ("System Profile", "Guest Profile")
-_BIDI_CONTROLS = frozenset("\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+_BIDI_CONTROLS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 _NAME_LIMIT = 64
 
 
+def _visible(text: str) -> bool:
+    """Whether a text holds a character a page shows: one outside the control, format, surrogate, private-use and
+    separator categories (C* and Z*)."""
+    return any(not unicodedata.category(char).startswith(("C", "Z")) for char in text)
+
+
 def plain_folder(name) -> bool:
-    """Whether a profile folder name is a plain name inside the data folder: not empty, not . or .., at most 64
-    characters, and no /, \\, : or control character."""
-    return (isinstance(name, str) and 0 < len(name) <= _NAME_LIMIT and name not in (".", "..")
-            and not any(char in "/\\:" or unicodedata.category(char) == "Cc" for char in name))
+    """Whether a profile folder name is a plain name inside the data folder that a page can show as it is: not empty,
+    not . or .., at most 64 characters, no /, \\, : or @, no control, format or surrogate character, and something
+    visible. Chromium names its folders Default and Profile N."""
+    return (isinstance(name, str) and 0 < len(name) <= _NAME_LIMIT and name not in (".", "..") and _visible(name)
+            and not any(char in "/\\:@" or unicodedata.category(char) in ("Cc", "Cf", "Cs") for char in name))
 
 
 def _profile_name(name, folder: str) -> str:
-    """The name the user gave a profile, cleaned: no control or bidi characters, trimmed, at most 64 characters.
-    A blank name, or one holding "@" (it may be an email), shows as the folder's name."""
+    """The name the user gave a profile, cleaned: no control, surrogate or bidi characters, trimmed, at most 64
+    characters. A name with nothing visible in those 64, or one holding "@" (it may be an email), shows as the
+    folder's name, which plain_folder() has already found safe to show."""
     if not isinstance(name, str):
         return folder
     text = "".join(char for char in name
-                   if unicodedata.category(char) != "Cc" and char not in _BIDI_CONTROLS).strip()
-    if not text or "@" in text:
+                   if unicodedata.category(char) not in ("Cc", "Cs") and char not in _BIDI_CONTROLS).strip()
+    if "@" in text:
         return folder
-    return text[:_NAME_LIMIT]
+    text = text[:_NAME_LIMIT]
+    return text if _visible(text) else folder
 
 
 def _color(value) -> str | None:
