@@ -31,9 +31,78 @@ uv run ai-browser build     # builds the sandbox image (~1.7 GB, once)
 uv run ai-browser doctor    # checks everything end to end
 ```
 
+## Windows
+
+ai-browser runs natively on Windows 10 (22H2) and Windows 11, 64-bit. In PowerShell:
+
+1. **Tools, once each.** Each line installs one tool; Windows may ask for permission for some of them.
+   ```powershell
+   winget install --id Git.Git -e
+   winget install --id astral-sh.uv -e
+   winget install --id GitHub.cli -e
+   winget install --id Google.Chrome -e
+   winget install --id Brave.Brave -e
+   irm https://claude.ai/install.ps1 | iex      # Claude Code, the native claude.exe
+   ```
+   Then open a new PowerShell window, so the new commands are on PATH.
+2. **Sign in, yourself:** `gh auth login`, for the private repo, and `claude` once, to log in to Claude Code in the
+   browser. Nothing here asks for a password or a token in a file.
+3. **The code**, in a short folder outside OneDrive:
+   ```powershell
+   git clone https://github.com/nanotechs001/ai-browser.git C:\dev\ai-browser
+   cd C:\dev\ai-browser
+   uv sync                        # Python 3.12 from .python-version; uv fetches it once
+   uv run ai-browser doctor --setup
+   ```
+4. **Claude Code's tools:**
+   ```powershell
+   claude mcp add ai-browser --scope user -e PYTHONUTF8=1 -- uv run --directory C:\dev\ai-browser ai-browser mcp
+   ```
+5. **AI Browser:** `uv run ai-browser app`.
+   - The setup page and `chrome://extensions` open, and File Explorer shows the `extension` folder, selected.
+   - Drag that folder onto the page, or click **Load unpacked** and paste the path into the address bar at the top
+     of the folder window.
+   - The page then says **All set**. The chat shortcut is **Ctrl+Shift+Y**.
+   - **Google sign-in:** sites can see that AI Browser is automated, and Google refuses to sign in there. For Google
+     work, use your everyday Brave (step 6), chosen before the task.
+6. **Brave, once, after step 5** (the first `ai-browser app` makes the watcher's folder):
+   - open `brave://extensions`, turn on **Developer mode**, click **Load unpacked** and pick
+     `%USERPROFILE%\.ai-browser\app\watcher`;
+   - for the everyday-Brave mode, open `brave://inspect/#remote-debugging` and tick **Allow remote debugging for this
+     browser instance**. While the switch is on, any program on this PC can reach your Brave, so untick it when
+     agents aren't working.
+7. **Optional, for the sandbox and the shell tool:**
+   - run `wsl --install` and reboot;
+   - run `winget install --id Docker.DockerDesktop -e`;
+   - start Docker Desktop (WSL 2 backend, Linux containers);
+   - then run `uv run ai-browser build` and `uv run ai-browser doctor`.
+
+   The work folder lives on NTFS, so it is slower and case-insensitive (`Report.html` and `report.html` are one
+   file), and names Windows can't hold (`CON`, `a:b`, `x?`) are refused with a plain message.
+8. **Optional, for voice input:**
+   - run `uv sync --extra voice` (the speech packages; plain `uv sync` removes them again, so keep the flag);
+   - allow desktop apps to use the microphone (Settings → Privacy & security → Microphone);
+   - the voice model itself (148 MB, the size the **Download** button shows; the "about 142 MB" quoted when you chose
+     it is the same files counted in MiB) is downloaded from inside the app, only after you click **Download**.
+
+   On Windows on Arm the speech packages can't install: Voice Access (Windows 11) works instead.
+
+**Troubleshooting:**
+- **"no free port":** Hyper-V or Docker may have reserved the port range.
+  `netsh interface ipv4 show excludedportrange protocol=tcp` shows the reserved ranges.
+- **"Claude Code was found at …claude.cmd":** install the native Claude Code (step 1), or set `AIB_CLAUDE` to the
+  full path of `claude.exe`.
+- **Chrome in an unusual place:** set `AIB_CHROME_BINARY` to the full path of `chrome.exe`.
+- **`~` in PowerShell:** native programs don't expand it. Use `$HOME` or `$env:USERPROFILE`.
+- **Files that hold tokens** (the extension's `config.json`, each agent's `mcp.json`, `link.json`) keep Windows'
+  per-user permissions on your folder: you, SYSTEM and Administrators.
+- **Running inside WSL2** works with the Linux code, but needs Linux Chrome and Brave inside WSL.
+
 ## Use it from Claude Code
 
-This folder has a `.mcp.json`. Open Claude Code in this folder and approve the **ai-browser** server when asked; its tools then appear in every chat here. To use it from any folder:
+Copy `.mcp.json.example` to `.mcp.json` and put this folder's path in it (git ignores your copy). Then open Claude
+Code in this folder and approve the **ai-browser** server when asked; its tools then appear in every chat here. To use
+it from any folder:
 
 ```bash
 claude mcp add ai-browser -- uv run --directory <path-to-this-folder> ai-browser mcp
@@ -399,6 +468,13 @@ What happens in your Brave:
 Google Chrome works the same way (`chrome://inspect/#remote-debugging`). The folder is found by itself, Brave first;
 set `AIB_CHROME_DIR` to pick one. Turn the switch on in one browser only.
 
+On Windows ai-browser finds Brave's folder (`%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data`) by itself. To
+pick one in PowerShell:
+
+```powershell
+$env:AIB_CHROME_DIR = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data"; uv run ai-browser doctor --own
+```
+
 ## Tools
 
 | Tool | What it does |
@@ -468,6 +544,7 @@ slower, so 30 pages of a typical site take about three minutes.
 ```bash
 uv run ai-browser app [--browser brave|app]  # AI Browser; agents browse in your Brave (default) or in AI Browser
 uv run ai-browser doctor [--own]             # health check (the sandbox, or your own Brave or Chrome)
+uv run ai-browser doctor --setup             # quick check, no Docker: Python, Claude Code, Chrome, Brave, ports
 uv run ai-browser bench                      # speed vs budgets
 uv run ai-browser live [--profile P]         # watch / log in
 uv run ai-browser stop [P | --all]           # stop containers (logins kept); `stop chrome` = own-Chrome shell
@@ -512,5 +589,11 @@ uv run ai-browser build                      # rebuild the image
 ```bash
 uv run pytest        # Docker tests skip themselves when Docker or the image is missing
 ```
+
+**Tests on Windows (GitHub):** the private repo's Actions tab has one workflow, **tests**. It runs only when you
+click **Run workflow**, never on a push. Pick `windows` (the default), `macos` or `both`; tick **voice** to also
+install the voice extra (no model is downloaded). It uses your Actions minutes only then: Windows and macOS minutes
+cost more than Linux ones, macOS the most. The test report is kept for 7 days, inside the private repo. Tests that
+need macOS or Linux (the DevTools pipe) show as skipped, with that reason.
 
 Layout: `src/ai_browser/` (engine), `docker/` (sandbox image), `src/ai_browser/pages/` (local test pages), `tests/`.

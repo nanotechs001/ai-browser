@@ -349,3 +349,15 @@ def test_the_ci_workflow_runs_only_by_hand():
     upload = job["steps"][-1]
     assert upload["if"] == "always()" and upload["with"]["path"] == "pytest.xml"
     assert upload["with"]["retention-days"] == 7
+
+
+def test_the_readme_has_the_windows_steps():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    for needed in ("## Windows", "winget install --id astral-sh.uv -e", "irm https://claude.ai/install.ps1 | iex",
+                   "gh auth login", "git clone https://github.com/nanotechs001/ai-browser.git C:\\dev\\ai-browser",
+                   "uv run ai-browser doctor --setup", "-e PYTHONUTF8=1", "%USERPROFILE%\\.ai-browser\\app\\watcher",
+                   "brave://inspect/#remote-debugging", "any program on this PC can reach your Brave", "wsl --install",
+                   "uv sync --extra voice", "netsh interface ipv4 show excludedportrange protocol=tcp", "AIB_CLAUDE",
+                   "AIB_CHROME_BINARY", "$env:USERPROFILE", "Run workflow", ".mcp.json.example"):
+        assert needed in text, needed
+    assert "This folder has a `.mcp.json`" not in text and "This repo's `.mcp.json`" not in text
