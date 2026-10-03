@@ -16,7 +16,7 @@ from test_bridge import EVENTS
 
 ONLY_WITH_ITEM, ONCE_OR_DENY = "only with an item", "only once or deny"
 
-# The table of watcher-safety's spec ("the table of what pages may send"), plus cdp-relay's row: (app, watcher).
+# The table of watcher-safety's spec, plus cdp-relay's and brain-delegation's rows: (app, watcher).
 # A row added to MESSAGE_RULES fails here until this copy says the same.
 SENDS = {
     "hello": (True, True),
@@ -32,6 +32,7 @@ SENDS = {
     **{kind: (True, False) for kind in ("hearing", "hearing_download", "hearing_cancel", "listen_start",
                                         "listen_chunk", "listen_end", "listen_cancel")},
     **{kind: (True, False) for kind in ("brain_ask", "brain_confirm", "brain_dismiss")},
+    "tell_confirm": (True, False), "tell_dismiss": (True, False),  # brain-delegation: Start/Send and Cancel on a card
     "check_continue": (True, True),
     "check_skip": (True, False),
     "check_show": (True, True),
@@ -47,8 +48,8 @@ def test_the_message_table_has_exactly_the_written_down_types():
     from ai_browser.app.server import MESSAGE_RULES
 
     assert set(MESSAGE_RULES) == set(SENDS)
-    assert len(SENDS) == 55
-    assert sum(1 for app, _ in SENDS.values() if app) == 48
+    assert len(SENDS) == 57
+    assert sum(1 for app, _ in SENDS.values() if app) == 50
     assert sum(1 for _, watcher in SENDS.values() if watcher) == 22  # the two conditional rows count as allowed
 
 

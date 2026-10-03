@@ -114,6 +114,7 @@ MESSAGE_RULES: dict[str, Rule] = {
     "hearing": APP_ONLY, "hearing_download": APP_ONLY, "hearing_cancel": APP_ONLY, "listen_start": APP_ONLY,
     "listen_chunk": APP_ONLY, "listen_end": APP_ONLY, "listen_cancel": APP_ONLY,
     "brain_ask": APP_ONLY, "brain_confirm": APP_ONLY, "brain_dismiss": APP_ONLY,
+    "tell_confirm": APP_ONLY, "tell_dismiss": APP_ONLY,  # brain-delegation: a card runs only from our own pages
     "check_continue": BOTH, "check_skip": APP_ONLY, "check_show": BOTH,  # Skip closes a tab: never the watcher's
     "brave_connect": APP_ONLY, "hand_tab": APP_ONLY, "take_back": APP_ONLY,
     "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in AI Home's list of connected clients
