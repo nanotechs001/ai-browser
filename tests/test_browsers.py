@@ -351,3 +351,37 @@ def test_a_windows_app_folder_is_a_path_not_a_command(tmp_path):
     env = {"LOCALAPPDATA": str(local), "TEMP": str(tmp_path / "Temp")}
     found = browsers.installed(system="win32", env=env, folders=[local], commands=[])
     assert [(item.id, item.binary) for item in found] == [("brave", brave)]  # never cut at "alex.exe", never expanded
+
+
+# The default browser (Task 6)
+
+
+def test_an_empty_fake_computer_has_no_default_browser():
+    assert [browsers.os_default(system) for system in (None, "darwin", "win32", "linux")] == [None] * 4
+
+
+def test_os_default_on_the_mac():
+    record = platforms.launch_services_file()
+    record.parent.mkdir(parents=True)
+    record.write_bytes(sample("launchservices.plist"))
+    assert browsers.os_default("darwin") == "brave"
+    handlers = plistlib.loads(sample("launchservices.plist"))
+    record.write_bytes(plistlib.dumps(handlers, fmt=plistlib.FMT_BINARY))  # as macOS writes it
+    assert browsers.os_default("darwin") == "brave"
+    mail_only = {"LSHandlers": [entry for entry in handlers["LSHandlers"]
+                                if entry.get("LSHandlerURLScheme") == "mailto"]}
+    record.write_bytes(plistlib.dumps(mail_only))
+    assert browsers.os_default("darwin") is None  # the mail handler (Chrome here) is never taken for the browser
+    record.write_bytes(b"\x00garbage")
+    assert browsers.os_default("darwin") is None
+    record.write_bytes(plistlib.dumps({"LSHandlers": [{"LSHandlerURLScheme": "https",
+                                                       "LSHandlerRoleAll": "org.mozilla.firefox"}]}))
+    assert browsers.os_default("darwin") is None
+
+
+@pytest.mark.parametrize("progid, expected", [
+    ("ChromeHTML", "chrome"), ("BraveHTML", "brave"), ("MSEdgeHTM", "edge"), ("ChromeHTML.ABC123", "chrome"),
+    ("bravehtml", "brave"), ("ChromeBHTML", None), ("FirefoxURL-308046B0AF4A39CB", None), (None, None)])
+def test_os_default_on_windows(monkeypatch, progid, expected):
+    monkeypatch.setattr(platforms, "windows_https_progid", lambda: progid)
+    assert browsers.os_default("win32") == expected

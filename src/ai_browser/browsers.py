@@ -219,3 +219,28 @@ def _windows_installed(folders, commands, env: Mapping) -> list[Installed]:
         binaries[facts.id] = Path(program)  # a browser found twice is counted once, where it was found first
     return [Installed(facts, binaries[facts.id], None, None, data_dir(facts, "win32", env))
             for facts in platforms.KNOWN_BROWSERS if facts.id in binaries]
+
+
+def os_default(system: str | None = None, env: Mapping | None = None) -> str | None:
+    """The id of the system's default browser for https links, or None. Only a first guess, for the user to confirm:
+    macOS reads LaunchServices' https entry, Windows the https ProgId."""
+    system = _system(system)
+    if system == "darwin":
+        data = _plist(platforms.launch_services_file())
+        handlers = data.get("LSHandlers") if isinstance(data, dict) else None
+        for entry in handlers if isinstance(handlers, list) else ():
+            if isinstance(entry, dict) and entry.get("LSHandlerURLScheme") == "https":
+                bundle = entry.get("LSHandlerRoleAll")
+                if not isinstance(bundle, str):
+                    return None
+                return next((facts.id for facts in platforms.KNOWN_BROWSERS
+                             if facts.mac_bundle_id.lower() == bundle.lower()), None)
+        return None
+    if system == "win32":
+        progid = platforms.windows_https_progid()
+        if not isinstance(progid, str):
+            return None
+        base = progid.split(".", 1)[0].lower()  # "ChromeHTML.ABC123" is still Chrome's
+        return next((facts.id for facts in platforms.KNOWN_BROWSERS
+                     if facts.win_progid and facts.win_progid.lower() == base), None)
+    return None
