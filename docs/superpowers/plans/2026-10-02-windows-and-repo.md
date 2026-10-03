@@ -5210,11 +5210,11 @@ until the user's yes in chat.
      "Block command line pushes that expose my email" is on, the push is refused with GH007, and the user decides
      then;
    - the flagged items:
-     - `docs/google-flights-cgy-mnl.jpg`: a signed-out Google Flights search, CGY → MNL, one adult, 16 October;
+     - `docs/google-flights-cgy-mnl.jpg`: a personal Google Flights search;
      - the same route named in the own-Chrome spec and plan.
 3. **Ask, plainly:**
    - "Create a **private** GitHub repo `nanotechs001/ai-browser` and push the code?"
-   - "The flights screenshot `docs/google-flights-cgy-mnl.jpg` shows your CGY → MNL search. Keep it, remove it, or
+   - "The flights screenshot `docs/google-flights-cgy-mnl.jpg` shows a personal flight search. Keep it, remove it, or
      remove it from the history too?"
 
    The two ways to remove it:

@@ -70,9 +70,9 @@ async def test_the_watch_list_saves_instructions_and_pause(watcher):
     assert await watcher.until(lambda: watcher.brain.store.entry("gmail").instructions == "Always tell me about clients")
     await js(f"{entry}.querySelector('.enabled').click(); true")
     assert await watcher.until(lambda: watcher.brain.store.entry("gmail").enabled)
-    await js("document.getElementById('style').value = 'Short, sign as Kurl';"
+    await js("document.getElementById('style').value = 'Short, sign as Alex';"
              "document.getElementById('save-style').click(); true")
-    assert await watcher.until(lambda: watcher.brain.store.style == "Short, sign as Kurl")
+    assert await watcher.until(lambda: watcher.brain.store.style == "Short, sign as Alex")
     await js("document.getElementById('pause').click(); true")
     assert await watcher.until(lambda: watcher.brain.store.paused)
     assert await until(js, "document.getElementById('pause').checked === true")
@@ -101,7 +101,7 @@ async def test_two_brain_pages_fill_once(watcher):
     session = (await watcher.cdp.send("Target.attachToTarget", {"targetId": thread["targetId"],
                                                                  "flatten": True}))["sessionId"]
     box = await evaluate(watcher.cdp, session, "document.getElementById('box').innerText")
-    assert box.split("-- Kurl, Web team")[0].strip() == "Monday works for us."  # once, above the signature
+    assert box.split("-- Alex, Web team")[0].strip() == "Monday works for us."  # once, above the signature
 
 
 @CHROME

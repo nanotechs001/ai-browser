@@ -67,11 +67,11 @@ def test_added_sites_and_settings(tmp_path):
     assert not store.watcher_seen and store.style == "" and not store.paused
     store.set_watch(WatchEntry(site="custom:shop.example", label="shop.example", url_match="https://shop.example/*",
                                selector="#orders tbody", instructions="Summarize new orders", enabled=True))
-    store.set_style("Short and friendly, sign as Kurl")
+    store.set_style("Short and friendly, sign as Alex")
     store.set_watcher_seen()
     again = BrainStore(tmp_path)
     assert again.entry("custom:shop.example").selector == "#orders tbody" and again.watcher_seen
-    assert again.style == "Short and friendly, sign as Kurl"
+    assert again.style == "Short and friendly, sign as Alex"
     again.remove_watch("custom:shop.example")
     assert again.entry("custom:shop.example") is None
     assert BrainStore(tmp_path).entry("custom:shop.example") is None

@@ -187,15 +187,15 @@ async def test_draft_fills_the_box_and_clicks_nothing(watcher):
     prompt = [json.loads(line) for line in watcher.log.read_text(encoding="utf-8").splitlines()
               if line.startswith('{"oneshot"') and "You draft a reply" in line][0]["oneshot"]
     assert "Can we move the launch to Monday?" in prompt  # the thread, read from the opened page
-    await watcher.brain.approve("gmail:t1", "Monday works.\nThanks, Kurl", 1)
+    await watcher.brain.approve("gmail:t1", "Monday works.\nThanks, Alex", 1)
     assert await watcher.until(lambda: watcher.brain.store.get("gmail:t1").state == "filled")
     targets = (await watcher.cdp.send("Target.getTargets"))["targetInfos"]
     thread = next(t for t in targets if t["type"] == "page" and "gmail.html#" in t["url"])
     session = (await watcher.cdp.send("Target.attachToTarget", {"targetId": thread["targetId"],
                                                                  "flatten": True}))["sessionId"]
     box = await evaluate(watcher.cdp, session, "document.getElementById('box').innerText")
-    reply, signature = box.split("-- Kurl, Web team")  # the reply above the user's signature, which stays
-    assert reply.replace("\n\n", "\n").strip() == "Monday works.\nThanks, Kurl" and signature.strip() == ""
+    reply, signature = box.split("-- Alex, Web team")  # the reply above the user's signature, which stays
+    assert reply.replace("\n\n", "\n").strip() == "Monday works.\nThanks, Alex" and signature.strip() == ""
     assert await evaluate(watcher.cdp, session, "window.sendClicks") == 0
 
 
@@ -272,16 +272,16 @@ async def test_gmail_fill_goes_above_the_signature_and_replaces_its_own_text(wat
     _, page = await watcher.watch("gmail", "brain/gmail.html", open_at="brain/gmail.html#all/t1")
     tab = await tab_of(watcher, "#all/t1")
     box = "document.getElementById('box')"
-    assert (await fill(watcher, tab, "Monday works.\nThanks, Kurl"))["ok"]
+    assert (await fill(watcher, tab, "Monday works.\nThanks, Alex"))["ok"]
     first = await page(f"{box}.innerText")
-    assert first.index("Monday works.") < first.index("Thanks, Kurl") < first.index("-- Kurl, Web team")
+    assert first.index("Monday works.") < first.index("Thanks, Alex") < first.index("-- Alex, Web team")
     html = await page(f"{box}.innerHTML")
-    assert (await fill(watcher, tab, "Monday works.\nThanks, Kurl"))["ok"]
+    assert (await fill(watcher, tab, "Monday works.\nThanks, Alex"))["ok"]
     assert await page(f"{box}.innerHTML") == html  # the same text again changes nothing
     assert (await fill(watcher, tab, "Tuesday works better."))["ok"]
     now = await page(f"{box}.innerText")
-    assert "Monday" not in now and now.index("Tuesday works better.") < now.index("-- Kurl, Web team")
-    assert now.count("-- Kurl, Web team") == 1 and await page("window.sendClicks") == 0
+    assert "Monday" not in now and now.index("Tuesday works better.") < now.index("-- Alex, Web team")
+    assert now.count("-- Alex, Web team") == 1 and await page("window.sendClicks") == 0
 
 
 @CHROME
@@ -289,11 +289,11 @@ async def test_slack_gets_one_line_once(watcher):
     _, page = await watcher.watch("slack", "brain/slack.html", open_at="brain/slack.html#/client/T1/C1")
     tab = await tab_of(watcher, "slack.html")
     composer = "document.getElementById('composer').innerText.trim()"
-    answer = await fill(watcher, tab, "Monday works.\nThanks, Kurl")
+    answer = await fill(watcher, tab, "Monday works.\nThanks, Alex")
     assert answer["ok"] and "one line" in answer["reason"]  # Enter sends in Slack: no line breaks typed
-    assert await page(composer) == "Monday works. Thanks, Kurl"
-    await fill(watcher, tab, "Monday works.\nThanks, Kurl")
-    assert await page(composer) == "Monday works. Thanks, Kurl"  # once
+    assert await page(composer) == "Monday works. Thanks, Alex"
+    await fill(watcher, tab, "Monday works.\nThanks, Alex")
+    assert await page(composer) == "Monday works. Thanks, Alex"  # once
     await fill(watcher, tab, "Tuesday then.")
     assert await page(composer) == "Tuesday then."  # only the watcher's text was there: replaced
 

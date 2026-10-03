@@ -699,9 +699,9 @@ These guards also cover whatever the other four sub-projects added (Decision 18)
 - `.mcp.json.example` with placeholders (the user's own `.mcp.json` is ignored).
 
 **What was checked for personal data** (tracked files at the baseline):
-- **`docs/google-flights-cgy-mnl.jpg`: flagged.** It shows a signed-out Google Flights search, Cagayan de Oro to Manila,
-  one adult, Friday 16 October, with prices. It holds no account, no name and no credentials, but it reveals a personal
-  trip. Nothing in the repo links to it.
+- **`docs/google-flights-cgy-mnl.jpg`: flagged.** It shows a personal Google Flights search. It holds no account, no
+  name and no credentials, but it reveals a personal trip. Nothing in the repo links to it. (The user chose to remove
+  it from the repo and its history before the first push.)
 - **The same trip is named in text,** in `docs/superpowers/specs/2026-10-02-own-chrome-mode-design.md:46` and
   `docs/superpowers/plans/2026-10-02-own-chrome-mode.md:51`, as the real-world test route. That is low risk, but the
   user should know.
@@ -725,7 +725,7 @@ These guards also cover whatever the other four sub-projects added (Decision 18)
 
    Then it asks the user, plainly:
    - "Create a **private** GitHub repo `nanotechs001/ai-browser` and push the code?"
-   - "The flights screenshot `docs/google-flights-cgy-mnl.jpg` shows your CGY → MNL search. Keep it, remove it, or
+   - "The flights screenshot `docs/google-flights-cgy-mnl.jpg` shows a personal flight search. Keep it, remove it, or
      remove it from the history too?"
 
    The two ways to remove it:
