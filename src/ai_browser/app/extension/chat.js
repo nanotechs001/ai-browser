@@ -9,6 +9,20 @@ export function el(tag, className, text) {
   return node;
 }
 
+// An agent's number, the one the user sees ("1 · Fix the footer"): the app's `number`, else its id's digits (a3 is
+// 3). It is fixed while the app runs; numbers start at 1 again after a restart.
+export function agentNumber(agent) {
+  if (Number.isInteger(agent?.number)) return agent.number;
+  const digits = String(agent?.id ?? "").replace(/\D/g, "");
+  return digits ? Number(digits) : null;
+}
+
+export function agentLabel(agent) { // "1 · Fix the footer": every page names an agent this one way
+  const number = agentNumber(agent);
+  const name = String(agent?.name || "an agent");
+  return number === null ? name : `${number} · ${name}`;
+}
+
 export function renderText(node, text) {
   node.textContent = "";
   let last = 0;

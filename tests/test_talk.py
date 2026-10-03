@@ -874,3 +874,21 @@ def test_the_readme_says_how_to_talk_and_the_zero_setup_way():
                   "**Download 148 MB**", "Allow while visiting the site", "never saved or logged", "no cloud speech",
                   "Dictation", "Voice Access", "Win+H", "Windows on Arm"):
         assert words in section, words
+
+
+@CHROME
+async def test_numbers_show_on_stations_the_list_and_the_drawer(stack):
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    agents = stack["server"].agents
+    await agents.create("Fix the footer")
+    await agents.create("Check flights")
+    js = await open_with(stack)
+    assert await until(js, f"{station('a1', '.nameplate')}?.textContent === '1 · Fix the footer'")
+    assert (await js(f"{station('a1')}.getAttribute('aria-label')")).startswith("1 · Fix the footer: ")
+    assert await js("document.querySelector('#list button[data-id=\"a1\"] .grow').textContent") == \
+        "1 · Fix the footer"
+    await js(f"{station('a1')}.click(); true")
+    assert await until(js, "document.getElementById('drawer-title').textContent === '1 · Fix the footer'")
+    await agents.close("a1")
+    assert await until(js, f"{station('a1')} === null")
+    assert await js(f"{station('a2', '.nameplate')}.textContent") == "2 · Check flights"  # numbers never change

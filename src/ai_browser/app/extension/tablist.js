@@ -1,7 +1,7 @@
 // AI Home's tab list: every web tab of the user's Brave (or of AI Browser), its title and site, and whose it is: an
 // agent's (its name and colour), Claude Code's, the Brain's, handed to an agent, or yours. Hand over gives one of
 // your tabs to an agent; Take back ends that. Titles, addresses and names are set as text, never as HTML.
-import { el } from "./chat.js";
+import { agentLabel, el } from "./chat.js";
 
 export const COLORS = { grey: "#5f6368", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038",
                         pink: "#d01884", purple: "#a142f4", cyan: "#007b83", orange: "#fa903e" };
@@ -22,8 +22,8 @@ export function chipText(owner) {
   if (!owner || owner.kind === "you") return "you";
   if (owner.kind === "session") return "Claude Code";
   if (owner.kind === "brain") return "Brain";
-  if (owner.kind === "handed") return `handed to ${owner.name || "an agent"}`;
-  return owner.name || "an agent";
+  if (owner.kind === "handed") return `handed to ${agentLabel(owner)}`;
+  return agentLabel(owner);
 }
 
 // send(message): to the app; agents(): the agents a tab can be given to; newAgent(tab): Hand over → New agent…
@@ -52,7 +52,7 @@ export function mountTabList(root, { send, agents, newAgent }) {
       newAgent(row.tab);
     }));
     for (const agent of agents()) {
-      const give = button("give", `Give to ${agent.name}`, () => {
+      const give = button("give", `Give to ${agentLabel(agent)}`, () => {
         menu.hidden = true;
         send({ type: "hand_tab", id: agent.id, target: row.tab.target });
       });

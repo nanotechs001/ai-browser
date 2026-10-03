@@ -3,7 +3,7 @@
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { connect } from "./link.js";
-import { createChat, el } from "./chat.js";
+import { agentLabel, createChat, el } from "./chat.js";
 import { permissionCard } from "./permission.js";
 import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
@@ -116,7 +116,7 @@ function fillAgentRow(row, agent) {
   const color = COLORS[agent.color] || "var(--muted)";
   row.style.borderLeftColor = color;
   parts.dot.style.background = color;
-  setText(parts.name, agent.name);
+  setText(parts.name, agentLabel(agent));
   setText(parts.state, STATES[agent.state] || agent.state);
   parts.state.className = `chip ${agent.state}`;
   setText(parts.status, agent.status || "");
@@ -199,7 +199,7 @@ function renderTabs() {
     brave: browser?.kind === "brave",
     ownerOf: (target) => { // AI Browser mode: the app's list has no owners, so they come from the agents
       const agent = owner(target);
-      return agent ? { kind: "agent", name: agent.name, color: agent.color } : { kind: "you" };
+      return agent ? { kind: "agent", id: agent.id, name: agent.name, color: agent.color } : { kind: "you" };
     },
   });
 }
@@ -523,7 +523,7 @@ function openChat(id) {
   if (!agent) return;
   chatAgent = id;
   $("chat").hidden = false;
-  $("chat-name").textContent = agent.name;
+  $("chat-name").textContent = agentLabel(agent);
   chat.reset("Loading…");
   renderAgents();
   link.send({ type: "events", id });

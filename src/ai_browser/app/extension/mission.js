@@ -3,7 +3,7 @@
 import { createBlob } from "./blob.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
-import { createChat } from "./chat.js";
+import { agentLabel, createChat } from "./chat.js";
 import { connect } from "./link.js";
 import { permissionCard } from "./permission.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
@@ -122,7 +122,7 @@ function listRow(agent) {
     $("list").insertBefore(row, later || null);
   }
   row.parts.dot.style.background = COLORS[agent.color] || COLORS.grey;
-  setText(row.parts.name, String(agent.name || ""));
+  setText(row.parts.name, agentLabel(agent));
   setText(row.parts.state, STATES[stateOf(agent)] || stateOf(agent));
 }
 
@@ -267,7 +267,7 @@ function fillDrawer(agent) { // the drawer's agent changed: its parts are update
   const parts = drawer.parts;
   const state = stateOf(agent);
   $("drawer-dot").style.background = COLORS[agent.color] || COLORS.grey;
-  setText($("drawer-title"), String(agent.name || ""));
+  setText($("drawer-title"), agentLabel(agent));
   setText(parts.state, STATES[state] || state);
   parts.state.className = `chip ${state}`;
   setText(parts.status, agent.status || agent.last_action || "");
