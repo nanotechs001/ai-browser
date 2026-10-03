@@ -17,10 +17,11 @@ REFRESH = 1.5  # seconds between full reads of the tab list: Chrome reports titl
 
 
 class TabWatch:
-    def __init__(self, ws_url: str, extension_id: str, open_timeout: float = 10):
+    def __init__(self, ws_url: str, extension_id: str, open_timeout: float = 10, cdp=None):
         self.ws_url = ws_url
         self.extension_id = extension_id
         self.open_timeout = open_timeout
+        self._given = cdp  # the relay's in-process client (brave mode): nothing to connect
         self._cdp: CDP | None = None
         self._pages: dict[str, dict] = {}  # target id -> {"target", "url", "title"}, in the order they appeared
         self._callbacks: list[Callable[[list[dict]], None]] = []
@@ -28,7 +29,8 @@ class TabWatch:
         self._poll: asyncio.Task | None = None
 
     async def start(self) -> None:
-        self._cdp = await CDP.connect(self.ws_url, open_timeout=self.open_timeout)
+        self._cdp = self._given if self._given is not None else await CDP.connect(self.ws_url,
+                                                                                   open_timeout=self.open_timeout)
         self._cdp.on("Target.targetCreated", self._on_target)
         self._cdp.on("Target.targetInfoChanged", self._on_target)
         self._cdp.on("Target.targetDestroyed", self._on_destroyed)

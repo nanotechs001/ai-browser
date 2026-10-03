@@ -1,11 +1,11 @@
-"""The app's one connection to the user's Brave (brave mode): the tab list with whose each tab is, Watch, thumbnails
-of the AI's tabs, and closing an agent's tabs.
+"""The app's view of the user's Brave (brave mode): the tab list with whose each tab is, Watch, thumbnails of the AI's
+tabs, and closing an agent's tabs. Its relay (app/cdprelay.py) holds the one connection to Brave that the app, every
+agent and every Claude Code session share, so Brave asks "Allow remote debugging?" once per app run.
 
-Brave asks "Allow remote debugging?" for this connection, so it connects only right after something the user did
-(the app starting, Connect or Try again in AI Home, an agent starting a turn). While it isn't connected it looks at
-the switch every few seconds with a TCP check alone, which never opens a debugging session. It never attaches to,
-reads or pictures a tab of the user's: only the AI's tabs, a tab handed over, or the page the user picked in the
-Train form."""
+That connection opens only right after something the user did (the app starting, Connect or Try again in AI Home, an
+agent starting a turn, a session's browser call). While it isn't connected the relay looks at the switch every few
+seconds with a TCP check alone, which never opens a debugging session. The app never attaches to, reads or pictures a
+tab of the user's: only the AI's tabs, a tab handed over, or the page the user picked in the Train form."""
 
 from __future__ import annotations
 
@@ -14,99 +14,95 @@ import contextlib
 from collections.abc import Callable
 from pathlib import Path
 
-from ..chrome import ChromeError, browser_name, find_ws_url, switch_on
+from .cdprelay import ALLOW_WAIT, SWITCH_EVERY, Relay, Tokens
 from .tabs import TabWatch
 
-SWITCH_EVERY = 2.0  # seconds between two looks at the switch while not connected
-ALLOW_WAIT = 60  # seconds Brave's "Allow remote debugging?" may stay open
 READABLE = {"agent", "session", "handed"}  # tabs whose picture or text the app may take
 YOU = {"kind": "you"}
+__all__ = ["ALLOW_WAIT", "SWITCH_EVERY", "BraveLink"]
 
 
 class BraveLink:
-    def __init__(self, folder: Path, allow_wait: float = ALLOW_WAIT, every: float = SWITCH_EVERY):
+    def __init__(self, folder: Path, allow_wait: float = ALLOW_WAIT, every: float = SWITCH_EVERY,
+                 tokens: Tokens | None = None):
         self.folder = Path(folder)
-        self.name = browser_name(self.folder)
-        self.state = "off"  # off · ready · asking · connected · refused · lost
+        self.relay = Relay(self.folder, tokens if tokens is not None else Tokens(), allow_wait=allow_wait,
+                           every=every)
+        self.name = self.relay.name
         self.allow_wait, self.every = allow_wait, every
         self._watch: TabWatch | None = None
+        self._starting: asyncio.Task | None = None
         self._owners: dict[str, dict] = {}  # target id -> its owner (no entry: the user's)
         self._changes: list[Callable[[list[dict]], None]] = []
-        self._states: list[Callable[[str], None]] = []
-        self._poll: asyncio.Task | None = None
+        self.relay.on_state(self._state_changed)  # first: the tab list follows the connection
 
-    # ---- the connection --------------------------------------------------------------------------------------
+    # ---- the connection (the relay's) ------------------------------------------------------------------------
+
+    @property
+    def state(self) -> str:
+        """off · ready · asking · connected · refused · lost"""
+        return self.relay.state
+
+    def on_state(self, callback: Callable[[str], None]) -> None:
+        self.relay.on_state(callback)
 
     async def start(self) -> None:
         """Look at the switch now, then every few seconds (never connecting by itself)."""
-        await self._look()
-        self._poll = asyncio.create_task(self._watch_switch())
+        await self.relay.start()
 
-    async def connect(self) -> None:
-        """Ask Brave for a debugging session: Brave asks the user, who has up to ALLOW_WAIT seconds to click Allow."""
-        if self.state in ("connected", "asking"):
-            return
-        try:
-            ws_url = await asyncio.to_thread(find_ws_url, self.folder)
-        except ChromeError:
-            self._set("off")
-            return
-        self._set("asking")
-        watch = TabWatch(ws_url, "", open_timeout=self.allow_wait)
+    async def connect(self, why: str = "connect", identity: str = "") -> None:
+        """Ask Brave for the one connection: Brave asks the user, who has up to ALLOW_WAIT seconds to click Allow.
+        `why` is "start", "connect" (AI Home's Connect or Try again) or "turn" (an agent's turn, its id in
+        `identity`)."""
+        if await self.relay.open(why, identity):
+            await asyncio.shield(self._ensure_watch())
+
+    def _state_changed(self, state: str) -> None:
+        if state == "connected":
+            self._ensure_watch()
+        else:
+            self._drop_watch()
+
+    def _ensure_watch(self) -> asyncio.Task:
+        if self._starting is None or (self._starting.done() and self._watch is None):
+            self._starting = asyncio.ensure_future(self._start_watch())
+        return self._starting
+
+    async def _start_watch(self) -> None:
+        watch = TabWatch("", "", cdp=self.relay.local())
         try:
             await watch.start()
-        except Exception:  # Deny, a refused handshake, or no answer in time
+        except Exception:  # the connection went again at once
             with contextlib.suppress(Exception):
                 await watch.close()
-            self._set("refused")
+            return
+        if self.relay.state != "connected":
+            with contextlib.suppress(Exception):
+                await watch.close()
             return
         self._watch = watch
         watch.on_change(lambda _tabs: self._changed())
-        self._set("connected")
         self._changed()
 
-    async def close(self) -> None:
-        if self._poll is not None:
-            self._poll.cancel()
-            self._poll = None
-        await self._drop()
+    def _drop_watch(self) -> None:
+        watch, self._watch, self._starting = self._watch, None, None
+        if watch is not None:
+            asyncio.ensure_future(self._close_watch(watch))
+            self._changed()
 
-    async def _drop(self) -> None:
+    @staticmethod
+    async def _close_watch(watch: TabWatch) -> None:
+        with contextlib.suppress(Exception):
+            await watch.close()
+
+    async def close(self) -> None:
+        """The app quits (after its agents ended): the tab list, then the one connection."""
+        if self._starting is not None and not self._starting.done():
+            self._starting.cancel()
         watch, self._watch = self._watch, None
         if watch is not None:
-            with contextlib.suppress(Exception):
-                await watch.close()
-
-    async def _look(self) -> None:
-        """Between off and ready, by the switch alone; refused and lost stay until the user's next Connect."""
-        if self.state not in ("off", "ready"):
-            return
-        on = await asyncio.to_thread(switch_on, self.folder)
-        if on and self.state == "off":
-            self._set("ready")
-        elif not on and self.state == "ready":
-            self._set("off")
-
-    async def _watch_switch(self) -> None:
-        while True:
-            await asyncio.sleep(self.every)
-            if self.state == "connected" and (self._watch is None or self._watch.closed):
-                await self._drop()  # Brave quit or restarted
-                self._set("lost")
-                self._changed()
-                continue
-            with contextlib.suppress(Exception):
-                await self._look()
-
-    def on_state(self, callback: Callable[[str], None]) -> None:
-        self._states.append(callback)
-
-    def _set(self, state: str) -> None:
-        if state != self.state:
-            self.state = state
-            for callback in list(self._states):
-                with contextlib.suppress(Exception):
-                    callback(state)
+            await self._close_watch(watch)
+        await self.relay.close()
 
     # ---- the tab list ----------------------------------------------------------------------------------------
 
