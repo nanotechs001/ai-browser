@@ -1008,3 +1008,31 @@ async def test_spoken_labels_read_the_dot_as_a_pause(stack):
     assert await until(js, "window.spoken.length === 1")
     assert await js("window.spoken") == [["speak", "Sent to 1, Fix the footer."]]
     assert await js("bubbleNode.textContent") == "Sent to 1 · Fix the footer."  # the bubble and the log keep the dot
+
+
+@CHROME
+async def test_a_yes_never_runs_a_card_that_left_the_screen(stack):  # final review I3
+    from ai_browser.brain.talk import NOTHING_OPEN, RELAY
+
+    talk_script(stack, {"say": "x", "action": "message_agent", "agent": "a1"}, default=EVENTS)
+    agents, brain, seen = stack["server"].agents, stack["brain"], []
+    await agents.create("Fix the footer")
+    assert await eventually(lambda: agents.agents["a1"].state == "your_turn")
+    real = brain.respond
+
+    async def respond(talk_id, text, proposal=None, task=None, model=None):
+        seen.append((text, proposal))
+        return await real(talk_id, text, proposal=proposal, task=task, model=model)
+
+    brain.respond = respond
+    js = await open_talk(stack, mic(permission="denied"))
+    await ask_typed(js, "tell the footer agent to check the header")
+    assert await until(js, "document.querySelector('#talk-card .talk-go')?.textContent === 'Send'")
+    await js("document.activeElement?.blur(); true")
+    await tap(stack, js, SPACE, " ")  # the microphone's problem card takes the send card's place
+    assert await until(js, f"{CARD}.includes('microphone') && !document.querySelector('#talk-card .talk-go')")
+    await ask_typed(js, "ok")  # meant for the card that is no longer on screen
+    assert await until(js, f"{LOG}.includes({json.dumps('Brain: ' + NOTHING_OPEN)})")
+    await asyncio.sleep(1)
+    assert seen[-1] == ("ok", None)  # no card id went with it
+    assert not [event for event in agents.events_of("a1") if str(event.get("text", "")).startswith(RELAY)]

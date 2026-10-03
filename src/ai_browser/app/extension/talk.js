@@ -500,7 +500,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     lastYou = line("You", words);
     asking = newId("t");
     const message = { type: "brain_ask", talk: talkId, request: asking, text: words };
-    if (proposal) { // a plain yes runs this card as it now reads: its box's words and its model
+    if (proposal?.node.isConnected) { // a plain yes runs this card as it now reads, only while it is on screen
       message.proposal = proposal.id;
       if (proposal.box) message.task = proposal.box.value;
       if (proposal.picker) message.model = proposal.picker.value;
