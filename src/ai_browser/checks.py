@@ -240,8 +240,8 @@ class CheckGate:
         return f"QA stopped on {host} {why}: qa can run there again from {again}."
 
     @staticmethod
-    def handoff(check: Check, tab_key: str, live_url: str | None = None) -> str:
-        return render_check(check, tab_key, live_url)
+    def handoff(check: Check, tab_key: str, live_url: str | None = None, system: str | None = None) -> str:
+        return render_check(check, tab_key, live_url, system)
 
     def waiting(self) -> str:
         held = self.held

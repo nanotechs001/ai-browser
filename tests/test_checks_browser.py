@@ -350,7 +350,8 @@ async def test_in_the_sandbox_the_hand_off_gives_the_live_view(tmp_path):
     engine.info = SandboxInfo("aib-default", "default", "", tmp_path / "work", False, False)
     engine.live = SimpleNamespace(url="http://127.0.0.1:8770/live?token=abc")
     text = await engine._on_check(Tab("t2", "TARGET", "SESSION"), Check("captcha", "shop.example.com"))
-    assert "The tab is now in front. The user can solve it in the live view: http://127.0.0.1:8770/live?token=abc" in text
+    assert "The tab is now in front." in text  # on Windows the taskbar words follow it
+    assert "The user can solve it in the live view: http://127.0.0.1:8770/live?token=abc" in text
     assert fronted == ["t2"] and (engine.gate.held.tab_key, engine.gate.held.where) == ("t2", "session")
 
 

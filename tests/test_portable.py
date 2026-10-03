@@ -241,3 +241,84 @@ def test_repo_hygiene():
     assert (ROOT / ".python-version").read_text(encoding="utf-8").strip() == "3.12"
     dockerfile = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
     assert r"RUN sed -i 's/\r$//' /usr/local/bin/aib-entrypoint /usr/local/bin/aib-cdp-proxy" in dockerfile
+
+
+def test_the_hand_off_says_where_to_look_on_windows():
+    from ai_browser.checks import Check, CheckGate
+    from ai_browser.render import render_check
+
+    check = Check("google", "www.google.com")
+    windows = CheckGate.handoff(check, "t2", None, system="win32")
+    mac = CheckGate.handoff(check, "t2", None, system="darwin")
+    assert windows.splitlines()[2] == "The tab is now in front. (if its window didn't come up, look for it in the taskbar)"
+    assert mac.splitlines()[2] == "The tab is now in front."
+    live = render_check(check, "t2", "http://127.0.0.1:8770/live?token=abc", system="win32")
+    assert live.splitlines()[2] == ("The tab is now in front. (if its window didn't come up, look for it in the "
+                                    "taskbar) The user can solve it in the live view: http://127.0.0.1:8770/live?token=abc")
+
+
+def test_no_macos_paths_outside_platforms():
+    pattern = re.compile(r'Application Support|/Applications/|"open", "-R"|os\.kill\(\s*[^,()]+,\s*0\s*\)')
+    found = [f"{path.relative_to(SRC).as_posix()}:{number}: {line.strip()}"
+             for path in sorted(SRC.rglob("*.py")) if path != SRC / "platforms.py"
+             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1) if pattern.search(line)]
+    assert not found, "macOS-only paths, or a liveness probe, outside platforms.py:\n" + "\n".join(found)
+
+
+WINDOWS_312 = {"implementation_name": "cpython", "implementation_version": "3.12.10", "os_name": "nt",
+               "platform_machine": "AMD64", "platform_python_implementation": "CPython", "platform_release": "10",
+               "platform_system": "Windows", "platform_version": "10.0.26100", "python_full_version": "3.12.10",
+               "python_version": "3.12", "sys_platform": "win32", "extra": ""}
+
+
+def _windows_wheel(url: str) -> bool:
+    name = url.rsplit("/", 1)[-1].split("#", 1)[0]
+    if not name.endswith(".whl"):
+        return False
+    python, abi, platform = name[:-4].split("-")[-3:]
+    if platform == "any":
+        return True
+    return "win_amd64" in platform.split(".") and ("cp312" in python.split(".") or abi in ("abi3", "none"))
+
+
+def test_voice_extra_has_windows_wheels():
+    import tomllib
+
+    from packaging.markers import Marker
+
+    packages = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8")).get("package", [])
+    if not any(package["name"] == "faster-whisper" for package in packages):
+        pytest.skip("uv.lock has no voice extra (faster-whisper): the user hasn't chosen to install it")
+    by_name: dict[str, list] = {}
+    for package in packages:
+        by_name.setdefault(package["name"], []).append(package)
+    root = next(package for package in packages if package["name"] == "ai-browser")
+
+    def applies(dependency) -> bool:  # left out when its marker is false for 64-bit Windows and CPython 3.12
+        return "marker" not in dependency or Marker(dependency["marker"]).evaluate(WINDOWS_312)
+
+    def find(dependency):
+        found = by_name.get(dependency["name"], [])
+        if "version" in dependency:
+            found = [package for package in found if package["version"] == dependency["version"]] or found
+        return found[0] if found else None
+
+    todo = [dependency for dependency in root.get("optional-dependencies", {}).get("voice", []) if applies(dependency)]
+    seen, missing = set(), []
+    while todo:
+        dependency = todo.pop()
+        package = find(dependency)
+        if package is None:
+            missing.append(f"{dependency['name']} (not in uv.lock)")
+            continue
+        extras = tuple(dependency.get("extra", ()))
+        key = (package["name"], package.get("version"), extras)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not any(_windows_wheel(wheel["url"]) for wheel in package.get("wheels", [])):
+            missing.append(f"{package['name']} {package.get('version', '')}")
+        todo += [dep for dep in package.get("dependencies", []) if applies(dep)]
+        for extra in extras:
+            todo += [dep for dep in package.get("optional-dependencies", {}).get(extra, []) if applies(dep)]
+    assert not missing, "no Windows (win_amd64, cp312) or pure wheel for: " + ", ".join(sorted(set(missing)))

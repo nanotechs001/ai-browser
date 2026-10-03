@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from functools import lru_cache
 
 NO_ROWS_HINT = '(no interactive elements in view — scroll, use observe find="…", or take a screenshot)'
 DIFF_TEXT_LIMIT = 500
 BOX_TAG = "[bot check box: the user ticks it]"  # a reCAPTCHA, hCaptcha or Turnstile box in a form: never the agent's
+TASKBAR = " (if its window didn't come up, look for it in the taskbar)"  # Windows' focus rules may only flash it
 
 
 def _quote(text: str) -> str:
@@ -129,10 +131,12 @@ def is_risky(name: str, words: list[str]) -> bool:
     return bool(name) and bool(risky_regex(words).search(name))
 
 
-def render_check(check, tab_key: str, live_url: str | None = None) -> str:
+def render_check(check, tab_key: str, live_url: str | None = None, system: str | None = None) -> str:
     """The hand-off when a page is a bot check (`check` is a checks.Check): no elements, no page text, nothing to
     click. The live view is named only in the sandbox, where the user can't see the tab otherwise."""
     front = "The tab is now in front."
+    if (system or sys.platform) == "win32":
+        front += TASKBAR
     if live_url:
         front += f" The user can solve it in the live view: {live_url}"
     return "\n".join([

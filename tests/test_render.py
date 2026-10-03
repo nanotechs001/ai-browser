@@ -179,7 +179,7 @@ def test_the_hand_off_has_nothing_to_click():
     from ai_browser.checks import Check
     from ai_browser.render import render_check
 
-    text = render_check(Check("google", "www.google.com"), "t2")
+    text = render_check(Check("google", "www.google.com"), "t2", system="darwin")
     assert text.splitlines() == [
         "⛔ bot check in tab t2 (www.google.com): Google's \"unusual traffic\" check (\"I'm not a robot\").",
         "It is for the user to solve, never you. Stop and tell the user. Don't reload, retry, wait it out, or reach "
@@ -188,6 +188,7 @@ def test_the_hand_off_has_nothing_to_click():
         "When the user says it's done, call observe. If they'd rather skip this site, they close the tab, or ask you "
         "to (tabs close t2): the site is then off-limits for the rest of this task.",
     ]
-    live = render_check(Check("captcha", "shop.example.com"), "t3", "http://127.0.0.1:8770/live?token=abc")
+    live = render_check(Check("captcha", "shop.example.com"), "t3", "http://127.0.0.1:8770/live?token=abc",
+                        system="darwin")
     assert live.splitlines()[2] == ("The tab is now in front. The user can solve it in the live view: "
                                     "http://127.0.0.1:8770/live?token=abc")
