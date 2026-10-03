@@ -33,8 +33,11 @@ class CDP:
         self._reader = asyncio.create_task(self._read())
 
     @classmethod
-    async def connect(cls, ws_url: str, open_timeout: float = 10) -> "CDP":
-        ws = await connect(ws_url, max_size=None, ping_interval=None, open_timeout=open_timeout)
+    async def connect(cls, ws_url: str, open_timeout: float = 10, headers: dict[str, str] | None = None) -> "CDP":
+        """`headers` go with the handshake (the relay's X-AIB-Agent-Token); no Origin is sent. proxy=None: every
+        address given here is on this computer, and a token in a header must never pass through a proxy."""
+        ws = await connect(ws_url, max_size=None, ping_interval=None, open_timeout=open_timeout,
+                           additional_headers=headers, proxy=None)
         return cls(ws)
 
     @property
@@ -91,29 +94,31 @@ class CDP:
     async def _read(self) -> None:
         try:
             async for raw in self._ws:
-                message = json.loads(raw)
-                if "id" in message:
-                    entry = self._pending.get(message["id"])
-                    if entry is None or entry[0].done():
-                        continue
-                    future, method = entry
-                    if "error" in message:
-                        error = message["error"]
-                        future.set_exception(
-                            CDPError(f"{method}: {error.get('message')}", error.get("code", 0), method))
-                    else:
-                        future.set_result(message.get("result", {}))
-                    continue
-                for handler in list(self._handlers.get(message.get("method"), ())):
-                    try:
-                        handler(message.get("params", {}), message.get("sessionId"))
-                    except Exception:  # a broken handler must not stop the reader
-                        log.exception("CDP event handler failed for %s", message.get("method"))
+                self._dispatch(json.loads(raw))
         except ConnectionClosed:
             pass
         finally:
             self._closed = True
             self._fail_pending()
+
+    def _dispatch(self, message: dict) -> None:
+        """One message from the browser: an answer settles its command, an event goes to its handlers."""
+        if "id" in message:
+            entry = self._pending.get(message["id"])
+            if entry is None or entry[0].done():
+                return
+            future, method = entry
+            if "error" in message:
+                error = message["error"]
+                future.set_exception(CDPError(f"{method}: {error.get('message')}", error.get("code", 0), method))
+            else:
+                future.set_result(message.get("result", {}))
+            return
+        for handler in list(self._handlers.get(message.get("method"), ())):
+            try:
+                handler(message.get("params", {}), message.get("sessionId"))
+            except Exception:  # a broken handler must not stop the reader
+                log.exception("CDP event handler failed for %s", message.get("method"))
 
     def _fail_pending(self) -> None:
         for future, method in list(self._pending.values()):
