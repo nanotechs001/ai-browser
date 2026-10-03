@@ -66,7 +66,8 @@ Success means:
 2. **Consent:**
    - nothing reaches Brave until the user ticks the switch at `brave://inspect/#remote-debugging`;
    - Brave then asks "Allow remote debugging?", and the user clicks Allow. It may ask for each new connection: the
-     app's, and each agent's or Claude Code session's first browser call (Decision 12);
+     app's, and each agent's or Claude Code session's first browser call (Decision 12; since the cdp-relay spec:
+     once per app run);
    - every connection starts right after something the user did, or in a workflow the user scheduled;
    - the setup page and AI Home say plainly that while the switch is on, any program on this computer can reach Brave.
 3. **Tabs in groups:**
@@ -443,6 +444,8 @@ If the watcher isn't connected, or `ai-browser app` isn't running:
   - a crawl from Brave opens worker tabs in the user's window and sends link checks with the user's cookies.
 
 ### 12. One connection per process; Brave may ask for each
+
+**Replaced on 2026-10-03** by the cdp-relay spec (`2026-10-03-cdp-relay-design.md`): the app holds the only connection, agents and Claude Code sessions go through it while it runs, and Brave asks once per app run.
 
 - **Connections:** the app holds one connection to Brave (`BraveLink`). Each agent's engine and each Claude Code
   session holds its own, as today, for its whole life.
@@ -963,7 +966,7 @@ profile. These Chromes are started with `--remote-debugging-port`, so they never
 - **Moving AI Home, Mission Control or the chat panel into Brave** (into the watcher): a later step.
 - **A switch in AI Home** to change where agents browse: the `--browser` flag only, for now.
 - **A relay through the app's one connection**, to cut Brave's Allow questions to one if it asks for every connection
-  (Decision 12).
+  (Decision 12). (built: the cdp-relay spec)
 - **A tab list in Mission Control:** AI Home has it; Mission Control keeps its stations.
 - **Claude Code sessions as full rows in AI Home** (chat, Stop): they show only as owners of tabs.
 - **Choosing a Brave profile** when Brave has several: tabs open in the default profile Brave picks.

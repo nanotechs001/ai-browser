@@ -858,8 +858,8 @@ async def test_the_setup_page_has_the_switch_and_its_warning(fake_claude, tmp_pa
         assert sentence.format("this Mac") in words("darwin")
         assert sentence.format("this PC") in words("win32")
         assert "Turn it off when agents aren't working: untick the same box." in page
-        assert "If Brave asks at any other time, click Deny." in page
-        assert "That is Brave telling you the truth; AI Browser never hides it." in page
+        assert "If Brave asks at any other time, it isn't AI Browser: click Deny" in page
+        assert "That is Brave telling you the truth; AI Browser never hides or closes it." in page
     finally:
         await server.stop()
 
@@ -1461,5 +1461,19 @@ async def test_a_bot_check_qa_meets_in_its_sandbox_reaches_ai_home_in_brave_mode
             answer = await client.post(url + "/agent-events", headers=agent_headers(server), json=qa)
         assert answer.status_code == 204 and agent.check is not None and agent.check["live"] == qa["live"]
         assert agent.check["target"] == "QA-TARGET" and agent.check["adopted"] is False
+    finally:
+        await server.stop()
+
+
+async def test_setup_page_says_once_per_run(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        async with httpx.AsyncClient() as client:
+            page = " ".join((await client.get(url + "/setup")).text.split())
+        assert "Brave asks once each time AI Browser starts, and again after Brave restarts" in page
+        assert "can also use your Brave through it without a new question" in page
+        assert "If you close it yourself, it comes back only when AI Browser or Brave restarts." in page
+        assert "If Brave asks at any other time, it isn't AI Browser" in page
+        assert "again when each agent first uses the browser" not in page
     finally:
         await server.stop()

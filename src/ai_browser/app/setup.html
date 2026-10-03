@@ -78,16 +78,21 @@
   <ol>
     <li>In Brave, open <strong>brave://inspect/#remote-debugging</strong>.</li>
     <li>Tick <strong>Allow remote debugging for this browser instance</strong>.</li>
-    <li>When Brave asks <strong>Allow remote debugging?</strong>, click <strong>Allow</strong>. Brave may ask when AI
-      Browser starts and again when each agent first uses the browser, and it asks again after it restarts.</li>
+    <li>When Brave asks <strong>Allow remote debugging?</strong>, click <strong>Allow</strong>. AI Browser holds one
+      connection for all its agents and Claude Code sessions, so Brave asks once each time AI Browser starts, and
+      again after Brave restarts.</li>
   </ol>
   <p class="warning"><strong>While this switch is on, any program on {{THIS_COMPUTER}} can reach your Brave, not only AI
     Browser.</strong> That includes the sites you are signed in to.</p>
+  <p class="warning">While AI Browser is connected, a program that can read AI Browser's files can also use your Brave
+    through it without a new question. AI Home lists everything connected, with Disconnect.</p>
   <p class="warning">Turn it off when agents aren't working: untick the same box.</p>
-  <p class="warning">Only click Allow right after you started AI Browser or gave an agent a task. If Brave asks at any
-    other time, click Deny.</p>
-  <p class="warning">While an agent is connected, Brave may show a bar saying it is being controlled by automated
-    software. That is Brave telling you the truth; AI Browser never hides it.</p>
+  <p class="warning">Only click Allow right after you started AI Browser, clicked Connect, gave an agent a task, asked
+    Claude Code to browse, or opened Brave again while an agent was working. If Brave asks at any other time, it isn't
+    AI Browser: click Deny, unless you just started another browser tool yourself.</p>
+  <p class="warning">While AI Browser is connected, Brave shows a bar saying it is being controlled by automated test
+    software. That is Brave telling you the truth; AI Browser never hides or closes it. If you close it yourself, it
+    comes back only when AI Browser or Brave restarts.</p>
 </main>
 <script>
   "use strict";

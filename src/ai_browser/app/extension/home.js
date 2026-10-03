@@ -26,6 +26,7 @@ let pendingTimer = null;
 let chatAgent = null;
 let storedModel = false; // the user picked a model here before: it wins over the app's default
 let browser = null; // where agents browse: {kind, name, state, groups}
+let browserClients = []; // what uses the user's browser through AI Browser's one connection (the relay)
 let handing = null; // one of the user's tabs the next new task starts in (Hand over → New agent…)
 const WINDOWS_TAKE_FOCUS = false; // Task 1's by-hand check: true if each new AI window comes to the front
 const STEPS = (name) => [`In ${name}, open ${name === "Brave" ? "brave" : "chrome"}://inspect/#remote-debugging.`,
@@ -225,6 +226,7 @@ function renderBrowser() {
     $("browser-title").textContent = "Agents browse in AI Browser";
     for (const id of ["browser-steps", "browser-note", "browser-groups", "browser-warning"]) $(id).hidden = true;
     action.hidden = true;
+    renderClients();
     return;
   }
   const name = browser.name || "Brave";
@@ -238,8 +240,9 @@ function renderBrowser() {
   action.textContent = label || "";
   action.hidden = !label;
   show($("browser-note"), {
-    ready: `${name} will ask "Allow remote debugging?": click Allow`,
-    asking: `${name} is asking "Allow remote debugging?": click Allow there (or Deny).`,
+    ready: `${name} will ask "Allow remote debugging?" once for AI Browser: click Allow`,
+    asking: `${name} is asking "Allow remote debugging?": click Allow there (or Deny). Everything waiting for `
+            + `${name} shares this one question.`,
     refused: `${name} said no, or nobody answered.`,
     lost: `${name} quit or restarted.`,
   }[browser.state]);
@@ -249,6 +252,38 @@ function renderBrowser() {
   show($("browser-groups"), why ? `Tab groups off: ${why}` : "");
   show($("browser-warning"), `While the switch is on, any program on this computer can reach your ${name}, not only `
                              + "AI Browser. Turn it off when agents aren't working.");
+  renderClients();
+}
+
+function clientLabel(row) {
+  if (row.kind === "app") return "AI Browser · the tab list and pictures";
+  const tabs = `${row.tabs} tab${row.tabs === 1 ? "" : "s"}`;
+  const who = row.kind === "agent" ? `${row.number} · ${row.name}` : "Claude Code";
+  return `${who} · ${tabs}${row.cut_off ? ` · cut off from ${browser?.name || "Brave"}` : ""}`;
+}
+
+function renderClients() { // what uses the user's browser through AI Browser's one connection; text only
+  const box = $("browser-using");
+  const list = $("browser-clients");
+  list.textContent = "";
+  box.hidden = !browser || browser.kind !== "brave" || browserClients.length === 0;
+  if (box.hidden) return;
+  const name = browser.name || "Brave";
+  $("browser-using-title").textContent = `Using your ${name} through AI Browser`;
+  for (const row of browserClients) {
+    const item = el("li", "client");
+    item.style.setProperty("--client-color", COLORS[row.color] || "transparent");
+    item.append(el("span", "", clientLabel(row)));
+    if (row.kind !== "app" && !row.cut_off) {
+      const button = el("button", "ghost", "Disconnect");
+      button.type = "button";
+      button.addEventListener("click", () => link.send({ type: "browser_disconnect", id: row.id }));
+      item.append(button);
+    }
+    list.append(item);
+  }
+  $("browser-clients-note").textContent = `Anything listed here can use your ${name} without a new question until `
+    + "AI Browser quits. Disconnect cuts one off; unticking the switch cuts off everything.";
 }
 
 async function browserAction() {
@@ -387,6 +422,7 @@ function handle(message) {
       for (const agent of message.agents) agents.set(agent.id, agent);
       tabs = message.tabs || [];
       browser = message.browser || null;
+      browserClients = message.browser_clients || [];
       renderBrowser();
       summary = message.skills_summary;
       maxWorking = message.max_working || 3;
@@ -425,6 +461,10 @@ function handle(message) {
       tabs = message.tabs || [];
       renderTabs();
       train.tabsChanged();
+      break;
+    case "browser_clients":
+      browserClients = message.clients || [];
+      renderClients();
       break;
     case "browser":
       browser = { kind: message.kind, name: message.name, state: message.state, groups: message.groups };
