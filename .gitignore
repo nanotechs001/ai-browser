@@ -15,3 +15,5 @@ node_modules/
 Thumbs.db
 desktop.ini
 pytest.xml
+# a personal screenshot kept on this Mac only
+docs/google-flights-cgy-mnl.jpg
