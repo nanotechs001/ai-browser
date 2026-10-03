@@ -953,6 +953,8 @@ async def test_download_progress_reaches_every_page(fake_claude, tmp_path):
 
 
 async def test_the_brain_answers_the_asker_and_confirm_starts_the_agent(fake_claude, tmp_path):
+    from ai_browser.brain.talk import START_SAY
+
     script = {"default": EVENTS, TALKING: [{"result": json.dumps({"say": "I can start an agent.",
                                                                   "action": "start_agent"})}]}
     server, url, engine = await with_hearing(fake_claude, tmp_path, script)
@@ -963,7 +965,7 @@ async def test_the_brain_answers_the_asker_and_confirm_starts_the_agent(fake_cla
             await hello(two)
             await one.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "t1", "text": "check the shop"}))
             answer = (await until(one, lambda m: m["type"] == "brain_answer"))[-1]
-            assert answer["talk"] == "k1" and answer["request"] == "t1" and answer["say"] == "I can start an agent."
+            assert answer["talk"] == "k1" and answer["request"] == "t1" and answer["say"] == START_SAY
             assert answer["proposal"]["task"] == "check the shop" and server.agents.agents == {}
             await one.send(json.dumps({"type": "brain_confirm", "talk": "k1", "request": "t2",
                                        "proposal": answer["proposal"]["id"], "task": "check the shop and the cart",
@@ -971,7 +973,7 @@ async def test_the_brain_answers_the_asker_and_confirm_starts_the_agent(fake_cla
             seen = await until(one, lambda m: m["type"] == "brain_answer")
             assert {"type": "created", "id": "a1", "request": "t2"} in seen
             assert seen[-1] == {"type": "brain_answer", "talk": "k1", "request": "t2",
-                                "say": "Started: check the shop and the cart"}
+                                "say": "Started: 1 · check the shop and the cart"}
             assert server.agents.agents["a1"].model == "haiku"
             assert not [m for m in await quiet(two) if m["type"] in ("brain_answer", "created")]
     finally:

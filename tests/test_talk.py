@@ -699,6 +699,7 @@ async def test_a_spoken_yes_starts_the_open_proposal(stack):
 
 @CHROME
 async def test_a_spoken_yes_never_answers_a_permission(stack, tmp_path):
+    from ai_browser.brain.talk import NOTHING_OPEN_WAITING
     from test_tools import answers, asking, user_config
 
     user_config(tmp_path)
@@ -710,15 +711,16 @@ async def test_a_spoken_yes_never_answers_a_permission(stack, tmp_path):
     stack["engine"].answers = ["yes"]
     js = await open_talk(stack, mic())
     await talk(stack, js)
-    assert await until(js, f"{LOG}.includes(\"Brain: It's waiting for your click on Allow.\")")
+    assert await until(js, f"{LOG}.includes({json.dumps('Brain: ' + NOTHING_OPEN_WAITING)})")
     await asyncio.sleep(1)
     assert agents.agents["a1"].permission is not None and agents.agents["a1"].state == "needs_you"
     assert answers(stack["log"]) == []  # no control_response: nothing answered the tool request
+    assert talk_calls(stack) == []  # a yes with no card never reaches Claude
 
 
 @CHROME
 async def test_voice_never_approves_or_fills_a_draft(stack):
-    from ai_browser.brain.talk import CLICK_ONLY
+    from ai_browser.brain.talk import CLICK_ONLY, NOTHING_OPEN
 
     brain = stack["brain"]
     entry = needs_reply(brain, sender="Maria", summary="asks to move the launch")
@@ -738,14 +740,14 @@ async def test_voice_never_approves_or_fills_a_draft(stack):
     for _ in range(2):
         await talk(stack, js)
         assert await until(js, f"{PANEL}.dataset.state === 'idle'", 10)
-    assert await js(LOG) == ["You: approve it", f"Brain: {CLICK_ONLY}", "You: yes",
-                             "Brain: Approve is a click on the draft."]
+    assert await js(LOG) == ["You: approve it", f"Brain: {CLICK_ONLY}", "You: yes", f"Brain: {NOTHING_OPEN}"]
     assert approved == [] and not [message for message in sent if message["type"] == "fill_reply"]
     assert brain.store.get("gmail:t1").state == "draft_ready"
 
 
 @CHROME
 async def test_voice_never_answers_a_bot_check(stack):
+    from ai_browser.brain.talk import NOTHING_OPEN_WAITING
     from ai_browser.checks import KINDS
 
     talk_script(stack, {"say": "Flights to Manila is waiting for you: press Continue on its card once you've solved "
@@ -776,7 +778,8 @@ async def test_voice_never_answers_a_bot_check(stack):
         assert await until(js, f"{PANEL}.dataset.state === 'idle'", 10)
     assert pressed == [] and agent.check is not None and agent.state == "needs_you"
     prompts = talk_calls(stack)
-    assert len(prompts) == 2 and "Flights to Manila" in prompts[0] and "on www.google.com" in prompts[0]
+    assert len(prompts) == 1 and "Flights to Manila" in prompts[0] and "on www.google.com" in prompts[0]
+    assert (await js(LOG))[-1] == f"Brain: {NOTHING_OPEN_WAITING}"  # the yes: a pointer to the card, no Claude call
 
 
 @CHROME

@@ -15,8 +15,9 @@ from collections.abc import Callable, Sequence
 
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
-from .talk import (AGENT_MODELS, HIDDEN, SECRET_ANSWER, Talks, is_no, is_yes, parse_answer, secret_like,
-                   state_summary, talk_prompt)
+from .talk import (AGENT_MODELS, DRAFT_SAY, HIDDEN, NOTHING_OPEN, NOTHING_OPEN_WAITING, PRESSED, SECRET_ANSWER,
+                   START_SAY, STARTED_SAY, Talks, is_no, is_yes, label, parse_answer, secret_like, state_summary,
+                   tab_hint, talk_prompt)
 
 KINDS = {"needs_reply", "new", "skip"}
 SUGGESTIONS = {"draft", "agent", "tell"}
@@ -598,6 +599,15 @@ class BrainService:
             if self._asking.get(talk) is current:
                 del self._asking[talk]
 
+    def _rows(self) -> list[dict]:
+        """The open agents' rows (AgentManager.snapshot), or none without agents."""
+        rows = self.agents.snapshot()["agents"] if self.agents is not None else []
+        return [row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)]
+
+    def _in_users_browser(self) -> bool:
+        """The agents work in the user's own browser, so the user can hand them a tab (AgentManager)."""
+        return bool(getattr(self.agents, "in_users_browser", False))
+
     async def _respond(self, talk: str, text: str, proposal_id: str | None, task: str | None,
                        model: str | None) -> dict:
         if not text:
@@ -605,52 +615,91 @@ class BrainService:
         card = self.talks.proposal(talk)
         if card is not None and card.id == proposal_id:
             if is_yes(text):  # the card runs as Start would, as it now reads: no Claude call
-                answer = await self.confirm(talk, proposal_id, task=task, model=model)
-                self.talks.add(talk, text, answer.get("say", ""))
-                return answer
+                return await self.confirm(talk, proposal_id, task=task, model=model, said=text)
             if is_no(text):
                 self.dismiss(talk, proposal_id)
                 self.talks.add(talk, text, NOTHING_DONE)
                 return {"say": NOTHING_DONE}
         self.talks.drop(talk)  # any other words close the card: they are a new question
-        if secret_like(text):  # never sent to Claude, and not kept in the talk either
+        rows = self._rows()
+        if is_yes(text) or is_no(text):  # a yes or no with no card to run: never Claude, and never a card
+            reply = self._bare(talk, text, proposal_id, rows)
+        elif secret_like(text):  # never sent to Claude, and not kept in the talk either
             self.talks.add(talk, HIDDEN, SECRET_ANSWER)
             return {"say": SECRET_ANSWER, "hidden": True}
-        agents = self.agents.snapshot()["agents"] if self.agents is not None else []
+        else:
+            reply = await self._ask_claude(talk, text, rows)
+            if "error" in reply:
+                return reply
+        self.talks.add(talk, text, reply["say"])
+        return reply
+
+    def _bare(self, talk: str, text: str, proposal_id: str | None, rows: list[dict]) -> dict:
+        """A plain yes or no that matched no open card (Decision 7): a fixed line, never Claude, never a card."""
+        if is_no(text):
+            return {"say": NOTHING_DONE}
+        if proposal_id:  # its card is past its two minutes, or the app restarted
+            return {"say": EXPIRED}
+        waiting = any(row.get("permission") or row.get("check") for row in rows)
+        return {"say": NOTHING_OPEN_WAITING if waiting else NOTHING_OPEN}
+
+    async def _ask_claude(self, talk: str, text: str, rows: list[dict]) -> dict:
         items = [item.public() for item in self.store.items()]
-        state = state_summary(agents, items, self.store.others, self._working[-1] if self._working else "")
+        state = state_summary(rows, items, self.store.others, self._working[-1] if self._working else "")
         with self._busy("Thinking about what you said"):
             answer = await self.ask(talk_prompt(text, self.talks.history(talk), state), model="haiku",
                                     claude=self.claude, cwd=self.store.folder / "calls", timeout=TALK_TIMEOUT)
         if answer.error:
             return {"say": "", "error": f"The Brain couldn't answer: {answer.error}"}
-        parsed = parse_answer(answer.text, {str(row.get("id")) for row in agents}, {item["id"] for item in items})
-        reply: dict = {"say": parsed.say}
+        parsed = parse_answer(answer.text, {row["id"] for row in rows}, {item["id"] for item in items})
+        return self._dispatch(talk, text, parsed, rows)
+
+    def _dispatch(self, talk: str, text: str, parsed, rows: list[dict]) -> dict:
+        """Claude's pick, as a reply. A card's spoken line is the app's own (Decision 2), never Claude's; Claude's words
+        stay only on plain answers and views, from which nothing can run."""
         if parsed.action == "open":
-            reply["open"] = {"brain": True} if parsed.target == "brain" else {"agent": parsed.agent}
-        elif parsed.action == "start_agent" and self.agents is not None:
-            card = self.talks.propose(talk, "start_agent", task=text, model=self.agent_model)  # the user's words
-            reply["proposal"] = card.public(self.talks.expires_in(card))
-        elif parsed.action == "draft_reply":
+            return self._open(talk, text, parsed, rows)
+        if parsed.action == "start_agent" and self.agents is not None:
+            return {"say": START_SAY, "proposal": self._start_card(talk, text)}  # the user's own words
+        if parsed.action == "draft_reply":
             item = self.store.get(parsed.item)
             if item is None:
-                reply["say"] = "I can't find that message"
-            else:
-                card = self.talks.propose(talk, "draft_reply", item=item.id, sender=item.sender, subject=item.subject,
-                                          guidance=text, model=self.draft_model)  # the user's words, as the guidance
-                reply["proposal"] = card.public(self.talks.expires_in(card))
-        self.talks.add(talk, text, reply["say"])
-        return reply
+                return {"say": "I can't find that message"}
+            card = self.talks.propose(talk, "draft_reply", item=item.id, sender=item.sender, subject=item.subject,
+                                      guidance=text, model=self.draft_model)  # the user's words, as the guidance
+            return {"say": DRAFT_SAY.format(sender=item.sender or "them"),
+                    "proposal": card.public(self.talks.expires_in(card))}
+        return {"say": parsed.say}
 
-    async def confirm(self, talk: str, proposal: str, task: str | None = None, model: str | None = None) -> dict:
-        """Start (or Draft it), or a plain yes: the open proposal runs once. It can only start an agent or draft."""
-        card = self.talks.take(talk, proposal)  # closed first: a second Start, or a late yes, does nothing
+    def _open(self, talk: str, text: str, parsed, rows: list[dict]) -> dict:
+        """A view only: the Brain's inbox, or one agent's drawer."""
+        if parsed.target == "brain":
+            return {"say": parsed.say, "open": {"brain": True}}
+        if parsed.target == "agent":
+            return {"say": parsed.say, "open": {"agent": parsed.agent}}
+        return {"say": parsed.say}
+
+    def _start_card(self, talk: str, words: str) -> dict:
+        """A start card holding the user's own words; it says how to hand over a tab when the words point at one."""
+        card = self.talks.propose(talk, "start_agent", task=words, model=self.agent_model,
+                                  tab_hint=self._in_users_browser() and tab_hint(words))
+        return card.public(self.talks.expires_in(card))
+
+    async def confirm(self, talk: str, proposal: str, task: str | None = None, model: str | None = None,
+                      said: str | None = None) -> dict:
+        """Start (Draft it), or a plain yes (`said`): the open card runs once, and the talk remembers it."""
+        card = self.talks.take(talk, proposal)  # closed first: a second click, or a late yes, does nothing
         if card is None:  # past its two minutes, or the app restarted: nothing runs, and the user hears why
             return {"say": EXPIRED}
+        answer = await self._run_card(talk, card, task, model)
+        self.talks.add(talk, said or PRESSED.get(card.kind, ""), answer.get("say", ""))
+        return answer
+
+    async def _run_card(self, talk: str, card, task: str | None, model: str | None) -> dict:
+        words = task.strip() if isinstance(task, str) and task.strip() else card.task  # the box as the user left it
         if card.kind == "start_agent" and self.agents is not None:
-            words = task.strip() if isinstance(task, str) and task.strip() else card.task
             agent = await self.agents.create(words, model=model if model in AGENT_MODELS else self.agent_model)
-            return {"say": f"Started: {agent.name}", "agent": agent.id}
+            return {"say": STARTED_SAY.format(label=label({"id": agent.id, "name": agent.name})), "agent": agent.id}
         if card.kind == "draft_reply":
             item = self.store.get(card.item)
             if item is None:

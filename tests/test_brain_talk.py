@@ -287,18 +287,27 @@ DRAFT = "Monday works for us."
 
 
 class Recorder:
-    """Stands in for the AgentManager: shows `rows`, creates agents, and records any other call, so a test can show
+    """Stands in for the AgentManager: shows `rows`, creates and sends, and records any other call, so a test can show
     there was none."""
 
+    in_users_browser = True  # brave mode: a class attribute, so __getattr__ never records it as a call
+
     def __init__(self, rows=()):
-        self.rows, self.created, self.calls = list(rows), [], []
+        self.rows, self.created, self.calls, self.sent, self.gone, self.made = list(rows), [], [], [], set(), 0
 
     def snapshot(self):
         return {"agents": list(self.rows)}
 
     async def create(self, text, skills=(), model="sonnet", adopt=None, tab=None, **options):
         self.created.append({"text": text, "model": model})
-        return SimpleNamespace(id=f"a{len(self.created)}", name=text[:40], state="waiting")
+        self.made = max([self.made, *(int(str(row["id"])[1:]) for row in self.rows)]) + 1  # never a listed id
+        return SimpleNamespace(id=f"a{self.made}", name=text[:40], state="waiting")
+
+    async def send(self, agent_id, text, tab=None):
+        if agent_id in self.gone:  # closed between the read and the send
+            return False
+        self.sent.append((agent_id, text))
+        return True
 
     def subscribe(self):
         return asyncio.Queue()
@@ -400,7 +409,7 @@ async def test_start_agent_proposes_the_users_own_words_and_waits_for_confirm(fa
     proposal = (await brain.respond("k1", words))["proposal"]
     assert proposal["kind"] == "start_agent" and proposal["task"] == words and proposal["expires_in"] == 120
     assert proposal["model"] == "sonnet" and agents.created == []  # nothing runs before Start
-    assert await brain.confirm("k1", proposal["id"]) == {"say": f"Started: {words}", "agent": "a1"}
+    assert await brain.confirm("k1", proposal["id"]) == {"say": f"Started: 1 · {words}", "agent": "a1"}
     assert await brain.confirm("k1", proposal["id"]) == {"say": "This has expired: ask again"}  # a second Start
     assert agents.created == [{"text": words, "model": "sonnet"}]  # does nothing, and says so
     assert await brain.confirm("k1", "p99") == {"say": "This has expired: ask again"}  # one the app no longer has
@@ -420,7 +429,7 @@ async def test_a_plain_yes_runs_the_card_as_it_now_reads(fake_claude, tmp_path):
     first = (await brain.respond("k1", "check the shop"))["proposal"]
     answer = await brain.respond("k1", "Yes, please.", proposal=first["id"], task="check the shop and the cart",
                                  model="haiku")
-    assert answer == {"say": "Started: check the shop and the cart", "agent": "a1"}
+    assert answer == {"say": "Started: 1 · check the shop and the cart", "agent": "a1"}
     assert agents.created == [{"text": "check the shop and the cart", "model": "haiku"}]
     assert len(talk_calls(log)) == 1  # the yes never reached Claude
     second = (await brain.respond("k1", "check the shop"))["proposal"]
@@ -432,8 +441,8 @@ async def test_a_plain_yes_runs_the_card_as_it_now_reads(fake_claude, tmp_path):
     brain.talks.proposal_ttl = 0.05
     fourth = (await brain.respond("k1", "check the shop"))["proposal"]
     await asyncio.sleep(0.1)
-    await brain.respond("k1", "yes", proposal=fourth["id"])  # expired: just a question
-    assert len(agents.created) == 1 and len(talk_calls(log)) == 6
+    assert await brain.respond("k1", "yes", proposal=fourth["id"]) == {"say": "This has expired: ask again"}
+    assert len(agents.created) == 1 and len(talk_calls(log)) == 5  # the expired yes never reached Claude
 
 
 async def test_draft_reply_runs_only_after_draft_it_and_never_fills(fake_claude, tmp_path):
@@ -508,14 +517,56 @@ async def test_a_new_question_cancels_the_one_in_flight(fake_claude, tmp_path):
 
 
 async def test_yes_with_a_permission_waiting_is_only_a_question(fake_claude, tmp_path):
+    from ai_browser.brain.talk import NOTHING_OPEN_WAITING
+
     waiting = agent_row("a1", "make a ClickUp task", state="needs_you",
                         permission={"request": "r1", "server": "clickup", "tool": "mcp__clickup__create_task",
                                     "input": {}})
     agents = Recorder([waiting])
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "It's waiting for your click on Allow.",
                                                                 "action": "none"}, agents=agents)
-    assert await brain.respond("k1", "yes") == {"say": "It's waiting for your click on Allow."}
-    assert len(talk_calls(log)) == 1 and agents.calls == [] and agents.created == []
+    assert await brain.respond("k1", "yes") == {"say": NOTHING_OPEN_WAITING}
+    assert talk_calls(log) == [] and agents.calls == [] and agents.created == []
+
+
+async def test_card_says_are_fixed_not_claudes(fake_claude, tmp_path):
+    from ai_browser.brain.talk import DRAFT_SAY, START_SAY
+
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path,
+                                        {"say": "I'll pass it to the footer agent", "action": "start_agent"},
+                                        {"say": "Sent it already!", "action": "draft_reply", "item": "gmail:t1"})
+    needs_reply(brain)
+    first = await brain.respond("k1", "fix the footer")
+    assert first["say"] == START_SAY and first["proposal"]["kind"] == "start_agent"
+    second = await brain.respond("k1", "tell Maria Monday works")
+    assert second["say"] == DRAFT_SAY.format(sender="Maria Santos") == \
+        "I can draft a reply to Maria Santos. Press Draft it, or say yes."
+    assert brain.talks.history("k1")[-1] == ("tell Maria Monday works", second["say"])
+
+
+async def test_a_yes_with_no_card_never_becomes_a_task(fake_claude, tmp_path):
+    from ai_browser.brain.talk import NOTHING_OPEN
+
+    agents = Recorder()
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "Starting it.", "action": "start_agent"},
+                                        agents=agents)
+    assert await brain.respond("k1", "yes") == {"say": NOTHING_OPEN}
+    assert await brain.respond("k1", "no") == {"say": "OK, I won't."}
+    assert await brain.respond("k1", "Yes, please.", proposal="p99") == {"say": "This has expired: ask again"}
+    assert talk_calls(log) == [] and agents.created == [] and brain.talks.proposal("k1") is None
+    assert brain.talks.history("k1") == [("yes", NOTHING_OPEN), ("no", "OK, I won't."),
+                                         ("Yes, please.", "This has expired: ask again")]
+
+
+async def test_click_confirms_are_remembered_in_the_talk(fake_claude, tmp_path):
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "x", "action": "start_agent"})
+    card = (await brain.respond("k1", "check the shop"))["proposal"]
+    await brain.confirm("k1", card["id"])
+    assert brain.talks.history("k1")[-1] == ("(pressed Start)", "Started: 1 · check the shop")
+    second = (await brain.respond("k1", "check the cart"))["proposal"]
+    await brain.respond("k1", "Yes.", proposal=second["id"])
+    assert brain.talks.history("k1")[-1] == ("Yes.", "Started: 2 · check the cart")
+    assert len(brain.talks.history("k1")) == 4  # each turn once: the question, then the run
 
 
 SHAPES = [{"say": "Done.", "action": action, "item": "gmail:t1", "agent": "a1", "target": "agent"}
