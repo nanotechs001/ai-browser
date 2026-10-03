@@ -1,0 +1,54 @@
+{
+  "browser": {"enabled_labs_experiments": []},
+  "profile": {
+    "info_cache": {
+      "Default": {
+        "avatar_icon": "chrome://theme/IDR_PROFILE_AVATAR_26",
+        "default_avatar_fill_color": -12627531,
+        "gaia_given_name": "Alex",
+        "gaia_id": "123456789012345678901",
+        "gaia_name": "Alex Example",
+        "is_ephemeral": false,
+        "is_using_default_name": false,
+        "name": "Personal",
+        "profile_highlight_color": -12627531,
+        "user_name": "alex@example.com"
+      },
+      "Profile 1": {
+        "avatar_icon": "chrome://theme/IDR_PROFILE_AVATAR_13",
+        "default_avatar_fill_color": -14983648,
+        "gaia_name": "",
+        "is_ephemeral": false,
+        "is_using_default_name": false,
+        "name": "Work",
+        "user_name": ""
+      },
+      "Profile 2": {
+        "avatar_icon": "chrome://theme/IDR_PROFILE_AVATAR_4",
+        "is_ephemeral": false,
+        "is_using_default_name": false,
+        "name": "alex@example.com",
+        "user_name": ""
+      },
+      "Profile 3": {
+        "avatar_icon": "chrome://theme/IDR_PROFILE_AVATAR_0",
+        "is_ephemeral": true,
+        "name": "Throwaway",
+        "user_name": ""
+      },
+      "Profile 4": {
+        "avatar_icon": "chrome://theme/IDR_PROFILE_AVATAR_1",
+        "is_ephemeral": false,
+        "name": "Deleted",
+        "user_name": ""
+      },
+      "System Profile": {"is_ephemeral": false, "name": "System Profile"},
+      "Guest Profile": {"is_ephemeral": false, "name": "Guest"}
+    },
+    "last_active_profiles": ["Profile 1"],
+    "last_used": "Profile 1",
+    "metrics": {"next_bucket_index": 5},
+    "profile_counts_reported": "13370000000000000",
+    "profiles_order": ["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4"]
+  }
+}

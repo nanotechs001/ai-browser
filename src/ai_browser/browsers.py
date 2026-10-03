@@ -244,3 +244,82 @@ def os_default(system: str | None = None, env: Mapping | None = None) -> str | N
         return next((facts.id for facts in platforms.KNOWN_BROWSERS
                      if facts.win_progid and facts.win_progid.lower() == base), None)
     return None
+
+
+@dataclass(frozen=True)
+class Profile:
+    """A profile of a browser: its folder in the data folder, the name and colour the user gave it, and whether the
+    browser used it last. Nothing from the account: no email, no account name."""
+
+    folder: str
+    name: str
+    color: str | None
+    last_used: bool
+
+
+_NOT_PROFILES = ("System Profile", "Guest Profile")
+_BIDI_CONTROLS = frozenset("‎‏‪‫‬‭‮⁦⁧⁨⁩")
+_NAME_LIMIT = 64
+
+
+def plain_folder(name) -> bool:
+    """Whether a profile folder name is a plain name inside the data folder: not empty, not . or .., at most 64
+    characters, and no /, \\, : or control character."""
+    return (isinstance(name, str) and 0 < len(name) <= _NAME_LIMIT and name not in (".", "..")
+            and not any(char in "/\\:" or unicodedata.category(char) == "Cc" for char in name))
+
+
+def _profile_name(name, folder: str) -> str:
+    """The name the user gave a profile, cleaned: no control or bidi characters, trimmed, at most 64 characters.
+    A blank name, or one holding "@" (it may be an email), shows as the folder's name."""
+    if not isinstance(name, str):
+        return folder
+    text = "".join(char for char in name
+                   if unicodedata.category(char) != "Cc" and char not in _BIDI_CONTROLS).strip()
+    if not text or "@" in text:
+        return folder
+    return text[:_NAME_LIMIT]
+
+
+def _color(value) -> str | None:
+    """A signed 32-bit ARGB integer as "#rrggbb", or None."""
+    if isinstance(value, bool) or not isinstance(value, int) or not -2**31 <= value <= 2**32 - 1:
+        return None
+    return f"#{value & 0xFFFFFF:06x}"
+
+
+def _json(path):
+    """A JSON file as Python data, or None."""
+    data = _read(path)
+    if data is None:
+        return None
+    try:
+        return json.loads(data.decode("utf-8", errors="replace"))
+    except (ValueError, RecursionError):
+        return None
+
+
+def profiles(data_dir) -> list[Profile]:
+    """The browser's profiles from its Local State, in its own order: never System, Guest or ephemeral ones, never
+    a folder that isn't plain or isn't there. Only `name` and the colour are copied from each entry."""
+    state = _json(Path(data_dir) / "Local State")
+    profile = state.get("profile") if isinstance(state, dict) else None
+    cache = profile.get("info_cache") if isinstance(profile, dict) else None
+    if not isinstance(cache, dict):
+        return []
+    order = profile.get("profiles_order")
+    order = [folder for folder in order if isinstance(folder, str)] if isinstance(order, list) else []
+    rest = sorted((folder for folder in cache if folder not in order), key=lambda folder: (folder != "Default", folder))
+    last_used = profile.get("last_used")
+    found, seen = [], set()
+    for folder in [*order, *rest]:
+        entry = cache.get(folder)
+        if folder in seen or not isinstance(entry, dict):
+            continue
+        seen.add(folder)
+        if (folder in _NOT_PROFILES or entry.get("is_ephemeral") is True or not plain_folder(folder)
+                or not os.path.isdir(os.path.join(data_dir, folder))):
+            continue
+        color = _color(entry.get("profile_highlight_color")) or _color(entry.get("default_avatar_fill_color"))
+        found.append(Profile(folder, _profile_name(entry.get("name"), folder), color, folder == last_used))
+    return found

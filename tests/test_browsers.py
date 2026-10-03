@@ -385,3 +385,143 @@ def test_os_default_on_the_mac():
 def test_os_default_on_windows(monkeypatch, progid, expected):
     monkeypatch.setattr(platforms, "windows_https_progid", lambda: progid)
     assert browsers.os_default("win32") == expected
+
+
+# Profiles (Task 7)
+
+BRAVE_FOLDERS = ("Default", "Profile 1", "Profile 2", "Profile 3", "System Profile", "Guest Profile")
+
+
+def data_folder(path: Path, local_state: bytes | None, folders=()) -> Path:
+    """A browser's data folder: its Local State (unless None) and these profile folders."""
+    path.mkdir(parents=True, exist_ok=True)
+    if local_state is not None:
+        (path / "Local State").write_bytes(local_state)
+    for folder in folders:
+        (path / folder).mkdir(exist_ok=True)
+    return path
+
+
+def local_state(drop=(), **changes) -> bytes:
+    """The Brave sample's Local State with keys under "profile" changed, or dropped."""
+    data = json.loads(sample("brave-local-state.json"))
+    data["profile"].update(changes)
+    for key in drop:
+        data["profile"].pop(key)
+    return json.dumps(data).encode("utf-8")
+
+
+def one_profile(entry) -> bytes:
+    return json.dumps({"profile": {"info_cache": {"Default": entry}}}).encode("utf-8")
+
+
+def test_profiles_read_name_colour_and_order(tmp_path):
+    data = data_folder(tmp_path / "Brave", sample("brave-local-state.json"), BRAVE_FOLDERS)
+    expected = [browsers.Profile("Default", "Personal", "#3f51b5", False),
+                browsers.Profile("Profile 1", "Work", "#1b5e20", True),
+                browsers.Profile("Profile 2", "Profile 2", None, False)]
+    assert browsers.profiles(data) == expected  # no System, Guest, ephemeral or folderless profile
+    (data / "Local State").write_bytes(local_state(profiles_order=["Profile 4", "Profile 3", "Profile 2",
+                                                                   "Profile 1", "Default"]))
+    assert browsers.profiles(data) == expected[::-1]
+    (data / "Local State").write_bytes(local_state(drop=("profiles_order",)))
+    assert browsers.profiles(data) == expected  # Default first, then the rest sorted
+    (data / "Profile 5").mkdir()
+    assert [profile.folder for profile in browsers.profiles(data)] == ["Default", "Profile 1", "Profile 2"]
+
+
+def test_profiles_never_return_an_email(tmp_path):
+    data = data_folder(tmp_path / "Brave", sample("brave-local-state.json"), BRAVE_FOLDERS)
+    shown = repr(browsers.profiles(data))
+    for secret in ("alex@example.com", "Alex Example", "Alex", "123456789012345678901", "@"):
+        assert secret not in shown
+    assert browsers.profiles(data)[2] == browsers.Profile("Profile 2", "Profile 2", None, False)
+    assert [field.name for field in dataclasses.fields(browsers.Profile)] == ["folder", "name", "color", "last_used"]
+
+
+@pytest.mark.parametrize("name, shown", [
+    ("‮evil\x07", "evil"), ("x" * 200, "x" * 64), ("   ", "Default"), (" Work ", "Work"),
+    ("Alex (alex@example.com)", "Default"),  # an email among other words never comes out either
+    ("‎⁦‮\x1b", "Default"),  # only invisible characters: blank
+    (42, "Default")])
+def test_profile_names_are_cleaned(tmp_path, name, shown):
+    data = data_folder(tmp_path / "Brave", one_profile({"name": name}), ["Default"])
+    assert [profile.name for profile in browsers.profiles(data)] == [shown]
+
+
+@pytest.mark.parametrize("value, color", [
+    (-16777216, "#000000"), (-1, "#ffffff"), (4282339765, "#3f51b5"), (-12627531, "#3f51b5"), (True, None),
+    ("#fff", None), (2**40, None), (None, None)])
+def test_colours(tmp_path, value, color):
+    data = data_folder(tmp_path / "Brave", one_profile({"name": "Personal", "profile_highlight_color": value}),
+                       ["Default"])
+    assert [profile.color for profile in browsers.profiles(data)] == [color]
+
+
+BAD_FOLDERS = ["../Default", "/etc", "a/b", "a\\b", "C:x", "", ".", "..", "nul\x00here", "x" * 65]
+
+
+def test_a_profile_folder_name_cannot_leave_the_data_folder(tmp_path):
+    assert not any(browsers.plain_folder(name) for name in BAD_FOLDERS) and not browsers.plain_folder(None)
+    assert browsers.plain_folder("Default") and browsers.plain_folder("Profile 12")
+    cache = {name: {"name": "Sneaky"} for name in [*BAD_FOLDERS, "Profile 1"]}
+    data = data_folder(tmp_path / "Brave", json.dumps({"profile": {"info_cache": cache}}).encode("utf-8"),
+                       ["Profile 1"])
+    (tmp_path / "Default").mkdir()  # beside the data folder: "../Default" names it
+    if os.name != "nt":
+        (data / "C:x").mkdir()  # on Windows "C:x" is a path on drive C:, not a folder name
+    assert [profile.folder for profile in browsers.profiles(data)] == ["Profile 1"]
+
+
+def test_each_profile_is_listed_once(tmp_path):
+    state = {"profile": {"info_cache": {"Default": {"name": "Personal"}, "Profile 1": {"name": "Work"},
+                                        "Profile 3": {"name": "Gone", "is_ephemeral": True}},
+                         "profiles_order": ["Profile 1", "Default", "Profile 1", "Default"], "last_used": "Profile 3"}}
+    data = data_folder(tmp_path / "Brave", json.dumps(state).encode("utf-8"), ["Default", "Profile 1", "Profile 3"])
+    assert browsers.profiles(data) == [browsers.Profile("Profile 1", "Work", None, False),
+                                       browsers.Profile("Default", "Personal", None, False)]
+
+
+@pytest.mark.parametrize("contents, shown", [
+    pytest.param(lambda: None, [], id="missing file"),
+    pytest.param(lambda: b"", [], id="empty file"),
+    pytest.param(lambda: sample("brave-local-state.json")[:300], [], id="cut JSON"),
+    pytest.param(lambda: b"[]", [], id="a list"),
+    pytest.param(lambda: b'{"profile": "Default"}', [], id="profile is a string"),
+    pytest.param(lambda: b'{"profile": {"info_cache": ["Default"]}}', [], id="info_cache is a list"),
+    pytest.param(lambda: b'{"profile": {"info_cache": {"Default": 7, "Profile 1": {"name": "Work"}}}}',
+                 ["Profile 1:Work"], id="an entry is a number"),
+    pytest.param(lambda: b'{"profile": {"info_cache": {"Default": {"name": 7}}}}', ["Default:Default"],
+                 id="name is a number"),
+    pytest.param(lambda: b'{"profile": {"info_cache": {"Default": {"name": "A"}}, "profiles_order": [1, null]}}',
+                 ["Default:A"], id="order holds numbers"),
+    pytest.param(lambda: b'{"profile": {"info_cache": {"Default": {"name": "A"}}, "profiles_order": ["\xff\xfe"]}}',
+                 ["Default:A"], id="invalid UTF-8"),
+    pytest.param(lambda: b'{"profile": {"profiles_order": ' + b"[" * 10000 + b"]" * 10000 + b"}}", [],
+                 id="10,000 nested lists"),
+])
+def test_profiles_fail_safely(tmp_path, contents, shown):
+    data = data_folder(tmp_path / "Brave", contents(), ["Default", "Profile 1"])
+    assert [f"{profile.folder}:{profile.name}" for profile in browsers.profiles(data)] == shown
+
+
+def test_profiles_fail_safely_on_odd_files(tmp_path, monkeypatch):
+    data = data_folder(tmp_path / "Brave", None, ["Default"])
+    (data / "Local State").mkdir()  # a folder called Local State
+    assert browsers.profiles(data) == []
+    (data / "Local State").rmdir()
+    if hasattr(os, "mkfifo"):
+        os.mkfifo(data / "Local State")  # a plain read would wait forever
+        assert browsers.profiles(data) == []
+        (data / "Local State").unlink()
+    (data / "Local State").write_bytes(b"")
+    os.truncate(data / "Local State", 17 * 1024 * 1024)
+    reads = recording_reads(monkeypatch)
+    assert browsers.profiles(data) == [] and reads == []  # 17 MB: not read at all
+    if os.name != "nt" and os.geteuid() != 0:  # root reads any folder
+        locked = data_folder(tmp_path / "Locked", sample("brave-local-state.json"), ["Default"])
+        locked.chmod(0)  # Path.is_file() would raise PermissionError here
+        try:
+            assert browsers.profiles(locked) == []
+        finally:
+            locked.chmod(0o700)
