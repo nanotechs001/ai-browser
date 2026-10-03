@@ -309,3 +309,50 @@ def test_rights_go_by_role_through_the_table():
 
     for method in (AppServer._handle, AppServer._brain_command):  # no origin test of its own any more
         assert "_watcher_origins" not in inspect.getsource(method), method.__name__
+
+
+async def test_show_me_from_the_watcher_brings_the_checks_tab_forward(fake_claude, tmp_path):
+    server, url, _ = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
+    brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"}])
+    server.attach_brave(brave)
+    agents = server.agents
+    for agent_id, live in (("a1", None), ("a3", "http://127.0.0.1:8770/live?token=abc")):
+        add_agent(agents, agent_id)
+        agents.tab_event(agent_id, "tab_opened", f"T{agent_id[1:]}")
+        agents.check_event(agent_id, {**CHECK_REPORT, "target": f"T{agent_id[1:]}", "live": live})
+    add_agent(agents, "a2", "Other", "green")  # no bot check
+    try:
+        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
+            await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
+            await until(watcher, lambda m: m["type"] == "watch_list")
+            for message in ({"type": "check_show", "id": "a2"},  # no check: nothing
+                            {"type": "check_show", "id": "a3"},  # shown in the live view: nothing here
+                            {"type": "check_show", "id": "nobody"},
+                            {"type": "watch", "target": "U1"},  # a tab the watcher names: never
+                            {"type": "check_show", "id": "a1"}):
+                await watcher.send(json.dumps(message))
+            await watcher.send(json.dumps({"type": "brain"}))  # handled in order: every message above came first
+            await until(watcher, lambda m: m["type"] == "brain_snapshot")
+        assert brave.watched == ["T1"] and agents.agents["a1"].check is not None  # Show me answers nothing
+        async with connect(socket_url(server, url), origin=ORIGIN) as page:  # AI Home's own Watch still names a tab
+            await page.send(json.dumps({"type": "watch", "target": "U1"}))
+            await wait_for(lambda: brave.watched == ["T1", "U1"])
+    finally:
+        await server.stop()
+
+
+async def test_show_me_with_no_tab_source_does_nothing(fake_claude, tmp_path):  # Review Focus 5
+    server, url, _ = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])  # no browser link attached
+    agents = server.agents
+    add_agent(agents)
+    agents.tab_event("a1", "tab_opened", "T1")
+    agents.check_event("a1", {**CHECK_REPORT, "target": "T1"})
+    try:
+        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
+            await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
+            await until(watcher, lambda m: m["type"] == "watch_list")
+            await watcher.send(json.dumps({"type": "check_show", "id": "a1"}))
+            await watcher.send(json.dumps({"type": "check_continue", "id": "a1"}))  # the socket goes on
+            await wait_for(lambda: agents.agents["a1"].check is None)
+    finally:
+        await server.stop()

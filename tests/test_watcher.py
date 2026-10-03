@@ -390,8 +390,8 @@ async def test_a_bot_check_gets_one_notification_with_show_me_and_continue(watch
     watcher.brain.send_watcher({"type": "check_request", "agent": "a1", "name": "Flights to Manila",
                                 "site": "www.google.com", "what": "a check", "target": "T1", "live": None})
     noted = ("chrome.storage.session.get('notes').then(({notes = {}}) => Object.values(notes).some("
-             "note => note.check && note.check.agent === 'a1' && note.check.target === 'T1'))")
-    assert await until(watcher.worker_js, noted)
+             "note => note.check && note.check.agent === 'a1' && !('target' in note.check)))")
+    assert await until(watcher.worker_js, noted)  # no tab id is kept: Show me asks by the agent's id
     assert await until(watcher.worker_js, "chrome.notifications.getAll().then(all => Object.keys(all).length === 1)")
     _, js = await open_page(watcher.cdp, f"chrome-extension://{watcher.app.extension_id}/brain.html")
 
@@ -403,15 +403,16 @@ async def test_a_bot_check_gets_one_notification_with_show_me_and_continue(watch
     assert made["options"]["title"] == "Flights to Manila: a bot check on www.google.com"
     assert made["options"]["message"] == "Solve it in the tab, then press Continue."
     assert [button["title"] for button in made["options"]["buttons"]] == ["Show me", "Continue"]
+    assert made["note"] == {"check": {"agent": "a1", "live": ""}}  # its input had a target: the note has none
     note = json.dumps(made["note"])
     assert await notify(f"m.checkAction({note}, 1)") == {"send": {"type": "check_continue", "id": "a1"}}
-    assert await notify(f"m.checkAction({note}, 0)") == {"send": {"type": "watch", "target": "T1"}}
+    assert await notify(f"m.checkAction({note}, 0)") == {"send": {"type": "check_show", "id": "a1"}}
     live = await notify("m.checkNotification({agent: 'a1', target: 'Q1', "
                         "live: 'http://127.0.0.1:8770/live?token=abc'})")
     assert await notify(f"m.checkAction({json.dumps(live['note'])}, 0)") == \
         {"open": "http://127.0.0.1:8770/live?token=abc"}
     forged = await notify("m.checkNotification({agent: 'a1', target: 'Q1', "
-                          "live: 'http://127.0.0.1:80@evil.example/live?token=x'})")  # Review Focus 2
+                          "live: 'http://127.0.0.1:80@evil.example/live?token=x'})")  # Review Focus 2 (safe-browsing)
     assert forged["note"]["check"]["live"] == ""
     assert await notify(f"m.checkAction({json.dumps(forged['note'])}, 0)") == \
-        {"send": {"type": "watch", "target": "Q1"}}
+        {"send": {"type": "check_show", "id": "a1"}}

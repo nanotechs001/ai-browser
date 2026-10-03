@@ -59,7 +59,7 @@ HEARING_MESSAGES = {"hearing", "hearing_download", "hearing_cancel", "listen_sta
                     "listen_cancel"}  # push-to-talk: only AI Browser's own pages, never the watcher
 TALK_MESSAGES = {"brain_ask", "brain_confirm", "brain_dismiss"}  # the talk with the Brain: the same
 _TALK_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
-CHECK_MESSAGES = {"check_continue", "check_skip"}  # a bot check's buttons; the watcher may Continue, never Skip
+CHECK_MESSAGES = {"check_continue", "check_skip", "check_show"}  # a bot check's buttons (who may: MESSAGE_RULES)
 BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back", "browser_disconnect"}  # only AI Browser's own pages
 CHECK_SITE = re.compile(r"[a-z0-9.-]{1,253}")  # a host name, nothing else
 CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{1,64}")  # an engine's live view
@@ -826,6 +826,8 @@ class AppServer:
                 await agents.continue_check(agent_id)
             elif kind == "check_skip":
                 await agents.skip_check(agent_id)
+            elif kind == "check_show":
+                await self._show_check(agent_id)
         elif kind in BRAVE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             await self._brave_command(queue, kind, message)
         elif kind in HEARING_MESSAGES:  # only AI Browser's own pages talk or listen (MESSAGE_RULES)
@@ -875,6 +877,16 @@ class AppServer:
             queue.put_nowait({"type": "thumbs", "thumbs": {
                 agent: state["jpeg"] for agent, state in self._thumbs.items()
                 if state.get("jpeg") and agent in self.agents.agents}})
+
+    async def _show_check(self, agent_id: str) -> None:
+        """Show me, from Brave's notification: bring forward the tab where this agent's bot check waits. The app holds
+        that tab, so no page names one. A check shown in the live view (QA's sandbox) has no tab here, and without a
+        tab source nothing happens. It uses the link's one connection and never opens one."""
+        agent = self.agents.agents.get(agent_id)
+        check = agent.check if agent is not None else None
+        if check is None or check.get("live") or not check.get("target") or self.tabs is None:
+            return
+        await self.tabs.watch(check["target"])
 
     async def _from_watcher(self, kind: str, message: dict) -> None:
         if kind == "watcher_caps":
