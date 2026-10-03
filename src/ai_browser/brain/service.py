@@ -15,9 +15,11 @@ from collections.abc import Callable, Sequence
 
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
-from .talk import (AGENT_MODELS, DRAFT_SAY, HIDDEN, NOTHING_OPEN, NOTHING_OPEN_WAITING, PRESSED, SECRET_ANSWER,
-                   START_SAY, STARTED_SAY, Talks, is_no, is_yes, label, parse_answer, secret_like, state_summary,
-                   tab_hint, talk_prompt)
+from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HIDDEN, NO_AGENT_SAY, NO_SUCH_SAY, NOTHING_OPEN,
+                   NOTHING_OPEN_WAITING, PRESSED, QUEUED_LINE_SAY, QUEUED_PERMISSION_SAY, QUEUED_WORKING_SAY, RELAY,
+                   SECRET_ANSWER, SEND_SAY, SENT_SAY, START_SAY, STARTED_SAY, WHICH_SAY, Pick, Talks, check_say,
+                   choices, is_no, is_yes, label, number_of, parse_answer, resolve_agent, secret_like, state_summary,
+                   tab_hint, talk_prompt, target_state)
 
 KINDS = {"needs_reply", "new", "skip"}
 SUGGESTIONS = {"draft", "agent", "tell"}
@@ -661,6 +663,11 @@ class BrainService:
             return self._open(talk, text, parsed, rows)
         if parsed.action == "start_agent" and self.agents is not None:
             return {"say": START_SAY, "proposal": self._start_card(talk, text)}  # the user's own words
+        if parsed.action == "message_agent" and self.agents is not None:
+            pick = resolve_agent(text, rows, parsed.agent, self.talks.last_agent(talk))
+            if pick.outcome == "none":  # no agent open: the card can only start a NEW one, and it says so
+                return {"say": NO_AGENT_SAY, "proposal": self._start_card(talk, text)}
+            return self._answer_pick(talk, pick, text, rows)
         if parsed.action == "draft_reply":
             item = self.store.get(parsed.item)
             if item is None:
@@ -685,6 +692,51 @@ class BrainService:
                                   tab_hint=self._in_users_browser() and tab_hint(words))
         return card.public(self.talks.expires_in(card))
 
+    def _answer_pick(self, talk: str, pick: Pick, words: str, rows: list[dict]) -> dict:
+        """The agent the words picked (Decision 4), for a send card holding `words`."""
+        if pick.outcome == "missing":  # a number or colour that names no open agent: no card
+            return {"say": NO_SUCH_SAY.format(said=pick.said, choices=choices(rows))}
+        if pick.outcome == "ask":
+            return {"say": WHICH_SAY.format(choices=choices([row for row in rows if row["id"] in pick.ids]))}
+        return self._send_card(talk, self._row(rows, pick.ids[0]), words)
+
+    @staticmethod
+    def _row(rows: list[dict], agent_id: str) -> dict:
+        return next(row for row in rows if row["id"] == agent_id)
+
+    def _send_card(self, talk: str, row: dict, words: str) -> dict:
+        """A send card for `row`, holding the user's words. An agent at a bot check gets none (Decision 8): the voice
+        never stands in for Continue."""
+        self.talks.clear_asking(talk)
+        if isinstance(row.get("check"), dict):
+            return {"say": check_say(row)}
+        card = self.talks.propose(talk, "message_agent", task=words, agent=row["id"], number=number_of(row),
+                                  name=str(row.get("name") or ""), color=str(row.get("color") or ""),
+                                  target_state=target_state(row),
+                                  tab_hint=self._in_users_browser() and tab_hint(words))
+        return {"say": SEND_SAY.format(label=label(row)), "proposal": card.public(self.talks.expires_in(card))}
+
+    async def _send(self, card, body: str) -> dict:
+        """A send card runs (Decision 8): the agent's row is read again, after the card closed. It never starts an
+        agent."""
+        row = next((row for row in self._rows() if row["id"] == card.agent), None)
+        name = label(row) if row is not None else label({"id": card.agent, "number": card.number, "name": card.name})
+        if row is None:
+            return {"say": CLOSED_SAY.format(label=name)}
+        if isinstance(row.get("check"), dict):  # a new turn beside the hold would blur "voice never answers a check"
+            return {"say": check_say(row)}
+        if row.get("permission"):
+            say = QUEUED_PERMISSION_SAY  # queued behind the permission, which stays unanswered
+        elif row.get("state") == "working":
+            say = QUEUED_WORKING_SAY
+        elif row.get("state") == "waiting":
+            say = QUEUED_LINE_SAY
+        else:
+            say = SENT_SAY  # done, stopped or failed: the words start its next turn
+        if not await self.agents.send(card.agent, body):  # it closed between the read and the send
+            return {"say": CLOSED_SAY.format(label=name)}
+        return {"say": say.format(label=name), "sent": card.agent, "open": {"agent": card.agent}}
+
     async def confirm(self, talk: str, proposal: str, task: str | None = None, model: str | None = None,
                       said: str | None = None) -> dict:
         """Start (Draft it), or a plain yes (`said`): the open card runs once, and the talk remembers it."""
@@ -700,6 +752,8 @@ class BrainService:
         if card.kind == "start_agent" and self.agents is not None:
             agent = await self.agents.create(words, model=model if model in AGENT_MODELS else self.agent_model)
             return {"say": STARTED_SAY.format(label=label({"id": agent.id, "name": agent.name})), "agent": agent.id}
+        if card.kind == "message_agent" and self.agents is not None:
+            return await self._send(card, f"{RELAY}\n{words}")
         if card.kind == "draft_reply":
             item = self.store.get(card.item)
             if item is None:

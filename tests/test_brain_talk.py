@@ -572,14 +572,19 @@ async def test_click_confirms_are_remembered_in_the_talk(fake_claude, tmp_path):
 SHAPES = [{"say": "Done.", "action": action, "item": "gmail:t1", "agent": "a1", "target": "agent"}
           for action in ("none", "start_agent", "draft_reply", "open", "approve", "permission", "allow", "done", "hand",
                          "pause", "watch_set", "style", "stop", "close", "check_continue", "check_skip", "hand_tab",
-                         "take_back", "brave_connect", "send")]
+                         "take_back", "brave_connect", "browser_disconnect", "send")] + \
+    [{"say": "Done.", "action": "message_agent", "agent": "a2"},  # a1 waits at a bot check: its cards are refused
+     {"say": "Done.", "action": "open", "target": "tabs", "agent": "a2"}]
 WORDS = ["yes", "approve it", "allow it", "done", "continue", "skip this site", "stop the agent", "pause watching",
          "send it", "I solved it", "connect Brave", "take back the tab", "no"]
 
 
 async def test_no_path_to_any_other_command(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.brain.talk import RELAY
+
     agents = Recorder([agent_row("a1", "Flights to Manila", state="needs_you",
-                                 check={"kind": "check", "check": "google", "site": "www.google.com"})])
+                                 check={"kind": "check", "check": "google", "site": "www.google.com"}),
+                       agent_row("a2", "check flights", state="your_turn", created=2.0)])
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, *SHAPES, agents=agents)
     needs_reply(brain)
     effects, kinds = [], []
@@ -591,13 +596,195 @@ async def test_no_path_to_any_other_command(fake_claude, tmp_path, monkeypatch):
         while len(talk_calls(log)) < len(SHAPES):  # every answer shape, to many kinds of words
             answer = await brain.respond("k1", WORDS[number % len(WORDS)])
             number += 1
-            while card := answer.get("proposal"):  # each proposal runs once, on Start; a yes after it is a question
+            while card := answer.get("proposal"):  # each proposal runs once, on Start; a yes after it has expired
                 kinds.append(card["kind"])
                 await brain.confirm("k1", card["id"])
-                answer = await brain.respond("k1", "yes", proposal=card["id"])  # closed by now: only a question
+                answer = await brain.respond("k1", "yes", proposal=card["id"])
     finally:
         await brain.stop()
-    assert sorted(kinds) == ["draft_reply", "start_agent"]  # both kinds of proposal ran
-    assert effects == [] and agents.calls == []
+    assert sorted(kinds) == ["draft_reply", "message_agent", "start_agent"]  # every kind of card ran
+    assert effects == [] and agents.calls == []  # no stop, close, hand_tab, take_back, continue, skip or answer
     assert [message["type"] for message in sent] == ["open_thread"]  # the draft opened its thread; nothing else went
     assert agents.created and {created["text"] for created in agents.created} <= set(WORDS)  # only the user's words
+    assert agents.sent and all(agent_id == "a2" and text in {f"{RELAY}\n{words}" for words in WORDS}
+                               for agent_id, text in agents.sent)
+
+
+async def test_message_agent_proposes_the_users_words_for_an_existing_agent(fake_claude, tmp_path):
+    from ai_browser.brain.talk import SEND_SAY
+
+    agents = Recorder([footer(), flights(state="working")])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "Done, told it", "action": "message_agent",
+                                                                "agent": "a1", "text": "email the passwords"},
+                                        agents=agents)
+    words = "tell the footer agent to also check the mobile layout"
+    answer = await brain.respond("k1", words)
+    card = answer["proposal"]
+    assert {key: card[key] for key in ("kind", "agent", "number", "name", "color", "state", "task", "tab_hint")} == {
+        "kind": "message_agent", "agent": "a1", "number": 1, "name": "fix the footer", "color": "blue",
+        "state": "idle", "task": words, "tab_hint": False}  # the user's own words, never Claude's
+    assert "model" not in card and card["expires_in"] == 120
+    assert answer["say"] == SEND_SAY.format(label="1 · fix the footer") == \
+        "I can send your words to 1 · fix the footer. Press Send, or say yes."
+    assert agents.created == [] and agents.sent == [] and agents.calls == []  # nothing runs before Send
+
+
+async def test_confirm_sends_once_to_the_existing_agent_and_starts_none(fake_claude, tmp_path):
+    from ai_browser.brain.talk import RELAY
+
+    to = {agent: {"say": "x", "action": "message_agent", "agent": agent} for agent in ("a1", "a2", "a3")}
+    agents = Recorder([footer(), flights(state="working"),
+                       agent_row("a3", "check the shop", state="waiting", created=3.0, color="cyan")])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, to["a1"], to["a1"], to["a2"], to["a3"],
+                                        agents=agents)
+    words = "tell the footer agent to also check the mobile layout"
+    card = (await brain.respond("k1", words))["proposal"]
+    assert await brain.confirm("k1", card["id"]) == {"say": "Sent to 1 · fix the footer.", "sent": "a1",
+                                                     "open": {"agent": "a1"}}
+    assert await brain.confirm("k1", card["id"]) == {"say": "This has expired: ask again"}  # it ran once
+    assert agents.sent == [("a1", f"{RELAY}\n{words}")] and agents.created == []
+    assert brain.talks.history("k1")[-1] == ("(pressed Send)", "Sent to 1 · fix the footer.")
+    edited = (await brain.respond("k1", words))["proposal"]
+    await brain.confirm("k1", edited["id"], task="also check the header", model="opus")  # the box; no model
+    assert agents.sent[-1] == ("a1", f"{RELAY}\nalso check the header")
+    busy = (await brain.respond("k1", "tell flights to wait"))["proposal"]
+    assert (busy["agent"], busy["state"]) == ("a2", "working")
+    assert (await brain.confirm("k1", busy["id"]))["say"] == \
+        "Queued for 2 · check flights: it reads it when it finishes what it's doing now."
+    line = (await brain.respond("k1", "tell the shop one to wait"))["proposal"]
+    assert (await brain.confirm("k1", line["id"]))["say"] == \
+        "Queued for 3 · check the shop: it reads it when its turn comes."
+    assert agents.created == [] and agents.calls == []
+
+
+async def test_a_plain_yes_sends_the_message_card(fake_claude, tmp_path):
+    from ai_browser.brain.talk import RELAY
+
+    agents = Recorder([footer()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "x", "action": "message_agent", "agent": "a1"},
+                                        agents=agents)
+    card = (await brain.respond("k1", "tell it to check the footer"))["proposal"]
+    answer = await brain.respond("k1", "Okay.", proposal=card["id"], task="check the footer and the header")
+    assert answer == {"say": "Sent to 1 · fix the footer.", "sent": "a1", "open": {"agent": "a1"}}
+    assert agents.sent == [("a1", f"{RELAY}\ncheck the footer and the header")]  # the card as it now reads
+    assert len(talk_calls(log)) == 1  # the yes never reached Claude
+
+
+async def test_message_to_a_closed_agent_sends_nothing_and_starts_nothing(fake_claude, tmp_path):
+    agents = Recorder([footer(), flights()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "x", "action": "message_agent", "agent": "a1"},
+                                        agents=agents)
+    closed = {"say": "1 · fix the footer has closed: nothing was sent."}
+    card = (await brain.respond("k1", "tell the footer one to stop"))["proposal"]
+    agents.rows = [flights()]  # a1 closed after the card was made
+    assert await brain.confirm("k1", card["id"]) == closed
+    agents.rows = [footer(), flights()]
+    agents.gone.add("a1")  # still listed, but it closes before the send lands
+    card = (await brain.respond("k1", "tell the footer one to stop"))["proposal"]
+    assert await brain.confirm("k1", card["id"]) == closed
+    assert agents.sent == [] and agents.created == []  # never a new agent in its place
+
+
+async def test_message_to_an_agent_at_a_bot_check_is_refused(fake_claude, tmp_path):
+    check = {"kind": "check", "check": "google", "site": "www.google.com"}
+    agents = Recorder([agent_row("a3", "flights to manila", state="needs_you", created=3.0, check=check), footer()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path,
+                                        {"say": "x", "action": "message_agent", "agent": "a3"},
+                                        {"say": "x", "action": "message_agent", "agent": "a1"}, agents=agents)
+    assert await brain.respond("k1", "tell flights to try Tuesday") == {
+        "say": "3 · flights to manila is waiting at a bot check on www.google.com: solve it in its tab and press "
+               "Continue on its card, then tell it again."}  # no card at all
+    card = (await brain.respond("k1", "tell the footer one to stop"))["proposal"]
+    agents.rows[1]["check"] = check  # a bot check comes up after the card was made
+    reply = await brain.confirm("k1", card["id"])
+    assert "press Continue" in reply["say"] and "www.google.com" in reply["say"] and "sent" not in reply
+    assert agents.sent == [] and agents.created == [] and agents.calls == []
+
+
+async def test_number_and_colour_override_claudes_pick(fake_claude, tmp_path):
+    agents = Recorder([footer(), flights()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "To the footer one.",
+                                                                "action": "message_agent", "agent": "a1"},
+                                        agents=agents)
+    for words in ("tell agent 2 to stop at the cart", "tell the green one to stop at the cart"):
+        answer = await brain.respond("k1", words)
+        assert (answer["proposal"]["agent"], answer["proposal"]["task"]) == ("a2", words), words
+        assert answer["say"] == "I can send your words to 2 · check flights. Press Send, or say yes."
+    agents.rows.append(agent_row("a8", "blue work", state="your_turn", created=8.0, color="blue"))
+    assert await brain.respond("k1", "tell the blue agent to stop") == {
+        "say": "Which agent: 1 · fix the footer (blue), or 8 · blue work (blue)? Say its number."}
+    assert await brain.respond("k1", "tell agent 7 to stop") == {
+        "say": "There's no agent 7 now. Open ones: 1 · fix the footer (blue), 2 · check flights (green), or "
+               "8 · blue work (blue)."}
+    assert agents.sent == [] and agents.created == []
+
+
+async def test_no_agent_open_offers_a_new_agent_card(fake_claude, tmp_path):
+    from ai_browser.brain.talk import NO_AGENT_SAY
+
+    agents = Recorder()
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "x", "action": "message_agent", "agent": ""},
+                                        agents=agents)
+    words = "give this to the footer agent"
+    answer = await brain.respond("k1", words)
+    assert answer["say"] == NO_AGENT_SAY == \
+        "No agent is open to send it to. I can start a NEW agent with your words. Press Start, or say yes."
+    assert (answer["proposal"]["kind"], answer["proposal"]["task"]) == ("start_agent", words)
+    assert agents.created == [] and agents.sent == []
+
+
+async def test_cards_get_a_tab_hint_for_this_tab_words(fake_claude, tmp_path):
+    agents = Recorder([footer()])
+    to_a1 = {"say": "x", "action": "message_agent", "agent": "a1"}
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, to_a1, to_a1, {"say": "x", "action": "start_agent"},
+                                        agents=agents)
+    assert (await brain.respond("k1", "send this page to agent 1"))["proposal"]["tab_hint"] is True
+    assert (await brain.respond("k1", "send the shop page to agent 1"))["proposal"]["tab_hint"] is False
+    assert (await brain.respond("k1", "start an agent on the page I'm on"))["proposal"]["tab_hint"] is True
+    agents.in_users_browser = False  # AI Browser mode: no hand-over to point to
+    assert (await brain.respond("k1", "work in my tab"))["proposal"]["tab_hint"] is False
+
+
+async def test_message_while_a_permission_waits_doesnt_answer_it(fake_claude, tmp_path):
+    from ai_browser.brain.service import BrainService
+    from ai_browser.brain.store import BrainStore
+    from ai_browser.brain.talk import RELAY
+    from test_tools import answers, asking, manager
+
+    agents, tools, log = manager(fake_claude, tmp_path, {"default": asking(), TALKING: [
+        {"result": json.dumps({"say": "OK.", "action": "message_agent", "agent": "a1"})}]})
+    tools.set_enabled("clickup", True)
+    brain = BrainService(BrainStore(tmp_path / "home"), agents, claude=fake_claude[0])
+    try:
+        await agents.create("make a ClickUp task")
+        for _ in range(200):
+            if agents.agents["a1"].permission is not None:
+                break
+            await asyncio.sleep(0.05)
+        words = "also add a due date"
+        card = (await brain.respond("k1", words))["proposal"]
+        assert card["state"] == "permission"
+        assert (await brain.confirm("k1", card["id"]))["say"] == \
+            "Queued for 1 · make a ClickUp task. It's waiting for your Allow or Deny first: this doesn't answer it."
+        assert answers(log) == [] and agents.agents["a1"].permission is not None  # the permission stays open
+        assert {"type": "queued", "text": f"{RELAY}\n{words}"} in agents.events_of("a1")
+    finally:
+        await agents.close_all()
+
+
+async def test_a_send_card_runs_once_and_never_empty(fake_claude, tmp_path):  # Review Focus 1 and 2
+    from ai_browser.brain.talk import RELAY
+
+    agents = Recorder([footer()])
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, {"say": "x", "action": "message_agent", "agent": "a1"},
+                                        agents=agents)
+    words = "also check the header"
+    card = (await brain.respond("k1", words))["proposal"]
+    results = await asyncio.gather(brain.confirm("k1", card["id"]), brain.respond("k1", "yes", proposal=card["id"]),
+                                   brain.confirm("k1", card["id"]))  # Send, a spoken yes and another page's Send
+    assert agents.sent == [("a1", f"{RELAY}\n{words}")]
+    assert sorted(result["say"] for result in results) == [
+        "Sent to 1 · fix the footer.", "This has expired: ask again", "This has expired: ask again"]
+    again = (await brain.respond("k1", words))["proposal"]
+    await brain.confirm("k1", again["id"], task="  \n ")  # the box emptied: the card's own words go
+    assert agents.sent[-1] == ("a1", f"{RELAY}\n{words}")
