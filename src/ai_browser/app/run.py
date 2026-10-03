@@ -37,21 +37,41 @@ from .tabs import TabWatch
 WINDOW_CHECKS = 3  # one second apart: this long without any page means the user closed AI Browser's last window
 TICK = 30  # seconds between two looks at the scheduled workflows
 EXTENSION_WAIT = 6  # seconds for an installed extension to connect; a record Chrome no longer loads never does
-READY = ("AI Browser is open: AI Home is the first tab (every agent, tab and skill). Click the AI Browser icon or "
-         "press ⌘⇧Y to chat beside any page, or type ai and a space in the address bar.\nPress Ctrl-C here to close it.")
-SETUP = """AI Browser needs its extension, once (a Finder window shows its folder):
+
+
+def _goto(folder: str, system: str | None) -> str:
+    return platforms.shortcut(f"press ⌘⇧G, paste {folder} and press Enter",
+                              f"click the address bar at the top of the folder window, paste {folder} and press Enter",
+                              system)
+
+
+def ready_text(system: str | None = None) -> str:
+    keys = platforms.shortcut("⌘⇧Y", "Ctrl+Shift+Y", system)  # the manifest maps both
+    return ("AI Browser is open: AI Home is the first tab (every agent, tab and skill). Click the AI Browser icon or "
+            f"press {keys} to chat beside any page, or type ai and a space in the address bar.\n"
+            "Press Ctrl-C here to close it.")
+
+
+def setup_text(folder: str, system: str | None = None) -> str:
+    manager = platforms.file_manager(system)
+    return f"""AI Browser needs its extension, once (a {manager} window shows its folder):
   1. In the chrome://extensions tab, turn on Developer mode (top right).
-  2. Drag the "extension" folder from Finder onto that page.
-     (Or click Load unpacked, press ⌘⇧G, paste {folder} and press Enter.)
+  2. Drag the "extension" folder from {manager} onto that page.
+     (Or click Load unpacked, {_goto(folder, system)}.)
   3. Pin the AI Browser icon from the puzzle-piece menu.
 Already listed there but switched off? Switch it on. If Chrome asks about the new tab page, choose Keep it.
 The setup tab says "All set" when it's done. Press Ctrl-C here to close AI Browser."""
-BRAVE = """The Brain watches your messages (Gmail, Slack, Asana…) in Brave, through a small extension. Once:
+
+
+def brave_text(folder: str, system: str | None = None) -> str:
+    return f"""The Brain watches your messages (Gmail, Slack, Asana…) in Brave, through a small extension. Once:
   1. In Brave, open brave://extensions and turn on Developer mode (top right).
   2. Drag the "watcher" folder onto that page.
-     (Or click Load unpacked, press ⌘⇧G, paste {folder} and press Enter.)
+     (Or click Load unpacked, {_goto(folder, system)}.)
   3. Click the watcher's icon to open the Brain, and switch on the sites to watch.
 It reads new messages in tabs you have open and never sends anything."""
+
+
 BROWSERS = ("brave", "app")
 SWITCH = """Agents browse in your {name}, but its remote-debugging switch is off, so nothing reaches it yet. Once:
   1. In {name}, open {inspect}.
@@ -206,14 +226,14 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
             await _open(app.ws_url, _setup_pages(url))
         if not installed:
             reveal(extension_path(folder))
-        out(READY if installed else SETUP.format(folder=extension_path(folder)))
+        out(ready_text() if installed else setup_text(extension_path(folder)))
         if brave is not None:
             if brave.state == "off":
                 out(SWITCH.format(name=brave.name, inspect=inspect_address(brave.folder)))
             else:
                 server.connect_brave()  # once, as the app starts: Brave asks "Allow remote debugging?"
         if not brain.store.watcher_seen:  # the Brain's watcher isn't in Brave yet: its steps, until it is
-            out(BRAVE.format(folder=server.watcher_folder))
+            out(brave_text(server.watcher_folder))
             if installed and not brain.store.watcher_prompted:  # one Finder window at a time, and only once
                 brain.store.set_watcher_prompted()
                 reveal(server.watcher_folder)

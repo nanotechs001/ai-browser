@@ -451,3 +451,17 @@ async def test_the_setup_steps_show_the_path_the_id_is_hashed_from(fake_claude, 
     assert extension_id_for(expected) == extension_id_for(folder)
     if os.name == "nt":
         assert expected == str(folder)  # the junction's path, as Chrome sees it, not the resolved one
+
+
+def test_the_terminal_steps_are_worded_for_each_computer():
+    from ai_browser.app.run import brave_text, ready_text, setup_text
+
+    folder, watcher = "C:\\Users\\me\\.ai-browser\\app\\extension", "C:\\Users\\me\\.ai-browser\\app\\watcher"
+    windows = [ready_text("win32"), setup_text(folder, "win32"), brave_text(watcher, "win32")]
+    assert "Ctrl+Shift+Y" in windows[0]
+    assert all("⌘" not in text and "Finder" not in text for text in windows)
+    assert "File Explorer" in windows[1] and "address bar" in windows[1] and folder in windows[1]
+    assert "address bar" in windows[2] and watcher in windows[2] and "brave://extensions" in windows[2]
+    mac = [ready_text("darwin"), setup_text("/x/extension", "darwin"), brave_text("/x/watcher", "darwin")]
+    assert "⌘⇧Y" in mac[0] and "Finder" in mac[1] and "⌘⇧G" in mac[1] and "/x/extension" in mac[1]
+    assert "⌘⇧G" in mac[2] and "/x/watcher" in mac[2]
