@@ -26,6 +26,14 @@ def item_row(raw_id, kind="needs_reply", summary="Maria asks to move the launch"
             "snippet": snippet, "kind": kind, "state": "open", "draft": "the secret draft", **extra}
 
 
+def footer(state="your_turn", **extra):
+    return agent_row("a1", "fix the footer", state=state, created=1.0, color="blue", **extra)
+
+
+def flights(state="your_turn", **extra):
+    return agent_row("a2", "check flights", state=state, created=2.0, color="green", **extra)
+
+
 def found(text, needle):
     return [index for index in range(len(text)) if text.startswith(needle, index)]
 
@@ -151,6 +159,49 @@ def test_talks_keep_six_exchanges_and_one_proposal_for_a_while():
     assert talks.take("k1", third.id) is third and talks.take("k1", third.id) is None  # it runs once
     now[0] += 15 * 60 + 1
     assert talks.history("k1") == []  # forgotten after 15 minutes without a turn
+
+
+def test_resolve_agent_reads_numbers_colours_and_back_references():  # Review Focus 5: speech's capitals and stops
+    from ai_browser.brain.talk import Pick, choices, label, resolve_agent, resolve_among, tab_hint
+
+    two = [footer(), flights()]
+    three = [footer(), flights(), agent_row("a3", "check the shop", color="cyan")]
+    for words in ("agent 2", "agent two", "Agent #2", "agent number 2", "Tell AGENT TWO, please.", "agent 2's tab"):
+        assert resolve_agent(words, two, picked="a1") == Pick("one", ("a2",)), words  # beats Claude's pick
+    for words in ("fix issue #2", "check that number 2 is in stock"):  # tasks are full of numbers
+        assert resolve_agent(words, two, picked="a1") == Pick("one", ("a1",)), words
+    greys = [footer(), agent_row("a7", "grey work", color="grey")]
+    assert resolve_agent("the grey one", greys) == Pick("one", ("a7",))
+    assert resolve_agent("the gray agent", greys) == Pick("one", ("a7",))
+    assert resolve_agent("tell the green one to stop", two, picked="a1") == Pick("one", ("a2",))
+    assert resolve_agent("the yellow station", two) == Pick("missing", (), "yellow agent")
+    blues = [footer(), flights(), agent_row("a8", "blue work", color="blue")]
+    assert resolve_agent("the blue agent", blues, picked="a2") == Pick("ask", ("a1", "a8"))
+    assert resolve_agent("agent 2 and agent 3", three) == Pick("ask", ("a2", "a3"))
+    assert resolve_agent("agent 2 and agent 3", two) == Pick("missing", (), "agent 3")
+    assert resolve_agent("agent 7", two, picked="a1") == Pick("missing", (), "agent 7")
+    assert resolve_agent("tell it to stop", two, last="a2") == Pick("one", ("a2",))
+    assert resolve_agent("tell it to stop", two, last="a9") == Pick("ask", ("a1", "a2"))  # a9 has closed
+    assert resolve_agent("check the cart", [flights()]) == Pick("one", ("a2",))  # one open: the card confirms it
+    assert resolve_agent("agent 2", []) == Pick("none") and resolve_agent("hello", []) == Pick("none")
+    assert resolve_agent("the footer agent", two) == Pick("ask", ("a1", "a2"))  # fuzzy names are Claude's job
+    for words in ("1", "#1", "number one, please", "One.", "the footer one", "agent 1"):
+        assert resolve_among(words, two, ("a1", "a2")) == Pick("one", ("a1",)), words
+    assert resolve_among("the flights one", two, ("a1", "a2")) == Pick("one", ("a2",))  # its "one" isn't the answer
+    assert resolve_among("footer or flights", two, ("a1", "a2")) == Pick("none")  # name words in two agents
+    assert resolve_among("nevermind, the footer is fine", two, ("a1", "a2")) == Pick("none")  # every name word counts
+    assert resolve_among("agent 7", two, ("a1", "a2")) == Pick("missing", (), "agent 7")
+    assert resolve_among("3", three, ("a1", "a2")) == Pick("one", ("a3",))  # an open agent the question didn't list
+    assert resolve_among("what's the weather?", two, ("a1", "a2")) == Pick("none")
+    assert label({"id": "a12", "name": "Fix the footer"}) == "12 · Fix the footer"
+    assert label({"id": "a3", "number": 7, "name": "x"}) == "7 · x"
+    assert choices(two) == "1 · fix the footer (blue), or 2 · check flights (green)"
+    many = [agent_row(f"a{n}", f"task {n}", color="blue") for n in range(1, 9)]
+    assert choices(many).startswith("3 · task 3 (blue), 4 · task 4 (blue)")  # the six newest
+    assert choices(many).endswith(", or 8 · task 8 (blue)")
+    for words in ("send this page to agent 1", "use my tab", "the page I’m on", "check the current tab"):
+        assert tab_hint(words), words
+    assert not tab_hint("send the shop page to agent 1") and not tab_hint("open a new tab")
 
 
 # ---- the Brain, with the fake claude -----------------------------------------------------------------------------

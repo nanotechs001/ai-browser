@@ -244,6 +244,167 @@ def secret_like(text) -> bool:
     return bool(_LONG_NUMBER.search(raw))
 
 
+# ---- which agent the user means: their own words first (Decision 4) ------------------------------------------------
+
+NUMBER_WORDS = {word: number for number, word in enumerate(
+    ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+     "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"), start=1)}
+COLOR_WORDS = {"blue": "blue", "green": "green", "cyan": "cyan", "pink": "pink", "yellow": "yellow", "red": "red",
+               "grey": "grey", "gray": "grey"}  # the agents' colours (app/agents.py COLORS), as people say them
+BACK_REFERENCES = ("it", "them", "that agent", "that one", "the same one", "the same agent")
+NOT_NAME_WORDS = frozenset({"agent", "station", "that", "this", "with", "from", "which", "about", "please", "thanks"})
+TAB_WORDS = ("this tab", "this page", "my tab", "my page", "that tab", "current tab", "open tab", "the page i'm on")
+CHOICES_LIMIT = 6  # agents a "which agent?" question lists: the newest
+_NUMBER = r"(\d+|" + "|".join(sorted(NUMBER_WORDS, key=len, reverse=True)) + r")"
+_AGENT_NUMBER = re.compile(r"\bagent\s*(?:number\s*|#\s*)?" + _NUMBER + r"\b")  # agent 2, agent #2, agent two
+_BARE_NUMBER = re.compile(r"(?:number\s+)?" + _NUMBER)  # 1, one, number one: only as the whole answer
+_COLOR = re.compile(r"\b(" + "|".join(COLOR_WORDS) + r")\s+(?:agent|one|station)\b")  # the blue one
+
+
+@dataclass(frozen=True)
+class Pick:
+    """Which agent the words mean: "one" (ids holds it), "ask" (ids are the ones to ask about), "missing" (`said` is
+    the reference that names no open agent, "agent 7"), or "none" (no agent is open, or nothing picks one)."""
+    outcome: str
+    ids: tuple[str, ...] = ()
+    said: str = ""
+
+
+def number_of(row) -> int:
+    """An agent's number: its row's `number`, else its id's digits (a test's rows have no number; a3 is 3)."""
+    row = row if isinstance(row, dict) else {}
+    number = row.get("number")
+    if isinstance(number, int) and not isinstance(number, bool):
+        return number
+    digits = re.sub(r"\D", "", str(row.get("id") or ""))
+    return int(digits) if digits else 0
+
+
+def label(row) -> str:
+    """'1 · Fix the footer': how every fixed line names an agent (from a row, a card's fields, or a new agent)."""
+    return f"{number_of(row)} · {_clip(row.get('name')) or 'an agent'}"
+
+
+def shown_rows(rows) -> list[dict]:
+    """The newest CHOICES_LIMIT agents, in number order: what a question lists."""
+    return sorted(rows, key=number_of)[-CHOICES_LIMIT:]
+
+
+def choices(rows) -> str:
+    """'1 · Fix the footer (blue), or 3 · Flights to Manila (cyan)'."""
+    parts = [f"{label(row)} ({_clip(row.get('color'))})" if row.get("color") else label(row)
+             for row in shown_rows(rows)]
+    if len(parts) < 2:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + ", or " + parts[-1]
+
+
+def _open_rows(rows) -> list[dict]:
+    return [row for row in rows or [] if isinstance(row, dict) and isinstance(row.get("id"), str)]
+
+
+def _lower(text) -> str:
+    return str(text or "").lower().replace("’", "'")
+
+
+def _number(token: str) -> int:
+    return int(token) if token.isdigit() else NUMBER_WORDS[token]
+
+
+def _numbers(words, bare: bool) -> list[int]:
+    """The agent numbers the words name: "agent 2" and the like; with `bare` (the Brain asked which agent), also a
+    number that is the whole answer ("1", "one", "#1", "number one")."""
+    found = [_number(match.group(1)) for match in _AGENT_NUMBER.finditer(_lower(words))]
+    if not found and bare:
+        whole = _BARE_NUMBER.fullmatch(_plain(words))
+        if whole:
+            found = [_number(whole.group(1))]
+    return list(dict.fromkeys(found))
+
+
+def _explicit(words, rows: list[dict], bare: bool = False) -> Pick | None:
+    """Decision 4, step 1: a number or a colour the user said, among the open agents; None when they said neither."""
+    numbers = _numbers(words, bare)
+    if numbers:
+        by_number = {number_of(row): row["id"] for row in rows}
+        named = [by_number[number] for number in numbers if number in by_number]
+        missing = [number for number in numbers if number not in by_number]
+        if len(named) >= 2:
+            return Pick("ask", tuple(named))
+        if named and not missing:
+            return Pick("one", (named[0],))
+        return Pick("missing", said=f"agent {missing[0]}")
+    colours = list(dict.fromkeys(match.group(1) for match in _COLOR.finditer(_lower(words))))
+    if colours:
+        wanted = {COLOR_WORDS[colour] for colour in colours}
+        named = [row["id"] for row in rows if row.get("color") in wanted]
+        missing = [colour for colour in colours if not any(row.get("color") == COLOR_WORDS[colour] for row in rows)]
+        if len(named) >= 2:  # colours repeat after seven agents
+            return Pick("ask", tuple(named))
+        if named and not missing:
+            return Pick("one", (named[0],))
+        return Pick("missing", said=f"{missing[0]} agent")
+    return None
+
+
+def explicit_pick(words, rows) -> Pick | None:
+    """Steps 0 and 1 only (for `open`, a view): None when no agent is open, or the words name none."""
+    listed = _open_rows(rows)
+    return _explicit(words, listed) if listed else None
+
+
+def _back_reference(words) -> bool:
+    padded = f" {_plain(words)} "
+    return any(f" {phrase} " in padded for phrase in BACK_REFERENCES)
+
+
+def resolve_agent(words, rows, picked=None, last=None) -> Pick:
+    """Which open agent the user means (Decision 4): no agent open; the user's number or colour; Claude's pick; "it"
+    for the last agent this talk dealt with; the only one open; else ask among them all."""
+    listed = _open_rows(rows)
+    if not listed:
+        return Pick("none")
+    explicit = _explicit(words, listed)
+    if explicit is not None:
+        return explicit
+    ids = [row["id"] for row in sorted(listed, key=number_of)]
+    if picked in ids:
+        return Pick("one", (picked,))
+    if last in ids and _back_reference(words):
+        return Pick("one", (last,))
+    if len(ids) == 1:
+        return Pick("one", (ids[0],))
+    return Pick("ask", tuple(ids))
+
+
+def _name_words(text) -> set[str]:
+    return {word for word in _plain(text).split() if len(word) >= 4 and word not in NOT_NAME_WORDS}
+
+
+def resolve_among(words, rows, candidates) -> Pick:
+    """The answer to "Which agent?", with no Claude call (Decision 5): a number or colour (a bare number too, as the
+    whole answer), else name words: every one of them in the name of one agent the question named, and none in
+    another's. "none" leaves the turn to Claude."""
+    listed = _open_rows(rows)
+    if not listed:
+        return Pick("none")
+    explicit = _explicit(words, listed, bare=True)
+    if explicit is not None:
+        return explicit
+    names = {row["id"]: _name_words(row.get("name")) for row in listed if row["id"] in candidates}
+    said = _name_words(words)  # all of them: one stray word ("nevermind, the footer is fine") picks nothing
+    holders = [agent for agent, found in names.items() if said and said <= found]
+    if len(holders) == 1 and not any(said & found for agent, found in names.items() if agent != holders[0]):
+        return Pick("one", (holders[0],))
+    return Pick("none")
+
+
+def tab_hint(words) -> bool:
+    """The words point at one of the user's tabs ("this page", "my tab"…): the card then says how to hand it over."""
+    padded = f" {_plain(words)} "
+    return any(f" {phrase} " in padded for phrase in TAB_WORDS)
+
+
 @dataclass
 class Proposal:
     id: str
