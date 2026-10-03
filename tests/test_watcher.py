@@ -66,8 +66,8 @@ async def watcher(fake_claude, tmp_path):
     script.write_text(json.dumps([{"result": "[]"}]), encoding="utf-8")
     base, _, stop_pages = testpages.serve_host()
     home = tmp_path / "home"
-    agents = AgentManager(home, claude=str(runner))
-    brain = BrainService(BrainStore(home), agents, claude=str(runner), batch_wait=0.2, reader_timeout=2)
+    agents = AgentManager(home, claude=runner)
+    brain = BrainService(BrainStore(home), agents, claude=runner, batch_wait=0.2, reader_timeout=2)
     server, folder = await start_server(home, agents, brain)
     app = launch_app_browser(tmp_path / "profile", folder, headless=True)
     server.allow_origin(f"chrome-extension://{app.extension_id}", watcher=True)
@@ -211,7 +211,7 @@ async def test_items_wait_while_the_app_is_off(watcher):
                "snippet: 'Price?'}); true")
     await asyncio.sleep(1.5)  # read while the app is off: kept by the watcher
     await watcher.cdp.send("Target.closeTarget", {"targetId": target})  # and the page is gone before it is back
-    brain = BrainService(BrainStore(watcher.home), watcher.server.agents, claude=str(watcher.runner), batch_wait=0.2,
+    brain = BrainService(BrainStore(watcher.home), watcher.server.agents, claude=watcher.runner, batch_wait=0.2,
                          reader_timeout=2)
     server, _ = await start_server(watcher.home, watcher.server.agents, brain)
     server.allow_origin(f"chrome-extension://{watcher.app.extension_id}", watcher=True)

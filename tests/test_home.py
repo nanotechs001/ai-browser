@@ -58,12 +58,12 @@ async def stack(fake_claude, tmp_path):
     runner, log, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
     home = tmp_path / "home"
-    agents = AgentManager(home, claude=str(runner))
+    agents = AgentManager(home, claude=runner)
     from ai_browser.brain.skillwriter import SkillWriter
     from ai_browser.brain.tools import ToolsConfig
     from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
 
-    brain = BrainService(BrainStore(home), agents, claude=str(runner))
+    brain = BrainService(BrainStore(home), agents, claude=runner)
     from ai_browser.hearing.service import HearingService
     from fake_engine import FakeEngine, tiny_store
 
@@ -71,7 +71,7 @@ async def stack(fake_claude, tmp_path):
     hearing = HearingService(tiny_store(home / "models"), engine)  # talking is ready: the tiny model is in place
     workflows = WorkflowStore(home)
     tools = ToolsConfig(home, claude_home=tmp_path / "user")  # the tests that use it write a configuration there
-    skills = SkillWriter(tmp_path / "user" / ".claude" / "skills", claude=str(runner), cwd=tmp_path / "calls")
+    skills = SkillWriter(tmp_path / "user" / ".claude" / "skills", claude=runner, cwd=tmp_path / "calls")
     server = AppServer(home, agents, brain=brain, workflows=workflows, runner=WorkflowRunner(workflows, agents),
                        tools=tools, skill_writer=skills, hearing=hearing)
     url = await server.start()
@@ -180,7 +180,7 @@ async def test_pages_reconnect_after_the_app_restarts(home):
     js, _, stack = home
     await stack["server"].stop()
     assert await until(js, "document.getElementById('status').dataset.state !== 'connected'")
-    agents = AgentManager(stack["home"], claude=str(stack["runner"]))
+    agents = AgentManager(stack["home"], claude=stack["runner"])
     server = AppServer(stack["home"], agents)
     url = await server.start()
     server.allow_origin(f"chrome-extension://{stack['app'].extension_id}")

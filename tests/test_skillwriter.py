@@ -28,7 +28,7 @@ def writer(fake_claude, tmp_path, answers, skills_dir=None):
     runner, log, script = fake_claude
     script.write_text(json.dumps(answers), encoding="utf-8")
     saved = []
-    skills = SkillWriter(skills_dir or tmp_path / "skills", claude=str(runner), cwd=tmp_path / "calls",
+    skills = SkillWriter(skills_dir or tmp_path / "skills", claude=runner, cwd=tmp_path / "calls",
                          on_saved=saved.append)
     return skills, saved, log
 

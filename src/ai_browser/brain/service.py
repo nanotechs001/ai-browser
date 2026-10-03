@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
@@ -124,7 +124,7 @@ def _verdicts(text: str, ids: set[str], workflows: frozenset[str] = frozenset())
 
 
 class BrainService:
-    def __init__(self, store: BrainStore, agents=None, ask=ask_claude, claude: str | None = None,
+    def __init__(self, store: BrainStore, agents=None, ask=ask_claude, claude: str | Sequence[str] | None = None,
                  batch_wait: float = 3.0, batch_max: int = 20, draft_model: str = "sonnet",
                  agent_model: str = "sonnet", reader_timeout: float = 120):
         self.store = store

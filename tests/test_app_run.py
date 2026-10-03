@@ -49,7 +49,7 @@ async def test_run_app_opens_the_browser_and_ends_when_it_closes(fake_claude, tm
         app.process.kill()  # the user closes AI Browser (here, abruptly)
 
     started = time.monotonic()
-    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=str(runner), ready=ready,
+    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
                                           out=lambda *args: None), 30)
     assert code == 0 and time.monotonic() - started < 20
     assert seen["health"] == {"ok": True} and seen["config"]["server"] == seen["url"]
@@ -70,7 +70,7 @@ async def test_run_app_refuses_a_profile_already_in_use(fake_claude, tmp_path):
                                prepare_extension(tmp_path / "other", "http://127.0.0.1:1", "t"), headless=True)
     lines = []
     try:
-        code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=str(runner),
+        code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner,
                                               out=lines.append), 30)
     finally:
         other.close()
@@ -89,11 +89,11 @@ async def test_a_second_run_changes_nothing_for_the_running_one(fake_claude, tmp
 
     async def ready(url, app):
         before, lines = config.read_text(encoding="utf-8"), []
-        seen["code"] = await run_app(tmp_path / "home", headless=True, claude=str(runner), out=lines.append)
+        seen["code"] = await run_app(tmp_path / "home", headless=True, claude=runner, out=lines.append)
         seen["lines"], seen["unchanged"] = lines, config.read_text(encoding="utf-8") == before
         stop.set()
 
-    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=str(runner), ready=ready,
+    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
                                           stop=stop, out=lambda *args: None), 60)
     assert code == 0 and seen["code"] == 1
     assert any("already running" in line for line in seen["lines"]) and seen["unchanged"]
@@ -117,7 +117,7 @@ async def test_run_app_ends_when_the_last_window_closes(fake_claude, tmp_path):
                 await cdp.send("Target.closeTarget", {"targetId": info["targetId"]})
         await cdp.close()
 
-    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=str(runner), ready=ready,
+    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
                                           out=lambda *args: None), 30)
     assert code == 0 and seen["app"].closed  # the command ended and quit AI Browser
 
@@ -138,7 +138,7 @@ async def test_first_start_opens_the_setup_steps(fake_claude, tmp_path, monkeypa
 
     shown = []
     monkeypatch.setattr(run, "reveal", shown.append)  # on a Mac: a Finder window with the folder selected
-    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=str(runner),
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=runner,
                                               ready=ready, stop=stop, out=lines.append), 60)
     assert shown == [str((tmp_path / "home" / "app" / "extension").resolve())]
     printed = "\n".join(lines)
@@ -169,7 +169,7 @@ async def test_a_stale_install_record_still_gets_the_setup_steps(fake_claude, tm
         seen["pages"] = await page_urls(app)
         stop.set()
 
-    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=str(runner),
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=runner,
                                               ready=ready, stop=stop, out=lines.append), 60)
     assert code == 0 and "Developer mode" in "\n".join(lines)
     assert any(url.endswith("/setup") for url in seen["pages"])
@@ -210,7 +210,7 @@ async def test_first_start_also_sets_up_the_watcher(fake_claude, tmp_path, monke
         stop.set()
 
     home = tmp_path / "home"
-    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=str(runner), ready=ready, stop=stop,
+    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready, stop=stop,
                                               out=lines.append), 60)
     watcher = str((home / "app" / "watcher").resolve())
     printed = "\n".join(lines)
@@ -222,7 +222,7 @@ async def test_first_start_also_sets_up_the_watcher(fake_claude, tmp_path, monke
     async def ready_again(url, app):
         again.set()
 
-    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=str(runner), ready=ready_again, stop=again,
+    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready_again, stop=again,
                                               out=lines.append), 60)
     assert code == 0 and shown == [watcher]  # the Finder window, once; the printed steps until it is set up
 
@@ -252,7 +252,7 @@ async def test_the_brain_survives_a_restart(fake_claude, tmp_path):
                     seen["snapshot"] = message
         app.process.kill()
 
-    code = await asyncio.wait_for(run_app(home, headless=True, claude=str(runner), ready=ready,
+    code = await asyncio.wait_for(run_app(home, headless=True, claude=runner, ready=ready,
                                           out=lambda *args: None), 60)
     assert code == 0 and [item["id"] for item in seen["snapshot"]["items"]] == ["gmail:t1"]
 
@@ -291,7 +291,7 @@ async def test_scheduled_workflows_tick_while_the_app_runs(fake_claude, tmp_path
         seen["users"] = users()
         app.process.kill()
 
-    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=str(runner), ready=ready,
+    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready,
                                               out=lambda *args: None), 60)
     assert code == 0 and seen["users"][0]["message"]["content"].startswith("Check the sites and tell me what changed")
 
@@ -350,7 +350,7 @@ async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_
         seen["env"] = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]["ai-browser"]["env"]
         app.process.kill()
 
-    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=str(runner), ready=ready,
+    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready,
                                               out=lines.append, browser="brave"), 60)
     printed = "\n".join(lines)
     assert code == 0 and seen["mode"] in (0o600, None)
@@ -381,7 +381,7 @@ async def test_first_start_in_brave_mode_names_the_extension_folder(fake_claude,
     monkeypatch.setenv("AIB_CHROME_DIR", str(brave))
     lines, shown, stop = [], [], asyncio.Event()
     monkeypatch.setattr(run, "reveal", shown.append)
-    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=str(runner),
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=runner,
                                               ready=lambda url, app: stop.set(), stop=stop, out=lines.append,
                                               browser="brave"), 60)
     extension = str((tmp_path / "home" / "app" / "extension").resolve())
@@ -409,7 +409,7 @@ async def test_the_app_can_hear_with_its_models_folder(fake_claude, tmp_path):
             seen["status"] = message
         app.process.kill()  # the user closes AI Browser
 
-    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=str(runner), ready=ready,
+    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
                                           out=lambda *args: None), 30)
     status = seen["status"]
     assert code == 0 and status["folder"] == str(tmp_path / "home" / "models" / "faster-whisper-base.en")
@@ -444,7 +444,7 @@ async def test_the_setup_steps_show_the_path_the_id_is_hashed_from(fake_claude, 
         stop.set()
 
     monkeypatch.setattr(run, "reveal", shown.append)
-    code = await asyncio.wait_for(run.run_app(home, headless=True, pipe_install=False, claude=str(runner),
+    code = await asyncio.wait_for(run.run_app(home, headless=True, pipe_install=False, claude=runner,
                                               ready=ready, stop=stop, out=lines.append), 60)
     expected = extension_path(folder)
     assert code == 0 and shown == [expected] and expected in "\n".join(lines)

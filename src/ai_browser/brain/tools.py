@@ -12,9 +12,10 @@ import contextlib
 import json
 import os
 import re
-import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
+from ..claudecli import claude_argv
 from ..syncdir import write_atomic
 
 CONNECTOR = "claude_ai_"  # how Claude Code names a claude.ai connector's tools: mcp__claude_ai_<Name>__<tool>
@@ -138,18 +139,18 @@ class ToolsConfig:
             self._connectors = found
             self._save()
 
-    async def probe(self, claude: str | None = None, timeout: float = 30) -> bool:
+    async def probe(self, claude: str | Sequence[str] | None = None, timeout: float = 30) -> bool:
         """Start Claude Code the way a connector-using agent does, read which servers and tools it loaded, and end
         it before it answers."""
-        claude = claude or shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
         folder = self.path.parent / "app" / "probe"
         folder.mkdir(parents=True, exist_ok=True)
         env = {key: value for key, value in os.environ.items()
                if key not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
         try:
             process = await asyncio.create_subprocess_exec(
-                claude, "-p", PROBE_PROMPT, "--model", "haiku", "--tools", "", "--setting-sources", "local",
-                "--no-session-persistence", "--output-format", "stream-json", "--verbose", cwd=folder, env=env, stdin=asyncio.subprocess.DEVNULL,
+                *claude_argv(claude), "-p", PROBE_PROMPT, "--model", "haiku", "--tools", "", "--setting-sources",
+                "local", "--no-session-persistence", "--output-format", "stream-json", "--verbose", cwd=folder, env=env,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, limit=32 * 1024 * 1024)
         except OSError:
             return False

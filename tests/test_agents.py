@@ -37,7 +37,7 @@ async def test_three_agents_work_at_once_and_a_fourth_waits(fake_claude, tmp_pat
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(SLOW), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner), max_working=3)
+    manager = AgentManager(tmp_path / "home", claude=runner, max_working=3)
     try:
         for n in range(4):
             await manager.create(f"task {n}")
@@ -55,7 +55,7 @@ async def test_stop_leaves_the_others_working(fake_claude, tmp_path):
 
     runner, _, script = fake_claude
     script.write_text(json.dumps([EVENTS[0], EVENTS[1], {"sleep": 3}, *EVENTS[2:]]), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    manager = AgentManager(tmp_path / "home", claude=runner)
     try:
         first = await manager.create("one")
         await manager.create("two")
@@ -75,7 +75,7 @@ async def test_a_crashed_agent_leaves_the_others_working(fake_claude, tmp_path):
 
     runner, _, script = fake_claude
     script.write_text(json.dumps({"crash": [EVENTS[0], {"exit": 3}], "default": SLOW}), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    manager = AgentManager(tmp_path / "home", claude=runner)
     try:
         await manager.create("please crash now")
         await manager.create("all good")
@@ -97,7 +97,7 @@ async def test_close_ends_the_agent_and_closes_only_its_own_tabs(fake_claude, tm
     async def close_tabs(targets):
         closed.append(list(targets))
 
-    manager = AgentManager(tmp_path / "home", claude=str(runner), close_tabs=close_tabs)
+    manager = AgentManager(tmp_path / "home", claude=runner, close_tabs=close_tabs)
     queue = manager.subscribe()
     try:
         agent = await manager.create("one")
@@ -117,7 +117,7 @@ async def test_a_message_to_a_busy_agent_waits_for_its_turn(fake_claude, tmp_pat
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(SLOW), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    manager = AgentManager(tmp_path / "home", claude=runner)
     queue = manager.subscribe()
     try:
         await manager.create("one")
@@ -137,7 +137,7 @@ async def test_names_colours_skills_and_models(fake_claude, tmp_path):
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    manager = AgentManager(tmp_path / "home", claude=runner)
     task = "please check every page of the shop for broken links and layout problems"
     try:
         first = await manager.create(task)
@@ -180,7 +180,7 @@ async def test_a_bot_check_makes_the_agent_need_you_until_continue(fake_claude, 
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(SLOW), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    manager = AgentManager(tmp_path / "home", claude=runner)
     feed = manager.subscribe()
     try:
         agent = await manager.create("Flights to Manila")
@@ -212,7 +212,7 @@ async def test_a_tool_answered_during_a_check_keeps_the_agent_needing_you(fake_c
     script.write_text(json.dumps([EVENTS[0], {"ask_permission": {"tool_name": "mcp__ai-browser__open",
                                                                  "input": {"url": "https://example.com"}}},
                                   {"sleep": 1}, EVENTS[-1]]), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    manager = AgentManager(tmp_path / "home", claude=runner)
     try:
         agent = await manager.create("look up flights")
         assert await settle(manager, lambda _: agent.permission is not None)
@@ -237,7 +237,7 @@ async def test_skip_closes_only_the_agents_own_tab_and_tells_it_so(fake_claude, 
     async def close_tabs(targets):
         closed.append(list(targets))
 
-    manager = AgentManager(tmp_path / "home", claude=str(runner), close_tabs=close_tabs)
+    manager = AgentManager(tmp_path / "home", claude=runner, close_tabs=close_tabs)
     try:
         own, mine, sandboxed = [await manager.create(name) for name in ("own tab", "the user's tab", "qa sandbox")]
         assert await settle(manager, lambda agents: all(a["state"] == "your_turn" for a in agents))
@@ -263,7 +263,7 @@ async def test_the_check_clears_when_the_engine_says_so_or_on_stop(fake_claude, 
 
     runner, _, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    manager = AgentManager(tmp_path / "home", claude=runner)
     try:
         agent = await manager.create("one")
         assert await settle(manager, lambda agents: state(agents, "a1") == "your_turn")
@@ -286,7 +286,7 @@ async def test_continue_pressed_twice_sends_one_message(fake_claude, tmp_path):
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    manager = AgentManager(tmp_path / "home", claude=runner)
     try:
         agent = await manager.create("one")
         assert await settle(manager, lambda agents: state(agents, "a1") == "your_turn")
@@ -304,7 +304,7 @@ async def test_hand_tab_records_it_and_sends_a_labelled_note(fake_claude, tmp_pa
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner))
+    manager = AgentManager(tmp_path / "home", claude=runner)
     try:
         agent = await manager.create("Fix the footer")
         assert await settle(manager, lambda agents: state(agents, "a1") == "your_turn")
@@ -329,7 +329,7 @@ async def test_take_back_and_close_let_go_of_handed_tabs(fake_claude, tmp_path):
     async def close_tabs(targets):
         closed.append(list(targets))
 
-    manager = AgentManager(tmp_path / "home", claude=str(runner), close_tabs=close_tabs)
+    manager = AgentManager(tmp_path / "home", claude=runner, close_tabs=close_tabs)
     manager.ungroup = ungrouped.append
     try:
         agent = await manager.create("one")
@@ -350,7 +350,7 @@ async def test_agents_never_wear_the_brains_or_claude_codes_colours(fake_claude,
 
     runner, _, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
-    manager = AgentManager(tmp_path / "home", claude=str(runner), max_working=1)
+    manager = AgentManager(tmp_path / "home", claude=runner, max_working=1)
     turns = []
     manager.on_turn = lambda agent: turns.append(agent.id)
     try:

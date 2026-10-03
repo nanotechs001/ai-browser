@@ -11,7 +11,7 @@ import contextlib
 import re
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
@@ -83,8 +83,8 @@ class Agent:
 
 
 class AgentManager:
-    def __init__(self, home: Path, claude: str | None = None, max_working: int = 3, env: dict[str, str] | None = None,
-                 close_tabs: Callable[[list[str]], Awaitable[None]] | None = None,
+    def __init__(self, home: Path, claude: str | Sequence[str] | None = None, max_working: int = 3,
+                 env: dict[str, str] | None = None, close_tabs: Callable[[list[str]], Awaitable[None]] | None = None,
                  on_action: Callable[[Agent], None] | None = None):
         self.home = Path(home)
         self.claude = claude

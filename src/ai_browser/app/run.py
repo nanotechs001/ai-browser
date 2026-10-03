@@ -11,7 +11,7 @@ import contextlib
 import inspect
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .. import platforms
@@ -96,10 +96,10 @@ def write_link(home: Path, url: str, token: str) -> Path:
     return path
 
 
-async def run_app(home: Path, model: str = "sonnet", headless: bool = False, claude: str | None = None,
-                  ready: Callable | None = None, stop: asyncio.Event | None = None,
-                  out: Callable[[str], None] = print, pipe_install: bool | None = None,
-                  browser: str | None = None) -> int:
+async def run_app(home: Path, model: str = "sonnet", headless: bool = False,
+                  claude: str | Sequence[str] | None = None, ready: Callable | None = None,
+                  stop: asyncio.Event | None = None, out: Callable[[str], None] = print,
+                  pipe_install: bool | None = None, browser: str | None = None) -> int:
     """0 once AI Browser is closed (or `stop` is set); 1 with a message when it can't start."""
     home = Path(home)
     try:
@@ -155,7 +155,7 @@ def _lock(home: Path):
     return platforms.lock_file(folder / "lock")
 
 
-async def _run(home: Path, model: str, headless: bool, claude: str | None, ready: Callable | None,
+async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[str] | None, ready: Callable | None,
                stop: asyncio.Event | None, out: Callable[[str], None], pipe_install: bool | None,
                where: str) -> int:
     agents = AgentManager(home, claude=claude, max_working=_max_agents())

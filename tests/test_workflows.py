@@ -152,7 +152,7 @@ async def test_a_message_workflow_is_offered_or_runs_right_away(fake_claude, tmp
     workflows.save({"name": "Site fix", "instructions": "Fix what the task asks on the website", "trigger": "message",
                     "site": "asana", "when": "a task tagged website", "run": "ask"})
     agents = FakeAgents()
-    brain = BrainService(BrainStore(tmp_path / "home"), agents, claude=str(runner_bin), batch_wait=0.1)
+    brain = BrainService(BrainStore(tmp_path / "home"), agents, claude=runner_bin, batch_wait=0.1)
     brain.workflows, brain.runner = workflows, WorkflowRunner(workflows, agents)
     sent = []
     brain.send_watcher = lambda message: sent.append(message) or True
@@ -192,7 +192,7 @@ async def test_run_by_hand_over_the_socket(fake_claude, tmp_path):
     runner_bin, log, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
     home = tmp_path / "home"
-    agents = AgentManager(home, claude=str(runner_bin))
+    agents = AgentManager(home, claude=runner_bin)
     workflows = WorkflowStore(home)
     server = AppServer(home, agents, workflows=workflows, runner=WorkflowRunner(workflows, agents))
     url = await server.start()
@@ -240,7 +240,7 @@ async def test_a_workflow_loads_its_skills_and_only_its_tools(fake_claude, tmp_p
     tools = ToolsConfig(home, claude_home=user_config(tmp_path))
     tools.set_enabled("figma", True)
     tools.set_enabled("clickup", True)
-    agents = AgentManager(home, claude=str(runner_bin))
+    agents = AgentManager(home, claude=runner_bin)
     agents.tools = tools
     store = WorkflowStore(home)
     store.save({**FOOTER, "trigger": "manual", "tools": ["figma"]})

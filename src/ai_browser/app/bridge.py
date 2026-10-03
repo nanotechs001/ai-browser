@@ -11,13 +11,13 @@ import contextlib
 import json
 import os
 import re
-import shutil
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from ..brain.tools import ToolsConfig, server_of
+from ..claudecli import ClaudeNotUsable, claude_argv
 from ..syncdir import write_atomic
 
 DENIED = "The user said no"
@@ -93,7 +93,7 @@ def _text(content) -> str:
 
 
 class ClaudeBridge:
-    def __init__(self, home: Path, model: str = "sonnet", claude: str | None = None,
+    def __init__(self, home: Path, model: str = "sonnet", claude: str | Sequence[str] | None = None,
                  env: dict[str, str] | None = None, agent_id: str | None = None, tools: ToolsConfig | None = None,
                  servers: list[str] | None = None,
                  on_permission: Callable[[dict], Awaitable[str]] | None = None):
@@ -106,7 +106,7 @@ class ClaudeBridge:
         self.folder = self.home / "app" / "agents" / agent_id if agent_id else self.home / "app"  # its settings, cwd
         self.loaded_skills: set[str] = set()  # skills Claude loaded in this conversation
         self.model = model  # a change applies from the next message, in the same process (set_model)
-        self.claude = claude or shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
+        self.claude = claude  # resolved when a process starts (claude_argv): a list too, such as the tests' fake
         self.env = dict(env or {})  # extra settings for the ai-browser MCP server
         self.session_id: str | None = None
         self.busy = False
@@ -137,6 +137,9 @@ class ClaudeBridge:
             if self._process is None:
                 try:
                     await self._start()
+                except ClaudeNotUsable as exc:  # its message is the whole explanation
+                    yield {"type": "error", "text": str(exc)}
+                    return
                 except OSError as exc:
                     yield {"type": "error", "text": f"Claude Code isn't available ({exc.strerror or exc}): install "
                                                     "Claude Code, sign in once with `claude`, then try again"}
@@ -301,6 +304,7 @@ class ClaudeBridge:
         return path
 
     def _command(self) -> list[str]:
+        argv = claude_argv(self.claude)  # ClaudeNotUsable for an npm claude.cmd
         allowed, blocked = ["mcp__ai-browser__*"], ["mcp__ai-browser__sandbox_start"]
         strict, asking = ["--strict-mcp-config"], ["--permission-mode", "dontAsk"]
         if self.tools is not None:  # the user's tools: allowed ones pass, the rest are asked for
@@ -311,7 +315,7 @@ class ClaudeBridge:
                 strict = []
                 blocked += [f"mcp__{name}__*" for name in sorted(connectors - servers)]
             asking = ["--permission-prompt-tool", "stdio"]
-        command = [self.claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        command = [*argv, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                    "--include-partial-messages", "--model", self.model, "--tools", "", *strict,
                    "--mcp-config", str(self._mcp_config()), "--allowedTools", ",".join(allowed),
                    "--disallowedTools", ",".join(blocked), *asking, "--setting-sources", "local",

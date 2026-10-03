@@ -12,7 +12,7 @@ import difflib
 import json
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .. import platforms
@@ -68,8 +68,8 @@ def _quoted(text: str) -> str:
 
 
 class SkillWriter:
-    def __init__(self, skills_dir: Path, ask=ask_claude, claude: str | None = None, cwd: Path | None = None,
-                 on_saved: Callable[[str], None] | None = None):
+    def __init__(self, skills_dir: Path, ask=ask_claude, claude: str | Sequence[str] | None = None,
+                 cwd: Path | None = None, on_saved: Callable[[str], None] | None = None):
         self.skills_dir = Path(skills_dir)
         self.ask = ask
         self.claude = claude

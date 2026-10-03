@@ -29,7 +29,7 @@ async def started(fake_claude, tmp_path, events, **options):
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(events), encoding="utf-8")
-    server = AppServer(tmp_path / "home", AgentManager(tmp_path / "home", claude=str(runner)), **options)
+    server = AppServer(tmp_path / "home", AgentManager(tmp_path / "home", claude=runner), **options)
     url = await server.start()
     server.allow_origin(ORIGIN)
     return server, url
@@ -260,8 +260,8 @@ async def with_brain(fake_claude, tmp_path, answers):
     runner, log, script = fake_claude
     script.write_text(json.dumps(answers), encoding="utf-8")
     home = tmp_path / "home"
-    agents = AgentManager(home, claude=str(runner))
-    brain = BrainService(BrainStore(home), agents, claude=str(runner), batch_wait=0.1)
+    agents = AgentManager(home, claude=runner)
+    brain = BrainService(BrainStore(home), agents, claude=runner, batch_wait=0.1)
     server = AppServer(home, agents, brain=brain)
     url = await server.start()
     server.allow_origin(ORIGIN)
@@ -886,10 +886,10 @@ async def with_hearing(fake_claude, tmp_path, script, present=True, brain=True, 
     runner, log, script_file = fake_claude
     script_file.write_text(json.dumps(script), encoding="utf-8")
     home = tmp_path / "home"
-    agents = AgentManager(home, claude=str(runner))
+    agents = AgentManager(home, claude=runner)
     fake = FakeEngine(**engine)
     server = AppServer(home, agents,
-                       brain=BrainService(BrainStore(home), agents, claude=str(runner)) if brain else None,
+                       brain=BrainService(BrainStore(home), agents, claude=runner) if brain else None,
                        hearing=HearingService(tiny_store(home / "models", present=present), fake) if hearing else None)
     url = await server.start()
     server.allow_origin(ORIGIN)
@@ -1161,7 +1161,7 @@ async def test_a_wrong_extension_id_is_reported_not_allowed(fake_claude, tmp_pat
     from ai_browser.app.server import AppServer
 
     runner, _, _ = fake_claude
-    server = AppServer(tmp_path / "home", AgentManager(tmp_path / "home", claude=str(runner)))
+    server = AppServer(tmp_path / "home", AgentManager(tmp_path / "home", claude=runner))
     url = await server.start()
     lines = []
     server.out = lines.append

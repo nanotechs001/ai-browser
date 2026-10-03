@@ -47,7 +47,7 @@ def brain_for(fake_claude, tmp_path, answers, **options):
     runner, log, script = fake_claude
     script.write_text(json.dumps(answers), encoding="utf-8")
     sent, shown = [], []
-    brain = BrainService(BrainStore(tmp_path / "home"), claude=str(runner), batch_wait=0.1, **options)
+    brain = BrainService(BrainStore(tmp_path / "home"), claude=runner, batch_wait=0.1, **options)
     brain.send_watcher = lambda message: sent.append(message) or True
     brain.broadcast = shown.append
     assert brain.set_watch({"site": "gmail", "enabled": True, "url_match": "https://mail.google.com/*"}) == ""

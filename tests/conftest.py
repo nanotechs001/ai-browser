@@ -132,16 +132,13 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture
 def fake_claude(tmp_path, monkeypatch):
-    """A fake `claude` executable: (runner, log, script). Write the reply events to `script` as a JSON list."""
+    """The fake `claude`: (runner, log, script). runner is an argv prefix, [python, fake_claude.py], which every
+    `claude` parameter accepts, the same on every OS. Write the reply events to `script` as a JSON list."""
     import sys
-    from pathlib import Path
 
     script, log = tmp_path / "fake-claude-script.json", tmp_path / "fake-claude.log"
     script.write_text("[]", encoding="utf-8")
-    runner = tmp_path / "claude"
-    runner.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{Path(__file__).with_name("fake_claude.py")}" "$@"\n',
-                      encoding="utf-8")
-    runner.chmod(0o755)
+    runner = [sys.executable, str(Path(__file__).with_name("fake_claude.py"))]
     monkeypatch.setenv("FAKE_CLAUDE_SCRIPT", str(script))
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
     return runner, log, script

@@ -56,7 +56,7 @@ def manager(fake_claude, tmp_path, script):
     script_file.write_text(json.dumps(script), encoding="utf-8")
     home = tmp_path / "home"
     tools = ToolsConfig(home, claude_home=user_config(tmp_path))
-    agents = AgentManager(home, claude=str(runner))
+    agents = AgentManager(home, claude=runner)
     agents.tools = tools
     return agents, tools, log
 
@@ -246,7 +246,7 @@ async def test_the_probe_finds_the_connectors_and_their_tools(fake_claude, tmp_p
                       encoding="utf-8")  # it would go on answering: the probe doesn't wait for that
     tools = ToolsConfig(tmp_path / "home", claude_home=tmp_path / "nobody")
     started = asyncio.get_running_loop().time()
-    await tools.probe(str(runner))
+    await tools.probe(runner)
     assert asyncio.get_running_loop().time() - started < 10
     connectors = {server["name"]: server for server in tools.servers() if server["source"] == "connector"}
     assert set(connectors) == {"claude_ai_ClickUp", "claude_ai_Asana"}

@@ -11,9 +11,11 @@ import asyncio
 import contextlib
 import json
 import os
-import shutil
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from ..claudecli import ClaudeNotUsable, claude_argv
 
 NO_SERVERS = json.dumps({"mcpServers": {}})
 
@@ -25,17 +27,16 @@ class OneShot:
     error: str = ""
 
 
-def command(claude: str, model: str) -> list[str]:
-    return [claude, "-p", "--model", model, "--tools", "", "--strict-mcp-config", "--mcp-config", NO_SERVERS,
-            "--setting-sources", "local", "--no-session-persistence", "--output-format", "json"]
+def command(claude: str | Sequence[str] | None, model: str) -> list[str]:
+    return [*claude_argv(claude), "-p", "--model", model, "--tools", "", "--strict-mcp-config", "--mcp-config",
+            NO_SERVERS, "--setting-sources", "local", "--no-session-persistence", "--output-format", "json"]
 
 
-async def ask_claude(prompt: str, model: str = "haiku", claude: str | None = None, cwd: Path | None = None,
-                     timeout: float = 120, think: bool = False) -> OneShot:
+async def ask_claude(prompt: str, model: str = "haiku", claude: str | Sequence[str] | None = None,
+                     cwd: Path | None = None, timeout: float = 120, think: bool = False) -> OneShot:
     """Claude's answer to `prompt`, or a plain error (and empty text) when Claude Code can't give one. Quick work
     (sorting, a reply) goes without extended thinking: measured, it made sorting four emails take 10-28 s instead of
     5 s."""
-    claude = claude or shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
     folder = Path(cwd) if cwd is not None else Path.home() / ".ai-browser" / "brain" / "calls"
     folder.mkdir(parents=True, exist_ok=True)
     env = {key: value for key, value in os.environ.items()  # the user's own login, never API credentials
@@ -46,6 +47,8 @@ async def ask_claude(prompt: str, model: str = "haiku", claude: str | None = Non
         process = await asyncio.create_subprocess_exec(
             *command(claude, model), cwd=folder, env=env, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    except ClaudeNotUsable as exc:
+        return OneShot(error=str(exc))
     except OSError as exc:
         return OneShot(error=f"Claude Code isn't available ({exc.strerror or exc}): install Claude Code and sign in "
                              "once with `claude`")

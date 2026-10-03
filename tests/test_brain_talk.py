@@ -200,7 +200,7 @@ def brain_for(fake_claude, tmp_path, *answers, agents=None):
     script.write_text(json.dumps(talk_script(*answers)), encoding="utf-8")
     sent, shown = [], []
     brain = BrainService(BrainStore(tmp_path / "home"), agents if agents is not None else Recorder(),
-                         claude=str(runner))
+                         claude=runner)
     brain.send_watcher = lambda message: sent.append(message) or True
     brain.broadcast = shown.append
     return brain, sent, shown, log
