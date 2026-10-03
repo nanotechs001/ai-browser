@@ -12,10 +12,10 @@ def make_skill(root: Path, folder: str, name: str | None = None, desc: str = "",
     d = root / folder
     d.mkdir(parents=True)
     head = f"---\nname: {name or folder}\ndescription: {desc}\n---\n" if frontmatter else "---\n: [broken\n---\n"
-    (d / "SKILL.md").write_text(head + body)
+    (d / "SKILL.md").write_text(head + body, encoding="utf-8")
     if scripts:
         (d / "scripts").mkdir()
-        (d / "scripts" / "run.py").write_text("print('hi')")
+        (d / "scripts" / "run.py").write_text("print('hi')", encoding="utf-8")
     return d
 
 
@@ -37,9 +37,9 @@ def env(tmp_path):
         "ecc@ecc": [{"installPath": str(ecc)}],
         "superpowers@superpowers-marketplace": [{"installPath": str(sp)}],
         "off@x": [{"installPath": str(off)}],
-    }}))
+    }}), encoding="utf-8")
     (claude / "settings.json").write_text(json.dumps({"enabledPlugins": {
-        "ecc@ecc": True, "superpowers@superpowers-marketplace": True, "off@x": False}}))
+        "ecc@ecc": True, "superpowers@superpowers-marketplace": True, "off@x": False}}), encoding="utf-8")
     app = tmp_path / "AppSupport"
     old = app / "local-agent-mode-sessions/skills-plugin/a/old/skills"
     make_skill(old, "docx", desc="OLD")

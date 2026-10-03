@@ -12,7 +12,7 @@ def test_record_writes_one_json_line_per_call(tmp_path):
     log = TaskLog(tmp_path, "t1")
     log.record("act", {"steps": ["click e1"]}, 42, "ok", "done")
     log.record("open", {"url": "http://x"}, 7, "error", "boom")
-    lines = (tmp_path / "t1" / "log.jsonl").read_text().splitlines()
+    lines = (tmp_path / "t1" / "log.jsonl").read_text(encoding="utf-8").splitlines()
     first = json.loads(lines[0])
     assert (first["tool"], first["args"], first["ms"], first["outcome"], first["result"]) == (
         "act", {"steps": ["click e1"]}, 42, "ok", "done")
@@ -23,7 +23,7 @@ def test_record_writes_one_json_line_per_call(tmp_path):
 def test_record_truncates_long_results(tmp_path):
     log = TaskLog(tmp_path, "t1")
     log.record("observe", {}, 1, "ok", "x" * 2000)
-    entry = json.loads((tmp_path / "t1" / "log.jsonl").read_text())
+    entry = json.loads((tmp_path / "t1" / "log.jsonl").read_text(encoding="utf-8"))
     assert len(entry["result"]) == 501
     assert entry["result"].endswith("…")
 
@@ -31,7 +31,7 @@ def test_record_truncates_long_results(tmp_path):
 def test_record_truncates_long_args(tmp_path):
     log = TaskLog(tmp_path, "t1")
     log.record("write_file", {"path": "a.txt", "content": "y" * 2000}, 1, "ok", "")
-    entry = json.loads((tmp_path / "t1" / "log.jsonl").read_text())
+    entry = json.loads((tmp_path / "t1" / "log.jsonl").read_text(encoding="utf-8"))
     assert entry["args"]["path"] == "a.txt"
     assert len(entry["args"]["content"]) == 501
 

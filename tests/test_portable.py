@@ -114,3 +114,48 @@ def test_every_module_imports_on_a_windows_like_python():
 def test_the_mcp_example_sets_utf8_for_the_server():
     example = json.loads((ROOT / ".mcp.json.example").read_text(encoding="utf-8"))
     assert example["mcpServers"]["ai-browser"]["env"]["PYTHONUTF8"] == "1"
+
+
+def _binary_mode(node) -> bool:
+    """A mode counts as binary when it is a literal with b, or an `x if c else y` of such literals."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return "b" in node.value
+    if isinstance(node, ast.IfExp):
+        return _binary_mode(node.body) and _binary_mode(node.orelse)
+    return False
+
+
+def _true(call: ast.Call, name: str) -> bool:
+    return any(kw.arg == name and isinstance(kw.value, ast.Constant) and kw.value.value is True for kw in call.keywords)
+
+
+def text_io_calls(source: str) -> list[ast.Call]:
+    """The calls that read or write text without naming the encoding (Windows would use its code page):
+    .read_text() with no positional argument, .write_text(x) with one, open() and os.fdopen() in a mode without b,
+    and subprocess calls with text=True or universal_newlines=True."""
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or any(kw.arg == "encoding" for kw in node.keywords):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+        owner = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else ""
+        if isinstance(func, ast.Attribute) and name == "read_text" and not node.args:
+            found.append(node)  # WorkDir.read_text(path, limit) has two
+        elif isinstance(func, ast.Attribute) and name == "write_text" and len(node.args) == 1:
+            found.append(node)  # WorkDir.write_text(path, content) has two
+        elif (isinstance(func, ast.Name) and name == "open") or (owner == "os" and name == "fdopen"):
+            mode = node.args[1] if len(node.args) > 1 else next(
+                (kw.value for kw in node.keywords if kw.arg == "mode"), None)
+            if mode is None or not _binary_mode(mode):
+                found.append(node)
+        elif owner == "subprocess" and (_true(node, "text") or _true(node, "universal_newlines")):
+            found.append(node)
+    return found
+
+
+def test_text_io_names_its_encoding():
+    found = [f"{path.relative_to(ROOT)}:{call.lineno}"
+             for top in (SRC, ROOT / "tests") for path in sorted(top.rglob("*.py"))
+             for call in text_io_calls(path.read_text(encoding="utf-8"))]
+    assert not found, "text read or written without encoding=:\n" + "\n".join(sorted(found))

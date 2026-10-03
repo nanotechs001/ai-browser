@@ -197,7 +197,7 @@ def brain_for(fake_claude, tmp_path, *answers, agents=None):
     from ai_browser.brain.store import BrainStore
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(talk_script(*answers)))
+    script.write_text(json.dumps(talk_script(*answers)), encoding="utf-8")
     sent, shown = [], []
     brain = BrainService(BrainStore(tmp_path / "home"), agents if agents is not None else Recorder(),
                          claude=str(runner))
@@ -367,7 +367,7 @@ async def test_a_new_question_cancels_the_one_in_flight(fake_claude, tmp_path):
     runner, log, script = fake_claude
     brain, sent, shown, _ = brain_for(fake_claude, tmp_path)
     script.write_text(json.dumps({"first question": [{"sleep": 5, "result": json.dumps({"say": "old"})}],
-                                  TALKING: [{"result": json.dumps({"say": "new"})}]}))
+                                  TALKING: [{"result": json.dumps({"say": "new"})}]}), encoding="utf-8")
     first = asyncio.create_task(brain.respond("k1", "first question"))
     for _ in range(100):
         if talk_calls(log):

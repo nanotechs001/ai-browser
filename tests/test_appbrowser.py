@@ -15,8 +15,10 @@ def test_prepare_extension_copies_the_panel_with_its_config(tmp_path):
 
     folder = prepare_extension(tmp_path, "http://127.0.0.1:8792", "secret")
     assert folder == tmp_path / "app" / "extension"
-    assert json.loads((folder / "manifest.json").read_text())["side_panel"]["default_path"] == "panel.html"
-    assert json.loads((folder / "config.json").read_text()) == {"server": "http://127.0.0.1:8792", "token": "secret"}
+    assert json.loads(
+        (folder / "manifest.json").read_text(encoding="utf-8"))["side_panel"]["default_path"] == "panel.html"
+    assert json.loads((folder / "config.json").read_text(encoding="utf-8")) == {
+        "server": "http://127.0.0.1:8792", "token": "secret"}
 
 
 @pytest.mark.posix_only
@@ -73,7 +75,8 @@ app = launch_app_browser(sys.argv[1] + "/profile", prepare_extension(sys.argv[1]
 print(len(app.extension_id))
 app.close()
 """
-    result = subprocess.run([sys.executable, "-c", code, str(tmp_path)], capture_output=True, text=True, timeout=90)
+    result = subprocess.run([sys.executable, "-c", code, str(tmp_path)], capture_output=True, text=True, timeout=90,
+                            encoding="utf-8")
     assert result.stdout.strip() == "32", result.stderr[-800:]
 
 
@@ -103,14 +106,17 @@ def test_the_install_check_reads_the_profile(tmp_path):
     assert not extension_installed(profile, folder)  # no profile yet
     prefs = profile / "Default" / "Secure Preferences"
     prefs.parent.mkdir(parents=True)
-    prefs.write_text(json.dumps({"extensions": {"settings": {extension_id_for(folder): {"path": str(tmp_path / "x")}}}}))
+    prefs.write_text(
+        json.dumps({"extensions": {"settings": {extension_id_for(folder): {"path": str(tmp_path / "x")}}}}),
+        encoding="utf-8")
     assert not extension_installed(profile, folder)  # same ID, another folder
-    prefs.write_text(json.dumps({"extensions": {"settings": {extension_id_for(folder): {"path": str(folder)}}}}))
+    prefs.write_text(json.dumps({"extensions": {"settings": {extension_id_for(folder): {"path": str(folder)}}}}),
+                     encoding="utf-8")
     assert extension_installed(profile, folder)
-    prefs.write_text("not json")
+    prefs.write_text("not json", encoding="utf-8")
     assert not extension_installed(profile, folder)
     (profile / "Default" / "Preferences").write_text(
-        json.dumps({"extensions": {"settings": {extension_id_for(folder): {"path": str(folder)}}}}))
+        json.dumps({"extensions": {"settings": {extension_id_for(folder): {"path": str(folder)}}}}), encoding="utf-8")
     assert extension_installed(profile, folder)  # some Chrome builds keep it in Preferences
 
 

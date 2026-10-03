@@ -110,13 +110,13 @@ def test_missing_port_file_explains_the_fix(tmp_path):
 
 
 def test_stale_port_file_says_chrome_is_not_running(tmp_path):
-    (tmp_path / "DevToolsActivePort").write_text(f"{free_port()}\n/devtools/browser/abc\n")
+    (tmp_path / "DevToolsActivePort").write_text(f"{free_port()}\n/devtools/browser/abc\n", encoding="utf-8")
     with pytest.raises(ChromeError, match="isn't running"):
         find_ws_url(tmp_path)
 
 
 def test_a_port_file_removed_while_reading_counts_as_missing(tmp_path, monkeypatch):
-    (tmp_path / "DevToolsActivePort").write_text("1\n/devtools/browser/abc\n")
+    (tmp_path / "DevToolsActivePort").write_text("1\n/devtools/browser/abc\n", encoding="utf-8")
 
     def removed(self, *args, **kwargs):
         raise FileNotFoundError(str(self))
@@ -240,7 +240,7 @@ async def test_chrome_mode_uploads_a_copy_the_sandbox_cannot_swap(chrome_browser
     logo = browser.work.to_host("logo.png")
     logo.write_bytes(b"real image bytes")
     secret = tmp_path / "secret.txt"
-    secret.write_text("TOP SECRET")
+    secret.write_text("TOP SECRET", encoding="utf-8")
     page = await browser.open(base + "upload.html")
     chooser = next(line.split()[0] for line in page.splitlines() if '"Choose image"' in line)
     assert (await browser.act(parse_steps([f"upload {chooser} logo.png"]))).startswith("✓ upload")

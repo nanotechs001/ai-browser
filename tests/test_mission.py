@@ -41,7 +41,7 @@ def key(name):
 async def test_every_agent_has_a_station_and_names_stay_text(mission):
     js, stack = mission
     agents = stack["server"].agents
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     for name in ("Fix the footer", HOSTILE, "QA my-site.com"):
         await agents.create(name)
     assert await until(js, "document.querySelectorAll('.station').length === 3")
@@ -60,7 +60,7 @@ async def test_every_agent_has_a_station_and_names_stay_text(mission):
 async def test_monitors_show_thumbnails_and_late_pages_get_them(mission):
     js, stack = mission
     server = stack["server"]
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await server.agents.create("Fix the footer")
     assert await until(js, "document.querySelectorAll('.station').length === 1")
     server._thumbs["a1"] = {"last": 0.0, "task": None, "again": False, "jpeg": JPEG}
@@ -149,7 +149,7 @@ async def test_a_waiting_permission_is_answered_from_mission_control(stack, tmp_
 @CHROME
 async def test_the_drawer_shows_the_chat_and_closes_an_agent(mission):
     js, stack = mission
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create(f"Fix the footer {HOSTILE}")
     assert await until(js, f"{station('a1')} !== null")
     await js(f"{station('a1')}.click(); true")
@@ -392,7 +392,7 @@ async def test_a_failed_fill_is_not_told_as_ready(stack):
 async def test_an_open_room_does_no_layout_while_agents_work(mission):
     js, stack = mission
     cdp = stack["cdp"]
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     for name in ("one", "two", "three"):
         await stack["server"].agents.create(name)
     assert await until(js, "document.querySelectorAll('.station[data-state=\"working\"]').length === 3")
@@ -454,7 +454,7 @@ async def test_a_picture_for_an_unknown_agent_is_dropped(mission):
     server = stack["server"]
     server._send_all({"type": "thumb", "id": "a1", "jpeg": JPEG})  # a closed agent's late picture
     await asyncio.sleep(0.5)
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await server.agents.create("Fix the footer")  # gets the id a1
     assert await until(js, f"{station('a1')} !== null")
     await asyncio.sleep(0.5)
@@ -472,7 +472,7 @@ async def test_a_trackpad_zooms_gently(mission):
 
 @CHROME
 async def test_the_list_follows_creation_and_gives_way_to_the_drawer(stack):
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     for name in ("first", "second", "third"):
         await stack["server"].agents.create(name)
     js = await open_mission(stack)
@@ -573,7 +573,7 @@ async def test_a_lost_webgl_context_hands_over_to_the_orb(mission):
 @CHROME
 async def test_watch_says_it_brings_the_agents_tab_to_the_front(mission):
     js, stack = mission
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("Fix the footer")
     assert await until(js, f"{station('a1')} !== null")
     await js(f"{station('a1')}.click(); true")

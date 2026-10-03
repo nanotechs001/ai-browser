@@ -19,7 +19,7 @@ from .model import Issue, PageResult, SizeResult
 from .polite import HostGate, retry_after, stop_reason
 from .urls import origin
 
-PROBE_JS = Path(__file__).with_name("probe.js").read_text()
+PROBE_JS = Path(__file__).with_name("probe.js").read_text(encoding="utf-8")
 LOAD_WAIT = 15  # seconds for the load event; a page still loading after that is checked as it is
 QUIET_WAIT = 3  # then at most this long for the network to go quiet
 QUIET_AFTER_WAKE = 2

@@ -84,7 +84,7 @@ async def test_two_brain_pages_fill_once(watcher):
                  "why": "a client", "suggest": "draft"}]
     watcher.script.write_text(json.dumps({"default": [{"result": "[]"}],
                                           "You sort new messages": [{"result": json.dumps(verdicts)}],
-                                          "You draft a reply": [{"result": "Monday works for us."}]}))
+                                          "You draft a reply": [{"result": "Monday works for us."}]}), encoding="utf-8")
     await watcher.watch("gmail", "brain/gmail.html")
     assert await watcher.until(lambda: "t1" in watcher.raw_ids())
     await watcher.brain.draft("gmail:t1")

@@ -155,7 +155,7 @@ async def test_qa_run_finds_exactly_the_planted_problems(chrome_browser, monkeyp
     assert text.splitlines()[1].startswith("issues: 3 high · 3 medium · 1 low")
     assert saved_before_report == [6]  # every page's screenshots were on disk before the report was written
     html = browser.work.to_host(next(line for line in text.splitlines() if line.startswith("report: "))
-                                .split()[1]).read_text()
+                                .split()[1]).read_text(encoding="utf-8")
     assert "products.html" in html
 
 

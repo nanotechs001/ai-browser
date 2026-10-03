@@ -147,7 +147,7 @@ class WorkflowStore:
             if self.folder.is_dir() else []
 
     def _load(self, path: Path) -> Workflow:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8-sig")  # a BOM from Notepad is dropped
         end = text.find("\n---", 4)
         if not text.startswith("---\n") or end < 0:
             raise ValueError("it needs front matter between two --- lines")

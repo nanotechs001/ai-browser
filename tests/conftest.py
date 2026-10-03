@@ -137,9 +137,10 @@ def fake_claude(tmp_path, monkeypatch):
     from pathlib import Path
 
     script, log = tmp_path / "fake-claude-script.json", tmp_path / "fake-claude.log"
-    script.write_text("[]")
+    script.write_text("[]", encoding="utf-8")
     runner = tmp_path / "claude"
-    runner.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{Path(__file__).with_name("fake_claude.py")}" "$@"\n')
+    runner.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{Path(__file__).with_name("fake_claude.py")}" "$@"\n',
+                      encoding="utf-8")
     runner.chmod(0o755)
     monkeypatch.setenv("FAKE_CLAUDE_SCRIPT", str(script))
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))

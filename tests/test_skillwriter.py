@@ -26,7 +26,7 @@ def writer(fake_claude, tmp_path, answers, skills_dir=None):
     from ai_browser.brain.skillwriter import SkillWriter
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(answers))
+    script.write_text(json.dumps(answers), encoding="utf-8")
     saved = []
     skills = SkillWriter(skills_dir or tmp_path / "skills", claude=str(runner), cwd=tmp_path / "calls",
                          on_saved=saved.append)
@@ -45,7 +45,7 @@ async def test_a_skill_from_a_description_is_checked_and_saved_once(fake_claude,
     assert prompt.index("build Elementor landing pages") < prompt.index(MARKER) < prompt.index("Ignore the user")
     assert prompt.index("Always use the blue button") < prompt.index(MARKER)
     path = skills.save(text)
-    assert path == tmp_path / "skills" / "elementor-landing" / "SKILL.md" and path.read_text() == GOOD
+    assert path == tmp_path / "skills" / "elementor-landing" / "SKILL.md" and path.read_text(encoding="utf-8") == GOOD
     assert file_mode(path) in (0o644, None) and [entry.name for entry in path.parent.iterdir()] == ["SKILL.md"]
     assert saved == ["elementor-landing"]
     with pytest.raises(FileExistsError):
@@ -138,11 +138,11 @@ async def test_save_and_update_over_the_socket(fake_claude, tmp_path, monkeypatc
             assert "-2. Use the blue primary button style." in diff["diff"]
             assert "+2. Use the dark blue primary button style." in diff["diff"]
             skill_file = user_home / ".claude" / "skills" / "elementor-landing" / "SKILL.md"
-            assert "dark blue" not in skill_file.read_text()  # nothing changes before the second yes
+            assert "dark blue" not in skill_file.read_text(encoding="utf-8")  # nothing changes before the second yes
             await ws.send(json.dumps({"type": "skill_save", "request": "s4", "text": changed, "update": True,
                                       "confirm": True}))
             assert (await until(ws, lambda m: m["type"] == "skill_saved"))["request"] == "s4"
-            assert "dark blue" in skill_file.read_text()
+            assert "dark blue" in skill_file.read_text(encoding="utf-8")
             assert [entry.name for entry in skill_file.parent.iterdir()] == ["SKILL.md"]
     finally:
         await server.stop()

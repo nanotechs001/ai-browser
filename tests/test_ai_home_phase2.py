@@ -28,7 +28,7 @@ def ask_for_clickup(stack, tmp_path):
     """The agents' tools: ClickUp switched on; the fake claude asks for one of its tools."""
     user_config(tmp_path)
     stack["tools"].set_enabled("clickup", True)
-    stack["script"].write_text(json.dumps(asking()))
+    stack["script"].write_text(json.dumps(asking()), encoding="utf-8")
 
 
 async def answered(log):
@@ -105,7 +105,7 @@ async def test_a_workflow_is_saved_from_the_form_and_run(home):
              "form.querySelector('.save').click(); true")
     assert await until(js, "document.querySelector('.workflow[data-slug=\"morning-report\"]') !== null")
     path = stack["home"] / "workflows" / "morning-report.md"
-    assert path.exists() and "weekdays 09:00" in path.read_text()
+    assert path.exists() and "weekdays 09:00" in path.read_text(encoding="utf-8")
     assert str(path) in await js(f"{form}.querySelector('.saved').textContent")  # it says where the file is
     await js("const run = document.querySelector('.workflow[data-slug=\"morning-report\"] .run');"
              "run.click(); run.click(); true")  # a double click: one run
@@ -122,7 +122,8 @@ async def test_train_a_new_agent_saves_a_skill_after_review(home, monkeypatch):
     js, _, stack = home
     monkeypatch.setenv("HOME", str(stack["user"]))  # the skills list reads ~/.claude/skills
     monkeypatch.setenv("USERPROFILE", str(stack["user"]))  # Path.home() on Windows
-    stack["script"].write_text(json.dumps({"default": EVENTS, "You write a skill": [{"result": DRAFT}]}))
+    stack["script"].write_text(json.dumps({"default": EVENTS, "You write a skill": [{"result": DRAFT}]}),
+                               encoding="utf-8")
     await js("document.getElementById('train-section').open = true; true")
     train = "document.getElementById('train')"
     await js(f"{train}.querySelector('.job').value = 'build Elementor landing pages the way I like';"
@@ -138,7 +139,7 @@ async def test_train_a_new_agent_saves_a_skill_after_review(home, monkeypatch):
         if skill.exists():
             break
         await asyncio.sleep(0.1)
-    assert "Hero template" in skill.read_text()
+    assert "Hero template" in skill.read_text(encoding="utf-8")
     assert await until(js, "[...document.querySelectorAll('#skill-list .skill .name')]"
                            ".some(node => node.textContent === 'elementor-landing')")
 
@@ -150,7 +151,7 @@ async def test_the_watcher_shows_a_permission_request(watcher, tmp_path):
     tools = ToolsConfig(watcher.home, claude_home=user_config(tmp_path))
     tools.set_enabled("clickup", True)
     watcher.server.agents.tools = tools
-    watcher.script.write_text(json.dumps(asking()))
+    watcher.script.write_text(json.dumps(asking()), encoding="utf-8")
     _, js = await open_page(watcher.cdp, f"chrome-extension://{watcher.app.extension_id}/brain.html")
     await watcher.server.agents.create("make a ClickUp task")
     assert await until(watcher.worker_js, "chrome.notifications.getAll().then(all => Object.keys(all).length === 1)")

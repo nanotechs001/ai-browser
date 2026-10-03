@@ -272,7 +272,8 @@ async def talk(stack, js, seconds=0.3):
 def talk_script(stack, *answers, default=WORKING):
     """The fake claude: agents run `default`; the Brain's talk calls get `answers` in order (the last one repeats)."""
     stack["script"].write_text(json.dumps({"default": default, TALKING: [
-        {"result": answer if isinstance(answer, str) else json.dumps(answer)} for answer in answers]}))
+        {"result": answer if isinstance(answer, str) else json.dumps(answer)} for answer in answers]}),
+        encoding="utf-8")
 
 
 def talk_calls(stack):
@@ -365,7 +366,7 @@ async def test_space_keeps_its_job_in_text_boxes_and_on_buttons(stack):
 
 @CHROME
 async def test_esc_throws_the_turn_away_and_does_nothing_else(stack):
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("Fix the footer")
     js = await open_talk(stack, mic())
     assert await until(js, f"{station('a1')} !== null")
@@ -494,7 +495,7 @@ async def test_only_the_newest_questions_answer_shows(stack):
     stack["script"].write_text(json.dumps({
         "default": WORKING,
         "first question": [{"sleep": 2.5, "result": json.dumps({"say": "The old answer.", "action": "none"})}],
-        TALKING: [{"result": json.dumps({"say": "The new answer.", "action": "none"})}]}))
+        TALKING: [{"result": json.dumps({"say": "The new answer.", "action": "none"})}]}), encoding="utf-8")
     js = await open_talk(stack, mic())
     for words in ("first question", "second question"):  # typed in Ask the Brain, the second before the first's answer
         await js(f"document.getElementById('talk-text').value = {json.dumps(words)};"

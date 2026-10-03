@@ -24,11 +24,11 @@ def sample_run() -> QARun:
 def test_report_files_escape_page_text(tmp_path):
     work = WorkDir(tmp_path / "work", "t1")
     paths = write_report(work, sample_run())
-    html = work.to_host(paths.html).read_text()
+    html = work.to_host(paths.html).read_text(encoding="utf-8")
     assert "<script>alert" not in html and "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; co" in html
     assert "Old &lt;b&gt;offers&lt;/b&gt;" in html and "data:image/jpeg;base64," in html
     assert 'href="shots/01-home-mobile.jpg"' in html
-    rows = list(csv.reader(io.StringIO(work.to_host(paths.csv).read_text())))
+    rows = list(csv.reader(io.StringIO(work.to_host(paths.csv).read_text(encoding="utf-8"))))
     assert rows[0] == ["severity", "kind", "detail", "pages_count", "pages", "sizes", "extra"]
     assert len(rows) == 1 + 14 and rows[1][:2] == ["high", "broken link"]
     assert work.to_host(paths.shots + "/01-home-desktop.jpg").read_bytes() == JPEG

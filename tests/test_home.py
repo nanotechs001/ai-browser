@@ -56,7 +56,7 @@ async def stack(fake_claude, tmp_path):
     from ai_browser.cdp import CDP
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     home = tmp_path / "home"
     agents = AgentManager(home, claude=str(runner))
     from ai_browser.brain.skillwriter import SkillWriter
@@ -185,7 +185,7 @@ async def test_pages_reconnect_after_the_app_restarts(home):
     url = await server.start()
     server.allow_origin(f"chrome-extension://{stack['app'].extension_id}")
     stack["server"] = server
-    (stack["folder"] / "config.json").write_text(json.dumps({"server": url, "token": server.token}))
+    (stack["folder"] / "config.json").write_text(json.dumps({"server": url, "token": server.token}), encoding="utf-8")
     await agents.create("after the restart")
     assert await until(js, "document.getElementById('status').dataset.state === 'connected'", 10)
     assert await until(js, "document.getElementById('agents').textContent.includes('after the restart')")
@@ -201,7 +201,8 @@ async def test_ai_home_is_the_new_tab_page(home):
 @CHROME
 async def test_rows_are_updated_in_place_so_clicks_land(home):
     js, _, stack = home
-    stack["script"].write_text(json.dumps([EVENTS[0], {"sleep": 4}, *EVENTS[1:]]))  # it keeps working a while
+    stack["script"].write_text(json.dumps([EVENTS[0], {"sleep": 4}, *EVENTS[1:]]),
+                               encoding="utf-8")  # it keeps working a while
     page, _ = await open_page(stack["cdp"], "data:text/html,<title>Some page</title>", background=True)
     agent = await stack["server"].agents.create("keep working")
     row = "#agents .agent[data-id='a1']"

@@ -18,8 +18,8 @@ def skill_catalog(tmp_path: Path) -> Catalog:
     folder = root / "skills" / "hello"
     (folder / "scripts").mkdir(parents=True)
     (folder / "SKILL.md").write_text("---\nname: hello\ndescription: Says hello from a script\n---\n"
-                                     "Run python3 ${CLAUDE_PLUGIN_ROOT}/skills/hello/scripts/hi.py\n")
-    (folder / "scripts" / "hi.py").write_text("print('hello from the skill')\n")
+                                     "Run python3 ${CLAUDE_PLUGIN_ROOT}/skills/hello/scripts/hi.py\n", encoding="utf-8")
+    (folder / "scripts" / "hi.py").write_text("print('hello from the skill')\n", encoding="utf-8")
     return Catalog([SkillSource("demo", root, "/skills/plugins/demo", "skills/*/SKILL.md")], set())
 
 
@@ -104,7 +104,7 @@ async def test_long_shell_output_is_truncated_and_saved(engine):
     result = await engine.shell("python3 -c \"print('x' * 20000)\"")
     assert len(result.text) < 10_400
     saved = result.text.split("full output saved to ")[1].split("]")[0]
-    assert len(engine.work.to_host(saved).read_text().strip()) == 20000
+    assert len(engine.work.to_host(saved).read_text(encoding="utf-8").strip()) == 20000
 
 
 @DOCKER
@@ -132,7 +132,7 @@ async def test_tool_text_is_always_valid_utf8(engine):
     result = await engine.open(base + "unicode.html")
     assert not result.text.startswith("error")
     result.text.encode("utf-8")
-    assert json.loads((engine.log.dir / "log.jsonl").read_text().splitlines()[-1])["tool"] == "open"
+    assert json.loads((engine.log.dir / "log.jsonl").read_text(encoding="utf-8").splitlines()[-1])["tool"] == "open"
 
 
 async def test_lone_surrogates_are_cleaned_and_logged(tmp_path):
@@ -144,7 +144,7 @@ async def test_lone_surrogates_are_cleaned_and_logged(tmp_path):
     result = await engine._run("observe", {}, broken)
     result.text.encode("utf-8")
     assert "�" in result.text
-    assert (engine.log.dir / "log.jsonl").read_text().count("\n") == 1
+    assert (engine.log.dir / "log.jsonl").read_text(encoding="utf-8").count("\n") == 1
 
 
 @DOCKER
@@ -174,7 +174,7 @@ async def test_every_call_is_logged(engine):
     engine, base = engine
     await engine.open(base + "form.html")
     await engine.observe()
-    lines = (engine.log.dir / "log.jsonl").read_text().splitlines()
+    lines = (engine.log.dir / "log.jsonl").read_text(encoding="utf-8").splitlines()
     tools = [json.loads(line)["tool"] for line in lines]
     assert tools[-2:] == ["open", "observe"]
 
@@ -194,7 +194,7 @@ async def test_restarts_after_the_sandbox_dies(engine):
     assert result.text.startswith("(sandbox restarted")
     assert not result.text.startswith("error")
     leftover = subprocess.run(["docker", "ps", "-a", "--filter", f"name=^{old_shell}$", "--format", "{{.Names}}"],
-                              capture_output=True, text=True).stdout.strip()
+                              capture_output=True, text=True, encoding="utf-8").stdout.strip()
     assert leftover == "" or old_shell == engine.info.shell  # a throwaway pair is replaced whole
 
 
@@ -209,10 +209,10 @@ async def test_tabs_left_by_a_dead_session_are_closed(tmp_path):
         await engine.sandbox_start(profile="pytest-orphans")
         orphan = (await engine.cdp.send("Target.createTarget", {"url": "about:blank#orphan"}))["targetId"]
         dead = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
-                              capture_output=True, text=True).stdout.strip()
+                              capture_output=True, text=True, encoding="utf-8").stdout.strip()
         sessions = engine.work.host_task.parent.parent / "sessions"
         sessions.mkdir(parents=True, exist_ok=True)
-        (sessions / "old-task.json").write_text(json.dumps({"pid": int(dead), "targets": [orphan]}))
+        (sessions / "old-task.json").write_text(json.dumps({"pid": int(dead), "targets": [orphan]}), encoding="utf-8")
         await engine.close()
 
         again = Engine(home=tmp_path, default_profile="pytest-orphans", catalog=Catalog([], set()))

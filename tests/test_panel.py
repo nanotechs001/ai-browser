@@ -46,7 +46,7 @@ async def test_start_a_task_here_works_in_the_current_tab(panel):
     assert await until(js, "document.getElementById('agent-name').textContent === 'summarize this page'")
     agents = list(stack["server"].agents.agents.values())
     assert len(agents) == 1 and agents[0].adopted == [user_tab]
-    config = json.loads((stack["home"] / "app" / "agents" / agents[0].id / "mcp.json").read_text())
+    config = json.loads((stack["home"] / "app" / "agents" / agents[0].id / "mcp.json").read_text(encoding="utf-8"))
     assert config["mcpServers"]["ai-browser"]["env"]["AIB_APP_ADOPT"] == user_tab
 
 
@@ -55,7 +55,7 @@ async def test_replies_stay_text(panel):
     js, user_tab, stack = panel
     reply = {"type": "stream_event", "event": {"type": "content_block_delta",
                                                "delta": {"type": "text_delta", "text": "Sure " + HOSTILE}}}
-    stack["script"].write_text(json.dumps([EVENTS[0], reply] + EVENTS[3:]))
+    stack["script"].write_text(json.dumps([EVENTS[0], reply] + EVENTS[3:]), encoding="utf-8")
     await js("document.getElementById('input').value = 'hi'; document.getElementById('send').click(); true")
     assert await until(js, "document.getElementById('messages').textContent.includes('click e5')")
     assert "<img" in await js("document.getElementById('messages').textContent")  # the planted markup is text...

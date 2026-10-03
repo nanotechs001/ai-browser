@@ -20,7 +20,7 @@ def asking(tool="mcp__clickup__create_task", data=None):
 
 
 def lines(log):
-    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
 
 
 def answers(log):
@@ -40,11 +40,11 @@ def user_config(tmp_path):
     project.mkdir(parents=True)
     (project / ".mcp.json").write_text(json.dumps({"mcpServers": {
         "ai-browser": {"command": "python", "args": ["-m", "ai_browser.cli", "mcp"]},
-        "figma": {"command": "npx", "args": ["figma-mcp"], "env": {"FIGMA_TOKEN": "t"}}}}))
+        "figma": {"command": "npx", "args": ["figma-mcp"], "env": {"FIGMA_TOKEN": "t"}}}}), encoding="utf-8")
     claude_home.mkdir(exist_ok=True)
     (claude_home / ".claude.json").write_text(json.dumps({
         "mcpServers": {"clickup": {"type": "http", "url": "https://mcp.example/clickup"}},
-        "projects": {str(project): {"mcpServers": {"canvas": {"command": "canvas-mcp"}}}}}))
+        "projects": {str(project): {"mcpServers": {"canvas": {"command": "canvas-mcp"}}}}}), encoding="utf-8")
     return claude_home
 
 
@@ -53,7 +53,7 @@ def manager(fake_claude, tmp_path, script):
     from ai_browser.brain.tools import ToolsConfig
 
     runner, log, script_file = fake_claude
-    script_file.write_text(json.dumps(script))
+    script_file.write_text(json.dumps(script), encoding="utf-8")
     home = tmp_path / "home"
     tools = ToolsConfig(home, claude_home=user_config(tmp_path))
     agents = AgentManager(home, claude=str(runner))
@@ -164,13 +164,14 @@ async def test_enabled_servers_reach_the_agents_mcp_config(fake_claude, tmp_path
     agent = await agents.create("look at the design")
     assert await settled(agents, agent.id) == "your_turn"
     config_file = tmp_path / "home" / "app" / "agents" / agent.id / "mcp.json"
-    servers = json.loads(config_file.read_text())["mcpServers"]
+    servers = json.loads(config_file.read_text(encoding="utf-8"))["mcpServers"]
     assert set(servers) == {"ai-browser", "figma"} and file_mode(config_file) in (0o600, None)
     argv = commands(log)[-1]
     assert "--strict-mcp-config" in argv and argv[argv.index("--tools") + 1] == ""
     workflow = await agents.create("only canvas", servers=["canvas"])  # a workflow's own list: still only if on
     assert await settled(agents, workflow.id) == "your_turn"
-    servers = json.loads((tmp_path / "home" / "app" / "agents" / workflow.id / "mcp.json").read_text())["mcpServers"]
+    servers = json.loads(
+        (tmp_path / "home" / "app" / "agents" / workflow.id / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]
     assert set(servers) == {"ai-browser"}
     await agents.close_all()
 
@@ -241,7 +242,8 @@ async def test_the_probe_finds_the_connectors_and_their_tools(fake_claude, tmp_p
                                    "mcp_servers": [{"name": "claude.ai ClickUp", "status": "connected"},
                                                    {"name": "claude.ai Asana", "status": "pending"}],
                                    "tools": ["mcp__claude_ai_ClickUp__clickup_get_task"]},
-                                  {"sleep": 30}]))  # it would go on answering: the probe doesn't wait for that
+                                  {"sleep": 30}]),
+                      encoding="utf-8")  # it would go on answering: the probe doesn't wait for that
     tools = ToolsConfig(tmp_path / "home", claude_home=tmp_path / "nobody")
     started = asyncio.get_running_loop().time()
     await tools.probe(str(runner))
@@ -261,6 +263,6 @@ def test_a_damaged_tools_file_still_starts(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     (home / "tools.json").write_text(json.dumps({"enabled": "figma", "always": {"x": 1}, "known": ["not", "a", "map"],
-                                                 "connectors": "claude_ai_X"}))
+                                                 "connectors": "claude_ai_X"}), encoding="utf-8")
     tools = ToolsConfig(home, claude_home=tmp_path / "nobody")
     assert tools.servers() == [] and tools.always() == set() and tools.enabled() == set()

@@ -40,7 +40,7 @@ class Rig:
     def sorted_calls(self):
         if not self.log.exists():
             return 0
-        return sum(1 for line in self.log.read_text().splitlines() if line.startswith('{"oneshot"'))
+        return sum(1 for line in self.log.read_text(encoding="utf-8").splitlines() if line.startswith('{"oneshot"'))
 
 
 async def start_server(home, agents, brain):
@@ -63,7 +63,7 @@ async def watcher(fake_claude, tmp_path):
     from ai_browser.cdp import CDP
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps([{"result": "[]"}]))
+    script.write_text(json.dumps([{"result": "[]"}]), encoding="utf-8")
     base, _, stop_pages = testpages.serve_host()
     home = tmp_path / "home"
     agents = AgentManager(home, claude=str(runner))
@@ -178,13 +178,13 @@ async def test_draft_fills_the_box_and_clicks_nothing(watcher):
                  "why": "a client", "suggest": "draft"}]
     watcher.script.write_text(json.dumps({"default": [{"result": "[]"}],
                                           "You sort new messages": [{"result": json.dumps(verdicts)}],
-                                          "You draft a reply": [{"result": "Monday works for us."}]}))
+                                          "You draft a reply": [{"result": "Monday works for us."}]}), encoding="utf-8")
     await watcher.watch("gmail", "brain/gmail.html")
     assert await watcher.until(lambda: "t1" in watcher.raw_ids())
     await watcher.brain.draft("gmail:t1")
     item = watcher.brain.store.get("gmail:t1")
     assert item.state == "draft_ready" and item.draft == "Monday works for us.", item.note
-    prompt = [json.loads(line) for line in watcher.log.read_text().splitlines()
+    prompt = [json.loads(line) for line in watcher.log.read_text(encoding="utf-8").splitlines()
               if line.startswith('{"oneshot"') and "You draft a reply" in line][0]["oneshot"]
     assert "Can we move the launch to Monday?" in prompt  # the thread, read from the opened page
     await watcher.brain.approve("gmail:t1", "Monday works.\nThanks, Kurl", 1)

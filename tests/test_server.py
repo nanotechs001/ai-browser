@@ -72,7 +72,7 @@ async def test_screenshot_comes_back_as_text_and_jpeg_image():
 async def test_skill_tools_work_without_docker(tmp_path):
     folder = tmp_path / "root" / "skills" / "hello"
     folder.mkdir(parents=True)
-    (folder / "SKILL.md").write_text("---\nname: hello\ndescription: Greets people\n---\nSay hi.\n")
+    (folder / "SKILL.md").write_text("---\nname: hello\ndescription: Greets people\n---\nSay hi.\n", encoding="utf-8")
     catalog = Catalog([SkillSource("demo", tmp_path / "root", "/skills/plugins/demo", "skills/*/SKILL.md")], set())
     async with Client(build_server(lambda: Engine(home=tmp_path, catalog=catalog))) as client:
         found = await client.call_tool("find_skills", {"query": "greets"})

@@ -175,7 +175,7 @@ class SkillWriter:
         path = self.skills_dir / name / "SKILL.md"
         if not path.is_file():
             raise ValueError(f"There is no skill named {json.dumps(name)} to update")
-        return "".join(difflib.unified_diff(path.read_text().splitlines(keepends=True),
+        return "".join(difflib.unified_diff(path.read_text(encoding="utf-8-sig").splitlines(keepends=True),
                                             (text.strip() + "\n").splitlines(keepends=True),
                                             f"{name}/SKILL.md (now)", f"{name}/SKILL.md (new)"))
 

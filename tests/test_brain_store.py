@@ -46,16 +46,16 @@ def test_seen_ids_are_capped(tmp_path):
     store = BrainStore(tmp_path)
     store.mark_seen([f"gmail:{n}" for n in range(6000)])
     assert not store.seen("gmail:0") and store.seen("gmail:5999")
-    assert len(json.loads((tmp_path / "brain" / "inbox.json").read_text())["seen"]) == 5000
+    assert len(json.loads((tmp_path / "brain" / "inbox.json").read_text(encoding="utf-8"))["seen"]) == 5000
 
 
 def test_a_damaged_file_starts_fresh_and_is_kept(tmp_path):
     from ai_browser.brain.store import BrainStore
 
     (tmp_path / "brain").mkdir()
-    (tmp_path / "brain" / "inbox.json").write_text("not json")
+    (tmp_path / "brain" / "inbox.json").write_text("not json", encoding="utf-8")
     store = BrainStore(tmp_path)
-    assert store.items() == [] and (tmp_path / "brain" / "inbox.json.bad").read_text() == "not json"
+    assert store.items() == [] and (tmp_path / "brain" / "inbox.json.bad").read_text(encoding="utf-8") == "not json"
     store.remove_watch("gmail")
     assert store.entry("gmail") is not None and not store.entry("gmail").enabled
 

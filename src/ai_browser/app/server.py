@@ -252,7 +252,7 @@ class AppServer:
         return extension_path(self.watcher_folder or self.home / "app" / "watcher")
 
     async def _setup(self, request: Request) -> HTMLResponse:
-        page = SETUP_PAGE.read_text().replace("{{FOLDER}}", html.escape(self._extension_folder()))
+        page = SETUP_PAGE.read_text(encoding="utf-8").replace("{{FOLDER}}", html.escape(self._extension_folder()))
         page = page.replace("{{WATCHER}}", html.escape(self._watcher_folder()))
         return HTMLResponse(page.replace("{{KEY}}", self.setup_key))
 

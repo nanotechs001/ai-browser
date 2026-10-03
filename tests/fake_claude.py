@@ -21,7 +21,10 @@ import sys
 import threading
 import time
 
-with open(os.environ["FAKE_CLAUDE_LOG"] + ".env", "w") as env_log:  # credentials it was given, if any
+for stream in (sys.stdin, sys.stdout, sys.stderr):  # UTF-8 on every OS, as Claude Code's own streams are
+    stream.reconfigure(encoding="utf-8")
+
+with open(os.environ["FAKE_CLAUDE_LOG"] + ".env", "w", encoding="utf-8") as env_log:  # credentials it was given, if any
     json.dump({**{key: os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "MAX_THINKING_TOKENS")},
                "cwd": os.getcwd(), "pid": os.getpid()}, env_log)
 
@@ -29,13 +32,13 @@ with open(os.environ["FAKE_CLAUDE_LOG"] + ".env", "w") as env_log:  # credential
 def one_shot(argv: list[str]) -> None:
     prompt = sys.stdin.read()
     try:
-        with open(os.environ["FAKE_CLAUDE_LOG"]) as earlier_log:
+        with open(os.environ["FAKE_CLAUDE_LOG"], encoding="utf-8") as earlier_log:
             earlier = sum(1 for line in earlier_log if line.startswith('{"oneshot"'))
     except FileNotFoundError:
         earlier = 0
-    with open(os.environ["FAKE_CLAUDE_LOG"], "a") as call_log:
+    with open(os.environ["FAKE_CLAUDE_LOG"], "a", encoding="utf-8") as call_log:
         call_log.write(json.dumps({"oneshot": prompt, "argv": argv}) + "\n")
-    with open(os.environ["FAKE_CLAUDE_SCRIPT"]) as script:
+    with open(os.environ["FAKE_CLAUDE_SCRIPT"], encoding="utf-8") as script:
         entries = json.load(script)
     if isinstance(entries, dict):
         entries = next((entries[key] for key in entries if key != "default" and key in prompt),
@@ -102,7 +105,7 @@ def ask_permission(request: dict) -> str:
     return "deny"
 
 
-with open(os.environ["FAKE_CLAUDE_LOG"], "a", buffering=1) as log:
+with open(os.environ["FAKE_CLAUDE_LOG"], "a", buffering=1, encoding="utf-8") as log:
     log.write(json.dumps(sys.argv[1:]) + "\n")
     if "--input-format" not in sys.argv:  # a probe: the prompt is on the command line
         messages.put({"type": "user", "message": {"content": sys.argv[sys.argv.index("-p") + 1]}})
@@ -110,7 +113,7 @@ with open(os.environ["FAKE_CLAUDE_LOG"], "a", buffering=1) as log:
     else:
         threading.Thread(target=read, args=(log,), daemon=True).start()
     while (message := messages.get()) is not None:
-        with open(os.environ["FAKE_CLAUDE_SCRIPT"]) as script:
+        with open(os.environ["FAKE_CLAUDE_SCRIPT"], encoding="utf-8") as script:
             events = json.load(script)
         if isinstance(events, dict):
             content = json.dumps(message.get("message", {}).get("content", ""))

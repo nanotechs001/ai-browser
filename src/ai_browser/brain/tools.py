@@ -53,7 +53,7 @@ class ToolsConfig:
     def _config_servers(self) -> dict[str, tuple[str, str, dict]]:
         """name -> (source, project, definition), from Claude Code's configuration; ai-browser's own is left out."""
         try:
-            data = json.loads((self.claude_home / ".claude.json").read_text())
+            data = json.loads((self.claude_home / ".claude.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
         found: dict[str, tuple[str, str, dict]] = {}
@@ -69,7 +69,8 @@ class ToolsConfig:
             add((settings or {}).get("mcpServers") if isinstance(settings, dict) else None, "local", project)
         for project in projects:
             with contextlib.suppress(OSError, ValueError, AttributeError):
-                add(json.loads((Path(project) / ".mcp.json").read_text()).get("mcpServers"), "project", project)
+                add(json.loads((Path(project) / ".mcp.json").read_text(encoding="utf-8")).get("mcpServers"),
+                    "project", project)
         return found
 
     def servers(self) -> list[dict]:
@@ -179,7 +180,7 @@ class ToolsConfig:
 
     def _read(self) -> dict:
         try:
-            data = json.loads(self.path.read_text())
+            data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
         return data if isinstance(data, dict) else {}

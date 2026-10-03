@@ -504,7 +504,7 @@ async def test_only_html_layers_are_animated(stack):
 
 @CHROME
 async def test_with_reduced_motion_nothing_moves(stack):
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     for name in ("one", "two", "three"):
         await stack["server"].agents.create(name)
     js = await open_with(stack)
@@ -533,7 +533,7 @@ async def wait_for_permissions(agents, ids):
 async def test_every_station_has_a_worker_with_the_agents_tie(stack):
     js = await open_with(stack)
     agents = stack["server"].agents
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     for name in ("Fix the footer", HOSTILE, "QA my-site.com"):
         await agents.create(name)
     assert await until(js, "document.querySelectorAll('.station').length === 3")
@@ -576,7 +576,7 @@ async def test_a_station_that_needs_the_user_raises_a_hand(stack, tmp_path):
 
 @CHROME
 async def test_twenty_working_agents_cause_no_layout(stack):
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     stack["server"].agents.max_working = 20  # all of them at work at once, none waiting in line
     for number in range(20):
         await stack["server"].agents.create(f"Task number {number}")
@@ -616,7 +616,7 @@ PERF_ROOM = """(async () => {
 
 @CHROME
 async def test_perf_room_adds_twenty_working_stand_ins(stack):
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("Fix the footer")
     js = await open_with(stack)
     assert await until(js, "document.querySelectorAll('#scene .station').length === 1")
@@ -675,7 +675,7 @@ async def test_the_alert_moves_to_the_next_agent_still_waiting(stack, tmp_path):
 
 @CHROME
 async def test_agents_already_there_simply_appear(stack):
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     for name in ("one", "two", "three"):
         await stack["server"].agents.create(name)
     js = await brain_page(stack)
@@ -690,7 +690,7 @@ async def test_agents_already_there_simply_appear(stack):
 @CHROME
 async def test_a_new_agent_arrives_with_a_spark(stack):
     js = await brain_page(stack)
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("Fix the footer")
     assert await until(js, "window.spawned.includes('a1')")
     assert await until(js, "window.sparks === 1 && window.sparksGone === 1", 3)
@@ -714,7 +714,7 @@ async def test_with_reduced_motion_a_new_agent_simply_appears(stack):
 @CHROME
 async def test_many_new_agents_at_once_fly_at_most_six_sparks(stack):
     js = await brain_page(stack)
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     for number in range(8):
         await stack["server"].agents.create(f"Task number {number}")
     await stack["server"].agents.close("a2")  # closed while it arrives
@@ -787,7 +787,7 @@ FRAMES = ("(() => { window.rafFrames = 0; const tick = () => { window.rafFrames 
 @CHROME
 @pytest.mark.skipif(os.environ.get("AIB_PERF") != "1", reason="timing depends on the machine: set AIB_PERF=1")
 async def test_the_budget(stack):
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     stack["server"].agents.max_working = 20  # all of them at work at once, none waiting in line
     for number in range(20):
         await stack["server"].agents.create(f"Task number {number}")
@@ -863,7 +863,7 @@ async def test_screenshots_for_the_eye(stack):
     await asyncio.sleep(0.5)
     await shoot(stack, js, "brain-turned")
     await js(key("0"))
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     agents = stack["server"].agents
     for total in (1, 6, 14, 20):
         while len(agents.agents) < total:

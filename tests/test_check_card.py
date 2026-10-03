@@ -19,7 +19,7 @@ LIVE = "http://127.0.0.1:8770/live?token=abc"
 async def checked(stack, name="Flights to Manila", **report):
     """An agent at work whose engine reported a bot check (what /agent-events delivers)."""
     agents = stack["server"].agents
-    stack["script"].write_text(json.dumps(WORKING))
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     agent = await agents.create(name)
     report = {**REPORT, **report}
     agents.tab_event(agent.id, "tab_opened", report["target"], report["adopted"])

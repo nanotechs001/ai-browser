@@ -49,7 +49,7 @@ def boxes(tmp_path_factory):
 
 def ip_of(container: str) -> str:
     return subprocess.run(["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-                           container], capture_output=True, text=True).stdout.strip()
+                           container], capture_output=True, text=True, encoding="utf-8").stdout.strip()
 
 
 @pytest.mark.docker
@@ -107,10 +107,10 @@ def test_exec_timeout_kills(boxes):
 @pytest.mark.docker
 def test_work_dir_is_shared_with_host(boxes):
     info = boxes.start(PROFILE)
-    (info.work_host / "hello.txt").write_text("from host")
+    (info.work_host / "hello.txt").write_text("from host", encoding="utf-8")
     assert boxes.exec(info.shell, "cat /work/hello.txt").output.strip() == "from host"
     boxes.exec(info.shell, "echo from-box > /work/out.txt")
-    assert (info.work_host / "out.txt").read_text().strip() == "from-box"
+    assert (info.work_host / "out.txt").read_text(encoding="utf-8").strip() == "from-box"
 
 
 @pytest.mark.docker
@@ -149,7 +149,7 @@ def test_fresh_container_is_removed_on_stop(boxes):
     assert not boxes.is_running(info.name)
     for name in (info.name, info.shell):
         listed = subprocess.run(["docker", "ps", "-a", "--filter", f"name=^{name}$", "--format", "{{.Names}}"],
-                                capture_output=True, text=True).stdout
+                                capture_output=True, text=True, encoding="utf-8").stdout
         assert listed.strip() == ""
 
 
@@ -157,7 +157,7 @@ def test_fresh_container_is_removed_on_stop(boxes):
 def test_changed_skill_mounts_keep_the_browser_running(tmp_path_factory):
     home = tmp_path_factory.mktemp("aib3")
     first, second = tmp_path_factory.mktemp("skills-a"), tmp_path_factory.mktemp("skills-b")
-    (second / "new.txt").write_text("new skill")
+    (second / "new.txt").write_text("new skill", encoding="utf-8")
     try:
         Sandboxes(home, mounts=[(first, "/skills/personal")]).start("pytest-mounts")
         refreshed = Sandboxes(home, mounts=[(second, "/skills/personal")])
@@ -172,7 +172,7 @@ def test_changed_skill_mounts_keep_the_browser_running(tmp_path_factory):
 @pytest.mark.docker
 def test_skill_mounts_are_read_only(tmp_path_factory):
     skills = tmp_path_factory.mktemp("skills")
-    (skills / "s.txt").write_text("skill")
+    (skills / "s.txt").write_text("skill", encoding="utf-8")
     sandboxes = Sandboxes(tmp_path_factory.mktemp("aib2"), mounts=[(skills, "/skills/personal")])
     info = sandboxes.start(fresh=True)
     try:

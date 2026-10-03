@@ -124,7 +124,7 @@ def test_discover_needs_a_link_file_a_live_app_and_this_computer(tmp_path):
     (tmp_path / "app").mkdir()
     link_file = tmp_path / "app" / "link.json"
     dead = int(subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True,
-                              text=True).stdout)
+                              text=True, encoding="utf-8").stdout)
     events = "http://127.0.0.1:8792/agent-events"
     link_file.write_text(json.dumps({"events": events, "session_token": "s", "pid": dead}), encoding="utf-8")
     assert AgentLink.discover(tmp_path, "t1") is None  # the app's process is gone

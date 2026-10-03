@@ -128,7 +128,7 @@ class LiveView:
     async def _page(self, request: Request):
         if request.query_params.get("token") != self.token:
             return PlainTextResponse("forbidden", status_code=403)
-        return HTMLResponse(PAGE.read_text())
+        return HTMLResponse(PAGE.read_text(encoding="utf-8"))
 
     async def _socket(self, ws: WebSocket) -> None:
         if ws.query_params.get("token") != self.token:

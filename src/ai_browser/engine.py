@@ -315,7 +315,7 @@ class Engine:
             folder = self._sessions_dir()
             folder.mkdir(parents=True, exist_ok=True)
             (folder / f"{self.task_id}.json").write_text(
-                json.dumps({"pid": os.getpid(), "targets": self.browser.owned_targets()}))
+                json.dumps({"pid": os.getpid(), "targets": self.browser.owned_targets()}), encoding="utf-8")
         except OSError:
             pass
 
@@ -330,7 +330,7 @@ class Engine:
             if record.stem == self.task_id:
                 continue
             try:
-                data = json.loads(record.read_text())
+                data = json.loads(record.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 data = {"pid": 0, "targets": []}
             try:

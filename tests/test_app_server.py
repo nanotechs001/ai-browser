@@ -28,7 +28,7 @@ async def started(fake_claude, tmp_path, events, **options):
     from ai_browser.app.server import AppServer
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(events))
+    script.write_text(json.dumps(events), encoding="utf-8")
     server = AppServer(tmp_path / "home", AgentManager(tmp_path / "home", claude=str(runner)), **options)
     url = await server.start()
     server.allow_origin(ORIGIN)
@@ -128,7 +128,8 @@ async def test_skills_for_the_dashboard(fake_claude, tmp_path):
     root = tmp_path / "skills"
     for name, description in (("alpha", "<img src=x onerror=alert(1)>"), ("beta", "Builds pages")):
         (root / name).mkdir(parents=True)
-        (root / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {description}\n---\nbody\n")
+        (root / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {description}\n---\nbody\n",
+                                              encoding="utf-8")
     catalog = Catalog([SkillSource("personal", root, "/skills/personal", "*/SKILL.md")], set())
     server, url = await started(fake_claude, tmp_path, EVENTS, catalog=catalog)
     try:
@@ -257,7 +258,7 @@ async def with_brain(fake_claude, tmp_path, answers):
     from ai_browser.brain.store import BrainStore
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(answers))
+    script.write_text(json.dumps(answers), encoding="utf-8")
     home = tmp_path / "home"
     agents = AgentManager(home, claude=str(runner))
     brain = BrainService(BrainStore(home), agents, claude=str(runner), batch_wait=0.1)
@@ -343,17 +344,19 @@ def test_prepare_watcher_updates_its_folder_in_place(tmp_path):
 
     folder, build = prepare_watcher(tmp_path, "http://127.0.0.1:8792", "secret")
     assert folder == tmp_path / "app" / "watcher" and len(build) == 12
-    assert json.loads((folder / "config.json").read_text()) == {"server": "http://127.0.0.1:8792", "token": "secret"}
+    assert json.loads((folder / "config.json").read_text(encoding="utf-8")) == {
+        "server": "http://127.0.0.1:8792", "token": "secret"}
     assert file_mode(folder / "config.json") in (0o600, None)
-    assert (folder / "link.js").exists() and f'"{build}"' in (folder / "build.js").read_text()
-    manifest = json.loads((folder / "manifest.json").read_text())
+    assert (folder / "link.js").exists() and f'"{build}"' in (folder / "build.js").read_text(encoding="utf-8")
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
     assert "https://mail.google.com/*" in manifest["host_permissions"]
     assert extension_id_for(folder) != extension_id_for(prepare_extension(tmp_path, "http://127.0.0.1:1", "t"))
-    (folder / "stale.js").write_text("old")
+    (folder / "stale.js").write_text("old", encoding="utf-8")
     before = (folder / "manifest.json").stat().st_mtime_ns
     again, same = prepare_watcher(tmp_path, "http://127.0.0.1:8793", "other")
     assert same == build and (folder / "manifest.json").stat().st_mtime_ns == before  # unchanged files stay as they are
-    assert json.loads((folder / "config.json").read_text())["token"] == "other" and not (folder / "stale.js").exists()
+    assert json.loads((folder / "config.json").read_text(encoding="utf-8"))["token"] == "other"
+    assert not (folder / "stale.js").exists()
 
 
 async def test_the_setup_page_has_the_brave_steps(fake_claude, tmp_path):
@@ -662,7 +665,7 @@ async def test_a_session_whose_process_ended_is_dropped(fake_claude, tmp_path, m
     monkeypatch.setattr(server_module, "SESSION_SWEEP", 0.1)
     server, url = await started(fake_claude, tmp_path, EVENTS)
     dead = int(subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True,
-                              text=True).stdout)
+                              text=True, encoding="utf-8").stdout)
     try:
         async with httpx.AsyncClient() as client:
             await client.post(url + "/agent-hello", headers=session_headers(server), json={"agent": "cc-t9",
@@ -881,7 +884,7 @@ async def with_hearing(fake_claude, tmp_path, script, present=True, brain=True, 
     from fake_engine import FakeEngine, tiny_store
 
     runner, log, script_file = fake_claude
-    script_file.write_text(json.dumps(script))
+    script_file.write_text(json.dumps(script), encoding="utf-8")
     home = tmp_path / "home"
     agents = AgentManager(home, claude=str(runner))
     fake = FakeEngine(**engine)

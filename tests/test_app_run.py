@@ -42,7 +42,8 @@ async def test_run_app_opens_the_browser_and_ends_when_it_closes(fake_claude, tm
     async def ready(url, app):
         async with httpx.AsyncClient() as client:
             seen["health"] = (await client.get(url + "/health")).json()
-        seen["config"] = json.loads((tmp_path / "home" / "app" / "extension" / "config.json").read_text())
+        seen["config"] = json.loads(
+            (tmp_path / "home" / "app" / "extension" / "config.json").read_text(encoding="utf-8"))
         seen["url"] = url
         seen["pages"] = await page_urls(app)
         app.process.kill()  # the user closes AI Browser (here, abruptly)
@@ -87,9 +88,9 @@ async def test_a_second_run_changes_nothing_for_the_running_one(fake_claude, tmp
     stop = asyncio.Event()
 
     async def ready(url, app):
-        before, lines = config.read_text(), []
+        before, lines = config.read_text(encoding="utf-8"), []
         seen["code"] = await run_app(tmp_path / "home", headless=True, claude=str(runner), out=lines.append)
-        seen["lines"], seen["unchanged"] = lines, config.read_text() == before
+        seen["lines"], seen["unchanged"] = lines, config.read_text(encoding="utf-8") == before
         stop.set()
 
     code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=str(runner), ready=ready,
@@ -159,7 +160,8 @@ async def test_a_stale_install_record_still_gets_the_setup_steps(fake_claude, tm
     prefs.parent.mkdir(parents=True)
     # what a one-run install (an older ai-browser, over the pipe) leaves behind: Chrome does not load it again
     prefs.write_text(json.dumps({"extensions": {"settings": {extension_id_for(folder): {"path": str(folder),
-                                                                                        "location": 4}}}}))
+                                                                                        "location": 4}}}}),
+                     encoding="utf-8")
     lines, seen = [], {}
     stop = asyncio.Event()
 
@@ -240,7 +242,7 @@ async def test_the_brain_survives_a_restart(fake_claude, tmp_path):
     seen = {}
 
     async def ready(url, app):
-        token = json.loads((home / "app" / "extension" / "config.json").read_text())["token"]
+        token = json.loads((home / "app" / "extension" / "config.json").read_text(encoding="utf-8"))["token"]
         async with connect(url.replace("http", "ws") + "/ws?token=" + token,
                            origin=f"chrome-extension://{app.extension_id}") as ws:
             await ws.send(json.dumps({"type": "brain"}))
@@ -264,7 +266,7 @@ async def test_scheduled_workflows_tick_while_the_app_runs(fake_claude, tmp_path
     from test_bridge import EVENTS
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     home = tmp_path / "home"
     WorkflowStore(home).save({"name": "Hourly check", "instructions": "Check the sites and tell me what changed",
                               "trigger": "schedule", "schedule": "every 15m"})
@@ -276,7 +278,7 @@ async def test_scheduled_workflows_tick_while_the_app_runs(fake_claude, tmp_path
     def users():
         if not log.exists():
             return []
-        return [json.loads(line) for line in log.read_text().splitlines() if '"type": "user"' in line]
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if '"type": "user"' in line]
 
     async def ready(url, app):
         await asyncio.sleep(0.5)  # the first tick starts the schedule's clock: nothing missed is caught up
@@ -329,7 +331,7 @@ async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_
         seen["mode"] = file_mode(link)
         seen["link"] = json.loads(link.read_text(encoding="utf-8"))
         seen["url"] = url
-        token = json.loads((home / "app" / "extension" / "config.json").read_text())["token"]
+        token = json.loads((home / "app" / "extension" / "config.json").read_text(encoding="utf-8"))["token"]
         async with connect(url.replace("http", "ws") + "/ws?token=" + token,
                            origin=f"chrome-extension://{app.extension_id}") as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
@@ -345,7 +347,7 @@ async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_
             if mcp.exists():
                 break
             await asyncio.sleep(0.1)
-        seen["env"] = json.loads(mcp.read_text())["mcpServers"]["ai-browser"]["env"]
+        seen["env"] = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]["ai-browser"]["env"]
         app.process.kill()
 
     code = await asyncio.wait_for(run.run_app(home, headless=True, claude=str(runner), ready=ready,

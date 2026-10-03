@@ -98,7 +98,7 @@ async def test_extract_links_writes_json(env):
     await browser.open(base + "report.html")
     out = await browser.extract("links")
     assert "Privacy policy → http://localhost:8000/privacy.html" in out
-    links = json.loads(browser.work.to_host("links.json").read_text())
+    links = json.loads(browser.work.to_host("links.json").read_text(encoding="utf-8"))
     assert {"text": "External about", "href": "https://example.org/about"} in links
 
 
@@ -107,7 +107,7 @@ async def test_extract_tables_writes_csv(env):
     await browser.open(base + "report.html")
     out = await browser.extract("tables")
     assert "table-1.csv" in out and "Fruit prices" in out
-    with open(browser.work.to_host("table-1.csv"), newline="") as handle:
+    with open(browser.work.to_host("table-1.csv"), newline="", encoding="utf-8") as handle:
         assert list(csv.reader(handle)) == [["Name", "Price"], ["Apple", "1.00"], ["Banana, ripe", "0.50"]]
 
 
@@ -116,10 +116,10 @@ async def test_extract_saves_everything_and_says_so(env):
     await browser.open(base + "bigdata.html")
     links_out = await browser.extract("links")
     assert links_out.startswith("1200 links")
-    assert len(json.loads(browser.work.to_host("links.json").read_text())) == 1200
+    assert len(json.loads(browser.work.to_host("links.json").read_text(encoding="utf-8"))) == 1200
     tables_out = await browser.extract("tables")
     assert "701 rows" in tables_out
-    with open(browser.work.to_host("table-1.csv"), newline="") as handle:
+    with open(browser.work.to_host("table-1.csv"), newline="", encoding="utf-8") as handle:
         rows = list(csv.reader(handle))
     assert len(rows) == 701
 

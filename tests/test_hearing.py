@@ -181,7 +181,7 @@ def test_the_real_engine_imports_nothing_heavy_until_it_loads():
     code = ("import sys; from ai_browser.hearing.engine import WhisperEngine; "
             "from ai_browser.hearing.service import HearingService; WhisperEngine().available(); "
             "print('faster_whisper' in sys.modules, 'numpy' in sys.modules)")
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, encoding="utf-8")
     assert result.stdout.split() == ["False", "False"], result.stderr
 
 

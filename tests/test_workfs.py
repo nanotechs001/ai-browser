@@ -39,7 +39,7 @@ def test_escapes_are_rejected(work, bad):
 def test_symlink_escape_is_rejected(work, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "secret").write_text("x")
+    (outside / "secret").write_text("x", encoding="utf-8")
     symlink_or_skip(outside, work.host_task / "link")
     with pytest.raises(PathError):
         work.to_host("link/secret")
@@ -47,7 +47,7 @@ def test_symlink_escape_is_rejected(work, tmp_path):
 
 def test_write_creates_parents_and_returns_sandbox_path(work):
     assert work.write_text("a/b/c.txt", "hi") == "/work/t1/a/b/c.txt"
-    assert (work.host_task / "a/b/c.txt").read_text() == "hi"
+    assert (work.host_task / "a/b/c.txt").read_text(encoding="utf-8") == "hi"
 
 
 def test_read_truncates_long_files(work):
@@ -69,7 +69,7 @@ def _checks_pass(monkeypatch):
 
 def test_reads_never_follow_a_link_swapped_in_after_the_check(work, tmp_path, monkeypatch):
     secret = tmp_path / "secret.txt"
-    secret.write_text("TOP SECRET")
+    secret.write_text("TOP SECRET", encoding="utf-8")
     symlink_or_skip(secret, work.host_task / "notes.txt")
     _checks_pass(monkeypatch)
     with pytest.raises(PathError, match="symbolic link"):
@@ -78,13 +78,13 @@ def test_reads_never_follow_a_link_swapped_in_after_the_check(work, tmp_path, mo
 
 def test_writes_never_follow_a_link_swapped_in_after_the_check(work, tmp_path, monkeypatch):
     target = tmp_path / "zshrc"
-    target.write_text("original")
+    target.write_text("original", encoding="utf-8")
     (work.host_task / ".shell").mkdir()
     symlink_or_skip(target, work.host_task / ".shell" / "001.log")  # the shell knows the next log name
     _checks_pass(monkeypatch)
     with pytest.raises(PathError, match="symbolic link"):
         work.write_text(".shell/001.log", "replaced")
-    assert target.read_text() == "original"
+    assert target.read_text(encoding="utf-8") == "original"
 
 
 def test_writes_never_create_files_through_a_linked_folder(work, tmp_path, monkeypatch):
@@ -112,7 +112,7 @@ def test_a_fifo_is_refused_without_hanging(work):
     reader.start()
     reader.join(timeout=3)
     if reader.is_alive():  # free the blocked reader so the test run can finish
-        with open(work.host_task / "pipe", "w"):
+        with open(work.host_task / "pipe", "w", encoding="utf-8"):
             pass
         reader.join(timeout=3)
         pytest.fail("reading a FIFO hung")

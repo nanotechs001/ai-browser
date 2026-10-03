@@ -220,7 +220,7 @@ class BrainStore:
     def _read(self, name: str) -> dict | None:
         path = self.folder / name
         try:
-            text = path.read_text()
+            text = path.read_text(encoding="utf-8")
         except OSError:
             return None
         try:

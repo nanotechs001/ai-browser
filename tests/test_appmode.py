@@ -109,11 +109,11 @@ async def test_a_dead_session_never_takes_the_users_tab_with_it(app_engine, tmp_
     await engine.tabs("list")
     await engine.tabs("switch", "u1")
     gone = int(subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
-                              capture_output=True, text=True).stdout)
+                              capture_output=True, text=True, encoding="utf-8").stdout)
     records = list((tmp_path / "home" / "sandboxes").glob("*/sessions/*.json"))
     assert not records  # in AI Browser the app, not the next session, cleans up after a session
     for record in records:  # (kept: had there been one, it must not hold the user's tab)
-        record.write_text(json.dumps({**json.loads(record.read_text()), "pid": gone}))
+        record.write_text(json.dumps({**json.loads(record.read_text(encoding="utf-8")), "pid": gone}), encoding="utf-8")
     following = Engine(home=tmp_path / "home", default_profile="pytest-app", catalog=Catalog([], set()))
     try:
         await following.tabs("list")  # the next session cleans up after the dead one
@@ -362,7 +362,7 @@ def test_the_engine_needs_no_development_packages():
     import sys
 
     code = "import sys; sys.modules['httpx'] = None; import ai_browser.engine, ai_browser.server"  # httpx is dev-only
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, encoding="utf-8")
     assert result.returncode == 0, result.stderr[-500:]
 
 

@@ -78,7 +78,7 @@ class Catalog:
     @staticmethod
     def _read(source: SkillSource, skill_md: Path) -> Skill | None:
         try:
-            meta, _ = _frontmatter(skill_md.read_text(errors="replace"))
+            meta, _ = _frontmatter(skill_md.read_text(encoding="utf-8-sig", errors="replace"))
         except OSError:
             return None
         folder = skill_md.parent
@@ -147,7 +147,7 @@ class Catalog:
 
     def load(self, name: str) -> str:
         skill = self.get(name)
-        _, body = _frontmatter((skill.host_dir / "SKILL.md").read_text(errors="replace"))
+        _, body = _frontmatter((skill.host_dir / "SKILL.md").read_text(encoding="utf-8-sig", errors="replace"))
         body = body.replace("${CLAUDE_PLUGIN_ROOT}", skill.mount).replace("${CLAUDE_SKILL_DIR}", skill.sandbox_dir)
         files = _list_files(skill.host_dir)
         lines = [f"skill {skill.ref} · sandbox folder {skill.sandbox_dir} (read-only)"]
@@ -165,7 +165,7 @@ class Catalog:
         path = (skill.host_dir / rel).resolve()
         if not path.is_relative_to(skill.host_dir.resolve()):
             raise ValueError(f"{rel!r}: use a path inside the skill folder")
-        text = path.read_text(errors="replace")
+        text = path.read_text(encoding="utf-8", errors="replace")
         if len(text) > READ_LIMIT:
             text = text[:READ_LIMIT] + f"\n[truncated: {len(text) - READ_LIMIT} more chars]"
         return text
@@ -176,11 +176,11 @@ class Catalog:
 
 def _plugin_sources(claude_home: Path) -> list[SkillSource]:
     try:
-        installed = json.loads((claude_home / "plugins" / "installed_plugins.json").read_text())
+        installed = json.loads((claude_home / "plugins" / "installed_plugins.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     try:
-        enabled = json.loads((claude_home / "settings.json").read_text()).get("enabledPlugins") or {}
+        enabled = json.loads((claude_home / "settings.json").read_text(encoding="utf-8")).get("enabledPlugins") or {}
     except (OSError, ValueError, AttributeError):
         enabled = {}
     sources = []

@@ -69,7 +69,8 @@ class Sandboxes:
 
     def _docker(self, *args: str, timeout: float = 60, check: bool = True) -> subprocess.CompletedProcess:
         try:
-            result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
+            result = subprocess.run(["docker", *args], capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", timeout=timeout)
         except FileNotFoundError:
             raise DockerError("Docker is not installed. Install Docker Desktop, then retry.") from None
         except subprocess.TimeoutExpired:

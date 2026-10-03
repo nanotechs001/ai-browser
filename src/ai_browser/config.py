@@ -49,7 +49,7 @@ class Config:
 def load_config(root: Path) -> Config:
     """Read root/config.json; a missing or invalid file gives the defaults."""
     try:
-        data = json.loads((root / "config.json").read_text())
+        data = json.loads((root / "config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return Config()
     cfg = Config()

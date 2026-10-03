@@ -28,7 +28,7 @@ def drain(queue):
 
 
 def sent_to_claude(log):
-    lines = [json.loads(line) for line in log.read_text().splitlines()]
+    lines = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     return [line for line in lines if isinstance(line, dict)]
 
 
@@ -36,7 +36,7 @@ async def test_three_agents_work_at_once_and_a_fourth_waits(fake_claude, tmp_pat
     from ai_browser.app.agents import AgentManager
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(SLOW))
+    script.write_text(json.dumps(SLOW), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner), max_working=3)
     try:
         for n in range(4):
@@ -44,7 +44,8 @@ async def test_three_agents_work_at_once_and_a_fourth_waits(fake_claude, tmp_pat
         assert await settle(manager, lambda agents: sorted(a["state"] for a in agents)
                             == ["waiting", "working", "working", "working"])
         assert await settle(manager, lambda agents: all(a["state"] == "your_turn" for a in agents))
-        assert sum(line.startswith("[") for line in log.read_text().splitlines()) == 4  # one Claude Code each
+        # one Claude Code each
+        assert sum(line.startswith("[") for line in log.read_text(encoding="utf-8").splitlines()) == 4
     finally:
         await manager.close_all()
 
@@ -53,7 +54,7 @@ async def test_stop_leaves_the_others_working(fake_claude, tmp_path):
     from ai_browser.app.agents import AgentManager
 
     runner, _, script = fake_claude
-    script.write_text(json.dumps([EVENTS[0], EVENTS[1], {"sleep": 3}, *EVENTS[2:]]))
+    script.write_text(json.dumps([EVENTS[0], EVENTS[1], {"sleep": 3}, *EVENTS[2:]]), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner))
     try:
         first = await manager.create("one")
@@ -73,7 +74,7 @@ async def test_a_crashed_agent_leaves_the_others_working(fake_claude, tmp_path):
     from ai_browser.app.agents import AgentManager
 
     runner, _, script = fake_claude
-    script.write_text(json.dumps({"crash": [EVENTS[0], {"exit": 3}], "default": SLOW}))
+    script.write_text(json.dumps({"crash": [EVENTS[0], {"exit": 3}], "default": SLOW}), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner))
     try:
         await manager.create("please crash now")
@@ -90,7 +91,7 @@ async def test_close_ends_the_agent_and_closes_only_its_own_tabs(fake_claude, tm
     from ai_browser.app.agents import AgentManager
 
     runner, _, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     closed = []
 
     async def close_tabs(targets):
@@ -115,7 +116,7 @@ async def test_a_message_to_a_busy_agent_waits_for_its_turn(fake_claude, tmp_pat
     from ai_browser.app.agents import AgentManager
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(SLOW))
+    script.write_text(json.dumps(SLOW), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner))
     queue = manager.subscribe()
     try:
@@ -135,7 +136,7 @@ async def test_names_colours_skills_and_models(fake_claude, tmp_path):
     from ai_browser.app.agents import AgentManager
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner))
     task = "please check every page of the shop for broken links and layout problems"
     try:
@@ -178,7 +179,7 @@ async def test_a_bot_check_makes_the_agent_need_you_until_continue(fake_claude, 
     from ai_browser.checks import KINDS
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(SLOW))
+    script.write_text(json.dumps(SLOW), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner))
     feed = manager.subscribe()
     try:
@@ -210,7 +211,7 @@ async def test_a_tool_answered_during_a_check_keeps_the_agent_needing_you(fake_c
     runner, _, script = fake_claude
     script.write_text(json.dumps([EVENTS[0], {"ask_permission": {"tool_name": "mcp__ai-browser__open",
                                                                  "input": {"url": "https://example.com"}}},
-                                  {"sleep": 1}, EVENTS[-1]]))
+                                  {"sleep": 1}, EVENTS[-1]]), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner))
     try:
         agent = await manager.create("look up flights")
@@ -230,7 +231,7 @@ async def test_skip_closes_only_the_agents_own_tab_and_tells_it_so(fake_claude, 
     from ai_browser.app.agents import SKIP_TEXT, AgentManager
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     closed = []
 
     async def close_tabs(targets):
@@ -261,7 +262,7 @@ async def test_the_check_clears_when_the_engine_says_so_or_on_stop(fake_claude, 
     from ai_browser.app.agents import AgentManager
 
     runner, _, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner))
     try:
         agent = await manager.create("one")
@@ -284,7 +285,7 @@ async def test_continue_pressed_twice_sends_one_message(fake_claude, tmp_path):
     from ai_browser.app.agents import CONTINUE_TEXT, AgentManager
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner))
     try:
         agent = await manager.create("one")
@@ -302,7 +303,7 @@ async def test_hand_tab_records_it_and_sends_a_labelled_note(fake_claude, tmp_pa
     from ai_browser.app.agents import HANDED_NOTE, AgentManager
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner))
     try:
         agent = await manager.create("Fix the footer")
@@ -322,7 +323,7 @@ async def test_take_back_and_close_let_go_of_handed_tabs(fake_claude, tmp_path):
     from ai_browser.app.agents import AgentManager
 
     runner, _, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     closed, ungrouped = [], []
 
     async def close_tabs(targets):
@@ -348,7 +349,7 @@ async def test_agents_never_wear_the_brains_or_claude_codes_colours(fake_claude,
     from ai_browser.app.agents import AgentManager
 
     runner, _, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     manager = AgentManager(tmp_path / "home", claude=str(runner), max_working=1)
     turns = []
     manager.on_turn = lambda agent: turns.append(agent.id)

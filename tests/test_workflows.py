@@ -50,7 +50,7 @@ FOOTER = {"name": "Footer fix", "instructions": "Open the site, fix the footer, 
 def user_messages(log):
     if not log.exists():
         return []
-    return [json.loads(line) for line in log.read_text().splitlines() if '"type": "user"' in line]
+    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if '"type": "user"' in line]
 
 
 def test_workflow_files_round_trip_and_bad_ones_are_reported(tmp_path):
@@ -60,16 +60,17 @@ def test_workflow_files_round_trip_and_bad_ones_are_reported(tmp_path):
     saved = store.save(FOOTER)
     path = tmp_path / "workflows" / "footer-fix.md"
     assert saved.slug == "footer-fix" and file_mode(path) in (0o600, None)
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert text.startswith("---\n") and text.rstrip().endswith("post what you did in #web-team")
     again = WorkflowStore(tmp_path).get("footer-fix")
     assert (again.trigger, again.site, again.when, again.run) == ("message", "asana", "an Asana task tagged website",
                                                                   "auto")
     assert (again.tools, again.skills, again.model) == (["clickup"], ["elementor-pages"], "sonnet")
-    path.write_text(text.replace("fix the footer", "fix the footer links"))  # edited by hand in a text editor
+    path.write_text(text.replace("fix the footer", "fix the footer links"),
+                    encoding="utf-8")  # edited by hand in a text editor
     assert "footer links" in WorkflowStore(tmp_path).get("footer-fix").instructions
-    (tmp_path / "workflows" / "broken.md").write_text("---\nname: [unclosed\n---\nbody\n")
-    (tmp_path / "workflows" / "odd.md").write_text("---\nname: Odd\ntrigger: sometimes\n---\nbody\n")
+    (tmp_path / "workflows" / "broken.md").write_text("---\nname: [unclosed\n---\nbody\n", encoding="utf-8")
+    (tmp_path / "workflows" / "odd.md").write_text("---\nname: Odd\ntrigger: sometimes\n---\nbody\n", encoding="utf-8")
     store = WorkflowStore(tmp_path)
     assert [workflow.slug for workflow in store.all()] == ["footer-fix"]
     problems = store.problems()
@@ -146,7 +147,7 @@ async def test_a_message_workflow_is_offered_or_runs_right_away(fake_claude, tmp
                  "workflow": "made-up"},
                 {"id": "asana:3", "kind": "new", "summary": "Another website task", "why": "", "suggest": "agent",
                  "workflow": "site-fix"}]
-    script.write_text(json.dumps([{"result": json.dumps(verdicts)}]))
+    script.write_text(json.dumps([{"result": json.dumps(verdicts)}]), encoding="utf-8")
     workflows = WorkflowStore(tmp_path / "home")
     workflows.save({"name": "Site fix", "instructions": "Fix what the task asks on the website", "trigger": "message",
                     "site": "asana", "when": "a task tagged website", "run": "ask"})
@@ -189,7 +190,7 @@ async def test_run_by_hand_over_the_socket(fake_claude, tmp_path):
     from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
 
     runner_bin, log, script = fake_claude
-    script.write_text(json.dumps(EVENTS))
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
     home = tmp_path / "home"
     agents = AgentManager(home, claude=str(runner_bin))
     workflows = WorkflowStore(home)
@@ -234,7 +235,7 @@ async def test_a_workflow_loads_its_skills_and_only_its_tools(fake_claude, tmp_p
     from test_tools import INIT, RESULT, user_config
 
     runner_bin, log, script = fake_claude
-    script.write_text(json.dumps([INIT, RESULT]))
+    script.write_text(json.dumps([INIT, RESULT]), encoding="utf-8")
     home = tmp_path / "home"
     tools = ToolsConfig(home, claude_home=user_config(tmp_path))
     tools.set_enabled("figma", True)
@@ -248,7 +249,7 @@ async def test_a_workflow_loads_its_skills_and_only_its_tools(fake_claude, tmp_p
         if agents.agents[agent_id].state == "your_turn":
             break
         await asyncio.sleep(0.05)
-    servers = json.loads((home / "app" / "agents" / agent_id / "mcp.json").read_text())["mcpServers"]
+    servers = json.loads((home / "app" / "agents" / agent_id / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]
     assert set(servers) == {"ai-browser", "figma"}  # clickup is on, but not in this workflow's list
     assert user_messages(log)[0]["message"]["content"].startswith(
         "Load and use these skills with load_skill: elementor-pages")
@@ -283,3 +284,24 @@ def test_workflows_and_skills_keep_arrows_emoji_and_cjk(tmp_path):
     text = "---\nname: notes\ndescription: Takes notes → fast 🚀\n---\nWrite 日本語 notes.\n"
     path = skills.save(text)
     assert path.read_bytes() == text.encode("utf-8")
+
+
+def test_files_saved_by_notepad_load_like_the_macs(tmp_path):
+    from ai_browser.brain.workflows import WorkflowStore
+    from ai_browser.skills import Catalog, SkillSource
+
+    store = WorkflowStore(tmp_path)
+    store.folder.mkdir(parents=True)
+    (store.folder / "morning.md").write_bytes(  # UTF-8 with a BOM, and CRLF line ends
+        "﻿---\r\nname: Morning → report 🚀\r\ntrigger: manual\r\n---\r\nCheck 日本語 mail\r\n".encode("utf-8"))
+    assert [(w.slug, w.name, w.instructions) for w in store.all()] == [
+        ("morning", "Morning → report 🚀", "Check 日本語 mail")]
+    assert store.problems() == []
+    folder = tmp_path / "skills" / "notes"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_bytes(
+        "﻿---\r\nname: notes\r\ndescription: Takes notes — fast\r\n---\r\nBody\r\n".encode("utf-8"))
+    catalog = Catalog([SkillSource("personal", tmp_path / "skills", "/skills/personal", "*/SKILL.md")], set())
+    [skill] = catalog.all()
+    assert (skill.name, skill.description) == ("notes", "Takes notes — fast")
+    assert catalog.load("notes").rstrip().endswith("Body")

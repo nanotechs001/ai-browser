@@ -45,7 +45,7 @@ def brain_for(fake_claude, tmp_path, answers, **options):
     from ai_browser.brain.store import BrainStore
 
     runner, log, script = fake_claude
-    script.write_text(json.dumps(answers))
+    script.write_text(json.dumps(answers), encoding="utf-8")
     sent, shown = [], []
     brain = BrainService(BrainStore(tmp_path / "home"), claude=str(runner), batch_wait=0.1, **options)
     brain.send_watcher = lambda message: sent.append(message) or True
@@ -310,14 +310,15 @@ async def test_tell_maps_to_a_draft_an_agent_or_a_note(fake_claude, tmp_path):
     assert agents.created[0]["text"].startswith("ask an agent to check the launch page")  # the user's own words
     [call] = [call for call in oneshots(log) if call["oneshot"].startswith("You map the user's answer")]
     assert call["oneshot"].index("ask an agent") < call["oneshot"].index(MARKER)
-    script.write_text(json.dumps(dict_script(NEEDS, tell={"action": "draft"})))
+    script.write_text(json.dumps(dict_script(NEEDS, tell={"action": "draft"})), encoding="utf-8")
     telling = asyncio.create_task(brain.tell("gmail:t2", "say no politely"))
     await answer_thread(brain, sent)
     await telling
     assert brain.store.get("gmail:t2").state == "draft_ready"
     [draft_call] = [call for call in oneshots(log) if call["oneshot"].startswith("You draft a reply")]
     assert draft_call["oneshot"].index("say no politely") < draft_call["oneshot"].index(MARKER)
-    script.write_text(json.dumps(dict_script(NEEDS, tell={"action": "none", "reply": "I can't set reminders"})))
+    script.write_text(json.dumps(dict_script(NEEDS, tell={"action": "none", "reply": "I can't set reminders"})),
+                      encoding="utf-8")
     await brain.tell("gmail:t3", "remind me tomorrow")
     assert brain.store.get("gmail:t3").note == "I can't set reminders" and len(agents.created) == 1
 
