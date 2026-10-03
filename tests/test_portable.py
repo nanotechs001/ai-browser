@@ -322,3 +322,30 @@ def test_voice_extra_has_windows_wheels():
         for extra in extras:
             todo += [dep for dep in package.get("optional-dependencies", {}).get(extra, []) if applies(dep)]
     assert not missing, "no Windows (win_amd64, cp312) or pure wheel for: " + ", ".join(sorted(set(missing)))
+
+
+def test_the_ci_workflow_runs_only_by_hand():
+    import yaml
+
+    text = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    workflow = yaml.safe_load(text)
+    triggers = workflow[True]  # PyYAML reads the `on:` key as True
+    assert list(triggers) == ["workflow_dispatch"]  # never on a push, a pull request or a schedule
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    assert inputs["os"]["options"] == ["windows", "macos", "both"] and inputs["os"]["default"] == "windows"
+    assert inputs["voice"]["type"] == "boolean" and inputs["voice"]["default"] is False
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "windows-latest" in text and "macos-latest" in text
+    job = workflow["jobs"]["test"]
+    assert job["strategy"]["fail-fast"] is False and job["timeout-minutes"] == 40
+    runs = [step.get("run", "") for step in job["steps"]]
+    assert any(run.startswith("uv sync --locked") for run in runs)
+    assert any(run.startswith("uv run --no-sync pytest") for run in runs)
+    assert "secrets." not in text and "PYTHONUTF8" not in text  # no secrets; Windows' own encoding is what's tested
+    uses = [step["uses"] for step in job["steps"] if "uses" in step]
+    assert [use.split("@")[0] for use in uses] == ["actions/checkout", "astral-sh/setup-uv", "actions/upload-artifact"]
+    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", use) for use in uses), uses
+    assert len(re.findall(r"uses: \S+@[0-9a-f]{40} +# v\d", text)) == 3  # each pin names its release
+    upload = job["steps"][-1]
+    assert upload["if"] == "always()" and upload["with"]["path"] == "pytest.xml"
+    assert upload["with"]["retention-days"] == 7

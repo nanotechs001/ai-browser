@@ -1,0 +1,36 @@
+name: tests
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Which systems to test on
+        type: choice
+        options: [windows, macos, both]
+        default: windows
+      voice:
+        description: Also install the voice extra (no model download)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os == 'both' && '["windows-latest","macos-latest"]' || inputs.os == 'macos' && '["macos-latest"]' || '["windows-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - run: uv sync --locked ${{ inputs.voice && '--extra voice' || '' }}
+      - if: inputs.voice
+        run: uv run --no-sync python -c "import faster_whisper"
+      - run: uv run --no-sync pytest -q --junitxml=pytest.xml
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: pytest-${{ matrix.os }}
+          path: pytest.xml
+          retention-days: 7
