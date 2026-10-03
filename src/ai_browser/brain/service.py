@@ -15,11 +15,12 @@ from collections.abc import Callable, Sequence
 
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
-from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HIDDEN, NO_AGENT_SAY, NO_SUCH_SAY, NOTHING_OPEN,
-                   NOTHING_OPEN_WAITING, PRESSED, QUEUED_LINE_SAY, QUEUED_PERMISSION_SAY, QUEUED_WORKING_SAY, RELAY,
-                   SECRET_ANSWER, SEND_SAY, SENT_SAY, START_SAY, STARTED_SAY, WHICH_SAY, Pick, Talks, check_say,
-                   choices, is_no, is_yes, label, number_of, parse_answer, resolve_agent, resolve_among, secret_like,
-                   shown_rows, state_summary, tab_hint, talk_prompt, target_state)
+from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HAND_OVER_ANY_SAY, HAND_OVER_APP_SAY, HAND_OVER_SAY, HIDDEN,
+                   NO_AGENT_SAY, NO_SUCH_SAY, NOTHING_OPEN, NOTHING_OPEN_WAITING, PRESSED, QUEUED_LINE_SAY,
+                   QUEUED_PERMISSION_SAY, QUEUED_WORKING_SAY, RELAY, SECRET_ANSWER, SEND_SAY, SENT_SAY, START_SAY,
+                   STARTED_SAY, WHICH_SAY, Pick, Talks, check_say, choices, explicit_pick, is_no, is_yes, label,
+                   number_of, parse_answer, resolve_agent, resolve_among, secret_like, shown_rows, state_summary,
+                   tab_hint, talk_prompt, target_state)
 
 KINDS = {"needs_reply", "new", "skip"}
 SUGGESTIONS = {"draft", "agent", "tell"}
@@ -699,12 +700,31 @@ class BrainService:
         return {"say": parsed.say}
 
     def _open(self, talk: str, text: str, parsed, rows: list[dict]) -> dict:
-        """A view only: the Brain's inbox, or one agent's drawer."""
+        """A view only: the Brain's inbox, one agent's drawer, or that drawer at Your tabs."""
         if parsed.target == "brain":
             return {"say": parsed.say, "open": {"brain": True}}
-        if parsed.target == "agent":
-            return {"say": parsed.say, "open": {"agent": parsed.agent}}
-        return {"say": parsed.say}
+        if parsed.target == "tabs":
+            return self._hand_over(talk, text, parsed, rows)
+        pick = explicit_pick(text, rows)  # a number or colour the user said beats Claude's pick
+        if pick is not None and pick.outcome == "missing":
+            return {"say": NO_SUCH_SAY.format(said=pick.said, choices=choices(rows))}
+        agent = pick.ids[0] if pick is not None and pick.outcome == "one" else parsed.agent
+        self.talks.set_last(talk, agent)
+        return {"say": parsed.say, "open": {"agent": agent}}
+
+    def _hand_over(self, talk: str, text: str, parsed, rows: list[dict]) -> dict:
+        """Hand over is the user's click (Decision 10): the Brain says how, and opens that agent's drawer at Your
+        tabs. It never hands over or takes back a tab itself."""
+        pick = resolve_agent(text, rows, parsed.agent, self.talks.last_agent(talk))
+        row = self._row(rows, pick.ids[0]) if pick.outcome == "one" else None
+        if row is not None:
+            self.talks.set_last(talk, row["id"])
+        if not self._in_users_browser():  # AI Browser mode: agents can't take the user's tabs
+            return {"say": HAND_OVER_APP_SAY.format(label=label(row) if row is not None else "the agent"),
+                    **({"open": {"agent": row["id"]}} if row is not None else {})}
+        if row is None:
+            return {"say": HAND_OVER_ANY_SAY}
+        return {"say": HAND_OVER_SAY.format(label=label(row)), "open": {"agent": row["id"], "tabs": True}}
 
     def _start_card(self, talk: str, words: str) -> dict:
         """A start card holding the user's own words; it says how to hand over a tab when the words point at one."""

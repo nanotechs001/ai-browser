@@ -871,3 +871,24 @@ async def test_an_agent_that_closes_while_asked_about_is_no_longer_a_pick(fake_c
     card = (await brain.respond("k1", "two"))["proposal"]  # the question stayed: the first words still go
     assert (card["agent"], card["task"]) == ("a2", FOOTER_WORDS)
     assert len(talk_calls(log)) == 1 and agents.sent == []
+
+
+async def test_hand_over_is_a_pointer_never_a_hand(fake_claude, tmp_path):
+    from ai_browser.brain.talk import HAND_OVER_ANY_SAY, HAND_OVER_APP_SAY, HAND_OVER_SAY
+
+    agents = Recorder([footer(), flights()])
+    tabs = {"say": "Handing it over.", "action": "open", "target": "tabs", "agent": "a1"}
+    tabs_any = {"say": "Handing it over.", "action": "open", "target": "tabs", "agent": ""}
+    show = {"say": "Here.", "action": "open", "target": "agent", "agent": "a1"}
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, tabs, tabs_any, tabs_any, show, agents=agents)
+    assert await brain.respond("k1", "give agent 1 my Gmail tab") == {
+        "say": HAND_OVER_SAY.format(label="1 · fix the footer"), "open": {"agent": "a1", "tabs": True}}
+    assert brain.talks.last_agent("k1") == "a1"
+    assert await brain.respond("k2", "use my mail tab") == {"say": HAND_OVER_ANY_SAY}  # no single agent: no open
+    agents.in_users_browser = False  # AI Browser mode: agents can't take the user's tabs
+    assert await brain.respond("k3", "give agent 2 my Gmail tab") == {
+        "say": HAND_OVER_APP_SAY.format(label="2 · check flights"), "open": {"agent": "a2"}}
+    assert await brain.respond("k4", "show me agent 2") == {"say": "Here.", "open": {"agent": "a2"}}
+    assert await brain.respond("k4", "show me agent 7") == {
+        "say": "There's no agent 7 now. Open ones: 1 · fix the footer (blue), or 2 · check flights (green)."}
+    assert agents.calls == [] and agents.sent == [] and agents.created == []  # never hand_tab or take_back
