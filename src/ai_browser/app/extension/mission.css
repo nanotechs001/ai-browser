@@ -251,6 +251,14 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .chip.working { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
 .chip.failed { background: color-mix(in srgb, var(--fail) 18%, transparent); color: var(--fail); }
 .permission-slot:empty { display: none; }
+/* Your tabs, in an agent's drawer (tablist.js mountYourTabs): the user's own tabs, each with Give to this agent */
+.your-tabs { border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; }
+.your-tabs summary { cursor: pointer; font-size: 13px; }
+.your-tabs p { margin: 6px 0 0; font-size: 13px; }
+.your-tab { display: flex; gap: 8px; align-items: center; padding: 4px 0; min-width: 0; }
+.your-tab .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.your-tab .host { color: var(--muted); font-size: 12px; }
+.your-tab .give-here { font-size: 12px; padding: 2px 8px; }
 .messages { flex: 1; min-height: 120px; overflow: auto; display: flex; flex-direction: column; gap: 8px;
             border-top: 1px solid var(--line); padding-top: 10px; }
 .messages .empty { color: var(--muted); font-size: 13px; margin: 0; }

@@ -8,12 +8,13 @@ import { connect } from "./link.js";
 import { permissionCard } from "./permission.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
 import { mountTalk } from "./talk.js";
+import { mountYourTabs } from "./tablist.js";
 import { createVoice } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
 const agents = new Map(); // id -> the agent, as the app describes it
 const listRows = new Map(); // id -> its row in the List, updated in place
-const drawer = { id: null, parts: null, chat: null, brain: null }; // what the drawer shows: an agent, or the Brain
+const drawer = { id: null, parts: null, chat: null, brain: null, yourTabs: null }; // an agent, or the Brain
 const brainItems = new Map(); // the Brain's inbox: id -> item
 const brainState = { busy: false, what: "" }; // what the Brain is doing now
 let speaking = false; // the voice is reading an update aloud
@@ -25,6 +26,8 @@ let pendingTimer = null;
 let storedModel = false;
 let talkState = "idle"; // the talk panel's state (talk.js): the Brain listens while the user talks
 let talk = null; // the talk panel, mounted once the line to the app exists
+let tabs = []; // the browser's tab list (snapshot.tabs, then each "tabs" message): the drawer's Your tabs
+let browser = null; // where agents browse: {kind, name, state} (snapshot.browser, then each "browser" message)
 
 const scene = createScene($("scene"), { onSelect: select, onCamera: aimBrain });
 const brainButton = el("button", "brain");
@@ -66,7 +69,7 @@ talk = mountTalk({
     talkState = state;
     renderBrain();
   },
-  openAgent: (id) => select(id),
+  openAgent: (id, options) => select(id, options),
   openBrain: () => openBrain(),
   model: () => $("task-model").value, // the model last picked here or in AI Home
 });
@@ -210,11 +213,11 @@ function openBrain() {
   $("drawer").hidden = false;
 }
 
-function select(id) {
+function select(id, options = {}) {
   selected = id;
   for (const node of document.querySelectorAll(".station.selected")) node.classList.remove("selected");
   document.querySelector(`.station[data-id="${CSS.escape(id)}"]`)?.classList.add("selected");
-  openAgent(id);
+  openAgent(id, options);
 }
 
 // ---- the drawer: an agent's state, Watch, Stop, Close, its permission card and its chat ------------------------------
@@ -225,13 +228,14 @@ function button(className, label, onClick) {
   return node;
 }
 
-function openAgent(id) {
+function openAgent(id, { tabs: showTabs = false } = {}) {
   const agent = agents.get(id);
   if (!agent) return;
   drawer.brain = null;
   drawer.id = id;
   const parts = { state: el("span", "chip"), status: el("div", "status muted"), buttons: el("div", "row buttons"),
-                  permission: el("div", "permission-slot"), messages: el("div", "messages"),
+                  permission: el("div", "permission-slot"), yourTabs: el("details", "your-tabs"),
+                  messages: el("div", "messages"),
                   composer: el("div", "composer"), input: el("textarea"), card: null };
   parts.watch = button("watch", "Watch", () => {
     const current = agents.get(id);
@@ -253,12 +257,16 @@ function openAgent(id) {
       sendChat();
     }
   });
-  $("drawer-body").replaceChildren(parts.status, parts.buttons, parts.permission, parts.messages, parts.composer);
+  drawer.yourTabs = mountYourTabs(parts.yourTabs, { send: (message) => link.send(message), agentId: () => id });
+  parts.yourTabs.open = showTabs; // folded, unless the Brain pointed here to hand a tab over
+  $("drawer-body").replaceChildren(parts.status, parts.buttons, parts.permission, parts.yourTabs, parts.messages,
+                                   parts.composer);
   showList(false); // the drawer takes the List's place
   drawer.parts = parts;
   drawer.chat = createChat(parts.messages);
   drawer.chat.reset("Loading…");
   fillDrawer(agent);
+  renderYourTabs();
   $("drawer").hidden = false;
   link.send({ type: "events", id });
 }
@@ -294,6 +302,12 @@ function fillDrawer(agent) { // the drawer's agent changed: its parts are update
   }
 }
 
+function renderYourTabs() { // the drawer's Your tabs follows the tab list and the browser's state
+  if (!drawer.yourTabs) return;
+  drawer.yourTabs.render(tabs, { brave: browser?.kind === "brave", connected: browser?.state === "connected",
+                                 name: browser?.name || "Brave" });
+}
+
 function sendChat() {
   const text = drawer.parts?.input.value.trim();
   if (!text || !drawer.id) return;
@@ -306,6 +320,7 @@ function closeDrawer() {
   drawer.parts = null;
   drawer.chat = null;
   drawer.brain = null;
+  drawer.yourTabs = null;
   $("drawer-body").replaceChildren();
   for (const node of document.querySelectorAll(".station.selected")) node.classList.remove("selected");
 }
@@ -384,6 +399,9 @@ function handle(message) {
       const ids = new Set((message.agents || []).map((agent) => agent.id));
       for (const id of [...agents.keys()]) if (!ids.has(id)) forget(id);
       for (const agent of message.agents || []) update(agent);
+      tabs = message.tabs || [];
+      browser = message.browser || null;
+      renderYourTabs();
       agentsKnown = true;
       renderCounts();
       renderEmptyList();
@@ -419,6 +437,14 @@ function handle(message) {
     case "error":
       if (pending && message.request === pending) finishStart();
       if (message.text && (!message.request || String(message.request).startsWith("m"))) note(message.text);
+      break;
+    case "tabs":
+      tabs = message.tabs || [];
+      renderYourTabs();
+      break;
+    case "browser":
+      browser = { kind: message.kind, name: message.name, state: message.state };
+      renderYourTabs();
       break;
     case "agent":
       update(message.agent);

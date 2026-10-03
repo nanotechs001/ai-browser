@@ -119,3 +119,45 @@ export function mountTabList(root, { send, agents, newAgent }) {
 
   return { render };
 }
+
+// Mission Control's Your tabs, in an agent's drawer: the user's own tabs (theirs, or a Brain thread's), each with Give
+// to this agent. That button is the existing hand_tab, the same click as AI Home's Hand over; the Brain never sends
+// it. root is a <details>; every text is set with textContent.
+export function mountYourTabs(root, { send, agentId }) {
+  const summary = el("summary", "", "Your tabs");
+  const list = el("div", "your-tab-list");
+  root.replaceChildren(summary, list);
+
+  function render(tabs, { brave = false, connected = false, name = "Brave" } = {}) {
+    root.hidden = !brave; // agents in AI Browser itself can't take the user's tabs
+    list.textContent = "";
+    if (!brave) return;
+    if (!connected) {
+      summary.textContent = "Your tabs";
+      list.append(el("p", "muted", `${name} isn't connected yet: connect it in AI Home.`));
+      return;
+    }
+    const mine = tabs.filter((tab) => ["you", "brain"].includes(tab.owner?.kind || "you"));
+    summary.textContent = `Your tabs (${mine.length})`;
+    if (!mine.length) {
+      list.append(el("p", "muted", "None of your tabs are open."));
+      return;
+    }
+    for (const tab of mine) {
+      const row = el("div", "your-tab");
+      row.dataset.target = tab.target;
+      const give = el("button", "give-here", "Give to this agent");
+      give.type = "button";
+      give.addEventListener("click", () => {
+        if (give.disabled) return;
+        give.disabled = true; // one click, one hand-over: the next render shows where the tab went
+        send({ type: "hand_tab", id: agentId(), target: tab.target });
+      });
+      row.title = tab.url || "";
+      row.append(el("span", "title", tab.title || tab.url || ""), el("span", "host", host(tab.url || "")), give);
+      list.append(row);
+    }
+  }
+
+  return { render };
+}

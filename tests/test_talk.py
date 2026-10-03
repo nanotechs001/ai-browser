@@ -946,3 +946,46 @@ async def test_send_click_sends_once_to_a_busy_agent_as_queued(stack):
     await asyncio.sleep(1)
     assert [event for event in agents.events_of("a1") if event["type"] == "queued"] == [
         {"type": "queued", "text": f"{RELAY}\nalso check the header"}]  # one click, one message
+
+
+@CHROME
+async def test_hand_over_hint_opens_this_agents_tab_list(stack):
+    from ai_browser.brain.talk import HAND_OVER_SAY
+    from fake_brave import FakeBrave
+
+    server = stack["server"]
+    agents = server.agents
+    talk_script(stack, {"say": "Hand it over.", "action": "open", "target": "tabs", "agent": "a1"},
+                {"say": "OK.", "action": "message_agent", "agent": "a1"})
+    await agents.create("Fix the footer")
+    brave = FakeBrave([{"target": "U1", "url": "https://mail.example/inbox", "title": "Inbox"},
+                       {"target": "T1", "url": "https://shop.example/", "title": "Agent page"},
+                       {"target": "S1", "url": "https://s.example/", "title": "Session page"}])
+    brave.owners.update({"T1": {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"},
+                         "S1": {"kind": "session", "id": "cc-x", "name": "Claude Code", "color": "orange"}})
+    server.tabs._callbacks.clear()  # brave mode has no AI Browser TabWatch on the pages (run.py): only Brave's list
+    server.attach_brave(brave)
+    agents.env["AIB_BROWSER"] = "chrome"  # brave mode, as run.py's brave_env sets it
+    js = await open_talk(stack, mic())
+    await ask_typed(js, "give agent 1 my Gmail tab")
+    yours = "document.querySelector('#drawer .your-tabs')"
+    assert await until(js, f"{yours}?.open === true")
+    assert await js(f"{yours}.querySelector('summary').textContent") == "Your tabs (1)"
+    assert await js(f"[...{yours}.querySelectorAll('.your-tab')].map((row) => row.dataset.target)") == ["U1"]
+    assert await js("document.getElementById('drawer-title').textContent") == "1 · Fix the footer"
+    said = "Brain: " + HAND_OVER_SAY.format(label="1 · Fix the footer")
+    assert await until(js, f"{LOG}.includes({json.dumps(said)})")
+    await asyncio.sleep(0.5)
+    assert agents.agents["a1"].adopted == [] and "U1" not in brave.owners  # the Brain handed nothing
+    await js(f"{yours}.open = false; true")
+    await ask_typed(js, "send this page to agent 1")
+    assert await until(js, "!!document.querySelector('#talk-card .talk-tabs')")
+    assert "It can't see your tabs: use Your tabs → Give to this agent." in await js(CARD)
+    await js("document.querySelector('#talk-card .talk-tabs').click(); true")
+    assert await until(js, f"{yours}?.open === true")  # a view only
+    assert agents.agents["a1"].adopted == []
+    await js(f"{yours}.querySelector('.give-here').click(); true")  # the user's click
+    assert await eventually(lambda: "U1" in agents.agents["a1"].adopted)
+    brave.set_state("ready")
+    assert await until(js, f"{yours}.textContent.includes(\"Brave isn't connected yet: connect it in AI Home.\")")
+    assert await js(f"{yours}.querySelectorAll('.your-tab').length") == 0
