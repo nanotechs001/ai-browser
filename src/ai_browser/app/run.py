@@ -205,7 +205,7 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
         server.allow_origin(f"chrome-extension://{app.extension_id}")
         server.allow_origin(f"chrome-extension://{extension_id_for(watcher)}", watcher=True)
         agents.env.update({"AIB_APP_PROFILE": str(app.profile), "AIB_APP_EXTENSION": app.extension_id,
-                           "AIB_APP_EVENTS": f"{url}/agent-events", "AIB_APP_AGENT_TOKEN": server.agent_token})
+                           "AIB_APP_EVENTS": f"{url}/agent-events"})  # each agent's own token comes from create()
         if where == "brave":  # agents browse in the user's own Brave; AI Browser is the control room
             own = own_browser_dir()  # not `folder`: that is the extension's, which the setup steps name
             brave = BraveLink(own)

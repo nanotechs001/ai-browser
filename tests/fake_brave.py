@@ -227,6 +227,61 @@ async def raw_handshake(port, host, token) -> int:
         writer.close()
 
 
+class FakeRelay:
+    """The relay's surface for FakeBrave: a test declares grants with own(); cuts, forgets, disconnects and closes are
+    recorded; clients() answers `rows`."""
+
+    def __init__(self):
+        self.port = 0
+        self.handed = lambda identity: set()
+        self.may_open = lambda identity: False
+        self.granted: dict[str, str] = {}  # target -> identity
+        self.cuts, self.forgot, self.disconnected, self.closed_clients = [], [], [], []
+        self.cut_off: set[str] = set()
+        self.rows: list[dict] = []
+        self._grant_hooks, self._changes = [], []
+
+    def on_grant(self, callback):
+        self._grant_hooks.append(callback)
+
+    def on_change(self, callback):
+        self._changes.append(callback)
+
+    def own(self, identity, target, announce=True):
+        """A tab `identity` opened through the relay (announce: the owner chip comes at once, as the relay's does)."""
+        self.granted[target] = identity
+        if announce:
+            for callback in list(self._grant_hooks):
+                callback(identity, target)
+
+    def grants(self, identity, target):
+        return self.granted.get(target) == identity
+
+    def own_targets(self, identity):
+        return [target for target, owner in self.granted.items() if owner == identity]
+
+    def is_cut_off(self, identity):
+        return identity in self.cut_off
+
+    def clients(self):
+        return [dict(row) for row in self.rows]
+
+    async def cut(self, identity, target):
+        self.cuts.append((identity, target))
+
+    async def forget(self, identity, close_tabs=False):
+        self.forgot.append((identity, close_tabs))
+
+    async def disconnect(self, identity):
+        self.disconnected.append(identity)
+        self.cut_off.add(identity)
+        for callback in list(self._changes):
+            callback()
+
+    async def close_clients(self, code=1001):
+        self.closed_clients.append(code)
+
+
 class FakeBrave:
     """BraveLink's surface, holding the tabs a test gives it; owners, Watch, closes and connects are recorded."""
 
@@ -238,6 +293,8 @@ class FakeBrave:
         self.owners: dict[str, dict] = {}
         self.watched, self.closed, self.marked = [], [], []
         self.connects = 0
+        self.connect_calls = []  # (why, identity) of each connect
+        self.relay = FakeRelay()
         self._changes, self._states = [], []
 
     def on_change(self, callback):
@@ -274,8 +331,9 @@ class FakeBrave:
     def mark_brain(self, url):
         self.marked.append(url)
 
-    async def connect(self):
+    async def connect(self, why="connect", identity=""):
         self.connects += 1
+        self.connect_calls.append((why, identity))
 
     async def watch(self, target):
         self.watched.append(target)

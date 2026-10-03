@@ -118,7 +118,7 @@ async def home(stack):
 
 async def post_tab(stack, agent, kind, target):
     async with httpx.AsyncClient() as client:
-        await client.post(stack["url"] + "/agent-events", headers={"X-AIB-Agent-Token": stack["server"].agent_token},
+        await client.post(stack["url"] + "/agent-events", headers={"X-AIB-Agent-Token": stack["server"].token_for(agent)},
                           json={"agent": agent, "kind": kind, "target": target, "adopted": False})
 
 

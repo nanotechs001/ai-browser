@@ -60,7 +60,7 @@ def agent_engine(watcher, tmp_path, monkeypatch, agent="a1"):  # noqa: F811
     monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path / "profile"))  # the watcher fixture's throwaway Chrome
     monkeypatch.setenv("AIB_APP_AGENT", agent)
     monkeypatch.setenv("AIB_APP_EVENTS", watcher.server.url + "/agent-events")
-    monkeypatch.setenv("AIB_APP_AGENT_TOKEN", watcher.server.agent_token)
+    monkeypatch.setenv("AIB_APP_AGENT_TOKEN", watcher.server.token_for(agent))
     return Engine(home=tmp_path / f"engine-{agent}", catalog=Catalog([], set()))
 
 
