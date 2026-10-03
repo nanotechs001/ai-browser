@@ -3,6 +3,7 @@ claude: items come back as "new" unless a test scripts verdicts), and the sample
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -73,7 +74,8 @@ async def watcher(fake_claude, tmp_path):
     server.allow_origin(f"chrome-extension://{app.extension_id}", watcher=True)
     from ai_browser.app.bravelink import BraveLink
 
-    brave = BraveLink(tmp_path / "profile", every=0.1, tokens=server.tokens)  # the throwaway Chrome as the user's
+    brave = BraveLink(tmp_path / "profile", watcher_id=app.extension_id, every=0.1,  # as run.py: the watcher's id
+                      tokens=server.tokens)  # the throwaway Chrome as the user's
     server.attach_brave(brave)
     agents.close_tabs = brave.close_targets
     await brave.start()
@@ -416,3 +418,20 @@ async def test_a_bot_check_gets_one_notification_with_show_me_and_continue(watch
     assert forged["note"]["check"]["live"] == ""
     assert await notify(f"m.checkAction({json.dumps(forged['note'])}, 0)") == \
         {"send": {"type": "check_show", "id": "a1"}}
+
+
+@CHROME
+async def test_the_watchers_profile_is_found_from_its_worker(watcher):
+    brave = watcher.brave  # the fixture's BraveLink on its Chrome, given the watcher's id as run.py gives it
+    assert brave.watcher_id == watcher.app.extension_id
+    assert await watcher.until(lambda: brave.agents_context()[1] == "watcher")
+    target = (await watcher.cdp.send("Target.createTarget", {"url": watcher.base + "privacy.html"}))["targetId"]
+    assert await watcher.until(lambda: any(tab["target"] == target for tab in brave.tabs()))
+    assert brave.scope()["profile"] == "watcher"
+
+
+def test_the_watcher_never_runs_in_private_windows():
+    manifest = json.loads((Path(__file__).parents[1] / "src" / "ai_browser" / "app" / "watcher" / "manifest.json")
+                          .read_text(encoding="utf-8"))
+    assert manifest.get("incognito", "spanning") == "spanning"  # its worker lives in the regular profile
+    assert "debugger" not in manifest["permissions"]

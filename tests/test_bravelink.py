@@ -356,3 +356,56 @@ async def test_brave_link_in_a_throwaway_chrome(throwaway_chrome):
         await link.close()
         await stop()
         stop_pages()
+
+
+@CHROME
+async def test_a_private_window_is_never_listed_in_a_throwaway_chrome(tmp_path):
+    from ai_browser import testpages
+    from ai_browser.app.bravelink import BraveLink
+    from ai_browser.app.tabs import TabWatch
+    from ai_browser.cdp import CDP
+    from ai_browser.chrome import find_ws_url, launch
+
+    base, _, stop_pages = testpages.serve_host()
+    folder = tmp_path / "private-profile"
+    process = launch(folder, headless=True, extra_args=("--incognito",))  # its only window: private
+    link = BraveLink(folder, every=0.1)  # no watcher: the profile used last
+    try:
+        ws_url = find_ws_url(folder, timeout=20)
+        watch = TabWatch(ws_url, "")
+        await watch.start()
+        cdp = await CDP.connect(ws_url)
+        try:
+            # Headless Chrome takes one start address and launch() gives it about:blank: the test itself points the
+            # private window's start page at a web page.
+            for _ in range(100):
+                start = next((info["targetId"] for info in (await cdp.send("Target.getTargets"))["targetInfos"]
+                              if info["type"] == "page"), None)
+                if start is not None:
+                    break
+                await asyncio.sleep(0.1)
+            session = (await cdp.send("Target.attachToTarget", {"targetId": start, "flatten": True}))["sessionId"]
+            await cdp.send("Page.navigate", {"url": base + "privacy.html"}, session_id=session)
+            await cdp.send("Target.detachFromTarget", {"sessionId": session})
+            assert await until(lambda: any(row["url"] == base + "privacy.html" for row in watch.pages()), 10)
+            private = next(row for row in watch.pages() if row["url"] == base + "privacy.html")
+            regular = (await cdp.send("Target.createTarget", {"url": base + "form.html"}))["targetId"]  # no context
+            assert await until(lambda: any(row["target"] == regular for row in watch.pages()), 10)
+            context = next(row["context"] for row in watch.pages() if row["target"] == regular)
+            assert private["context"] and context and private["context"] != context
+            assert await until(lambda: watch.default_context == context)  # never the private window's
+            await link.start()
+            await link.connect()
+            assert link.state == "connected"
+            assert await until(lambda: [tab["target"] for tab in link.tabs()] == [regular], 10)
+            assert link.scope() == {"profile": "last_used", "elsewhere": 1}
+            listed = json.dumps(link.tabs())
+            assert private["target"] not in listed and "Privacy" not in listed
+        finally:
+            await cdp.close()
+            await watch.close()
+    finally:
+        await link.close()
+        process.terminate()
+        process.wait(timeout=15)
+        stop_pages()
