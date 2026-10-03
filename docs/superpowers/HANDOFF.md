@@ -19,9 +19,9 @@ work ledgers (`.superpowers/`) are git-ignored and stayed on the Mac.
   - `docs/superpowers/specs/2026-10-03-app-as-an-app-investigation.json`: the investigators' findings, with evidence;
   - seven specs, `docs/superpowers/specs/2026-10-03-*-design.md`.
 - **Plans, all seven** (`docs/superpowers/plans/2026-10-03-*.md`):
-  - written **and reviewed**: `cdp-relay`, `brain-delegation`, `watcher-safety`, `browser-detection`;
-  - written, **not yet reviewed** (their reviewers hit a session limit): `app-window`, `browser-profile-choice`,
-    `side-chat`.
+  - all reviewed. The last three (`app-window`, `browser-profile-choice`, `side-chat`) were reviewed after the relay
+    merged; their findings are in `docs/superpowers/plans/reviews/`, and each builder applies them as pre-flight
+    rulings (`browser-profile-choice` has one Critical: agents must not get the session `rediscover`).
 - **The shared connection (cdp-relay), built and merged** (2026-10-03, on the Mac): Brave asks "Allow remote
   debugging?" once per app run, and a closed automation bar stays closed. Report:
   `docs/superpowers/reports/2026-10-03-cdp-relay.md` (its rulings, deferred minors, and the user's hand check).
@@ -34,8 +34,8 @@ work ledgers (`.superpowers/`) are git-ignored and stayed on the Mac.
    `browser_disconnect` is an app-only row, and `browser_clients` stays out of the watcher's messages. Their plans
    predate the relay: re-read every file at HEAD (tokens are now per agent: `server.token_for(id)`, not
    `server.agent_token`).
-2. **Review the three unreviewed plans** against their specs and the code: coverage, no placeholders, consistent
-   names, anchors that exist, tests that fail first.
+2. **The three unreviewed plans: reviewed** (see `docs/superpowers/plans/reviews/`). Wave A's three plans were also
+   checked against the relay; their builders got the findings as pre-flight rulings.
 3. **Wave A, in parallel branches:** `brain-delegation`, `watcher-safety`, `browser-detection`. Merge rule from the
    plans: once both 1A and 1B are on `main`, the `tell_confirm` and `tell_dismiss` rows must exist in `MESSAGE_RULES`,
    or AI Home's Start, Send and Cancel on inbox cards are silently dropped.
