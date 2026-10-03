@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import threading
+import unicodedata
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -440,9 +441,9 @@ def test_profiles_never_return_an_email(tmp_path):
 
 
 @pytest.mark.parametrize("name, shown", [
-    ("‮evil\x07", "evil"), ("x" * 200, "x" * 64), ("   ", "Default"), (" Work ", "Work"),
+    ("\u202eevil\x07", "evil"), ("x" * 200, "x" * 64), ("   ", "Default"), (" Work ", "Work"),
     ("Alex (alex@example.com)", "Default"),  # an email among other words never comes out either
-    ("‎⁦‮\x1b", "Default"),  # only invisible characters: blank
+    ("\u200e\u2066\u202e\x1b", "Default"),  # only invisible characters: blank
     (42, "Default")])
 def test_profile_names_are_cleaned(tmp_path, name, shown):
     data = data_folder(tmp_path / "Brave", one_profile({"name": name}), ["Default"])
@@ -719,7 +720,7 @@ def test_state_combines_the_lock_and_the_switch(tmp_path, monkeypatch, alive, an
         server.close()
 
 
-@pytest.mark.parametrize("contents", [None, b"abc\n/x\n", b"0\n/x\n", b"70000\n/x\n", "²\n/x\n".encode("utf-8"),
+@pytest.mark.parametrize("contents", [None, b"abc\n/x\n", b"0\n/x\n", b"70000\n/x\n", "\u00b2\n/x\n".encode("utf-8"),
                                       b""], ids=["no port file", "abc", "0", "70000", "superscript two", "empty"])
 def test_a_running_browser_without_a_usable_port_has_its_switch_off(tmp_path, monkeypatch, contents):
     monkeypatch.setattr(browsers, "running", lambda data_dir, system=None: True)
@@ -941,3 +942,22 @@ def test_the_readme_says_what_detection_reads():
     assert 'so it never makes your browser ask "Allow remote debugging?"' in development
     assert "It never opens cookies, saved passwords or history, and never reads your account's email." in development
     assert "browsers.public(browsers.detect({extension_id_for(w): w})" in development
+
+
+# The files of this track (final review)
+
+
+def test_the_detection_files_hold_no_invisible_characters():
+    """Bidi controls and other invisible format characters (Unicode category Cf) are written as escapes in these
+    files, never as the characters themselves: in source they can make code read differently from what runs (Trojan
+    Source), and a review can't see them."""
+    root = Path(__file__).parent.parent
+    files = [root / "src" / "ai_browser" / "browsers.py", root / "src" / "ai_browser" / "platforms.py",
+             Path(__file__), Path(__file__).parent / "test_platforms.py", *sorted(SAMPLES.iterdir())]
+    hidden = {}
+    for file in files:
+        found = sorted({f"U+{ord(char):04X}" for char in file.read_text(encoding="utf-8")
+                        if unicodedata.category(char) == "Cf"})
+        if found:
+            hidden[file.name] = found
+    assert hidden == {}
