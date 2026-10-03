@@ -344,3 +344,20 @@ def test_lock_names_and_the_launch_services_file():
                                                                               "SingletonLock"]
     assert UNPATCHED["launch_services_file"]() == Path.home().joinpath(
         "Library", "Preferences", "com.apple.LaunchServices", "com.apple.launchservices.secure.plist")
+
+
+def test_open_shared_lets_the_browser_replace_the_file(tmp_path):
+    path, backup, new = tmp_path / "Local State", tmp_path / "Local State.bak", tmp_path / "Local State.new"
+    path.write_bytes(b"old")
+    new.write_bytes(b"new")
+    with platforms.open_shared(path) as held:  # what ReplaceFile with a backup name does, while we read
+        os.rename(path, backup)
+        os.rename(new, path)
+        assert held.read() == b"old"
+    assert path.read_bytes() == b"new" and backup.read_bytes() == b"old"
+    with pytest.raises(OSError):
+        platforms.open_shared(tmp_path / "missing")
+    if platforms.WINDOWS:  # a plain open doesn't share delete access: the browser's save would fail
+        with open(path, "rb"):
+            with pytest.raises(PermissionError):
+                os.rename(path, tmp_path / "again")

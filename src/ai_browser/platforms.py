@@ -21,7 +21,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, BinaryIO
 
 WINDOWS = os.name == "nt"
 O_BINARY = getattr(os, "O_BINARY", 0)  # without it, os.open on Windows turns every "\n" written into "\r\n"
@@ -267,7 +267,40 @@ def _kernel32():
     kernel32.SetInformationJobObject.argtypes = (handle, ctypes.c_int, ctypes.c_void_p, dword)
     kernel32.SetInformationJobObject.restype = boolean
     kernel32.AssignProcessToJobObject.argtypes, kernel32.AssignProcessToJobObject.restype = (handle, handle), boolean
+    kernel32.CreateFileW.argtypes = (ctypes.c_wchar_p, dword, dword, ctypes.c_void_p, dword, dword, handle)
+    kernel32.CreateFileW.restype = handle
     return kernel32
+
+
+GENERIC_READ = 0x80000000
+FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE = 0x1, 0x2, 0x4
+OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL = 3, 0x80
+INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+
+def open_shared(path) -> BinaryIO:
+    """Open a file for reading only (binary), never in the way of the program that owns it. On Windows a plain open
+    doesn't share delete access, so a browser saving its Local State (a new file, then ReplaceFile, which first
+    renames the old one away) would fail while we read; this open shares read, write and delete access."""
+    if not WINDOWS:
+        return open(path, "rb")
+    import msvcrt  # Windows only
+
+    kernel32 = _kernel32()
+    handle = kernel32.CreateFileW(str(path), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None)
+    if not handle or handle == INVALID_HANDLE_VALUE:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | O_BINARY)
+    except BaseException:
+        kernel32.CloseHandle(handle)
+        raise
+    try:
+        return os.fdopen(descriptor, "rb")
+    except BaseException:
+        os.close(descriptor)  # closes the handle with it
+        raise
 
 
 def pid_alive(pid: int) -> bool:
