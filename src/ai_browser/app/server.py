@@ -50,7 +50,10 @@ THUMB_EVERY = 2  # seconds between two thumbnails of one agent's tab
 TEXT_LIMIT = 20_000  # characters of a task or a message
 # only Brave's watcher sends these
 WATCHER_MESSAGES = {"items", "replied", "thread", "filled", "reader_status", "watcher_caps", "tab_grouped"}
-BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "pause", "style"}
+BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "pause", "style",
+                  "tell_confirm", "tell_dismiss"}
+TELL_CARD_MESSAGES = {"tell_confirm", "tell_dismiss"}  # an inbox card's Start (Send) and Cancel: AI Browser's own
+# pages only. The watcher may ask for a card (tell), never run one.
 TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"}
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
 SKILL_MESSAGES = {"skill_draft", "skill_save"}
@@ -737,8 +740,10 @@ class AppServer:
             if self.brain is not None and self._watcher is not None and self._watcher[0] is ws:
                 await self._from_watcher(kind, message)
         elif kind in BRAIN_MESSAGES:
-            if self.brain is not None:
-                await self._brain_command(queue, kind, agent_id, message)
+            from_watcher = self._origin_of.get(ws) in self._watcher_origins
+            if self.brain is not None and not (from_watcher and kind in TELL_CARD_MESSAGES):
+                # the watcher's origin may ask for a card (tell), never run one: its typed yes is only a question
+                await self._brain_command(queue, kind, agent_id, message, from_watcher=from_watcher)
         elif kind in TOOLS_MESSAGES:
             self._tools_command(queue, kind, message)
         elif kind in WORKFLOW_MESSAGES:
@@ -831,7 +836,8 @@ class AppServer:
         elif kind == "reader_status":
             brain.reader_status(site, message.get("ok") is True, _text(message.get("note")))
 
-    async def _brain_command(self, queue: asyncio.Queue, kind: str, item_id: str, message: dict) -> None:
+    async def _brain_command(self, queue: asyncio.Queue, kind: str, item_id: str, message: dict,
+                             from_watcher: bool = False) -> None:
         brain = self.brain
         if kind == "brain":
             queue.put_nowait({"type": "brain_snapshot", **brain.snapshot()})
@@ -843,8 +849,14 @@ class AppServer:
             self._job(brain.hand(item_id, _text(message.get("instruction"))))
         elif kind == "done":
             brain.done(item_id)
-        elif kind == "tell":
-            self._job(brain.tell(item_id, _text(message.get("text"))))
+        elif kind == "tell":  # proposal and task: the item's open card, as its box now reads
+            proposal = message.get("proposal") if isinstance(message.get("proposal"), str) else None
+            self._job(brain.tell(item_id, _text(message.get("text")), proposal=proposal,
+                                 task=_text(message.get("task")) or None, from_watcher=from_watcher))
+        elif kind == "tell_confirm" and isinstance(message.get("proposal"), str):
+            self._job(brain.confirm_tell(item_id, message["proposal"], _text(message.get("task")) or None))
+        elif kind == "tell_dismiss" and isinstance(message.get("proposal"), str):
+            brain.dismiss_tell(item_id, message["proposal"])
         elif kind == "watch_set":
             error = brain.set_watch({key: message[key] for key in WATCH_FIELDS if key in message})
             if error:
