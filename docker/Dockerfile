@@ -19,6 +19,8 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash browser \
 
 COPY entrypoint.sh /usr/local/bin/aib-entrypoint
 COPY cdp_proxy.py /usr/local/bin/aib-cdp-proxy
+# A copy made without git (a ZIP) may carry CRLF endings; the scripts must reach Linux with LF.
+RUN sed -i 's/\r$//' /usr/local/bin/aib-entrypoint /usr/local/bin/aib-cdp-proxy
 RUN chmod 755 /usr/local/bin/aib-entrypoint /usr/local/bin/aib-cdp-proxy
 
 USER browser

@@ -208,3 +208,36 @@ def test_the_voice_model_swap_goes_through_the_retrying_helpers():
              if isinstance(node, ast.Call)}
     assert {"platforms.rmtree", "platforms.replace"} <= calls  # Defender may hold a fresh file for a moment
     assert not calls & {"shutil.rmtree", "os.replace", "os.rename"}
+
+
+def test_repo_hygiene():
+    import shutil
+
+    if shutil.which("git") is None:
+        pytest.skip("git isn't installed")
+    inside = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=ROOT, capture_output=True,
+                            encoding="utf-8")
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        pytest.skip("not a git checkout")
+    listing = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
+    tracked = [name for name in listing.decode("utf-8").split("\0") if name]
+    personal = [name for name in tracked
+                if PurePosixPath(name).name in {".mcp.json", ".DS_Store"} or PurePosixPath(name).name.startswith(".env")
+                or name.endswith(".log") or name.split("/")[0] in {".venv", ".superpowers", ".pytest_cache", ".claude"}]
+    assert not personal, f"personal or generated files are tracked: {personal}"
+    home = str(Path.home()).encode("utf-8")
+    leaking = []
+    for name in tracked:
+        try:
+            data = (ROOT / name).read_bytes()
+        except OSError:  # deleted, and not committed yet
+            continue
+        if b"\0" not in data and home in data:
+            leaking.append(name)
+    assert not leaking, f"tracked files name this computer's home folder ({Path.home()}): {leaking}"
+    eol = subprocess.run(["git", "check-attr", "eol", "--", "docker/entrypoint.sh"], cwd=ROOT, capture_output=True,
+                         encoding="utf-8", check=True).stdout
+    assert eol.strip() == "docker/entrypoint.sh: eol: lf"
+    assert (ROOT / ".python-version").read_text(encoding="utf-8").strip() == "3.12"
+    dockerfile = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    assert r"RUN sed -i 's/\r$//' /usr/local/bin/aib-entrypoint /usr/local/bin/aib-cdp-proxy" in dockerfile
