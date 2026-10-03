@@ -1,0 +1,17 @@
+{
+  "extensions": {
+    "settings": {
+      "aaaabbbbccccddddeeeeffffgggghhhh": {
+        "active_permissions": {"api": ["storage", "tabGroups", "tabs"], "manifest_permissions": []},
+        "creation_flags": 38,
+        "disable_reasons": [1],
+        "from_webstore": false,
+        "location": 4,
+        "path": "/Users/Alex/.ai-browser/app/watcher",
+        "service_worker_registration_info": {"version": "0.1.0"},
+        "was_installed_by_default": false
+      }
+    }
+  },
+  "profile": {"name": "Alex"}
+}

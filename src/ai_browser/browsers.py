@@ -323,3 +323,57 @@ def profiles(data_dir) -> list[Profile]:
         color = _color(entry.get("profile_highlight_color")) or _color(entry.get("default_avatar_fill_color"))
         found.append(Profile(folder, _profile_name(entry.get("name"), folder), color, folder == last_used))
     return found
+
+
+@dataclass(frozen=True)
+class WatcherPlace:
+    """A profile folder that holds an enabled copy of a watcher, and that copy's extension id."""
+
+    profile: str
+    extension_id: str
+
+
+def _extension_settings(path) -> dict:
+    data = _json(path)
+    extensions = data.get("extensions") if isinstance(data, dict) else None
+    settings = extensions.get("settings") if isinstance(extensions, dict) else None
+    return settings if isinstance(settings, dict) else {}
+
+
+def _watcher_key(path, system: str) -> str | None:
+    """A watcher folder as compared with the path a browser recorded: on Windows the absolute path without regard
+    to case and with no link resolved (as Chrome records it), elsewhere the real path, exactly."""
+    try:
+        if system == "win32":
+            return ntpath.normcase(ntpath.abspath(str(path)))
+        return os.path.realpath(path)
+    except (OSError, ValueError):
+        return None
+
+
+def _enabled(entry) -> bool:
+    reasons = entry.get("disable_reasons", 0)
+    if not (reasons == [] or (type(reasons) is int and reasons == 0)):
+        return False
+    state = entry.get("state")
+    return not (type(state) is int and state == 0)  # an older Chromium's "disabled"
+
+
+def watcher_places(data_dir, watchers: Mapping[str, str | Path], system: str | None = None) -> list[WatcherPlace]:
+    """Which profiles hold an enabled copy of which watcher: `watchers` maps each watcher's extension id to the
+    folder it was loaded from. Read from each profile's Secure Preferences, then Preferences (the first wins)."""
+    system = _system(system)
+    if not isinstance(watchers, Mapping):
+        return []
+    wanted = {extension_id: _watcher_key(folder, system) for extension_id, folder in watchers.items()
+              if isinstance(extension_id, str)}
+    places = []
+    for profile in profiles(data_dir):
+        secure = _extension_settings(Path(data_dir) / profile.folder / "Secure Preferences")
+        plain = _extension_settings(Path(data_dir) / profile.folder / "Preferences")
+        for extension_id, key in wanted.items():
+            entry = secure[extension_id] if extension_id in secure else plain.get(extension_id)
+            if (key is not None and isinstance(entry, dict) and isinstance(entry.get("path"), str)
+                    and _watcher_key(entry["path"], system) == key and _enabled(entry)):
+                places.append(WatcherPlace(profile.folder, extension_id))
+    return places

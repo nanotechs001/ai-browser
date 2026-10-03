@@ -525,3 +525,98 @@ def test_profiles_fail_safely_on_odd_files(tmp_path, monkeypatch):
             assert browsers.profiles(locked) == []
         finally:
             locked.chmod(0o700)
+
+
+# Watcher copies (Task 8)
+
+WATCHER_ID, OTHER_ID = "mnopmnopmnopmnopmnopmnopmnopmnop", "ijklijklijklijklijklijklijklijkl"
+SAMPLE_ID = "aaaabbbbccccddddeeeeffffgggghhhh"  # the watcher's entry in the samples
+
+
+def preferences(profile: Path, file_name: str, watcher_folder, extension_id: str = WATCHER_ID,
+                sample_name: str = "secure-preferences-watcher.json", **changes) -> None:
+    """A profile's Secure Preferences or Preferences: the sample's watcher entry, under `extension_id`, loaded from
+    `watcher_folder`, with `changes` made to the entry. json.dumps writes a Windows path with its escapes."""
+    data = json.loads(sample(sample_name))
+    settings = data["extensions"]["settings"]
+    entry = settings.pop(SAMPLE_ID)
+    entry["path"] = str(watcher_folder)
+    entry.update(changes)
+    settings[extension_id] = entry
+    profile.mkdir(parents=True, exist_ok=True)
+    (profile / file_name).write_bytes(json.dumps(data).encode("utf-8"))
+
+
+def brave_data(tmp_path) -> Path:
+    return data_folder(tmp_path / "Brave", sample("brave-local-state.json"), BRAVE_FOLDERS)
+
+
+def test_watcher_places(tmp_path):
+    data, watcher = brave_data(tmp_path), tmp_path / "watcher"
+    watcher.mkdir()
+    watchers = {WATCHER_ID: watcher}
+    profile_1 = [browsers.WatcherPlace("Profile 1", WATCHER_ID)]
+    preferences(data / "Profile 1", "Secure Preferences", watcher)
+    assert browsers.watcher_places(data, watchers) == profile_1
+    preferences(data / "Default", "Preferences", watcher)  # only in Preferences: counts too
+    assert browsers.watcher_places(data, watchers) == [browsers.WatcherPlace("Default", WATCHER_ID), *profile_1]
+    for disabled in ({"disable_reasons": [1]}, {"disable_reasons": 1}, {"state": 0}):
+        preferences(data / "Default", "Preferences", watcher, **disabled)
+        assert browsers.watcher_places(data, watchers) == profile_1, disabled
+    preferences(data / "Default", "Preferences", tmp_path / "another-folder")
+    assert browsers.watcher_places(data, watchers) == profile_1
+    preferences(data / "Default", "Preferences", watcher, extension_id=OTHER_ID)  # not one of the watchers
+    assert browsers.watcher_places(data, watchers) == profile_1
+    preferences(data / "Profile 1", "Preferences", watcher)  # enabled here, but Secure Preferences says disabled
+    preferences(data / "Profile 1", "Secure Preferences", watcher, sample_name="preferences-watcher-disabled.json")
+    assert browsers.watcher_places(data, watchers) == []
+
+
+def test_the_same_watcher_in_two_profiles_is_listed_twice(tmp_path):
+    data, watcher = brave_data(tmp_path), tmp_path / "watcher"
+    for profile in ("Default", "Profile 1"):
+        preferences(data / profile, "Secure Preferences", watcher)
+    assert browsers.watcher_places(data, {WATCHER_ID: watcher}) == [browsers.WatcherPlace("Default", WATCHER_ID),
+                                                                    browsers.WatcherPlace("Profile 1", WATCHER_ID)]
+
+
+def test_watcher_paths_ignore_case_only_on_windows(tmp_path):
+    data = brave_data(tmp_path)
+    default = [browsers.WatcherPlace("Default", WATCHER_ID)]
+
+    def places(folder, system):
+        return browsers.watcher_places(data, {WATCHER_ID: folder}, system=system)
+
+    preferences(data / "Default", "Secure Preferences", "c:\\users\\alex\\.ai-browser\\app\\watcher")
+    assert places("C:\\Users\\Alex\\.ai-browser\\app\\watcher", "win32") == default
+    assert places("C:\\Users\\Alex\\.ai-browser\\app\\watcher\\", "win32") == default  # a trailing separator
+    assert places("C:\\Users\\Alex\\.ai-browser\\app\\watcher2", "win32") == []
+    if os.name != "nt":  # Windows' realpath restores the case found on disk
+        watcher = tmp_path / "home" / ".ai-browser" / "app" / "watcher"
+        watcher.mkdir(parents=True)
+        preferences(data / "Default", "Secure Preferences", watcher.parent / "WATCHER")
+        assert places(watcher, "darwin") == []  # the id hashes the exact path: other case is another copy
+        preferences(data / "Default", "Secure Preferences", f"{watcher}/")
+        assert places(watcher, "darwin") == default
+
+
+@pytest.mark.parametrize("contents", [
+    pytest.param(lambda folder: b"{broken", id="broken file"),
+    pytest.param(lambda folder: {"extensions": []}, id="extensions is a list"),
+    pytest.param(lambda folder: {"extensions": {"settings": "x"}}, id="settings is a string"),
+    pytest.param(lambda folder: {"extensions": {"settings": {WATCHER_ID: {"path": 7}}}}, id="path is a number"),
+    pytest.param(lambda folder: {"extensions": {"settings": {WATCHER_ID: {"path": str(folder),
+                                                                          "disable_reasons": "none"}}}},
+                 id="disable_reasons is a string"),
+    pytest.param(lambda folder: {"extensions": {"settings": {WATCHER_ID: {"path": f"{folder}\0x"}}}},
+                 id="path holds a NUL"),
+    pytest.param(lambda folder: {"extensions": {"settings": {WATCHER_ID: ["path", str(folder)]}}},
+                 id="the entry is a list"),
+])
+def test_watcher_places_fail_safely(tmp_path, contents):
+    data, watcher = brave_data(tmp_path), tmp_path / "watcher"
+    watcher.mkdir()
+    written = contents(watcher)
+    (data / "Default" / "Secure Preferences").write_bytes(
+        written if isinstance(written, bytes) else json.dumps(written).encode("utf-8"))
+    assert browsers.watcher_places(data, {WATCHER_ID: watcher}) == []
