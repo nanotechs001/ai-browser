@@ -164,10 +164,12 @@ async def test_live_view_and_thumbnails_through_the_relay(relayed, throwaway_chr
         async with connect(engine.live.url.replace("http://", "ws://").replace("/live?", "/live/ws?")) as ws:
             async def frame():
                 while True:
-                    message = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                    message = json.loads(await asyncio.wait_for(ws.recv(), 20))
                     if message["t"] == "frame":
                         return message
 
+            await asyncio.sleep(0.3)  # the viewer started the screencast; a still page may send no frame until it changes
+            ok(await engine.js("document.body.style.background = 'rgb(4, 5, 6)'"))
             first = await frame()  # the live view streams through the relay
             picture = await brave.thumbnail(target)  # meanwhile the app pictures the same tab on its own session
             ok(await engine.js("document.body.style.background = 'rgb(1, 2, 3)'"))  # a change makes a new frame
