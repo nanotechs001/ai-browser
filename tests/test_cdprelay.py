@@ -661,6 +661,57 @@ async def test_a_frame_that_isnt_cdp_closes_only_that_client(rig):
     assert (await a1.send("Browser.getVersion"))["product"] == "FakeBrave/1"
 
 
+async def test_the_question_stays_open_until_the_user_answers(tmp_path):
+    """Brave's "Allow remote debugging?" isn't tied to the handshake that asked (Chromium's DevToolsConnectionDialog):
+    a handshake given up on leaves the question on screen, and Allow there later opens a connection nobody holds, which
+    keeps the automation bar up, and the next try asks again. So the one handshake stays until the user answers, and
+    clients waiting for it hear that the question is still open."""
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder, answer="silent")
+    await port.start()
+    tokens = Tokens()
+    relay = Relay(folder, tokens, allow_wait=0.5, every=0.1)
+    relay.may_open = lambda identity: True  # a1 is in its turn
+    url, stop = await serve_relay(relay)
+    await relay.start()
+    try:
+        asking = asyncio.ensure_future(relay.open("connect"))
+        assert await until(lambda: relay.state == "asking")
+        with pytest.raises(InvalidStatus) as waited:
+            await relay_client(url, tokens.mint("a1"), open_timeout=20)
+        assert waited.value.response.status_code == 409
+        assert b'is asking "Allow remote debugging?"' in bytes(waited.value.response.body)
+        await asyncio.sleep(1.5)  # three times allow_wait: the question is still up, and still the only one
+        assert relay.state == "asking" and not asking.done() and port.sessions == 1
+        port.answer = "accept"
+        port.release.set()  # the user clicks Allow, however late
+        assert await asking and relay.state == "connected" and port.sessions == 1 and relay.upstream_opens == 1
+        later = await relay_client(url, tokens.mint("cc-1"))
+        assert (await later.send("Browser.getVersion"))["product"] == "FakeBrave/1" and port.sessions == 1
+        await later.close()
+    finally:
+        await relay.close()
+        await stop()
+        await port.stop()
+
+
+async def test_a_question_cut_short_by_the_browser_quitting_is_lost_not_refused(tmp_path):
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder, answer="silent")
+    await port.start()
+    relay = Relay(folder, Tokens(), allow_wait=0.5, every=0.1)
+    await relay.start()
+    try:
+        asking = asyncio.ensure_future(relay.open("connect"))
+        assert await until(lambda: relay.state == "asking")
+        port.answer = "vanish"
+        port.release.set()  # Brave quits while its question is up: nobody said no
+        assert not await asyncio.wait_for(asking, 10) and relay.state == "lost"
+    finally:
+        await relay.close()
+        await port.stop()
+
+
 async def test_connect_twice_while_asking_is_one_question(tmp_path):
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
     port = FakePort(folder, answer="silent")

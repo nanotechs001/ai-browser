@@ -8,7 +8,13 @@ the app runs, and the app's own tab list talk to the browser through it: plain C
 The relay remaps message ids per client, routes flattened sessions to the client that attached, and decides which tabs
 each client may see and drive (its own, their popups, tabs the user handed it) and which commands pass. It opens the
 upstream only right after something the user did, and everyone waiting shares that one question. It never answers,
-clicks, hides or suppresses the browser's question or its bar: it only makes fewer connections."""
+clicks, hides or suppresses the browser's question or its bar: it only makes fewer connections.
+
+The question isn't tied to the handshake that asked (Chromium's DevToolsConnectionDialog has no time limit and outlives
+a closed handshake): a handshake given up on leaves the question on screen, and Allow there later opens a connection
+nobody holds, which keeps the bar up until the browser restarts, and the next try asks again. So the relay never gives
+up on its question: the handshake stays until the user answers (Allow, Deny, or closing the question, which is a Deny),
+and a client waiting longer than `allow_wait` hears that the question is still open."""
 
 from __future__ import annotations
 
@@ -29,13 +35,14 @@ from urllib.parse import unquote, urlsplit
 from starlette.responses import PlainTextResponse
 from starlette.websockets import WebSocket
 from websockets.asyncio.client import connect
+from websockets.exceptions import InvalidStatus
 
 from ..cdp import CDP, CDPError
 from ..chrome import ChromeError, browser_name, find_ws_url, inspect_address, switch_on
 
 log = logging.getLogger(__name__)
 
-ALLOW_WAIT = 60  # seconds Brave's "Allow remote debugging?" may stay open
+ALLOW_WAIT = 60  # seconds a client waits for the user's answer; the question itself stays until they answer
 SWITCH_EVERY = 2.0  # seconds between two looks at the switch while not connected
 BIND_WAIT = 2.0  # seconds a new session's first events wait for its attach answer
 BIND_BUFFER = 256  # ...at most this many of them per session
@@ -509,9 +516,12 @@ class Relay:
         self._set("asking")
         self.upstream_opens += 1
         try:
-            ws = await connect(ws_url, max_size=None, ping_interval=None, open_timeout=self.allow_wait, proxy=None)
-        except Exception:  # Deny, a refused handshake, or no answer in time: never retried by itself
+            ws = await connect(ws_url, max_size=None, ping_interval=None, open_timeout=None, proxy=None)
+        except InvalidStatus:  # Deny (or the question closed): never retried by itself
             self._set("refused")
+            return False
+        except Exception:  # the browser went away before anyone answered
+            self._set("lost")
             return False
         if self._quitting:
             with contextlib.suppress(Exception):
@@ -580,7 +590,7 @@ class Relay:
         """The checks, and the wait for the browser, happen before the upgrade, so a refusal reaches the client as an
         HTTP answer with its reason. After the upgrade: plain CDP both ways."""
         status, text, identity = self._check(ws)
-        if status == 0 and not await self.open("client", identity):
+        if status == 0 and not await self._wait_open(identity):
             status, text = (410, CUT_OFF_TEXT) if identity in self._cut_off else (409, self._closed_text())
         if status:
             with contextlib.suppress(Exception):
@@ -605,6 +615,14 @@ class Relay:
                         await asyncio.wait_for(asyncio.shield(client.writer), 5)
                 client.writer.cancel()
 
+    async def _wait_open(self, identity: str) -> bool:
+        """open() for a client, waiting at most `allow_wait` for the user's answer. The question stays open after that
+        (the module's docstring), and the client hears that it is still open."""
+        try:
+            return await asyncio.wait_for(self.open("client", identity), self.allow_wait)
+        except TimeoutError:
+            return False
+
     def _check(self, ws: WebSocket) -> tuple[int, str, str]:
         """(0, "", identity) when the handshake may go on to the browser, else (status, why, "")."""
         if "origin" in ws.headers or ws.headers.get("host", "") != f"127.0.0.1:{self.port}":
@@ -628,6 +646,9 @@ class Relay:
                     f"{inspect_address(self.folder)}")
         if self.state == "refused":
             return f"{self.name} said no to AI Browser's connection: ask the user to click Try again in AI Home"
+        if self.state == "asking":
+            return (f"{self.name} is asking \"Allow remote debugging?\" for AI Browser: ask the user to click Allow "
+                    f"there, then try again (it is the one question, for everyone)")
         return f"AI Browser isn't connected to {self.name}: ask the user to click Connect in AI Home"
 
     async def _listen(self, client: _Socket) -> None:

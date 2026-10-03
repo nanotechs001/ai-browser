@@ -47,6 +47,9 @@ class FakePort:
         self.sessions += 1  # a debugging session asked for: the moment the real Brave would ask "Allow?"
         if self.answer == "silent":
             await asyncio.wait_for(self.release.wait(), 30)
+        if self.answer == "vanish":  # Brave quits while it asks: the handshake ends with no answer at all
+            connection.transport.abort()
+            return connection.respond(500, "")  # never reaches the client
         if self.answer == "refuse":
             return connection.respond(403, "Denied\n")
         return None
