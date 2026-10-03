@@ -3,7 +3,6 @@ over the pipe stands in for Brave (the `watcher` fixture of test_watcher.py), ne
 
 import asyncio
 import json
-import os
 
 import pytest
 
@@ -61,6 +60,7 @@ def agent_engine(watcher, tmp_path, monkeypatch, agent="a1"):  # noqa: F811
     monkeypatch.setenv("AIB_APP_AGENT", agent)
     monkeypatch.setenv("AIB_APP_EVENTS", watcher.server.url + "/agent-events")
     monkeypatch.setenv("AIB_APP_AGENT_TOKEN", watcher.server.token_for(agent))
+    monkeypatch.setenv("AIB_APP_CDP", watcher.server.url.replace("http://", "ws://", 1) + "/cdp")
     return Engine(home=tmp_path / f"engine-{agent}", catalog=Catalog([], set()))
 
 
@@ -78,6 +78,7 @@ async def test_an_agents_tabs_go_in_its_group_without_taking_the_focus(watcher, 
     try:
         page = (await engine.open(base + "popup.html")).text
         assert 'page  "Popup test"' in page
+        first = engine.browser.current.target
         title, color, group_window, window = await group_of(watcher, base + "popup.html")
         assert (title, color) == ("Fix the footer", "blue") and group_window == window
         assert (await engine.js("document.referrer")).text.startswith('""')
@@ -89,6 +90,10 @@ async def test_an_agents_tabs_go_in_its_group_without_taking_the_focus(watcher, 
                 break
             await asyncio.sleep(0.1)
         assert (await group_of(watcher, base + "privacy.html"))[:2] == ["Fix the footer", "blue"]
+        popup = next(tab.target for tab in engine.browser.owned.values() if tab.target != first)
+        assert watcher.brave.relay.grants("a1", popup)  # the relay made it a1's own when the engine attached
+        assert await watcher.until(lambda: any(tab["target"] == popup and tab["owner"].get("name") == "Fix the footer"
+                                               for tab in watcher.brave.tabs()))  # and AI Home's chip says so
         await engine.tabs("new", url=base + "form.html")
         user_form = await watcher.worker_js(
             f"chrome.tabs.query({{}}).then(tabs => tabs.filter(tab => tab.url === {json.dumps(base + 'form.html')})"
@@ -170,9 +175,10 @@ async def test_a_claude_code_session_joins_while_the_app_runs(watcher, tmp_path,
     await groups_on(watcher)
     home = tmp_path / "session-home"
     (home / "app").mkdir(parents=True)
-    link = home / "app" / "link.json"
-    link.write_text(json.dumps({"events": watcher.server.url + "/agent-events",
-                                "session_token": watcher.server.session_token, "pid": os.getpid()}), encoding="utf-8")
+    from ai_browser.app.run import write_link
+
+    link = write_link(home, watcher.server.url, watcher.server.session_token,
+                      watcher.server.url.replace("http://", "ws://", 1) + "/cdp", tmp_path / "profile")
     engine = Engine(home=home, catalog=Catalog([], set()))
     try:
         await engine.open(base + "form.html")
@@ -191,38 +197,24 @@ async def test_a_claude_code_session_joins_while_the_app_runs(watcher, tmp_path,
 
 @CHROME
 async def test_the_brains_threads_go_in_its_group_and_ai_home_marks_them(watcher, tmp_path):  # noqa: F811
-    from ai_browser.app.bravelink import BraveLink
-
-    brave = BraveLink(tmp_path / "profile", every=0.2)
-    await brave.start()
-    await brave.connect()
-    watcher.server.attach_brave(brave)
-    try:
-        verdicts = [{"id": "gmail:t1", "kind": "needs_reply", "summary": "Maria asks to move the launch",
-                     "why": "a client", "suggest": "draft"}]
-        watcher.script.write_text(json.dumps({"default": [{"result": "[]"}],
-                                              "You sort new messages": [{"result": json.dumps(verdicts)}],
-                                              "You draft a reply": [{"result": "Monday works for us."}]}),
-                                  encoding="utf-8")
-        await watcher.watch("gmail", "brain/gmail.html")
-        assert await watcher.until(lambda: "t1" in watcher.raw_ids())
-        await watcher.brain.draft("gmail:t1")
-        thread = watcher.brain.store.get("gmail:t1").url
-        assert (await group_of(watcher, thread))[:2] == ["Brain", "purple"]
-        assert await watcher.until(lambda: any(tab["url"] == thread and tab["owner"]["kind"] == "brain"
-                                               for tab in brave.tabs()))
-    finally:
-        await brave.close()
+    brave = watcher.brave  # the fixture's: the throwaway Chrome as the user's Brave, through the relay
+    verdicts = [{"id": "gmail:t1", "kind": "needs_reply", "summary": "Maria asks to move the launch",
+                 "why": "a client", "suggest": "draft"}]
+    watcher.script.write_text(json.dumps({"default": [{"result": "[]"}],
+                                          "You sort new messages": [{"result": json.dumps(verdicts)}],
+                                          "You draft a reply": [{"result": "Monday works for us."}]}),
+                              encoding="utf-8")
+    await watcher.watch("gmail", "brain/gmail.html")
+    assert await watcher.until(lambda: "t1" in watcher.raw_ids())
+    await watcher.brain.draft("gmail:t1")
+    thread = watcher.brain.store.get("gmail:t1").url
+    assert (await group_of(watcher, thread))[:2] == ["Brain", "purple"]
+    assert await watcher.until(lambda: any(tab["url"] == thread and tab["owner"]["kind"] == "brain"
+                                           for tab in brave.tabs()))
 
 
 async def brave_for(watcher, tmp_path):  # noqa: F811
-    from ai_browser.app.bravelink import BraveLink
-
-    brave = BraveLink(tmp_path / "profile", every=0.2)
-    await brave.start()
-    await brave.connect()
-    watcher.server.attach_brave(brave)
-    return brave
+    return watcher.brave  # the fixture's: attached and connected, with the server's tokens
 
 
 async def hand(watcher, verb, **message):  # noqa: F811
@@ -279,7 +271,6 @@ async def test_a_handed_tab_is_used_taken_back_and_left_open(watcher, tmp_path, 
         assert await group_of(watcher, base + "privacy.html") is None  # and ungrouped
     finally:
         await engine.close()
-        await brave.close()
 
 
 @CHROME
@@ -305,4 +296,3 @@ async def test_take_back_during_a_bot_check_skips_the_site(watcher, tmp_path, mo
         assert user in {tab["target"] for tab in brave.tabs()}  # the user's tab stays open
     finally:
         await engine.close()
-        await brave.close()

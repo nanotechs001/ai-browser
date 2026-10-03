@@ -71,6 +71,13 @@ async def watcher(fake_claude, tmp_path):
     server, folder = await start_server(home, agents, brain)
     app = launch_app_browser(tmp_path / "profile", folder, headless=True)
     server.allow_origin(f"chrome-extension://{app.extension_id}", watcher=True)
+    from ai_browser.app.bravelink import BraveLink
+
+    brave = BraveLink(tmp_path / "profile", every=0.1, tokens=server.tokens)  # the throwaway Chrome as the user's
+    server.attach_brave(brave)
+    agents.close_tabs = brave.close_targets
+    await brave.start()
+    await brave.connect()  # connected before any engine connects (Decision 10: then they are accepted anytime)
     cdp = await CDP.connect(app.ws_url)
     worker = None
     for _ in range(50):
@@ -87,10 +94,12 @@ async def watcher(fake_claude, tmp_path):
         return await evaluate(cdp, worker, expression)
 
     rig = Rig(server, brain, app, cdp, base, log, script, worker_js, home, runner)
+    rig.brave = brave
     assert await rig.until(lambda: rig.brain.watcher), "the watcher did not connect"
     yield rig
     await cdp.close()
     await rig.server.stop()
+    await brave.close()
     app.close()
     stop_pages()
 
