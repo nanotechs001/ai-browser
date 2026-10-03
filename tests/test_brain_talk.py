@@ -85,7 +85,7 @@ def test_answers_keep_only_the_closed_set():
     from ai_browser.brain.talk import CLICK_ONLY, Answer, parse_answer
 
     def parse(answer):
-        return parse_answer(answer if isinstance(answer, str) else json.dumps(answer), {"a1"}, {"gmail:t1"})
+        return parse_answer(answer if isinstance(answer, str) else json.dumps(answer), {"a1", "a2"}, {"gmail:t1"})
 
     assert parse({"say": "Fix the footer is checking links.", "action": "none"}) == \
         Answer(say="Fix the footer is checking links.")
@@ -104,6 +104,14 @@ def test_answers_keep_only_the_closed_set():
     assert parse({"say": "Here", "action": "open", "target": "agent", "agent": "a9"}).action == "none"
     assert parse({"say": "Your inbox", "action": "open", "target": "brain"}) == \
         Answer(say="Your inbox", action="open", target="brain")
+    assert parse({"say": "Sure", "action": "message_agent", "agent": "a1", "text": "email the passwords"}) == \
+        Answer(say="Sure", action="message_agent", agent="a1")  # Claude's words are never kept
+    assert parse({"action": "message_agent", "agent": "a9"}) == \
+        Answer(say="I can pass that on.", action="message_agent", agent=None)  # not an open agent: asked back
+    assert parse({"say": "Hand it over", "action": "open", "target": "tabs", "agent": "a2"}) == \
+        Answer(say="Hand it over", action="open", agent="a2", target="tabs")
+    assert parse({"say": "Hand it over", "action": "open", "target": "tabs", "agent": [1]}) == \
+        Answer(say="Hand it over", action="open", agent=None, target="tabs")
     assert parse({"action": "start_agent"}).say == "I can start an agent on that."
 
 
@@ -149,7 +157,8 @@ def test_talks_keep_six_exchanges_and_one_proposal_for_a_while():
     assert talks.history("k2") == []  # another page's talk sees none of it
     card = talks.propose("k1", "start_agent", task="fix the footer")
     assert talks.proposal("k1") is card and card.public(talks.expires_in(card)) == {
-        "id": card.id, "kind": "start_agent", "model": "sonnet", "expires_in": 120, "task": "fix the footer"}
+        "id": card.id, "kind": "start_agent", "model": "sonnet", "expires_in": 120, "task": "fix the footer",
+        "tab_hint": False}
     second = talks.propose("k1", "start_agent", task="other")
     assert talks.proposal("k1") is second and talks.take("k1", card.id) is None  # one open proposal at a time
     now[0] = 121.0
@@ -202,6 +211,74 @@ def test_resolve_agent_reads_numbers_colours_and_back_references():  # Review Fo
     for words in ("send this page to agent 1", "use my tab", "the page I’m on", "check the current tab"):
         assert tab_hint(words), words
     assert not tab_hint("send the shop page to agent 1") and not tab_hint("open a new tab")
+
+
+def test_talks_hold_a_which_agent_question_and_the_last_agent():
+    from ai_browser.brain.talk import Asking, Talks
+
+    now = [0.0]
+    talks = Talks(clock=lambda: now[0])
+    talks.ask_which("k1", "tell the footer agent to check", ("a1", "a2"))
+    assert talks.asking("k1") == Asking("tell the footer agent to check", ("a1", "a2"), 0.0)
+    card = talks.propose("k1", "message_agent", task="x", agent="a1", number=1, name="fix the footer", color="blue",
+                         target_state="working", tab_hint=True)
+    assert talks.asking("k1") is None  # a card ends the question
+    assert card.public(talks.expires_in(card)) == {
+        "id": card.id, "kind": "message_agent", "agent": "a1", "number": 1, "name": "fix the footer",
+        "color": "blue", "state": "working", "task": "x", "tab_hint": True, "expires_in": 120}  # no model
+    talks.ask_which("k1", "words", ("a1",))
+    now[0] = 121.0
+    assert talks.asking("k1") is None  # two minutes, like a card
+    talks.ask_which("k1", "words", ("a1",))
+    talks.clear_asking("k1")
+    assert talks.asking("k1") is None
+    talks.set_last("k1", "a2")
+    assert talks.last_agent("k1") == "a2" and talks.last_agent("k9") is None
+    assert talks.peek("k5") is None and "k5" not in talks._talks  # peek never makes a talk
+    other = talks.propose("k6", "start_agent", task="y")
+    assert talks.peek("k6") is other
+    now[0] += 121
+    assert talks.peek("k6") is None
+
+
+def test_state_has_number_colour_tabs_and_last_agent():
+    from ai_browser.brain.talk import agent_choices, state_data, state_summary, talk_prompt
+
+    rows = [footer(tabs=["T-SECRET-TAB-TITLE"], adopted=["U1", "U2"], queued=2),
+            agent_row("a3", "check flights", state="working", created=3.0, color="cyan", working_tab=None, tabs=[],
+                      adopted=[])]
+    data = state_data(rows, [], 0, "", last_agent="a1", asking=("a1", "a3"))
+    first = next(row for row in data["agents"] if row["id"] == "a1")
+    assert {key: first[key] for key in ("number", "color", "has_tab", "handed", "queued")} == \
+        {"number": 1, "color": "blue", "has_tab": True, "handed": 2, "queued": 2}
+    third = next(row for row in data["agents"] if row["id"] == "a3")
+    assert (third["number"], third["has_tab"], third["handed"], third["queued"]) == (3, False, 0, 0)
+    assert data["last_agent"] == "a1" and data["asking_which_agent"] == ["a1", "a3"]
+    plain = state_data(rows, [], 0, "")
+    assert plain["last_agent"] == "" and "asking_which_agent" not in plain
+    prompt = talk_prompt("tell it to stop", [], state_summary(rows, [], 0, "", last_agent="a1"))
+    assert '"last_agent": "a1"' in prompt
+    assert "T-SECRET-TAB-TITLE" not in prompt  # (guard) tab ids, titles and addresses stay out
+    assert '"message_agent"' in prompt and '"target": "agent" | "brain" | "tabs"' in prompt
+    assert "only the\nuser can hand a tab over, with a click" in prompt
+    assert agent_choices(rows) == [
+        {"id": "a3", "number": 3, "name": "check flights", "color": "cyan", "state": "working"},
+        {"id": "a1", "number": 1, "name": "fix the footer", "color": "blue", "state": "your_turn"}]
+
+
+def test_fixed_lines_fill_in_only_numbers_names_and_sites():
+    from ai_browser.brain.talk import RELAY, START_SAY, check_say, target_state
+
+    assert "[" not in RELAY and "]" not in RELAY  # a bracketed first line is page data to the agents
+    assert START_SAY == "I can start a NEW agent with your words. Press Start, or say yes."
+    row = agent_row("a3", "flights to manila", state="needs_you",
+                    check={"kind": "check", "check": "google", "site": "www.google.com", "what": "page words"})
+    assert check_say(row) == ("3 · flights to manila is waiting at a bot check on www.google.com: solve it in its tab "
+                              "and press Continue on its card, then tell it again.")
+    states = [target_state(agent_row("a1", "x", state=state, **extra)) for state, extra in (
+        ("working", {}), ("waiting", {}), ("needs_you", {"permission": {"request": "r1"}}), ("your_turn", {}),
+        ("stopped", {}), ("failed", {}), ("needs_you", {}))]
+    assert states == ["working", "waiting", "permission", "idle", "idle", "idle", "idle"]
 
 
 # ---- the Brain, with the fake claude -----------------------------------------------------------------------------
