@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import statistics
 import sys
 import time
+from pathlib import Path
 
 from .config import IMAGE, home, project_root
 
@@ -23,6 +25,8 @@ def main(argv: list[str] | None = None) -> int:
     doctor = commands.add_parser("doctor", help="check Docker, the image, a sandbox, page reading, screenshots, skills, live view")
     doctor.add_argument("--own", "--chrome", dest="own", action="store_true",
                         help="check your own browser (Brave or Chrome) instead of the sandbox")
+    doctor.add_argument("--setup", action="store_true",
+                        help="check what `ai-browser app` needs, without Docker and without connecting to a browser")
     bench = commands.add_parser("bench", help="measure speed on local test pages against the budgets")
     bench.add_argument("--runs", type=int, default=15, help="repetitions per measurement (default 15)")
     live = commands.add_parser("live", help="start a sandbox and print its live-view link, to log in to sites yourself")
@@ -38,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
                      help="where agents browse: your Brave (the default when it is installed) or AI Browser")
     app.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)  # for tests
     args = parser.parse_args(argv)
+    if args.command != "mcp":  # the mcp library writes its own UTF-8 stream
+        _utf8_console()
 
     if args.command == "mcp":
         from .server import build_server
@@ -57,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
         return _stop(args.profile, args.all)
     try:
         if args.command == "doctor":
+            if args.setup:
+                return _doctor_setup()
             return asyncio.run(_doctor_own() if args.own else _doctor())
         if args.command == "bench":
             return asyncio.run(_bench(args.runs))
@@ -98,6 +106,84 @@ def _stop(profile: str, everything: bool) -> int:
 
 def _elapsed(text: str) -> str:
     return text.rsplit("⏱", 1)[-1].strip() if "⏱" in text else "?"
+
+
+def _utf8_console() -> None:
+    """✓ and ✗ print on any console and into files (`doctor > log.txt`): Windows' code page can't encode them."""
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(AttributeError, ValueError, OSError):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+def _first_free(ports: range) -> int | None:
+    from .live import _bind
+
+    for port in ports:
+        sock = _bind("127.0.0.1", port)
+        if sock is not None:
+            sock.close()
+            return port
+    return None
+
+
+def _doctor_setup() -> int:
+    """What `ai-browser app` needs, checked without Docker and without opening a DevTools connection, so no browser
+    asks Allow. Python, Claude Code and Chrome must pass; the rest is information."""
+    import platform
+
+    from .app.server import APP_PORTS
+    from .chrome import brave_binary, browser_name, chrome_binary, inspect_address, own_browser_dir, switch_on
+    from .claudecli import ClaudeNotUsable, claude_argv
+    from .config import LIVE_PORTS
+
+    failed = False
+
+    def report(mark: str, label: str, detail: str, required: bool = False) -> None:
+        nonlocal failed
+        failed |= required and mark == "✗"
+        print(f"{mark} {label:<11} {detail}")
+
+    version = platform.python_version()
+    if sys.version_info >= (3, 12):
+        report("✓", "Python", version, True)
+    else:
+        report("✗", "Python", f"{version}: ai-browser needs 3.12 or newer (`uv sync` installs it)", True)
+    try:
+        claude = claude_argv()[0]
+    except ClaudeNotUsable as exc:  # an npm claude.cmd on Windows: its message says what to do
+        report("✗", "Claude Code", str(exc), True)
+    else:
+        if Path(claude).is_file():
+            report("✓", "Claude Code", claude, True)
+        else:
+            report("✗", "Claude Code", f"not found ({claude}): install Claude Code, then sign in once with `claude`",
+                   True)
+    chrome = chrome_binary()
+    if chrome and Path(chrome).is_file():
+        report("✓", "Chrome", chrome, True)
+    else:
+        found = f"{chrome} doesn't exist" if chrome else "not found"
+        report("✗", "Chrome", f"{found}: install Google Chrome, or set AIB_CHROME_BINARY to the full path of chrome",
+               True)
+    brave = brave_binary()
+    report("✓" if brave else "-", "Brave", brave or "not installed (optional: the Brain's watcher and your everyday "
+                                                    "browser use it)")
+    folder = own_browser_dir()
+    name = browser_name(folder)
+    if not folder.is_dir():
+        report("-", "everyday", f"{name}: no profile folder at {folder}")
+    elif switch_on(folder):  # a TCP check of DevToolsActivePort's port: no DevTools session, so no Allow question
+        report("✓", "everyday", f"{name}: profile folder found; remote debugging is on")
+    else:
+        report("-", "everyday", f"{name}: profile folder found; remote debugging is off ({inspect_address(folder)})")
+    ranges = f"app {APP_PORTS.start}-{APP_PORTS.stop - 1} and live view {LIVE_PORTS.start}-{LIVE_PORTS.stop - 1}"
+    if _first_free(APP_PORTS) and _first_free(LIVE_PORTS):
+        report("✓", "ports", f"{ranges} have free ports")
+    else:
+        report("✗", "ports", f"no free port in {ranges}: see \"no free port\" in the README")
+    report("-", "Docker", "not checked here: run `uv run ai-browser doctor`")
+    print("some checks failed" if failed else "all good")
+    return 1 if failed else 0
 
 
 async def _doctor() -> int:
