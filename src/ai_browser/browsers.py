@@ -84,3 +84,138 @@ def _read(path) -> bytes | None:
     except (OSError, ValueError):
         return None
     return data if len(data) <= MAX_FILE else None  # it grew past the limit while we looked
+
+
+@dataclass(frozen=True)
+class Installed:
+    """A known browser whose app is on this computer: its program, its .app on macOS (None elsewhere), its version
+    from the app's Info.plist (None on Windows) and its data folder."""
+
+    facts: platforms.BrowserFacts
+    binary: Path
+    bundle: Path | None
+    version: str | None
+    data_dir: Path
+
+    @property
+    def id(self) -> str:
+        return self.facts.id
+
+    @property
+    def name(self) -> str:
+        return self.facts.name
+
+    @property
+    def agents(self) -> bool:
+        return self.facts.agents
+
+    @property
+    def window(self) -> bool:
+        return self.facts.window
+
+    @property
+    def inspect_address(self) -> str:
+        return f"{self.facts.inspect}://inspect/#remote-debugging"
+
+
+def _plist(path):
+    """A plist file (XML or binary) as Python data, or None."""
+    data = _read(path)
+    if data is None:
+        return None
+    try:
+        return plistlib.loads(data)
+    except Exception:  # a cut XML plist raises ExpatError, a broken <date> AttributeError: not only ValueError
+        return None
+
+
+def _plain_file_name(name) -> bool:
+    return isinstance(name, str) and name not in ("", ".", "..") and "/" not in name and "\0" not in name
+
+
+def installed(system: str | None = None, env: Mapping | None = None, folders=None, commands=None) -> list[Installed]:
+    """The known browsers whose app is on this computer, in the table's order. macOS: the .app in the app folders,
+    with the row's bundle id and its program. Windows: the row's program under the app folders, or a program the
+    registry names (`commands`), that is a file. Elsewhere: []."""
+    system = _system(system)
+    env = os.environ if env is None else env
+    if system not in ("darwin", "win32"):
+        return []
+    if folders is None:
+        folders = platforms.app_folders(system, env)
+    if system == "darwin":
+        return _mac_installed(folders, env)
+    if commands is None:
+        commands = platforms.windows_browser_commands()
+    return _windows_installed(folders, commands, env)
+
+
+def _mac_installed(folders, env: Mapping) -> list[Installed]:
+    found = []
+    for facts in platforms.KNOWN_BROWSERS:
+        for folder in folders:
+            bundle = Path(folder) / facts.mac_app
+            info = _plist(bundle / "Contents" / "Info.plist")
+            if not isinstance(info, dict):
+                continue
+            ident, program = info.get("CFBundleIdentifier"), info.get("CFBundleExecutable")
+            if not isinstance(ident, str) or ident.lower() != facts.mac_bundle_id.lower():
+                continue
+            if not _plain_file_name(program) or not os.path.isfile(bundle / "Contents" / "MacOS" / program):
+                continue
+            version = info.get("CFBundleShortVersionString")
+            version = version if isinstance(version, str) and len(version) <= 32 else None
+            found.append(Installed(facts, bundle / "Contents" / "MacOS" / program, bundle, version,
+                                   data_dir(facts, "darwin", env)))
+            break  # the first app folder that has it wins
+    return found
+
+
+def _program(command: str) -> str | None:
+    """The program in a command line: the text inside its leading quotes, else everything up to and including the
+    first ".exe" in any letter case."""
+    text = command.strip()
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        if end < 0:
+            return None
+        return text[1:end].strip() or None
+    match = re.search(r"\.exe", text, re.IGNORECASE)
+    return text[:match.end()] if match else None
+
+
+def _expand(text: str, env: Mapping) -> str:
+    """%NAME% from env, the name looked up without regard to case, as Windows does; an unknown one stays."""
+    values = {str(key).lower(): str(value) for key, value in env.items()}
+    return re.sub(r"%([^%]+)%", lambda match: values.get(match.group(1).lower(), match.group(0)), text)
+
+
+def _windows_row(program: str) -> platforms.BrowserFacts | None:
+    """The row whose program path is the tail of `program`, part by part without regard to case, with either
+    separator; the longest tail wins."""
+    parts = [part.lower() for part in re.split(r"[\\/]+", program) if part]
+    best = None
+    for facts in platforms.KNOWN_BROWSERS:
+        tail = [part.lower() for part in facts.win_exe or ()]
+        if tail and parts[-len(tail):] == tail and (best is None or len(tail) > len(best.win_exe)):
+            best = facts
+    return best
+
+
+def _windows_installed(folders, commands, env: Mapping) -> list[Installed]:
+    # The app folders give paths, used as they are; only the registry's command lines are cut down to their program
+    # and have %NAME% expanded, so a user folder whose name holds ".exe" or "%" is still found.
+    programs = [str(Path(folder).joinpath(*facts.win_exe))
+                for folder in folders for facts in platforms.KNOWN_BROWSERS if facts.win_exe]
+    for command in commands:
+        program = _program(command) if isinstance(command, str) else None
+        if program is not None:
+            programs.append(_expand(program, env))
+    binaries: dict[str, Path] = {}
+    for program in programs:
+        facts = _windows_row(program)
+        if facts is None or facts.id in binaries or not os.path.isfile(program):
+            continue
+        binaries[facts.id] = Path(program)  # a browser found twice is counted once, where it was found first
+    return [Installed(facts, binaries[facts.id], None, None, data_dir(facts, "win32", env))
+            for facts in platforms.KNOWN_BROWSERS if facts.id in binaries]
