@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
+from .. import platforms
 from ..syncdir import write_atomic
 
 SEEN_LIMIT = 5000  # ids remembered so nothing is sorted twice (the oldest are forgotten first)
@@ -230,7 +230,7 @@ class BrainStore:
         if isinstance(data, dict):
             return data
         with contextlib.suppress(OSError):
-            os.replace(path, path.with_name(name + ".bad"))
+            platforms.replace(path, path.with_name(name + ".bad"))  # a scanner may hold it a moment on Windows
         return None
 
     def _save_inbox(self) -> None:

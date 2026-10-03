@@ -75,3 +75,25 @@ def test_added_sites_and_settings(tmp_path):
     again.remove_watch("custom:shop.example")
     assert again.entry("custom:shop.example") is None
     assert BrainStore(tmp_path).entry("custom:shop.example") is None
+
+
+def test_a_damaged_file_is_set_aside_even_while_windows_holds_it(tmp_path, monkeypatch):
+    from ai_browser import platforms
+    from ai_browser.brain.store import BrainStore
+
+    folder = tmp_path / "brain"
+    folder.mkdir()
+    (folder / "inbox.json").write_text("not json", encoding="utf-8")
+    real, held = platforms.os.replace, []
+
+    def busy_once(src, dst):
+        if str(dst).endswith(".bad") and not held:  # only the rename that sets the damaged file aside
+            held.append(src)
+            raise PermissionError(13, "being scanned")
+        real(src, dst)
+
+    monkeypatch.setattr(platforms.os, "replace", busy_once)
+    monkeypatch.setattr(platforms.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(platforms, "WINDOWS", True)  # only the retry loop changes: no Win32 call is made
+    BrainStore(tmp_path)
+    assert (folder / "inbox.json.bad").read_text(encoding="utf-8") == "not json"

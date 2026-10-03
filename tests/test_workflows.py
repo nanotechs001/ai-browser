@@ -305,3 +305,26 @@ def test_files_saved_by_notepad_load_like_the_macs(tmp_path):
     [skill] = catalog.all()
     assert (skill.name, skill.description) == ("notes", "Takes notes — fast")
     assert catalog.load("notes").rstrip().endswith("Body")
+
+
+def test_deleting_a_workflow_waits_out_a_short_hold(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from ai_browser import platforms
+    from ai_browser.brain.workflows import WorkflowStore
+
+    store = WorkflowStore(tmp_path)
+    saved = store.save({"name": "Morning report", "instructions": "Check the inbox"})
+    real, held = Path.unlink, []
+
+    def busy_once(self, missing_ok=False):
+        if not held:
+            held.append(self)
+            raise PermissionError(13, "open in an editor")
+        return real(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", busy_once)
+    monkeypatch.setattr(platforms.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(platforms, "WINDOWS", True)
+    store.delete(saved.slug)
+    assert held and store.get(saved.slug) is None

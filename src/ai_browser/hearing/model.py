@@ -7,8 +7,8 @@ Cancel, nothing is kept. Nothing else here touches the network: whether the mode
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
-import os
 import shutil
 import ssl
 import urllib.error
@@ -16,6 +16,8 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+from .. import platforms
 
 REVISION = "3d3d5dee26484f91867d81cb899cfcf72b96be6c"  # the repo's head on 2026-10-02 (last changed 2023-11-23)
 PIECE = 1 << 20  # bytes read at a time: Cancel is checked between pieces
@@ -110,7 +112,8 @@ class ModelStore:
             return False
 
     def remove_partial(self) -> None:
-        shutil.rmtree(self.part, ignore_errors=True)
+        with contextlib.suppress(OSError):  # missing already, or still held: the next download clears it
+            platforms.rmtree(self.part)
 
     def download(self, progress: Callable[[int], None] = lambda done: None,
                  cancelled: Callable[[], bool] = lambda: False) -> None:
@@ -127,8 +130,8 @@ class ModelStore:
             for file in self.spec.files:
                 done = self._fetch(file, done, progress, cancelled)
             if self.folder.exists():  # only now, with every file checked, does the old folder go
-                shutil.rmtree(self.folder)
-            os.replace(self.part, self.folder)
+                platforms.rmtree(self.folder)
+            platforms.replace(self.part, self.folder)  # Defender may hold a fresh file a moment on Windows
         except BaseException:
             self.remove_partial()
             raise

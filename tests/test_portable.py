@@ -198,3 +198,13 @@ def test_no_mac_words_where_windows_shows_them():
                     and "this Mac" in node.value and not _mac_only(path, node.value):
                 found.append(f"{path.relative_to(SRC).as_posix()}:{node.lineno}: this Mac")
     assert not found, "Mac-only words in text Windows shows:\n" + "\n".join(found)
+
+
+def test_the_voice_model_swap_goes_through_the_retrying_helpers():
+    path = SRC / "hearing" / "model.py"
+    if not path.exists():
+        pytest.skip("voice input isn't in this checkout")
+    calls = {ast.unparse(node.func) for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+             if isinstance(node, ast.Call)}
+    assert {"platforms.rmtree", "platforms.replace"} <= calls  # Defender may hold a fresh file for a moment
+    assert not calls & {"shutil.rmtree", "os.replace", "os.rename"}

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import yaml
 
+from .. import platforms
 from ..syncdir import write_atomic
 
 TRIGGERS = {"manual", "message", "schedule"}
@@ -223,7 +224,7 @@ class WorkflowStore:
         return workflow
 
     def delete(self, slug: str) -> None:
-        self.path_of(slug).unlink(missing_ok=True)
+        platforms.unlink(self.path_of(slug), missing_ok=True)  # an editor may hold it a moment on Windows
 
 
 class WorkflowRunner:
