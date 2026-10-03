@@ -953,7 +953,7 @@ class AppServer:
     def _skills(self) -> list:
         if self._catalog is None:  # the same skills the agents' engines see
             self._catalog = Catalog.discover(Path.home() / ".claude",
-                                             Path.home() / "Library" / "Application Support" / "Claude",
+                                             platforms.claude_desktop_dir(),
                                              project_root() / "skills", set(load_config(self.home).blocked_skills))
         return self._catalog.all()
 

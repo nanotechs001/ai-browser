@@ -130,7 +130,7 @@ class Engine:
         if self._catalog is None:
             self._catalog = Catalog.discover(
                 Path.home() / ".claude",
-                Path.home() / "Library" / "Application Support" / "Claude",
+                platforms.claude_desktop_dir(),
                 project_root() / "skills",
                 set(self.cfg.blocked_skills),
             )

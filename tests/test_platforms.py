@@ -286,3 +286,22 @@ def test_a_port_bind_holds_cant_be_taken_with_reuseaddr():
     finally:
         second.close()
         held.close()
+
+
+async def test_the_claude_ai_skills_come_from_the_desktop_apps_folder(tmp_path, monkeypatch):
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.engine import Engine
+
+    synced = tmp_path / "appdata" / "Claude" / "local-agent-mode-sessions" / "skills-plugin" / "s1" / "p1" / "skills"
+    (synced / "summarize").mkdir(parents=True)
+    (synced / "summarize" / "SKILL.md").write_text("---\nname: summarize\ndescription: Sums things up\n---\nBody\n",
+                                                   encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path / "user"))  # no personal skills or plugins from this machine
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "user"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    home = tmp_path / "home"
+    engine, server = Engine(home=home), AppServer(home, AgentManager(home))
+    monkeypatch.setattr(sys, "platform", "win32")  # %APPDATA%\Claude, where the Claude app keeps them on Windows
+    for skills in (engine.catalog.all(), server._skills()):
+        assert "anthropic-skills:summarize" in {skill.ref for skill in skills}
