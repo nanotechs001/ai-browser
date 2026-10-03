@@ -125,3 +125,57 @@ async def test_hand_and_run_take_one_click(home):
              "row.querySelector('.run').click(); row.querySelector('.run').click(); true")
     await asyncio.sleep(1)
     assert calls == [("hand", "gmail:t1", "check the page"), ("run", "gmail:t1", "site-fix")]
+
+
+@CHROME
+async def test_tell_the_brain_shows_a_card_and_runs_only_on_start(home):
+    from test_bridge import EVENTS
+
+    js, _, stack = home
+    brain, agents = stack["brain"], stack["server"].agents
+    stack["script"].write_text(json.dumps({"default": EVENTS, "You map the user's answer": [
+        {"result": json.dumps({"action": "agent"})}]}), encoding="utf-8")
+    show(brain, item())
+    row = "document.querySelector('#brain .brain-item')"
+    assert await until(js, f"{row} !== null")
+    words = f"ask an agent to check the launch page {HOSTILE}"
+    await js(f"{row}.querySelector('.say').value = {json.dumps(words)}; {row}.querySelector('.tell').click(); true")
+    assert await until(js, f"{row}.querySelector('.brain-card-task')?.value === {json.dumps(words)}")
+    assert await js(f"{row}.querySelector('.brain-card-head').textContent") == "Start a NEW agent with your words:"
+    assert await js("document.querySelectorAll('#brain img').length") == 0 and await js("document.title") != "pwned"
+    await asyncio.sleep(0.5)
+    assert agents.agents == {}  # nothing starts before Start
+    await js(f"const go = {row}.querySelector('.brain-card-go'); go.click(); go.click(); true")
+    for _ in range(50):
+        if agents.agents:
+            break
+        await asyncio.sleep(0.1)
+    await asyncio.sleep(1)
+    assert list(agents.agents) == ["a1"]  # a second click does nothing
+    for _ in range(50):
+        if agents.events_of("a1"):
+            break
+        await asyncio.sleep(0.1)
+    assert agents.events_of("a1")[0]["text"].startswith(words)  # the words, then the message as page data
+    assert await until(js, f"{row}.querySelector('.agent').textContent.startsWith('Agent 1: ')")
+    assert await until(js, f"{row}.querySelector('.brain-card').hidden === true")
+
+
+@CHROME
+async def test_the_watchers_brain_page_shows_cards_without_buttons(watcher):
+    from ai_browser.brain.talk import WATCHER_CARD
+
+    brain = watcher.brain
+    entry = item()
+    brain.store.put(entry)
+    card = brain.tells.propose(entry.id, "start_agent", task="check the launch page", model="sonnet")
+    _, js = await open_page(watcher.cdp, f"chrome-extension://{watcher.app.extension_id}/brain.html")
+    row = "document.querySelector('.brain-item[data-id=\"gmail:t1\"]')"
+    assert await until(js, f"{row}?.querySelector('.brain-card')?.hidden === false")
+    text = await js(f"{row}.querySelector('.brain-card').textContent")
+    assert "Start a NEW agent with your words:" in text and "check the launch page" in text and WATCHER_CARD in text
+    assert await js(f"{row}.querySelector('.brain-card-go')") is None
+    await js(f"{row}.querySelector('.say').value = 'yes'; {row}.querySelector('.tell').click(); true")
+    assert await watcher.until(lambda: brain.store.get("gmail:t1").note == WATCHER_CARD)
+    await asyncio.sleep(0.5)
+    assert brain.tells.peek("gmail:t1") is card and watcher.server.agents.agents == {}

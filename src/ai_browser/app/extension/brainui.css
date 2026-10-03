@@ -23,6 +23,17 @@
                    background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
 .brain-item button { font-size: 13px; padding: 2px 10px; }
 .brain-more { margin-top: 6px; font-size: 13px; }
+/* An inbox card (brainui.js): Start a NEW agent, or Send to an open one, holding the user's own words */
+.brain-card { border: 1px solid var(--accent); border-radius: 10px; padding: 6px 10px; display: flex;
+              flex-direction: column; gap: 4px; }
+.brain-card[hidden] { display: none; }
+.brain-card p { margin: 0; font-size: 13px; }
+.brain-card-head { font-weight: 600; }
+.brain-card textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
+                       background: var(--bg); color: var(--text); resize: vertical; font: inherit; font-size: 13px; }
+.brain-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap;
+                         font-size: 13px; }
+.brain-card .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 /* A tool request waiting for the user (permission.js): on AI Home's agent rows, in the chat panel, on the Brain page. */
 .permission { border-color: var(--accent); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .permission-head { font-weight: 600; font-size: 14px; }

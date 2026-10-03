@@ -209,7 +209,7 @@ function openBrain() {
   $("drawer-dot").style.background = "var(--accent)";
   const root = el("div", "drawer-brain");
   $("drawer-body").replaceChildren(root);
-  drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id) });
+  drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id), cards: "confirm" });
   $("drawer").hidden = false;
 }
 

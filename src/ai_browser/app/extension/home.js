@@ -36,7 +36,7 @@ const SAYS = { connected: "connected", off: "switch off", ready: "ready", asking
                refused: "not allowed", lost: "closed" };
 const chat = createChat($("chat-messages"));
 const link = connect({ view: "home", onMessage: handle, onState: setStatus });
-const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id) });
+const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id), cards: "confirm" });
 let watchSites = []; // the Brain's watch list: a message workflow's sites
 let switchedOn = []; // the MCP servers switched on: what a workflow may use
 const tools = mountTools($("tools"), link);
