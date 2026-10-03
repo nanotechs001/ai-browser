@@ -159,3 +159,42 @@ def test_text_io_names_its_encoding():
              for top in (SRC, ROOT / "tests") for path in sorted(top.rglob("*.py"))
              for call in text_io_calls(path.read_text(encoding="utf-8"))]
     assert not found, "text read or written without encoding=:\n" + "\n".join(sorted(found))
+
+
+MAC_ONLY = {
+    ("platforms.py", "this Mac"),  # this_computer() itself
+    # Add (path, snippet) here only for text shown when a platform value says macOS, for example voice-input's
+    # macOS microphone lines chosen by hearing_status.platform == "mac".
+}
+PAGE_SUFFIXES = {".html", ".js", ".css", ".json", ".svg", ".txt", ".md"}
+
+
+def _mac_only(path: Path, text: str) -> bool:
+    relative = path.relative_to(SRC).as_posix()
+    return any(relative == where and snippet in text for where, snippet in MAC_ONLY)
+
+
+def _docstrings(tree: ast.AST) -> set[int]:
+    return {id(node.body[0].value) for node in ast.walk(tree)
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body
+            and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)}
+
+
+def test_no_mac_words_where_windows_shows_them():
+    found = []
+    pages = [*(SRC / "app" / "extension").rglob("*"), *(SRC / "app" / "watcher").rglob("*"), SRC / "app" / "setup.html"]
+    for path in sorted(pages):
+        if path.is_file() and path.suffix in PAGE_SUFFIXES:
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                for word in ("this Mac", "⌘"):
+                    if word in line and not _mac_only(path, line):
+                        found.append(f"{path.relative_to(SRC).as_posix()}:{number}: {word}")
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        skip = _docstrings(tree)  # comments aren't in the tree; docstrings may keep "this Mac"
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip \
+                    and "this Mac" in node.value and not _mac_only(path, node.value):
+                found.append(f"{path.relative_to(SRC).as_posix()}:{node.lineno}: this Mac")
+    assert not found, "Mac-only words in text Windows shows:\n" + "\n".join(found)

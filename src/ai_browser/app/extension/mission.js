@@ -490,7 +490,7 @@ $("drawer-close").addEventListener("click", closeDrawer);
 brainButton.addEventListener("click", openBrain);
 bubble.addEventListener("click", openBrain);
 
-async function setVoice(on) { // Voice: only a voice that runs on this Mac; off by default, and remembered
+async function setVoice(on) { // Voice: only a voice that runs on this computer; off by default, and remembered
   const result = await voice.setEnabled(on);
   $("voice").checked = result.on;
   setText($("voice-note"), result.reason || "");

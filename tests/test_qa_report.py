@@ -55,3 +55,13 @@ def test_errors_from_browser_extensions_are_not_the_sites():
                       console=[("extension says no", "chrome-extension://abc/content.js:9")],
                       failed=[("chrome-extension://abc/icon.png", "Image", "net::ERR_FILE_NOT_FOUND")])
     assert page_issues(page, "https://s.com") == []
+
+
+def test_the_summary_names_the_computer(tmp_path, monkeypatch):
+    import sys
+
+    work = WorkDir(tmp_path / "work", "t1")
+    run = sample_run()
+    paths = write_report(work, run)
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert any(line.startswith("report: ") and "(on this PC: " in line for line in summary(run, paths).splitlines())

@@ -9,7 +9,7 @@ const groups = new Map(); // agent id -> its tab group
 const targetsOf = new Map(); // agent id -> its targets, to ungroup the user's own tabs when the agent is closed
 let braveMode = false; // agents browse in the user's Brave: their tabs are Brave's, and Brave's watcher groups them
 
-// Clicking the toolbar icon (or pressing ⌘⇧Y) opens the chat in the side panel.
+// Clicking the toolbar icon (or its shortcut, in manifest.json's "commands") opens the chat in the side panel.
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
 async function homeTab() {

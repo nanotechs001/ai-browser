@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from .. import platforms
 from ..checks import site_key
 from ..workfs import WorkDir
 from .model import SITE_STOPPED, Issue, PageResult, QARun
@@ -81,7 +82,7 @@ def summary(run: QARun, paths: ReportPaths) -> str:
     if len(run.issues) > TOP:
         lines.append(f"… {len(run.issues) - TOP} more in the report")
     shots = sum(len(page.sizes) for page in run.pages)
-    lines.append(f"report: {paths.html} (on this Mac: {paths.folder_host}/report.html)")
+    lines.append(f"report: {paths.html} (on {platforms.this_computer()}: {paths.folder_host}/report.html)")
     lines.append(f"csv: {paths.csv} · screenshots: {paths.shots} ({shots})")
     lines += _notes(run)
     return "\n".join(lines)

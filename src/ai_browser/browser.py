@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from . import platforms
 from .cdp import CDP, CDPError
 from .checks import Check, box_frames, detect
 from .config import JS_LIMIT, MAX_ROWS, NAME_LIMIT, SHOT_MAX_HEIGHT, SHOT_MAX_WIDTH, SIZES, TEXT_LIMIT, Config
@@ -134,11 +135,11 @@ def url_problem(url: str, mode: str) -> str | None:
         if scheme == "chrome-extension":
             return ("AI Browser's own pages and other extensions' pages don't open from here: if the user opened one, "
                     "adopt it with tabs switch uN")
-        return ("only web pages open in AI Browser: local files and chrome:// pages would reach this Mac and Chrome's "
-                "settings (use read_file for work files)")
+        return (f"only web pages open in AI Browser: local files and chrome:// pages would reach "
+                f"{platforms.this_computer()} and Chrome's settings (use read_file for work files)")
     if mode == "chrome":
         return ("only web pages (http, https, data:, about:blank) open in your own Chrome: local files and chrome:// "
-                "pages would reach this Mac and Chrome's settings (use read_file for work files)")
+                f"pages would reach {platforms.this_computer()} and Chrome's settings (use read_file for work files)")
     path = posixpath.normpath(unquote(parts.path).replace("\\", "/"))
     if scheme == "file" and parts.netloc in {"", "localhost"} and (path == "/work" or path.startswith("/work/")):
         return None

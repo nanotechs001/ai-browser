@@ -518,8 +518,8 @@ class Engine:
         live = self.live.url if self.live is not None and self.live.url else "not started"
         if info.chrome and info.profile == "app":
             return ("browser: AI Browser (the agent's own Chrome) · tabs list also shows the user's tabs there\n"
-                    f"work folder {self.work.sandbox_task} (on this Mac: {self.work.host_task}; shell and skill "
-                    "scripts run in a Docker sandbox)")
+                    f"work folder {self.work.sandbox_task} (on {platforms.this_computer()}: {self.work.host_task}; "
+                    "shell and skill scripts run in a Docker sandbox)")
         if info.chrome:
             where = f" · {placement}" if placement else ""
             profile = _sandbox_profile()  # AIB_BROWSER chose the user's browser: a sandbox profile can't apply there
@@ -527,11 +527,11 @@ class Engine:
                       f"(sandbox_start(profile=\"{profile}\") uses it)") if profile else ""
             return (f"browser: your {self._browser_name()} · only tabs this session opens, and tabs the user hands "
                     f"it{where}\n"
-                    f"work folder {self.work.sandbox_task} (on this Mac: {self.work.host_task}; shell and skill "
-                    "scripts run in a Docker sandbox)\n"
+                    f"work folder {self.work.sandbox_task} (on {platforms.this_computer()}: {self.work.host_task}; "
+                    "shell and skill scripts run in a Docker sandbox)\n"
                     f"live view: {live}{unused}")
         return (f"sandbox {info.name} ready · profile {info.profile}{' (throwaway)' if info.fresh else ''}\n"
-                f"work folder {self.work.sandbox_task} (on this Mac: {self.work.host_task})\n"
+                f"work folder {self.work.sandbox_task} (on {platforms.this_computer()}: {self.work.host_task})\n"
                 f"live view: {live}")
 
     # ---- sandbox tools --------------------------------------------------------------------------------

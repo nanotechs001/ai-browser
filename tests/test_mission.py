@@ -315,11 +315,11 @@ async def test_old_news_is_not_told_and_hostile_text_stays_text(stack):
 
 
 @CHROME
-async def test_voice_is_off_by_default_and_needs_a_voice_on_this_mac(stack):
+async def test_voice_is_off_by_default_and_needs_a_voice_on_this_computer(stack):
     js = await open_with(stack, NO_LOCAL_VOICE)
     assert await js("document.getElementById('voice').checked") is False
     await js("document.getElementById('voice').click(); true")
-    assert await until(js, "document.getElementById('voice-note').textContent === 'No voice on this Mac'")
+    assert await until(js, "document.getElementById('voice-note').textContent === 'No voice on this computer'")
     assert await js("document.getElementById('voice').checked") is False
     spoken = await open_with(stack, LOCAL_VOICE)
     assert await spoken("document.getElementById('voice').checked") is False
@@ -328,7 +328,7 @@ async def test_voice_is_off_by_default_and_needs_a_voice_on_this_mac(stack):
     needs_reply(stack["brain"], sender="Maria Santos", summary="she asks to move the launch")
     assert await until(spoken, "window.spoken.length === 1")
     assert await spoken("window.spoken[0]") == ["Maria Santos needs your reply: she asks to move the launch",
-                                                "Samantha"]  # only a voice that runs on this Mac
+                                                "Samantha"]  # only a voice that runs on this computer
     await spoken("location.reload(); true")
     await asyncio.sleep(0.5)
     assert await until(spoken, "document.getElementById('status')?.dataset.state === 'connected'"

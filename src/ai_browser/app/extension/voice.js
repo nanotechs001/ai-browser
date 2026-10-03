@@ -1,5 +1,5 @@
 // The Brain talking back: short updates, one at a time, in a speech bubble above the blob, and spoken aloud when the
-// user switched Voice on. Speech uses only voices that run on this Mac (localService), so the words never leave it.
+// user switched Voice on. Speech uses only voices that run on this computer (localService), so the words never leave it.
 // More than three updates waiting become one summary, and the speech in progress stops: the voice never piles up.
 "use strict";
 
@@ -179,7 +179,7 @@ export function createVoice({ bubble, onSpeaking = () => {}, onBlocked = () => {
     }
     if (!local.length) {
       voice = null;
-      return { on: false, reason: "No voice on this Mac" };
+      return { on: false, reason: "No voice on this computer" };
     }
     const english = local.filter((one) => /^en\b/i.test(one.lang || ""));
     voice = english.find((one) => one.default) || english[0] || local.find((one) => one.default) || local[0];
