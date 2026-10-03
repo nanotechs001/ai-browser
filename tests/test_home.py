@@ -295,6 +295,66 @@ async def test_the_tab_list_marks_owners_and_hands_tabs_over(home):
     assert server.agents.agents["a2"].adopted == ["B1"]
 
 
+LAST_USED = ("Showing the Brave profile you used last. With the watcher loaded, this list stays on the watcher's "
+             "profile.")
+NO_PROFILE = "Your tabs aren't listed: AI Browser can't tell which Brave profile is yours yet."
+
+
+@CHROME
+async def test_the_tab_list_counts_what_it_doesnt_show(home):
+    from fake_brave import FakeBrave
+
+    js, _, stack = home
+    brave = FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
+    brave.set_scope("watcher", 3)
+    stack["server"].attach_brave(brave)
+    source = "document.querySelector('#tabs p.scope-source')?.textContent ?? null"
+    count = "document.querySelector('#tabs p.elsewhere')?.textContent ?? null"
+    empty = "document.querySelector('#tabs .empty')?.textContent ?? null"
+
+    async def shows(expression, text):
+        return await until(js, f"({expression}) === {json.dumps(text)}")
+
+    assert await shows(count, "3 more tabs in other profiles or private windows: not shown here.")
+    assert await js(source) is None
+    brave.set_scope("watcher", 1)
+    assert await shows(count, "1 more tab in other profiles or private windows: not shown here.")
+    brave.set_scope("last_used", 0)
+    assert await shows(source, LAST_USED)
+    assert await js(count) is None  # no line when the count is 0
+    brave.set_scope("none", 2)
+    assert await shows(source, NO_PROFILE)
+    assert await shows(count, "2 more tabs in other profiles or private windows: not shown here.")
+    brave.set_scope("watcher", 0)
+    assert await shows(source, None)
+    assert await js(count) is None
+    brave.pages = []
+    brave.changed()
+    assert await shows(empty, "No web pages open in this profile.")
+    brave.set_scope("none", 4)  # Review Focus 1: while Brave isn't connected, the list claims nothing about profiles
+    brave.set_state("ready")
+    assert await shows(empty, "No web pages open in your browser.")
+    assert await js(source) is None and await js(count) is None
+    brave.set_state("connected")  # connected again: the scope sent before is stale until the new connection's list
+    assert await until(js, "document.getElementById('browser-card').dataset.state === 'connected'")
+    assert await js(source) is None and await js(count) is None
+    assert await js(empty) == "No web pages open in your browser."
+    brave.changed()  # the new connection's first list brings its own scope
+    assert await shows(source, NO_PROFILE)
+    assert await shows(count, "4 more tabs in other profiles or private windows: not shown here.")
+    brave.set_scope("watcher", 0)
+    assert await shows(source, None)
+    await js("window.flashed = []; new MutationObserver(() => { const line = document.querySelector("
+             "'#tabs p.scope-source'); if (line) window.flashed.push(line.textContent); }).observe("
+             "document.getElementById('tabs'), {childList: true, subtree: true, characterData: true}); true")
+    brave.tab_scope = {"profile": "none", "elsewhere": 0}  # BraveLink's scope once its connection is gone
+    brave.state = "lost"  # Brave quits, in BraveLink's order: the state, then the empty list, then the card
+    brave.changed()
+    brave.set_state("lost")
+    assert await until(js, "document.getElementById('browser-card').dataset.state === 'lost'")
+    assert await js("window.flashed") == [] and await js(source) is None  # not even for a moment
+
+
 @CHROME
 async def test_the_browser_card_follows_brave(home):
     from fake_brave import FakeBrave
