@@ -787,10 +787,18 @@ class AppServer:
         self._jobs.add(task)
         task.add_done_callback(self._jobs.discard)
 
+    def _role(self, ws: WebSocket) -> str:
+        """ "watcher" for a socket from Brave's watcher's origin, else "app" (AI Browser's own pages). The origin was
+        checked when the socket opened, so every open socket has a role. (The app window, Wave B, maps its cookie to
+        "app" here; the table and the filter stay.)"""
+        return "watcher" if self._origin_of.get(ws) in self._watcher_origins else "app"
+
     async def _handle(self, ws: WebSocket, queue: asyncio.Queue, message: dict) -> None:
-        kind, agent_id, agents = message.get("type"), str(message.get("id", "")), self.agents
+        if not may_send(self._role(ws), message):  # MESSAGE_RULES, before anything reads the message's fields
+            return  # dropped, with no answer: a page can't map the table by trying types
+        kind, agent_id, agents = message["type"], str(message.get("id", "")), self.agents
         if kind == "hello" and message.get("view") == "watcher" and self.brain is not None \
-                and self._origin_of.get(ws) in self._watcher_origins:
+                and self._role(ws) == "watcher":
             self._watcher = (ws, queue)  # the latest watcher wins (a reloaded extension connects again)
             queue.put_nowait({"type": "watcher_hello", "build": self.watcher_build})
             queue.put_nowait(self.brain.watch_message())
@@ -813,20 +821,17 @@ class AppServer:
                 self._job(self._skill_draft(queue, message))  # a Claude call: the socket goes on meanwhile
             elif self.skill_writer is not None:
                 self._skill_save(queue, message)
-        elif kind in CHECK_MESSAGES:  # only a click in one of our pages (or the watcher's Continue) answers a check
+        elif kind in CHECK_MESSAGES:  # a bot check's buttons; MESSAGE_RULES lets the watcher Continue, never Skip
             if kind == "check_continue":
                 await agents.continue_check(agent_id)
-            elif self._origin_of.get(ws) not in self._watcher_origins:
+            elif kind == "check_skip":
                 await agents.skip_check(agent_id)
-        elif kind in BRAVE_MESSAGES:  # (everyday Brave) only AI Browser's own pages, never the watcher's origin
-            if self._origin_of.get(ws) not in self._watcher_origins:
-                await self._brave_command(queue, kind, message)
-        elif kind in HEARING_MESSAGES:
-            if self._origin_of.get(ws) not in self._watcher_origins:  # only AI Browser's own pages talk or listen
-                self._hearing_command(ws, queue, kind, message)
+        elif kind in BRAVE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            await self._brave_command(queue, kind, message)
+        elif kind in HEARING_MESSAGES:  # only AI Browser's own pages talk or listen (MESSAGE_RULES)
+            self._hearing_command(ws, queue, kind, message)
         elif kind in TALK_MESSAGES:
-            if self._origin_of.get(ws) not in self._watcher_origins:
-                self._talk_command(queue, kind, message)
+            self._talk_command(queue, kind, message)
         elif kind == "hello":
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
@@ -1030,7 +1035,9 @@ class AppServer:
                 self.workflows.delete(message["slug"])
                 self.workflows_changed()
             elif kind == "workflow_run" and isinstance(message.get("slug"), str):
-                if isinstance(message.get("item"), str) and self.brain is not None:
+                if isinstance(message.get("item"), str):  # the inbox's Run on a message: only through the Brain,
+                    if self.brain is None:                # never a bare run in its place
+                        return
                     agent_id = await self.brain.run_workflow(message["item"], message["slug"])
                 else:
                     agent_id = await self.runner.run(message["slug"], text=_text(message.get("text")) or None)
