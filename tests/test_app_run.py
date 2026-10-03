@@ -335,29 +335,37 @@ async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_
         async with connect(url.replace("http", "ws") + "/ws?token=" + token,
                            origin=f"chrome-extension://{app.extension_id}") as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
-            await ws.send(json.dumps({"type": "new_task", "text": "look around", "request": "r"}))
-            while "created" not in seen:
+            for request in ("r1", "r2"):
+                await ws.send(json.dumps({"type": "new_task", "text": "look around", "request": request}))
+            created = 0
+            while created < 2:
                 message = json.loads(await asyncio.wait_for(ws.recv(), 10))
                 if message["type"] == "snapshot":
                     seen["browser"] = message["browser"]
                 elif message["type"] == "created":
-                    seen["created"] = True
-        mcp = home / "app" / "agents" / "a1" / "mcp.json"
-        for _ in range(100):
-            if mcp.exists():
-                break
-            await asyncio.sleep(0.1)
-        seen["env"] = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]["ai-browser"]["env"]
+                    created += 1
+        for agent in ("a1", "a2"):
+            mcp = home / "app" / "agents" / agent / "mcp.json"
+            for _ in range(100):
+                if mcp.exists():
+                    break
+                await asyncio.sleep(0.1)
+            seen[agent] = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]["ai-browser"]["env"]
         app.process.kill()
 
     code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready,
                                               out=lines.append, browser="brave"), 60)
     printed = "\n".join(lines)
+    cdp = seen["url"].replace("http://", "ws://", 1) + "/cdp"
     assert code == 0 and seen["mode"] in (0o600, None)
     assert seen["link"] == {"events": seen["url"] + "/agent-events", "session_token": seen["link"]["session_token"],
-                            "pid": os.getpid()} and seen["link"]["session_token"]
+                            "pid": os.getpid(), "cdp": cdp, "browser_dir": str(folder)}
     assert seen["browser"] == {"kind": "brave", "name": "Brave", "state": "off", "groups": "no_watcher"}
-    assert seen["env"]["AIB_BROWSER"] == "chrome" and seen["env"]["AIB_CHROME_DIR"] == str(folder)
+    for agent in ("a1", "a2"):
+        env = seen[agent]
+        assert env["AIB_BROWSER"] == "chrome" and env["AIB_CHROME_DIR"] == str(folder) and env["AIB_APP_CDP"] == cdp
+    tokens = {seen["a1"]["AIB_APP_AGENT_TOKEN"], seen["a2"]["AIB_APP_AGENT_TOKEN"]}
+    assert len(tokens) == 2 and seen["link"]["session_token"] not in tokens  # each agent its own
     assert "brave://inspect/#remote-debugging" in printed
     assert "any program on this computer can reach your Brave" in printed
     assert not (home / "app" / "link.json").exists()  # removed at exit
@@ -465,3 +473,45 @@ def test_the_terminal_steps_are_worded_for_each_computer():
     mac = [ready_text("darwin"), setup_text("/x/extension", "darwin"), brave_text("/x/watcher", "darwin")]
     assert "⌘⇧Y" in mac[0] and "Finder" in mac[1] and "⌘⇧G" in mac[1] and "/x/extension" in mac[1]
     assert "⌘⇧G" in mac[2] and "/x/watcher" in mac[2]
+
+
+def test_the_switch_text_says_once_per_run():
+    from ai_browser.app.run import SWITCH
+
+    text = SWITCH.format(name="Brave", inspect="brave://inspect/#remote-debugging")
+    assert "asks once each time AI Browser starts" in text and "it isn't AI Browser" in text
+    assert "lists everything connected, with Disconnect" in text
+    assert "each agent first uses the browser" not in text
+
+
+@pytest.mark.posix_only
+@CHROME
+async def test_agents_end_before_the_relay_closes(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import run
+    from ai_browser.app.bravelink import BraveLink
+    from ai_browser.app.server import AppServer
+
+    order = []
+    stop, close = AppServer.stop, BraveLink.close
+
+    async def stopping(self):
+        order.append("server.stop")
+        await stop(self)
+
+    async def closing(self):
+        order.append("brave.close")
+        await close(self)
+
+    monkeypatch.setattr(AppServer, "stop", stopping)
+    monkeypatch.setattr(BraveLink, "close", closing)
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
+    runner, _, _ = fake_claude
+
+    async def ready(url, app):
+        app.process.kill()
+
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
+                                              out=lambda line: None, browser="brave"), 60)
+    assert code == 0 and order == ["server.stop", "brave.close"]  # no agent sees its browser vanish while it runs
