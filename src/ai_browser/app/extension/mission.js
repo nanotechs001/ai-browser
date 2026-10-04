@@ -27,6 +27,7 @@ let storedModel = false;
 let talkState = "idle"; // the talk panel's state (talk.js): the Brain listens while the user talks
 let talk = null; // the talk panel, mounted once the line to the app exists
 let tabs = []; // the browser's tab list (snapshot.tabs, then each "tabs" message): the drawer's Your tabs
+let tabScope = null; // which profile that list comes from, and how many tabs it leaves out (only numbers)
 let browser = null; // where agents browse: {kind, name, state} (snapshot.browser, then each "browser" message)
 
 const scene = createScene($("scene"), { onSelect: select, onCamera: aimBrain });
@@ -305,7 +306,7 @@ function fillDrawer(agent) { // the drawer's agent changed: its parts are update
 function renderYourTabs() { // the drawer's Your tabs follows the tab list and the browser's state
   if (!drawer.yourTabs) return;
   drawer.yourTabs.render(tabs, { brave: browser?.kind === "brave", connected: browser?.state === "connected",
-                                 name: browser?.name || "Brave" });
+                                 name: browser?.name || "Brave", scope: tabScope });
 }
 
 function sendChat() {
@@ -400,6 +401,7 @@ function handle(message) {
       for (const id of [...agents.keys()]) if (!ids.has(id)) forget(id);
       for (const agent of message.agents || []) update(agent);
       tabs = message.tabs || [];
+      tabScope = message.tab_scope || null;
       browser = message.browser || null;
       renderYourTabs();
       agentsKnown = true;
@@ -440,6 +442,7 @@ function handle(message) {
       break;
     case "tabs":
       tabs = message.tabs || [];
+      tabScope = message.tab_scope || null;
       renderYourTabs();
       break;
     case "browser":

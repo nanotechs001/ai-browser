@@ -1001,6 +1001,35 @@ async def test_hand_over_hint_opens_this_agents_tab_list(stack):
 
 
 @CHROME
+async def test_your_tabs_say_what_the_list_leaves_out(stack):
+    """Brave mode lists one profile (watcher-safety's tab scope). Mission Control's Your tabs says what it leaves out, as
+    AI Home's list does, and never "None of your tabs are open." while the user's tabs are elsewhere."""
+    from fake_brave import FakeBrave
+
+    server = stack["server"]
+    agents = server.agents
+    talk_script(stack, {"say": "Hand it over.", "action": "open", "target": "tabs", "agent": "a1"})
+    await agents.create("Fix the footer")
+    brave = FakeBrave([])
+    brave.set_scope("none", 0)  # AI Browser can't tell which Brave profile is the user's yet
+    server.tabs._callbacks.clear()  # brave mode has no AI Browser TabWatch on the pages (run.py): only Brave's list
+    server.attach_brave(brave)
+    agents.env["AIB_BROWSER"] = "chrome"  # brave mode, as run.py's brave_env sets it
+    js = await open_talk(stack, mic())
+    await ask_typed(js, "give agent 1 my Gmail tab")
+    yours = "document.querySelector('#drawer .your-tabs')"
+    assert await until(js, f"{yours}?.open === true")
+    text = f"{yours}.textContent"
+    not_listed = "Your tabs aren't listed: AI Browser can't tell which Brave profile is yours yet."
+    assert await until(js, f"{text}.includes({json.dumps(not_listed)})")
+    assert not await js(f"{text}.includes('None of your tabs are open')")
+    brave.set_scope("watcher", 3)  # the watcher's profile, with three of the user's tabs in other profiles
+    brave.changed()
+    assert await until(js, f"{text}.includes('3 more tabs in other profiles or private windows: not shown here.')")
+    assert await js(f"{text}.includes('None of your tabs are open in this profile.')")
+
+
+@CHROME
 async def test_spoken_labels_read_the_dot_as_a_pause(stack):
     js = await open_with(stack)
     assert await js(VOICE) is True

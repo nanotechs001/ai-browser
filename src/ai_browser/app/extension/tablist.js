@@ -161,7 +161,8 @@ export function mountYourTabs(root, { send, agentId }) {
   const list = el("div", "your-tab-list");
   root.replaceChildren(summary, list);
 
-  function render(tabs, { brave = false, connected = false, name = "Brave" } = {}) {
+  // scope: the server's tab_scope (brave mode lists one profile), said here as AI Home's list says it
+  function render(tabs, { brave = false, connected = false, name = "Brave", scope = null } = {}) {
     root.hidden = !brave; // agents in AI Browser itself can't take the user's tabs
     list.textContent = "";
     if (!brave) return;
@@ -172,10 +173,12 @@ export function mountYourTabs(root, { send, agentId }) {
     }
     const mine = tabs.filter((tab) => ["you", "brain"].includes(tab.owner?.kind || "you"));
     summary.textContent = `Your tabs (${mine.length})`;
-    if (!mine.length) {
-      list.append(el("p", "muted", "None of your tabs are open."));
-      return;
+    const texts = scopeTexts(scope);
+    if (!mine.length && scope?.profile !== "none") { // with no profile known, the source line says why instead
+      list.append(el("p", "muted", scope ? "None of your tabs are open in this profile." : "None of your tabs are open."));
     }
+    if (texts.source) list.append(el("p", "muted scope-source", texts.source));
+    if (texts.elsewhere) list.append(el("p", "muted elsewhere", texts.elsewhere));
     for (const tab of mine) {
       const row = el("div", "your-tab");
       row.dataset.target = tab.target;
