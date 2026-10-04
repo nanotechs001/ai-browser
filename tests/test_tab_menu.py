@@ -114,8 +114,12 @@ async def test_switching_tabs_keeps_each_page_as_it_was(shell):
     await pick(js, "/mission")
     assert await until(js, connected("/mission"))
     await js(f"(() => {{ const page = {frame('/mission')}; page.marker = 8; return true; }})()")
+    # AI Home runs on while hidden, and its own script may lay it out (as a broadcast's update can)
+    assert await js(f"[{home}.innerWidth > 0, {home}.document.body.getBoundingClientRect().height > 4000]") == [
+        True, True]
     assert await settled(lambda: stack["server"].window_count == 2)
     await pick(js, "/home")
+    await asyncio.sleep(0.6)  # drawn again (a page hidden with display:none and laid out comes back at the top)
     assert await js(f"{home}.document.getElementById('task').value") == "half typed"
     assert await js(f"[{home}.scrollY, {home}.marker]") == [1234, 7]  # the same page, never reloaded
     await pick(js, "/mission")
@@ -155,6 +159,31 @@ async def test_the_title_follows_the_tab_and_keeps_ai_homes_count(shell):
     assert await until(js, "document.title === '(1) AI Home · AI Browser'")
     await stack["server"].agents.stop(agent.id)
     assert await until(js, "document.title === 'AI Home · AI Browser'")
+
+
+async def mouse_click(js, at) -> None:
+    """A real mouse click at (x, y) in the window's page: the browser picks what is under it."""
+    for kind in ("mousePressed", "mouseReleased"):
+        await js.cdp.send("Input.dispatchMouseEvent", {"type": kind, "x": at[0], "y": at[1], "button": "left",
+                                                       "clickCount": 1}, session_id=js.session)
+
+
+CENTRE = "((box) => [box.x + box.width / 2, box.y + box.height / 2])"
+
+
+@CHROME
+async def test_a_real_click_lands_on_the_tab_shown_never_on_a_hidden_one(shell):
+    js, _ = shell
+    for key in ("/mission", "/settings"):  # two hidden pages now lie above AI Home's in the page
+        await pick(js, key)
+        assert await until(js, connected(key))
+    await mouse_click(js, await js(f"{CENTRE}({tab('/home')}.querySelector('.tab-label').getBoundingClientRect())"))
+    assert await until(js, active_is("/home"))
+    task = (f"(() => {{ const frame = {view('/home')}.querySelector('iframe'); const outer = "
+            "frame.getBoundingClientRect(); const box = frame.contentDocument.getElementById('task')"
+            ".getBoundingClientRect(); return [outer.x + box.x + box.width / 2, outer.y + box.y + box.height / 2]; })()")
+    await mouse_click(js, await js(task))
+    assert await until(js, f"{frame('/home')}.document.activeElement?.id === 'task'")  # AI Home's own box
 
 
 async def all_pages(stack) -> list[str]:
