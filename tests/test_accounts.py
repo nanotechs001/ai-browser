@@ -288,3 +288,13 @@ def test_a_limit_is_kept_until_it_resets(tmp_path):
     accounts._limits[work.id] = time.time() - 1  # its time came
     assert accounts.limit(work.id) is None
     assert Accounts(tmp_path).limit(work.id) is None  # this app run only: never written down
+
+
+def test_the_readme_explains_ai_accounts():
+    text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for needed in ("### AI accounts (Settings → Accounts)", "**Open Terminal**", "**Copy the command**",
+                   "AI Browser never sees a password or a token", "never your email or your organisation",
+                   "**Continue on Work**", "**Wait for the reset**",
+                   "The watcher, the Brain and voice never move an agent",
+                   "**Remove** only makes AI Browser forget an account"):
+        assert needed in text, needed

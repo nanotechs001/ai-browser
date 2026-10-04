@@ -180,8 +180,8 @@ up** open the same steps in a tab of their own, with a × to close it.
 - **Skills:**
   - every one of Claude's skills (personal, plugins, claude.ai, ai-browser), and which ones each agent loaded;
   - add one to a new task, or ask a running agent to use it.
-- **Settings** (a tab, and a button beside **Mission Control**): which browser draws the window. The model you
-  pick and Voice are remembered by AI Browser itself, in every tab and across restarts.
+- **Settings** (a tab, and a button beside **Mission Control**): which browser draws the window, and your AI
+  accounts. The model you pick and Voice are remembered by AI Browser itself, in every tab and across restarts.
 
 **Tabs and links:** AI Home, Mission Control and Settings are tabs in a row under the title bar, and the window's
 title follows the one shown ("Mission Control · AI Browser"). A tab loads the first time you pick it, and then stays
@@ -193,8 +193,9 @@ Brave, never in AI Browser's window. Each agent's tabs sit in a coloured tab gro
 task. The Brain's watcher makes the groups. Without the watcher, each tab the AI opens gets a window of its own.
 
 How it works:
-- **Claude:** each agent is Claude Code on this computer (`claude -p`), signed in with your Claude account, with no
-  API keys. Its only tools are ai-browser's. Shell commands and skill scripts run in the Docker sandbox.
+- **Claude:** each agent is Claude Code on this computer (`claude -p`), signed in with one of your Claude accounts
+  (AI accounts, below), with no API keys. Its only tools are ai-browser's. Shell commands and skill scripts run in the
+  Docker sandbox.
 - **Background agents:** tasks from AI Home, Mission Control or Brave's address bar work in background tabs. They
   never take your focus, and they stay at full speed. **Watch** brings one to the front.
 - **Stop and Close:** **Stop** interrupts an agent and keeps its tabs. **Close** ends it and closes the tabs it
@@ -214,6 +215,37 @@ How it works:
 - **Old folders:** `~/.ai-browser/browser/` (AI Browser's old Chrome profile, which may hold logins you made there)
   and `~/.ai-browser/app/extension/` (its old extension) are no longer used. AI Browser never deletes them; delete
   them by hand if you like.
+
+### AI accounts (Settings → Accounts)
+
+Agents can run on more than one Claude login: to keep working past a usage limit, or to keep work and personal
+apart.
+- **Default** is your own login: the folder in `CLAUDE_CONFIG_DIR` if your environment sets it, else `~/.claude`. It
+  can't be removed.
+- **Add** makes an account with a folder of its own (`~/.ai-browser/accounts/<id>/`). **Use a Claude Code folder I
+  already have** takes one you made yourself. A browser's data folder, such as the Claude app's `--user-data-dir`, is
+  refused.
+- **Sign in** has two ways:
+  - **Open Terminal** opens a terminal running `claude` for that account: Terminal on a Mac, a command window on
+    Windows;
+  - **Copy the command** is for your own terminal.
+
+  You sign in there and in your browser. AI Browser never sees a password or a token.
+- Each account shows **Signed in · Pro** or **Not signed in**. That is all AI Browser keeps: never your email or your
+  organisation.
+- **Choosing:** Settings sets the default account for new agents, and the Brain's account. AI Home and Mission
+  Control have an **Account** picker next to the model when you have two or more. An agent keeps its account until
+  you move it.
+- **At a usage limit,** the agent stops, and its row says "Personal hit its usage limit (resets 3:00 pm).":
+  - **Continue on Work** carries its conversation to the other account, and it goes on there. When the conversation
+    can't come along, it starts fresh there with a hand-over note: the task, its last steps and its tabs;
+  - **Wait for the reset** leaves it paused.
+
+  Nothing moves without your click. The watcher, the Brain and voice never move an agent. When the Brain hits its
+  limit, a card in AI Home's Brain area asks the same.
+- **Per account:** the login, Claude Code's settings, MCP servers and connectors (AI Home → Tools shows one account's
+  at a time), and conversations. **Shared:** AI Browser's skills, workflows, the browser and the Brain's inbox.
+- **Remove** only makes AI Browser forget an account. Its folder, its conversations and its sign-in stay.
 
 ## The Brain (watches your messages, tells you what needs you)
 
@@ -276,14 +308,16 @@ Agents can use the same MCP tools as your Claude Code app. The Tools section lis
 - your claude.ai connectors (ClickUp, Google Drive…). Claude Code is asked which ones you have the first time you open
   the section.
 
-Switch on the servers agents may use. Nothing else reaches them. ai-browser's own tools are always on.
+Switch on the servers agents may use. Nothing else reaches them. ai-browser's own tools are always on. With two or
+more AI accounts, a picker at the top shows one account's tools at a time: each account has its own servers, switches
+and **Always allow** list.
 
 **Asking first:**
 - The first time an agent wants a tool that isn't allowed always, it waits ("needs you").
 - AI Home's agent row, Mission Control and the chat beside its tab show the tool and its exact input, with **Allow
   once**, **Always allow** and **Deny**. The watcher's Brain page in Brave shows them with **Allow once** and **Deny**
   only, because Always allow is kept for AI Home's Tools. Brave also shows a notification (Review / Deny).
-- **Always allow** is remembered in `~/.ai-browser/tools.json`. **Forget** removes it.
+- **Always allow** is remembered in `~/.ai-browser/tools.json`, for that account. **Forget** removes it.
 - **Stop** or **Close** denies a request that is still waiting.
 - Nothing a page or a message says can answer for you.
 
