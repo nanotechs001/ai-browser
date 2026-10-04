@@ -14,7 +14,7 @@ def test_the_pages_live_in_app_ui_and_the_watcher_shares_them():
                  "check.js", "mic.js", "mic-worklet.js", "talk.js", "tablist.js", "chat.js", "permission.js"):
         assert (UI / name).is_file(), name
     assert sorted(path.name for path in (APP / "extension").iterdir() if not path.name.startswith(".")) == [
-        "manifest.json", "panel.css", "panel.html", "panel.js", "worker.js"]
+        "panel.css", "panel.html", "panel.js"]
     assert SHARED_SOURCE == UI and all((UI / name).is_file() for name in WATCHER_SHARED)
 
 
@@ -67,3 +67,7 @@ def test_nav_js_stays_out_of_the_watcher():
 def test_ai_browser_mode_is_gone_from_the_pages():
     assert "Agents browse in AI Browser" not in (UI / "home.js").read_text(encoding="utf-8")
     assert "No tabs open besides AI Home" not in (UI / "tablist.js").read_text(encoding="utf-8")
+
+
+def test_link_js_lists_no_debugger_targets():
+    assert "chrome.debugger" not in (UI / "link.js").read_text(encoding="utf-8")  # the watcher has no debugger

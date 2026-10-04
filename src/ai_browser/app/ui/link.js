@@ -2,8 +2,7 @@
 // address: the window's cookie goes with it, and a page that this run of the app didn't open is refused (close code
 // 4403), so it stops trying. Brave's watcher (a chrome-extension page) reads config.json (the server's address and
 // token) again before every attempt, so a restarted app, on a new port with a new token, is found again. Pings from the
-// server keep the watcher's service worker, and its socket, alive. Also, until AI Browser's old extension retires:
-// Chrome tab ids <-> DevTools target ids.
+// server keep the watcher's service worker, and its socket, alive.
 "use strict";
 
 const REFUSED = 4403; // the server's close code for a socket it won't take
@@ -74,20 +73,4 @@ export function connect({ view, onMessage = () => {}, onState = () => {} }) {
       return new Promise((resolve) => waiters.push(resolve));
     },
   };
-}
-
-async function targets() {
-  try {
-    return await chrome.debugger.getTargets(); // only lists them: nothing is attached
-  } catch {
-    return [];
-  }
-}
-
-export async function targetOfTab(tabId) {
-  return (await targets()).find((target) => target.tabId === tabId)?.id ?? null;
-}
-
-export async function tabOfTarget(target) {
-  return (await targets()).find((info) => info.id === target)?.tabId ?? null;
 }

@@ -58,7 +58,7 @@ async def start_server(home, agents, brain):
 async def watcher(fake_claude, tmp_path):
     from ai_browser import testpages
     from ai_browser.app.agents import AgentManager
-    from ai_browser.appbrowser import launch_app_browser
+    from pipe_chrome import launch_with_extension
     from ai_browser.brain.service import BrainService
     from ai_browser.brain.store import BrainStore
     from ai_browser.cdp import CDP
@@ -70,7 +70,7 @@ async def watcher(fake_claude, tmp_path):
     agents = AgentManager(home, claude=runner)
     brain = BrainService(BrainStore(home), agents, claude=runner, batch_wait=0.2, reader_timeout=2)
     server, folder = await start_server(home, agents, brain)
-    app = launch_app_browser(tmp_path / "profile", folder, headless=True)
+    app = launch_with_extension(tmp_path / "profile", folder)
     server.allow_watcher(f"chrome-extension://{app.extension_id}")
     from ai_browser.app.bravelink import BraveLink
 

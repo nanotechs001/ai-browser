@@ -24,12 +24,12 @@ def _docker_unavailable() -> str | None:
 
 POSIX_ONLY = "needs macOS or Linux (file descriptors 3 and 4, or the DevTools pipe)"
 WINDOWS_ONLY = "Windows behaviour (junctions, msvcrt, Win32 APIs)"
-PIPE_FIXTURES = {"watcher"}  # they launch AI Browser over the DevTools pipe
+PIPE_FIXTURES = {"watcher"}  # it loads Brave's watcher into a throwaway Chrome over the DevTools pipe
 
 
 def platform_skip(item, windows: bool) -> str | None:
     """Why this test can't run on this OS, or None. On Windows: a posix_only test, or one that uses a fixture that
-    installs the extension over the DevTools pipe (item.fixturenames holds every fixture it needs, however deep)."""
+    loads the watcher over the DevTools pipe (item.fixturenames holds every fixture it needs, however deep)."""
     if windows and ("posix_only" in item.keywords or set(getattr(item, "fixturenames", ())) & PIPE_FIXTURES):
         return POSIX_ONLY
     if not windows and "windows_only" in item.keywords:

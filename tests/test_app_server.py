@@ -396,7 +396,6 @@ async def test_a_draft_without_the_watcher_says_so(fake_claude, tmp_path):
 
 
 def test_prepare_watcher_updates_its_folder_in_place(tmp_path):
-    from ai_browser.appbrowser import prepare_extension
     from ai_browser.extension_id import extension_id_for
     from ai_browser.brain.watcher import prepare_watcher
 
@@ -408,7 +407,7 @@ def test_prepare_watcher_updates_its_folder_in_place(tmp_path):
     assert (folder / "link.js").exists() and f'"{build}"' in (folder / "build.js").read_text(encoding="utf-8")
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
     assert "https://mail.google.com/*" in manifest["host_permissions"]
-    assert extension_id_for(folder) != extension_id_for(prepare_extension(tmp_path, "http://127.0.0.1:1", "t"))
+    assert extension_id_for(folder) != extension_id_for(tmp_path / "app" / "extension")  # another folder, another ID
     (folder / "stale.js").write_text("old", encoding="utf-8")
     before = (folder / "manifest.json").stat().st_mtime_ns
     again, same = prepare_watcher(tmp_path, "http://127.0.0.1:8793", "other")

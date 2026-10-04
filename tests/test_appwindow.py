@@ -274,3 +274,27 @@ async def test_the_real_window_connects_with_no_debugging_port_and_ends(fake_cla
         if app is not None and app.process is not None and app.process.poll() is None:
             app.process.kill()
         await server.stop()
+
+
+CORRECTED = ("**Corrected 2026-10-02 (safe-browsing spec):** measured, `navigator.webdriver` is true in headed AI "
+             "Browser because of `--remote-debugging-port`; sites can see it is automated and Google refuses sign-in "
+             "there. Hiding that was never a goal.")
+
+
+def test_the_docs_say_the_window_is_never_automated():
+    import importlib.util
+
+    from ai_browser.config import project_root
+
+    doc = " ".join(window.__doc__.split())
+    assert "The window has no debugging port" in doc and "No agent browses in it" in doc
+    assert importlib.util.find_spec("ai_browser.appbrowser") is None  # AI Browser's own Chrome is gone
+
+    def flat(name):
+        path = project_root() / "docs" / "superpowers" / name
+        return " ".join(path.read_text(encoding="utf-8").split())
+
+    assert flat("specs/2026-10-02-ai-home-design.md").count(CORRECTED) == 3
+    assert flat("plans/2026-10-02-ai-home.md").count(CORRECTED) == 1
+    assert ("the user's own browser is chosen before a task, for their logins; it is never a way around a block. A "
+            "bot check is handed to the user in every mode.") in flat("specs/2026-10-02-own-chrome-mode-design.md")
