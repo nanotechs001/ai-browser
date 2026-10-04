@@ -1,7 +1,7 @@
 // AI Home's tab list: every web tab of the user's Brave (or of AI Browser), its title and site, and whose it is: an
 // agent's (its name and colour), Claude Code's, the Brain's, handed to an agent, or yours. Hand over gives one of
 // your tabs to an agent; Take back ends that. Titles, addresses and names are set as text, never as HTML.
-import { el } from "./chat.js";
+import { agentLabel, el } from "./chat.js";
 
 export const COLORS = { grey: "#5f6368", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038",
                         pink: "#d01884", purple: "#a142f4", cyan: "#007b83", orange: "#fa903e" };
@@ -22,8 +22,8 @@ export function chipText(owner) {
   if (!owner || owner.kind === "you") return "you";
   if (owner.kind === "session") return "Claude Code";
   if (owner.kind === "brain") return "Brain";
-  if (owner.kind === "handed") return `handed to ${owner.name || "an agent"}`;
-  return owner.name || "an agent";
+  if (owner.kind === "handed") return `handed to ${agentLabel(owner)}`;
+  return agentLabel(owner);
 }
 
 // The tab list's scope in brave mode (the server's tab_scope): which profile the rows come from, and how many of the
@@ -70,7 +70,7 @@ export function mountTabList(root, { send, agents, newAgent }) {
       newAgent(row.tab);
     }));
     for (const agent of agents()) {
-      const give = button("give", `Give to ${agent.name}`, () => {
+      const give = button("give", `Give to ${agentLabel(agent)}`, () => {
         menu.hidden = true;
         send({ type: "hand_tab", id: agent.id, target: row.tab.target });
       });
@@ -148,6 +148,48 @@ export function mountTabList(root, { send, agents, newAgent }) {
     const texts = scopeTexts(brave ? scope : null);
     line("scope-source", texts.source);
     line("elsewhere", texts.elsewhere);
+  }
+
+  return { render };
+}
+
+// Mission Control's Your tabs, in an agent's drawer: the user's own tabs (theirs, or a Brain thread's), each with Give
+// to this agent. That button is the existing hand_tab, the same click as AI Home's Hand over; the Brain never sends
+// it. root is a <details>; every text is set with textContent.
+export function mountYourTabs(root, { send, agentId }) {
+  const summary = el("summary", "", "Your tabs");
+  const list = el("div", "your-tab-list");
+  root.replaceChildren(summary, list);
+
+  function render(tabs, { brave = false, connected = false, name = "Brave" } = {}) {
+    root.hidden = !brave; // agents in AI Browser itself can't take the user's tabs
+    list.textContent = "";
+    if (!brave) return;
+    if (!connected) {
+      summary.textContent = "Your tabs";
+      list.append(el("p", "muted", `${name} isn't connected yet: connect it in AI Home.`));
+      return;
+    }
+    const mine = tabs.filter((tab) => ["you", "brain"].includes(tab.owner?.kind || "you"));
+    summary.textContent = `Your tabs (${mine.length})`;
+    if (!mine.length) {
+      list.append(el("p", "muted", "None of your tabs are open."));
+      return;
+    }
+    for (const tab of mine) {
+      const row = el("div", "your-tab");
+      row.dataset.target = tab.target;
+      const give = el("button", "give-here", "Give to this agent");
+      give.type = "button";
+      give.addEventListener("click", () => {
+        if (give.disabled) return;
+        give.disabled = true; // one click, one hand-over: the next render shows where the tab went
+        send({ type: "hand_tab", id: agentId(), target: tab.target });
+      });
+      row.title = tab.url || "";
+      row.append(el("span", "title", tab.title || tab.url || ""), el("span", "host", host(tab.url || "")), give);
+      list.append(row);
+    }
   }
 
   return { render };

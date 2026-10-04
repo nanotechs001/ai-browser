@@ -1051,6 +1051,8 @@ async def test_download_progress_reaches_every_page(fake_claude, tmp_path):
 
 
 async def test_the_brain_answers_the_asker_and_confirm_starts_the_agent(fake_claude, tmp_path):
+    from ai_browser.brain.talk import START_SAY
+
     script = {"default": EVENTS, TALKING: [{"result": json.dumps({"say": "I can start an agent.",
                                                                   "action": "start_agent"})}]}
     server, url, engine = await with_hearing(fake_claude, tmp_path, script)
@@ -1061,7 +1063,7 @@ async def test_the_brain_answers_the_asker_and_confirm_starts_the_agent(fake_cla
             await hello(two)
             await one.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "t1", "text": "check the shop"}))
             answer = (await until(one, lambda m: m["type"] == "brain_answer"))[-1]
-            assert answer["talk"] == "k1" and answer["request"] == "t1" and answer["say"] == "I can start an agent."
+            assert answer["talk"] == "k1" and answer["request"] == "t1" and answer["say"] == START_SAY
             assert answer["proposal"]["task"] == "check the shop" and server.agents.agents == {}
             await one.send(json.dumps({"type": "brain_confirm", "talk": "k1", "request": "t2",
                                        "proposal": answer["proposal"]["id"], "task": "check the shop and the cart",
@@ -1069,7 +1071,7 @@ async def test_the_brain_answers_the_asker_and_confirm_starts_the_agent(fake_cla
             seen = await until(one, lambda m: m["type"] == "brain_answer")
             assert {"type": "created", "id": "a1", "request": "t2"} in seen
             assert seen[-1] == {"type": "brain_answer", "talk": "k1", "request": "t2",
-                                "say": "Started: check the shop and the cart"}
+                                "say": "Started: 1 · check the shop and the cart"}
             assert server.agents.agents["a1"].model == "haiku"
             assert not [m for m in await quiet(two) if m["type"] in ("brain_answer", "created")]
     finally:
@@ -1574,4 +1576,35 @@ async def test_setup_page_says_once_per_run(fake_claude, tmp_path):
         assert "If Brave asks at any other time, it isn't AI Browser" in page
         assert "again when each agent first uses the browser" not in page
     finally:
+        await server.stop()
+
+
+async def test_the_watcher_may_not_confirm_an_inbox_card(fake_claude, tmp_path):
+    from ai_browser.brain.store import Item
+    from ai_browser.brain.talk import WATCHER_CARD
+
+    server, url, brain = await with_brain(fake_claude, tmp_path, {"default": EVENTS})
+    brain.store.put(Item(id="gmail:t1", site="gmail", raw_id="t1", sender="Maria", subject="Launch",
+                         snippet="Can we move it?", url="https://mail.google.com/mail/u/0/#inbox/t1",
+                         kind="needs_reply"))
+    card = brain.tells.propose("gmail:t1", "start_agent", task="check the launch page", model="sonnet")
+    watcher = await watcher_socket(server, url)
+    try:
+        for message in ({"type": "tell_confirm", "id": "gmail:t1", "proposal": card.id},
+                        {"type": "tell_dismiss", "id": "gmail:t1", "proposal": card.id},
+                        {"type": "tell", "id": "gmail:t1", "text": "yes", "proposal": card.id}):
+            await watcher.send(json.dumps(message))
+        await wait_for(lambda: brain.store.get("gmail:t1").note == WATCHER_CARD)
+        await asyncio.sleep(0.5)
+        assert brain.tells.peek("gmail:t1") is card and server.agents.agents == {}  # the card is still open
+        async with connect(socket_url(server, url), origin=ORIGIN) as page:  # AI Home may
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            await recv(page)
+            for _ in range(2):  # a double click
+                await page.send(json.dumps({"type": "tell_confirm", "id": "gmail:t1", "proposal": card.id}))
+            await wait_for(lambda: len(server.agents.agents) == 1)
+            await quiet(page, 0.5)  # read while waiting: an unread socket takes 10 s to close
+        assert list(server.agents.agents) == ["a1"] and brain.tells.peek("gmail:t1") is None
+    finally:
+        await watcher.close()
         await server.stop()

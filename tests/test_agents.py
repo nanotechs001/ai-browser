@@ -360,3 +360,50 @@ async def test_agents_never_wear_the_brains_or_claude_codes_colours(fake_claude,
         assert sorted(turns, key=lambda agent_id: int(agent_id[1:])) == [f"a{n}" for n in range(1, 15)]
     finally:
         await manager.close_all()
+
+
+async def test_rows_carry_a_fixed_number_and_a_queued_count(fake_claude, tmp_path):
+    from ai_browser.app.agents import AgentManager, agent_number
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps({"slow two": [EVENTS[0], {"sleep": 5}, *EVENTS[1:]], "default": EVENTS}),
+                      encoding="utf-8")
+    manager = AgentManager(tmp_path / "home", claude=runner)
+    feed = manager.subscribe()
+    try:
+        await manager.create("one")
+        await manager.create("slow two")
+        await manager.close("a1")
+        third = await manager.create("three")
+        assert third.number == 3  # a1 closed: the others keep their numbers
+        assert [row["number"] for row in manager.snapshot()["agents"]] == [3, 2]
+        assert await settle(manager, lambda agents: state(agents, "a2") == "working")
+        drain(feed)
+        assert await manager.send("a2", "also check the header") is True
+        rows = [message["agent"] for message in drain(feed)
+                if message["type"] == "agent" and message["agent"]["id"] == "a2"]
+        assert rows and rows[-1]["queued"] == 1  # the waiting message, counted on its row at once
+        assert await settle(manager, lambda agents: next(a for a in agents if a["id"] == "a2")["queued"] == 0)
+        later = drain(feed)
+        read = next(n for n, message in enumerate(later) if message["type"] == "agent_event"
+                    and message["event"] == {"type": "user", "text": "also check the header"})
+        assert any(message["type"] == "agent" and message["agent"]["id"] == "a2" and message["agent"]["queued"] == 0
+                   for message in later[:read])  # the drop reaches the pages as the agent reads it
+        assert await manager.send("a1", "are you there?") is False  # closed: nothing was sent
+        assert [agent_number(value) for value in ("a1", "a12", "cc-123", "app", "a", "ab3", "", None)] == \
+            [1, 12, None, None, None, None, None, None]
+        assert manager.in_users_browser is False
+        assert AgentManager(tmp_path / "other", env={"AIB_BROWSER": "chrome"}).in_users_browser is True
+    finally:
+        await manager.close_all()
+
+
+def test_the_relays_client_list_numbers_agents_the_one_way():
+    import inspect
+    import re
+
+    from ai_browser.app import cdprelay, server
+
+    source = inspect.getsource(cdprelay) + inspect.getsource(server)
+    assert "agent_number(" in source  # the relay's rows take the agents' own rule
+    assert not re.search(r"int\(\s*[\w.\"'\[\]]+\[1:\]\s*\)", source)  # and no second way to number an agent

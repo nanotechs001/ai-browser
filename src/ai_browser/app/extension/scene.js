@@ -6,6 +6,7 @@
 "use strict";
 
 import { createWorker, ensureDefs } from "./chibi.js";
+import { agentLabel } from "./chat.js";
 
 export const COLORS = { grey: "#8a8f98", blue: "#4c8df6", red: "#ef6a5f", yellow: "#f6c344", green: "#3fb26b",
                         pink: "#ea5aa8", purple: "#b57bf7", cyan: "#2bb3bd", orange: "#fb9f4e" };
@@ -186,9 +187,10 @@ export function createScene(root, { onSelect = () => {}, onCamera = () => {} } =
     if (node.dataset.state !== state) node.dataset.state = state;
     const color = COLORS[agent.color] || COLORS.grey;
     if (node.style.getPropertyValue("--c") !== color) node.style.setProperty("--c", color);
-    setText(parts.nameplate, String(agent.name || ""));
+    const name = agentLabel(agent);
+    setText(parts.nameplate, name);
     setText(parts.ticker, tickerOf(agent, state));
-    const label = `${agent.name}: ${STATES[state] || state}`;
+    const label = `${name}: ${STATES[state] || state}`;
     if (node.getAttribute("aria-label") !== label) node.setAttribute("aria-label", label);
   }
 

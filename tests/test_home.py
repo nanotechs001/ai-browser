@@ -267,9 +267,9 @@ async def test_the_tab_list_marks_owners_and_hands_tabs_over(home):
                          "B1": {"kind": "brain", "name": "Brain", "color": "purple"}})
     agent.adopted.append("U2")  # handed to it, as Hand over leaves it: only a handed tab can be taken back
     server.attach_brave(brave)
-    assert await until(js, f"{CHIP}('T1') === 'Fix the footer'")
-    assert await js(f"['S1', 'B1', 'U2', 'U1'].map({CHIP})") == ["Claude Code", "Brain", "handed to Fix the footer",
-                                                                 "you"]
+    assert await until(js, f"{CHIP}('T1') === '1 · Fix the footer'")
+    assert await js(f"['S1', 'B1', 'U2', 'U1'].map({CHIP})") == ["Claude Code", "Brain",
+                                                                 "handed to 1 · Fix the footer", "you"]
     assert "<img" in await js(f"{in_row('U1', '.title')}.textContent")  # a hostile title stays text
     assert await js("document.querySelectorAll('#tabs img').length") == 0 and await js("document.title") != "pwned"
     assert await js(f"[{in_row('U1', '.hand')}.hidden, {in_row('T1', '.hand')}.hidden, {in_row('B1', '.hand')}.hidden,"
@@ -391,6 +391,36 @@ async def test_while_brave_connects_ai_home_claims_no_profile(home, tmp_path):  
         connecting.cancel()
         await brave.close()
         await port.stop()
+
+
+@CHROME
+async def test_ai_home_shows_numbers_on_rows_and_give_to(home):
+    from fake_brave import FakeBrave
+
+    js, _, stack = home
+    server = stack["server"]
+    await server.agents.create("Fix the footer")
+    server.attach_brave(FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}]))
+    assert await until(js, "document.querySelector('#agents .agent .name')?.textContent === '1 · Fix the footer'")
+    await js("document.querySelector('#agents .agent .chat').click(); true")
+    assert await until(js, "document.getElementById('chat-name').textContent === '1 · Fix the footer'")
+    assert await until(js, f"{in_row('U1', '.hand')} !== null")
+    await js(f"{in_row('U1', '.hand')}.click(); true")
+    assert await js(f"{in_row('U1', '.give[data-id=a1]')}.textContent") == "Give to 1 · Fix the footer"
+
+
+@CHROME
+async def test_the_connected_list_names_agents_like_every_other_list(home):
+    from fake_brave import FakeBrave
+
+    js, _, stack = home
+    stack["server"].attach_brave(FakeBrave([]))
+    stack["server"]._send_all({"type": "browser_clients", "clients": [
+        {"id": "a3", "kind": "agent", "number": None, "name": "Fix the footer", "color": "blue", "tabs": 2,
+         "connected": True, "cut_off": False}]})
+    listed = "document.getElementById('browser-clients').textContent"
+    assert await until(js, f"{listed}.includes('3 · Fix the footer')")  # agentLabel: the id's digits, if need be
+    assert "null" not in await js(listed)
 
 
 @CHROME

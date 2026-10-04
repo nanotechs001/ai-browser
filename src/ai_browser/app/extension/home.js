@@ -3,7 +3,7 @@
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { connect } from "./link.js";
-import { createChat, el } from "./chat.js";
+import { agentLabel, createChat, el } from "./chat.js";
 import { permissionCard } from "./permission.js";
 import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
@@ -37,7 +37,7 @@ const SAYS = { connected: "connected", off: "switch off", ready: "ready", asking
                refused: "not allowed", lost: "closed" };
 const chat = createChat($("chat-messages"));
 const link = connect({ view: "home", onMessage: handle, onState: setStatus });
-const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id) });
+const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id), cards: "confirm" });
 let watchSites = []; // the Brain's watch list: a message workflow's sites
 let switchedOn = []; // the MCP servers switched on: what a workflow may use
 const tools = mountTools($("tools"), link);
@@ -117,7 +117,7 @@ function fillAgentRow(row, agent) {
   const color = COLORS[agent.color] || "var(--muted)";
   row.style.borderLeftColor = color;
   parts.dot.style.background = color;
-  setText(parts.name, agent.name);
+  setText(parts.name, agentLabel(agent));
   setText(parts.state, STATES[agent.state] || agent.state);
   parts.state.className = `chip ${agent.state}`;
   setText(parts.status, agent.status || "");
@@ -201,7 +201,7 @@ function renderTabs() {
     scope: browser?.kind === "brave" && browser.state === "connected" ? tabScope : null, // only while connected
     ownerOf: (target) => { // AI Browser mode: the app's list has no owners, so they come from the agents
       const agent = owner(target);
-      return agent ? { kind: "agent", name: agent.name, color: agent.color } : { kind: "you" };
+      return agent ? { kind: "agent", id: agent.id, name: agent.name, color: agent.color } : { kind: "you" };
     },
   });
 }
@@ -260,7 +260,7 @@ function renderBrowser() {
 function clientLabel(row) {
   if (row.kind === "app") return "AI Browser · the tab list and pictures";
   const tabs = `${row.tabs} tab${row.tabs === 1 ? "" : "s"}`;
-  const who = row.kind === "agent" ? `${row.number} · ${row.name}` : "Claude Code";
+  const who = row.kind === "agent" ? agentLabel(row) : "Claude Code";
   return `${who} · ${tabs}${row.cut_off ? ` · cut off from ${browser?.name || "Brave"}` : ""}`;
 }
 
@@ -530,7 +530,7 @@ function openChat(id) {
   if (!agent) return;
   chatAgent = id;
   $("chat").hidden = false;
-  $("chat-name").textContent = agent.name;
+  $("chat-name").textContent = agentLabel(agent);
   chat.reset("Loading…");
   renderAgents();
   link.send({ type: "events", id });

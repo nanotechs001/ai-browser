@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from ai_browser.chrome import chrome_binary
+from test_bridge import EVENTS
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
 from test_mission import BUBBLES, LOCAL_VOICE, SLOW_VOICE, WORKING, needs_reply, open_with, station, voice_on
 from test_oneshot import oneshots
@@ -278,6 +279,12 @@ def talk_script(stack, *answers, default=WORKING):
 
 def talk_calls(stack):
     return [call["oneshot"] for call in oneshots(stack["log"]) if TALKING in call["oneshot"]]
+
+
+async def ask_typed(js, words):
+    """The Ask the Brain box, typed and sent."""
+    await js(f"document.getElementById('talk-text').value = {json.dumps(words)};"
+             " document.getElementById('talk-form').requestSubmit(); true")
 
 
 async def open_talk(stack, *sources, hearing="ready"):
@@ -633,7 +640,7 @@ async def test_start_runs_the_users_own_words_once(stack):
     box = "document.querySelector('#talk-card .talk-task')"
     assert await until(js, f"{box}?.value === {json.dumps(words)}")  # the user's own words, never Claude's
     card = await js(CARD)
-    assert "Start an agent with this task:" in card and "or say yes" in card
+    assert "Start a NEW agent with your words:" in card and "or say yes" in card
     assert await js("[...document.images].filter((img) => !img.closest('.monitor')).length") == 0
     assert stack["server"].agents.agents == {}  # nothing runs before Start
     await js("const go = document.querySelector('#talk-card .talk-go'); go.click(); go.click(); true")
@@ -699,6 +706,7 @@ async def test_a_spoken_yes_starts_the_open_proposal(stack):
 
 @CHROME
 async def test_a_spoken_yes_never_answers_a_permission(stack, tmp_path):
+    from ai_browser.brain.talk import NOTHING_OPEN_WAITING
     from test_tools import answers, asking, user_config
 
     user_config(tmp_path)
@@ -710,15 +718,16 @@ async def test_a_spoken_yes_never_answers_a_permission(stack, tmp_path):
     stack["engine"].answers = ["yes"]
     js = await open_talk(stack, mic())
     await talk(stack, js)
-    assert await until(js, f"{LOG}.includes(\"Brain: It's waiting for your click on Allow.\")")
+    assert await until(js, f"{LOG}.includes({json.dumps('Brain: ' + NOTHING_OPEN_WAITING)})")
     await asyncio.sleep(1)
     assert agents.agents["a1"].permission is not None and agents.agents["a1"].state == "needs_you"
     assert answers(stack["log"]) == []  # no control_response: nothing answered the tool request
+    assert talk_calls(stack) == []  # a yes with no card never reaches Claude
 
 
 @CHROME
 async def test_voice_never_approves_or_fills_a_draft(stack):
-    from ai_browser.brain.talk import CLICK_ONLY
+    from ai_browser.brain.talk import CLICK_ONLY, NOTHING_OPEN
 
     brain = stack["brain"]
     entry = needs_reply(brain, sender="Maria", summary="asks to move the launch")
@@ -738,14 +747,14 @@ async def test_voice_never_approves_or_fills_a_draft(stack):
     for _ in range(2):
         await talk(stack, js)
         assert await until(js, f"{PANEL}.dataset.state === 'idle'", 10)
-    assert await js(LOG) == ["You: approve it", f"Brain: {CLICK_ONLY}", "You: yes",
-                             "Brain: Approve is a click on the draft."]
+    assert await js(LOG) == ["You: approve it", f"Brain: {CLICK_ONLY}", "You: yes", f"Brain: {NOTHING_OPEN}"]
     assert approved == [] and not [message for message in sent if message["type"] == "fill_reply"]
     assert brain.store.get("gmail:t1").state == "draft_ready"
 
 
 @CHROME
 async def test_voice_never_answers_a_bot_check(stack):
+    from ai_browser.brain.talk import NOTHING_OPEN_WAITING
     from ai_browser.checks import KINDS
 
     talk_script(stack, {"say": "Flights to Manila is waiting for you: press Continue on its card once you've solved "
@@ -776,7 +785,8 @@ async def test_voice_never_answers_a_bot_check(stack):
         assert await until(js, f"{PANEL}.dataset.state === 'idle'", 10)
     assert pressed == [] and agent.check is not None and agent.state == "needs_you"
     prompts = talk_calls(stack)
-    assert len(prompts) == 2 and "Flights to Manila" in prompts[0] and "on www.google.com" in prompts[0]
+    assert len(prompts) == 1 and "Flights to Manila" in prompts[0] and "on www.google.com" in prompts[0]
+    assert (await js(LOG))[-1] == f"Brain: {NOTHING_OPEN_WAITING}"  # the yes: a pointer to the card, no Claude call
 
 
 @CHROME
@@ -871,3 +881,158 @@ def test_the_readme_says_how_to_talk_and_the_zero_setup_way():
                   "**Download 148 MB**", "Allow while visiting the site", "never saved or logged", "no cloud speech",
                   "Dictation", "Voice Access", "Win+H", "Windows on Arm"):
         assert words in section, words
+
+
+def test_the_readme_says_the_brain_can_send_to_an_open_agent():
+    text = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    for words in ('"give this to agent 2"', "Press **Start** or **Send** on it (or type yes) in AI Home or Mission "
+                  "Control; the watcher's Brain page shows the card only", '"1 · Fix the footer"', "**Your tabs**",
+                  "**Give to this agent**", "**send your words to an agent that's already open**",
+                  'a "yes" with no card open does nothing', "hands over or takes back a tab"):
+        assert words in text, words
+
+
+@CHROME
+async def test_numbers_show_on_stations_the_list_and_the_drawer(stack):
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    agents = stack["server"].agents
+    await agents.create("Fix the footer")
+    await agents.create("Check flights")
+    js = await open_with(stack)
+    assert await until(js, f"{station('a1', '.nameplate')}?.textContent === '1 · Fix the footer'")
+    assert (await js(f"{station('a1')}.getAttribute('aria-label')")).startswith("1 · Fix the footer: ")
+    assert await js("document.querySelector('#list button[data-id=\"a1\"] .grow').textContent") == \
+        "1 · Fix the footer"
+    await js(f"{station('a1')}.click(); true")
+    assert await until(js, "document.getElementById('drawer-title').textContent === '1 · Fix the footer'")
+    await agents.close("a1")
+    assert await until(js, f"{station('a1')} === null")
+    assert await js(f"{station('a2', '.nameplate')}.textContent") == "2 · Check flights"  # numbers never change
+
+
+@CHROME
+async def test_a_spoken_message_goes_to_the_existing_agent(stack):
+    from ai_browser.brain.talk import RELAY
+
+    words = "tell the footer agent to also check the mobile layout"
+    talk_script(stack, {"say": "Sure, I'll pass that on.", "action": "message_agent", "agent": "a1"}, default=EVENTS)
+    agents = stack["server"].agents
+    await agents.create("Fix the footer")
+    assert await eventually(lambda: agents.agents["a1"].state == "your_turn")
+    stack["engine"].answers = [words, "yes"]
+    js = await open_talk(stack, mic())
+    await talk(stack, js)
+    box = "document.querySelector('#talk-card .talk-task')"
+    assert await until(js, f"{box}?.value === {json.dumps(words)}")  # the user's own words
+    card = await js(CARD)
+    assert "Send to 1 · Fix the footer:" in card and "or say yes" in card
+    assert await js("document.querySelector('#talk-card .talk-go').textContent") == "Send"
+    said = "Brain: I can send your words to 1 · Fix the footer. Press Send, or say yes."  # never Claude's "Sure"
+    assert await until(js, f"{LOG}.includes({json.dumps(said)})")
+    await talk(stack, js)
+    assert await eventually(lambda: {"type": "user", "text": f"{RELAY}\n{words}"} in agents.events_of("a1"))
+    assert list(agents.agents) == ["a1"] and len(talk_calls(stack)) == 1  # no new agent; the yes skipped Claude
+    assert await until(js, f"{box} === null")
+    assert await until(js, f"{LOG}.includes('Brain: Sent to 1 · Fix the footer.')")
+
+
+@CHROME
+async def test_send_click_sends_once_to_a_busy_agent_as_queued(stack):
+    from ai_browser.brain.talk import RELAY
+
+    talk_script(stack, {"say": "OK.", "action": "message_agent", "agent": "a1"})  # agents stay at work (WORKING)
+    agents = stack["server"].agents
+    await agents.create("Fix the footer")
+    assert await eventually(lambda: agents.agents["a1"].state == "working")
+    js = await open_talk(stack, mic())
+    await ask_typed(js, "also check the header")
+    go = "document.querySelector('#talk-card .talk-go')"
+    assert await until(js, f"{go}?.textContent === 'Send'")
+    assert "It's working: it reads your words when it finishes what it's doing now." in await js(CARD)
+    await js(f"{go}.click(); {go}?.click(); true")
+    queued = "Brain: Queued for 1 · Fix the footer: it reads it when it finishes what it's doing now."
+    assert await until(js, f"{LOG}.includes({json.dumps(queued)})")
+    await asyncio.sleep(1)
+    assert [event for event in agents.events_of("a1") if event["type"] == "queued"] == [
+        {"type": "queued", "text": f"{RELAY}\nalso check the header"}]  # one click, one message
+
+
+@CHROME
+async def test_hand_over_hint_opens_this_agents_tab_list(stack):
+    from ai_browser.brain.talk import HAND_OVER_SAY
+    from fake_brave import FakeBrave
+
+    server = stack["server"]
+    agents = server.agents
+    talk_script(stack, {"say": "Hand it over.", "action": "open", "target": "tabs", "agent": "a1"},
+                {"say": "OK.", "action": "message_agent", "agent": "a1"})
+    await agents.create("Fix the footer")
+    brave = FakeBrave([{"target": "U1", "url": "https://mail.example/inbox", "title": "Inbox"},
+                       {"target": "T1", "url": "https://shop.example/", "title": "Agent page"},
+                       {"target": "S1", "url": "https://s.example/", "title": "Session page"}])
+    brave.owners.update({"T1": {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"},
+                         "S1": {"kind": "session", "id": "cc-x", "name": "Claude Code", "color": "orange"}})
+    server.tabs._callbacks.clear()  # brave mode has no AI Browser TabWatch on the pages (run.py): only Brave's list
+    server.attach_brave(brave)
+    agents.env["AIB_BROWSER"] = "chrome"  # brave mode, as run.py's brave_env sets it
+    js = await open_talk(stack, mic())
+    await ask_typed(js, "give agent 1 my Gmail tab")
+    yours = "document.querySelector('#drawer .your-tabs')"
+    assert await until(js, f"{yours}?.open === true")
+    assert await js(f"{yours}.querySelector('summary').textContent") == "Your tabs (1)"
+    assert await js(f"[...{yours}.querySelectorAll('.your-tab')].map((row) => row.dataset.target)") == ["U1"]
+    assert await js("document.getElementById('drawer-title').textContent") == "1 · Fix the footer"
+    said = "Brain: " + HAND_OVER_SAY.format(label="1 · Fix the footer")
+    assert await until(js, f"{LOG}.includes({json.dumps(said)})")
+    await asyncio.sleep(0.5)
+    assert agents.agents["a1"].adopted == [] and "U1" not in brave.owners  # the Brain handed nothing
+    await js(f"{yours}.open = false; true")
+    await ask_typed(js, "send this page to agent 1")
+    assert await until(js, "!!document.querySelector('#talk-card .talk-tabs')")
+    assert "It can't see your tabs: use Your tabs → Give to this agent." in await js(CARD)
+    await js("document.querySelector('#talk-card .talk-tabs').click(); true")
+    assert await until(js, f"{yours}?.open === true")  # a view only
+    assert agents.agents["a1"].adopted == []
+    await js(f"{yours}.querySelector('.give-here').click(); true")  # the user's click
+    assert await eventually(lambda: "U1" in agents.agents["a1"].adopted)
+    brave.set_state("ready")
+    assert await until(js, f"{yours}.textContent.includes(\"Brave isn't connected yet: connect it in AI Home.\")")
+    assert await js(f"{yours}.querySelectorAll('.your-tab').length") == 0
+
+
+@CHROME
+async def test_spoken_labels_read_the_dot_as_a_pause(stack):
+    js = await open_with(stack)
+    assert await js(VOICE) is True
+    await js("testVoice.say('Sent to 1 · Fix the footer.', {priority: true}); true")
+    assert await until(js, "window.spoken.length === 1")
+    assert await js("window.spoken") == [["speak", "Sent to 1, Fix the footer."]]
+    assert await js("bubbleNode.textContent") == "Sent to 1 · Fix the footer."  # the bubble and the log keep the dot
+
+
+@CHROME
+async def test_a_yes_never_runs_a_card_that_left_the_screen(stack):  # final review I3
+    from ai_browser.brain.talk import NOTHING_OPEN, RELAY
+
+    talk_script(stack, {"say": "x", "action": "message_agent", "agent": "a1"}, default=EVENTS)
+    agents, brain, seen = stack["server"].agents, stack["brain"], []
+    await agents.create("Fix the footer")
+    assert await eventually(lambda: agents.agents["a1"].state == "your_turn")
+    real = brain.respond
+
+    async def respond(talk_id, text, proposal=None, task=None, model=None):
+        seen.append((text, proposal))
+        return await real(talk_id, text, proposal=proposal, task=task, model=model)
+
+    brain.respond = respond
+    js = await open_talk(stack, mic(permission="denied"))
+    await ask_typed(js, "tell the footer agent to check the header")
+    assert await until(js, "document.querySelector('#talk-card .talk-go')?.textContent === 'Send'")
+    await js("document.activeElement?.blur(); true")
+    await tap(stack, js, SPACE, " ")  # the microphone's problem card takes the send card's place
+    assert await until(js, f"{CARD}.includes('microphone') && !document.querySelector('#talk-card .talk-go')")
+    await ask_typed(js, "ok")  # meant for the card that is no longer on screen
+    assert await until(js, f"{LOG}.includes({json.dumps('Brain: ' + NOTHING_OPEN)})")
+    await asyncio.sleep(1)
+    assert seen[-1] == ("ok", None)  # no card id went with it
+    assert not [event for event in agents.events_of("a1") if str(event.get("text", "")).startswith(RELAY)]

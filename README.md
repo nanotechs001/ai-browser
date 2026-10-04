@@ -244,7 +244,9 @@ and AI Browser opens the setup page:
   3. You edit it, then **Approve**.
   4. The watcher puts the text in the reply box. **You press Send**: the Brain never sends anything.
 - **Hand to agent:** an AI Browser agent gets your instruction and the message.
-- **Tell the Brain:** your own words ("draft a polite no", "check the page") become a draft or an agent task.
+- **Tell the Brain:** your own words ("draft a polite no", "check the page", "give this to agent 2") become a draft, or
+  a card that starts a NEW agent or sends your words to an open one. Press **Start** or **Send** on it (or type yes)
+  in AI Home or Mission Control; the watcher's Brain page shows the card only.
 - **Done.**
 
 Notifications in Brave show the summary with **Draft reply** (or **Hand to agent**) and **Open**. Many items at once
@@ -345,8 +347,12 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
   - A station that **needs you** (a tool waiting for your permission) glows, and its worker turns to you and waves.
   - A new agent arrives with a short scene: the Brain flares, a spark flies to its desk, the monitor switches on, and
     the worker pops up and waves.
+  - Each nameplate shows the agent's number and name ("1 · Fix the footer"). The number stays the same while the app
+    runs, so "agent 2" always means the same agent; numbers start at 1 again when the app restarts.
   - Click a station, or pick it from **List**: the drawer shows its state, **Watch**, **Stop**, **Close**, its
-    permission card (**Allow once**, **Always allow**, **Deny**) and its chat.
+    permission card (**Allow once**, **Always allow**, **Deny**), **Your tabs** and its chat. When agents work in
+    your Brave, **Give to this agent** under **Your tabs** hands it one of your own tabs, as AI Home's **Hand over**
+    does.
 - **The Brain** floats in the middle as a brain of glowing points, turning slowly:
   - it drifts while idle, sends a wave of light across itself while it sorts messages or writes a draft, and beats
     like a heart, in amber, while something needs you, its signals gathering on the side of the agent that waits (the
@@ -375,11 +381,14 @@ turn stops by itself at 30 seconds. The **Ask the Brain** box does the same, typ
   service is used, not even as a fallback.
 - **Your words go to Claude**, like typed text: the Brain answers about your agents and your inbox in one or two
   sentences, in its bubble and the talk panel, and aloud when Voice is on.
-- **It only proposes.** Asked for work, it offers to **start an agent** with your own words as its task, or to **draft
-  a reply** to an inbox item. Nothing happens until you press **Start** (or **Draft it**) or say "yes". Voice never
-  approves or sends a draft, answers a permission card or a bot check, confirms a ⚠ action, marks items Done, pauses
-  watching, or changes a setting: those stay clicks. Words that sound like a password or a code are never sent: log in
-  yourself, in the site's own tab.
+- **It only proposes.** Asked for work, it offers one card: **start a NEW agent** with your own words, **send your
+  words to an agent that's already open** (say its number, "agent 2", its colour, "the blue one", a word of its name,
+  or "it"), or **draft a reply** to an inbox item. Nothing happens until you press **Start**, **Send** or **Draft
+  it**, or say "yes"; a "yes" with no card open does nothing. A message to a busy agent waits until it finishes what
+  it's doing now; one waiting at a bot check isn't sent, and its card's Continue stays yours. Voice never approves or
+  sends a draft, answers a permission card or a bot check, confirms a ⚠ action, marks items Done, pauses watching,
+  changes a setting, or hands over or takes back a tab: those stay clicks. Words that sound like a password or a code
+  are never sent: log in yourself, in the site's own tab.
 - **Setup, once:**
   1. In this folder, run `uv sync --extra voice`, then restart `ai-browser app`. It installs faster-whisper and the
      Python packages it needs, from PyPI. Sync with `uv sync --extra voice` (or `--all-extras`) from then on: a plain

@@ -251,6 +251,14 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .chip.working { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
 .chip.failed { background: color-mix(in srgb, var(--fail) 18%, transparent); color: var(--fail); }
 .permission-slot:empty { display: none; }
+/* Your tabs, in an agent's drawer (tablist.js mountYourTabs): the user's own tabs, each with Give to this agent */
+.your-tabs { border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; }
+.your-tabs summary { cursor: pointer; font-size: 13px; }
+.your-tabs p { margin: 6px 0 0; font-size: 13px; }
+.your-tab { display: flex; gap: 8px; align-items: center; padding: 4px 0; min-width: 0; }
+.your-tab .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.your-tab .host { color: var(--muted); font-size: 12px; }
+.your-tab .give-here { font-size: 12px; padding: 2px 8px; }
 .messages { flex: 1; min-height: 120px; overflow: auto; display: flex; flex-direction: column; gap: 8px;
             border-top: 1px solid var(--line); padding-top: 10px; }
 .messages .empty { color: var(--muted); font-size: 13px; margin: 0; }
@@ -327,6 +335,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
                       padding: 6px 8px; background: var(--bg); }
 .talk-card progress { width: 100%; }
 .talk-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap; }
+.talk-card .talk-state, .talk-card .talk-hint { font-size: 13px; }
 .talk-card .row { margin-top: 0; }
 .talk-form { display: flex; gap: 8px; }
 .talk-form input { flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
