@@ -1,10 +1,12 @@
 """`ai-browser app`: the agents, the app server and AI Browser's window together, until the user is done.
 
-AI Browser's window is an installed browser in --app mode on a profile of the app's own, with no debugging port
-(app/window.py). It opens on a one-time code the server swaps for the window's cookie. The app ends when the last of
-its windows has been closed for a few seconds (on macOS the browser keeps running with no window, so the windows'
-sockets tell), or on Ctrl-C, which closes the window too. Agents browse in the user's own browser through the app's
-one connection (the relay); the first start shows the watcher's steps, once."""
+AI Browser's own app (desktop/) opens when it is set up: closing its window hides it, and its Quit ends the run. Until
+it is set up (and with --window), a browser window draws AI Browser instead: an installed browser in --app mode on a
+profile of the app's own, with no debugging port (app/window.py). It opens on a one-time code the server swaps for the
+window's cookie. The app ends when the last of its windows has been closed for a few seconds (on macOS the browser
+keeps running with no window, so the windows' sockets tell), or on Ctrl-C, which closes the window too. Agents browse
+in the user's own browser through the app's one connection (the relay); the first start shows the watcher's steps,
+once."""
 
 from __future__ import annotations
 
@@ -27,6 +29,10 @@ from ..brain.tools import ToolsConfig
 from ..brain.watcher import prepare_watcher
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..chrome import inspect_address, own_browser_dir
+from ..desktop import layout
+from ..desktop.assemble import stale
+from ..desktop.launch import default_desktop
+from ..desktop.release import SETUP_COMMAND, asset_for
 from ..extension_id import extension_id_for, extension_path
 from ..hearing.engine import WhisperEngine
 from ..hearing.model import ModelStore
@@ -45,6 +51,10 @@ NO_WINDOW = ("AI Browser's window didn't open: {name} started, but the page neve
              "another browser with `ai-browser app --window brave`")
 RETIRED_APP = ("AI Browser's own Chrome is gone: agents browse in your browser (Brave or Chrome). Drop --browser app "
                "(and AIB_APP_BROWSER).")
+APP_ENDED = "AI Browser's app closed by itself, so AI Browser stops too."
+NO_APP_PAGE = ("AI Browser's app started, but its page never connected. Try again, or use a browser window: "
+               "`uv run ai-browser app --window chrome`")
+UPDATING = "Updating AI Browser's app for this version (nothing is downloaded)…"
 
 
 def _goto(folder: str, system: str | None) -> str:
@@ -57,6 +67,22 @@ def ready_text(system: str | None = None) -> str:
     return ("AI Browser is open in its own window: AI Home shows every agent, tab and skill.\n"
             "With the watcher in Brave, type ai and a space in Brave's address bar to start a task from there.\n"
             "Close the window, or press Ctrl-C here, to stop.")
+
+
+def app_text(system: str | None = None) -> str:
+    """What the terminal says once AI Browser's own app is open."""
+    where = platforms.shortcut("in the menu bar", "by the clock", system)
+    stop = platforms.shortcut("press ⌘Q or choose Quit from its menu-bar icon", "choose Quit from its icon there",
+                              system)
+    return ("AI Browser is open as its own app: AI Home shows every agent, tab and skill.\n"
+            f"Closing its window keeps it running {where}. To stop it, {stop}, or press Ctrl-C here.")
+
+
+def setup_hint(home, system: str | None = None, machine: str | None = None) -> str:
+    """The browser window's extra line, on a computer AI Browser's own app runs on, while it isn't set up."""
+    if asset_for(system, machine) is None or layout.installed(home, system) is not None:
+        return ""
+    return f"\nAI Browser can run as its own app, with a shortcut and notifications: run `{SETUP_COMMAND}` once."
 
 
 def brave_text(folder: str, system: str | None = None) -> str:
@@ -127,9 +153,10 @@ def write_link(home: Path, url: str, token: str, cdp: str | None = None, browser
 async def run_app(home: Path, model: str = "sonnet", claude: str | Sequence[str] | None = None,
                   ready: Callable | None = None, stop: asyncio.Event | None = None,
                   out: Callable[[str], None] = print, browser: str | None = None, window_browser: str | None = None,
-                  launcher: Callable | None = None) -> int:
+                  launcher: Callable | None = None, desktop: Callable | None = None) -> int:
     """0 once AI Browser's window is closed (or `stop` is set); 1 with a message when it can't start. `launcher` takes
-    the window's setting and returns the window (default_launcher; tests pass their own)."""
+    the window's setting and returns the browser window (default_launcher); `desktop` takes the home and the shortcut
+    and returns AI Browser's own app, or None while it isn't set up (default_desktop). Tests pass their own."""
     home = Path(home)
     try:
         app_browser(browser)
@@ -144,7 +171,7 @@ async def run_app(home: Path, model: str = "sonnet", claude: str | Sequence[str]
             f"{platforms.shortcut('the Dock', 'the taskbar')})")
         return 1
     try:
-        return await _run(home, model, claude, ready, stop or asyncio.Event(), out, window_browser, launcher)
+        return await _run(home, model, claude, ready, stop or asyncio.Event(), out, window_browser, launcher, desktop)
     finally:
         lock.close()
 
@@ -182,8 +209,18 @@ async def _first_window(server: AppServer, stop: asyncio.Event) -> bool:
     return True
 
 
-async def _until_closed(server: AppServer, stop: asyncio.Event) -> None:
-    """Until `stop`, or until no window socket has been open for WINDOW_GRACE seconds in a row."""
+async def _until_closed(server: AppServer, stop: asyncio.Event, window=None) -> None:
+    """Until `stop`. AI Browser's own app: until it has quit or gone (closing its window only hides it). A browser
+    window: until no window socket has been open for WINDOW_GRACE seconds in a row."""
+    ended = getattr(window, "ended", None)
+    if isinstance(ended, asyncio.Event):
+        waiting = [asyncio.ensure_future(stop.wait()), asyncio.ensure_future(ended.wait())]
+        try:
+            await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in waiting:
+                task.cancel()
+        return
     empty_since: float | None = None
     while not stop.is_set():
         if server.window_count:
@@ -196,9 +233,35 @@ async def _until_closed(server: AppServer, stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), POLL)
 
 
+async def _open_app(home: Path, server: AppServer, url: str, desktop: Callable | None, window_browser: str | None,
+                    out: Callable[[str], None]):
+    """AI Browser's own app, started and linked; or None, and this run uses a browser window. That happens when the
+    app isn't set up, when --window asked for one, or when the app couldn't start: then why is said, and kept for
+    Settings."""
+    if window_browser is not None:
+        return None
+    app = (desktop or default_desktop)(home, server.settings.get()["shortcut"])
+    if app is None:
+        return None
+    if stale(home):
+        out(UPDATING)
+    server.attach_desktop(app)
+    try:
+        await _call(app.launch, f"{url}/open?code={server.new_launch_code()}")
+    except WindowError as exc:
+        server.detach_desktop()
+        layout.set_problem(home, str(exc))
+        out(f"{exc}. AI Browser opens in a browser window this time.")
+        return None
+    layout.set_problem(home, None)
+    if app.note:
+        out(app.note)
+    return app
+
+
 async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready: Callable | None,
                stop: asyncio.Event, out: Callable[[str], None], window_browser: str | None,
-               launcher: Callable | None) -> int:
+               launcher: Callable | None, desktop: Callable | None) -> int:
     accounts = Accounts(home, claude=claude)  # Settings → Accounts: Default, and the logins the user added
     agents = AgentManager(home, claude=claude, max_working=_max_agents(), accounts=accounts)
     brain_account = BrainAccount(accounts)  # the Brain's and its skill writer's calls, on the Brain's account
@@ -233,26 +296,31 @@ async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready
         agents.close_tabs = brave.close_targets
         link_file = write_link(home, url, server.session_token, cdp, own)
         await brave.start()  # looks at the switch; it never connects by itself
-        try:
-            window = (launcher or default_launcher(home))(window_browser or server.settings.get()["window_browser"])
-        except WindowError as exc:
-            out(f"error: {exc}")
-            return 1
-        if window.note:
-            out(window.note)
-        server.window_info = {"using": window.id, "name": window.name, "note": window.note,
-                              "choices": await asyncio.to_thread(choices)}  # detection once, at start
-        try:
-            await _call(window.launch, f"{url}/open?code={server.new_launch_code()}")
-        except WindowError as exc:
-            out(f"error: {exc}")
-            return 1
+        window = await _open_app(home, server, url, desktop, window_browser, out)  # AI Browser's own app, if set up
+        if window is not None:
+            server.window_info = {"using": window.id, "name": window.name, "note": "",
+                                  "choices": await asyncio.to_thread(choices)}
+        else:  # a browser window, as before the app
+            try:
+                window = (launcher or default_launcher(home))(window_browser or server.settings.get()["window_browser"])
+            except WindowError as exc:
+                out(f"error: {exc}")
+                return 1
+            if window.note:
+                out(window.note)
+            server.window_info = {"using": window.id, "name": window.name, "note": window.note,
+                                  "choices": await asyncio.to_thread(choices)}  # detection once, at start
+            try:
+                await _call(window.launch, f"{url}/open?code={server.new_launch_code()}")
+            except WindowError as exc:
+                out(f"error: {exc}")
+                return 1
         if not await _first_window(server, stop):
             if stop.is_set():
                 return 0
-            out(NO_WINDOW.format(name=window.name))
+            out(NO_APP_PAGE if server.desktop is not None else NO_WINDOW.format(name=window.name))
             return 1
-        out(ready_text())
+        out(app_text() if server.desktop is not None else ready_text() + setup_hint(home))
         if not brain.store.watcher_seen:  # the Brain's watcher isn't in Brave yet: its steps, until it is
             out(brave_text(server.watcher_folder))
             if not brain.store.watcher_prompted:  # one folder window, once
@@ -267,7 +335,9 @@ async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready
             result = ready(url, window)
             if inspect.isawaitable(result):
                 await result
-        await _until_closed(server, stop)
+        await _until_closed(server, stop, window)
+        if server.desktop is not None and window.ended.is_set() and not window.quit_by_user and not stop.is_set():
+            out(APP_ENDED)
         return 0
     finally:
         asking = brave is not None and brave.state == "asking"  # Brave's question outlives this run (app/cdprelay.py)

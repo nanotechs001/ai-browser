@@ -41,8 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     app.add_argument("--browser", default=None, metavar="{brave}",
                      help="where agents browse: your Brave (the only choice: AI Browser's own Chrome is gone)")
     app.add_argument("--window", choices=["auto", "chrome", "brave", "edge"], default=None,
-                     help="which browser draws AI Browser's window, for this run only (default: the Settings "
-                          "choice)")
+                     help="a browser window for this run, drawn by this browser (default: AI Browser's own app once "
+                          "it is set up, else the Settings choice)")
     args = parser.parse_args(argv)
     if args.command != "mcp":  # the mcp library writes its own UTF-8 stream
         _utf8_console()

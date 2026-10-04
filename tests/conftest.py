@@ -91,6 +91,14 @@ def _no_real_window(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_desktop(monkeypatch):
+    """No test starts AI Browser's own app: run_app's tests pass desktop= (tests/fake_desktop.py)."""
+    import ai_browser.app.run as run
+
+    monkeypatch.setattr(run, "default_desktop", lambda home, shortcut=None: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_finder_windows(monkeypatch):
     """No test may open a file manager window on the machine running the suite, and no terminal window (tests that
     check it patch it again)."""
