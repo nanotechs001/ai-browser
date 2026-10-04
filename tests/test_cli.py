@@ -79,13 +79,6 @@ def test_doctor_own_names_brave(tmp_path, monkeypatch, capsys):
     assert "✗ Brave" in out and "brave://inspect/#remote-debugging" in out
 
 
-def test_app_takes_the_browser_choice(capsys):
-    with pytest.raises(SystemExit):
-        main(["app", "--help"])
-    out = capsys.readouterr().out
-    assert "--browser" in out and "{brave,app}" in out
-
-
 def test_the_mcp_example_needs_no_browser_folder():
     import json
 
@@ -205,3 +198,26 @@ def test_doctor_setup_prints_its_marks_on_any_console(tmp_path, monkeypatch):
         server.close()
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
     assert "✓ Python" in result.stdout.decode("utf-8")
+
+
+def test_app_help_offers_the_window_and_brave_only(capsys):
+    with pytest.raises(SystemExit) as exited:
+        main(["app", "--help"])
+    assert exited.value.code == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "--window {auto,chrome,brave,edge}" in out and "--browser {brave}" in out
+    assert "--headless" not in out and "side panel" not in out
+
+
+def test_app_hands_its_choices_to_run_app(monkeypatch):
+    import ai_browser.app.run as run
+
+    seen = {}
+
+    async def fake_run_app(home, model="sonnet", **options):
+        seen.update(model=model, **options)
+        return 0
+
+    monkeypatch.setattr(run, "run_app", fake_run_app)
+    assert main(["app", "--model", "haiku", "--window", "brave", "--browser", "brave"]) == 0
+    assert seen == {"model": "haiku", "browser": "brave", "window_browser": "brave"}

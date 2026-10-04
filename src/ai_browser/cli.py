@@ -35,12 +35,14 @@ def main(argv: list[str] | None = None) -> int:
     stop.add_argument("profile", nargs="?", default="default",
                       help="profile to stop (default: default), or chrome for the shell used with your own Chrome")
     stop.add_argument("--all", action="store_true", help="stop every ai-browser container")
-    app = commands.add_parser("app", help="open AI Browser: a Chrome of its own with a Claude chat side panel")
+    app = commands.add_parser("app", help="open AI Browser in its own window: AI Home, Mission Control and the Brain")
     app.add_argument("--model", choices=["sonnet", "opus", "haiku"], default="sonnet",
-                     help="Claude model for the chat (default: sonnet; it can be changed in the panel)")
-    app.add_argument("--browser", choices=["brave", "app"], default=None,
-                     help="where agents browse: your Brave (the default when it is installed) or AI Browser")
-    app.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)  # for tests
+                     help="Claude model for new agents until you pick one in AI Home (default: sonnet)")
+    app.add_argument("--browser", default=None, metavar="{brave}",
+                     help="where agents browse: your Brave (the only choice: AI Browser's own Chrome is gone)")
+    app.add_argument("--window", choices=["auto", "chrome", "brave", "edge"], default=None,
+                     help="which browser draws AI Browser's window, for this run only (default: the Settings "
+                          "choice)")
     args = parser.parse_args(argv)
     if args.command != "mcp":  # the mcp library writes its own UTF-8 stream
         _utf8_console()
@@ -73,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "app":
             from .app.run import run_app
 
-            return asyncio.run(run_app(home(), args.model, args.headless, browser=args.browser))
+            return asyncio.run(run_app(home(), args.model, browser=args.browser, window_browser=args.window))
     except KeyboardInterrupt:
         return 130
     return 2

@@ -1,344 +1,303 @@
-"""`ai-browser app`: server, AI Browser and panel together; it ends cleanly when the browser closes."""
+"""`ai-browser app`: the server, the watcher's folder, BraveLink and AI Browser's window together. FakeWindow stands in
+for the window (its start address opens in a throwaway headless Chrome, as the real window opens it: the one-time
+code, then the cookie); SocketWindow opens no browser, only a socket with the window's cookie. The app ends once the
+last window's socket has been gone WINDOW_GRACE seconds, or when `stop` is set."""
 
 import asyncio
 import json
 import os
 import socket
 import time
+from pathlib import Path
 
 import httpx
 import pytest
 
 from ai_browser.chrome import chrome_binary
 from conftest import file_mode
+from fake_window import FakeWindow, SocketWindow
+from test_home import click_as_user, page_js, until, wait_targets
+from ui_socket import ui_socket
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 
 
-async def page_urls(app) -> list[str]:
+def quiet(*args):
+    pass
+
+
+def port_free(url) -> bool:
+    with socket.socket() as probe:  # closed connections may linger in TIME_WAIT
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(("127.0.0.1", int(url.rsplit(":", 1)[1])))
+        except OSError:
+            return False
+    return True
+
+
+@pytest.fixture
+async def window(throwaway_chrome):
+    """A FakeWindow on a throwaway headless Chrome."""
     from ai_browser.cdp import CDP
+    from ai_browser.chrome import find_ws_url
 
-    cdp = await CDP.connect(app.ws_url)
-    try:
-        for _ in range(80):  # until AI Home, or the setup page, is open
-            urls = [info["url"] for info in (await cdp.send("Target.getTargets"))["targetInfos"]
-                    if info["type"] == "page"]
-            if any("home.html" in url or url.endswith("/setup") for url in urls):
-                return urls
-            await asyncio.sleep(0.1)
-        return urls
-    finally:
-        await cdp.close()
+    cdp = await CDP.connect(find_ws_url(throwaway_chrome, timeout=20))
+    yield FakeWindow(cdp)
+    await cdp.close()
 
 
-@pytest.mark.posix_only
+@pytest.fixture
+def servers(monkeypatch):
+    """Every AppServer run_app makes, for the tests that look inside it."""
+    from ai_browser.app import run
+    from ai_browser.app.server import AppServer
+
+    made = []
+
+    class Recording(AppServer):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(run, "AppServer", Recording)
+    return made
+
+
 @CHROME
-async def test_run_app_opens_the_browser_and_ends_when_it_closes(fake_claude, tmp_path):
-    from ai_browser.app.run import run_app
+async def test_it_opens_the_window_and_ends_when_the_window_closes(fake_claude, tmp_path, window, monkeypatch,
+                                                                   servers):
+    from ai_browser.app import run
 
     runner, _, _ = fake_claude
-    seen = {}
+    monkeypatch.setattr(run, "WINDOW_GRACE", 1)
+    seen, asked = {}, []
 
-    async def ready(url, app):
+    async def ready(url, opened):
+        seen["url"], seen["opened"] = url, opened
         async with httpx.AsyncClient() as client:
             seen["health"] = (await client.get(url + "/health")).json()
-        seen["config"] = json.loads(
-            (tmp_path / "home" / "app" / "extension" / "config.json").read_text(encoding="utf-8"))
-        seen["url"] = url
-        seen["pages"] = await page_urls(app)
-        app.process.kill()  # the user closes AI Browser (here, abruptly)
+        page = await window.page()
+        seen["home"] = await until(page, "location.pathname === '/home' && "
+                                         "document.getElementById('status').dataset.state === 'connected'")
+        await window.cdp.send("Target.closeTarget", {"targetId": window.targets[0]})  # the user closes the window
+        seen["closed_at"] = time.monotonic()
 
-    started = time.monotonic()
-    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
-                                          out=lambda *args: None), 30)
-    assert code == 0 and time.monotonic() - started < 20
-    assert seen["health"] == {"ok": True} and seen["config"]["server"] == seen["url"]
-    assert any("/home.html" in url for url in seen["pages"])  # AI Home is the first thing it shows
-    with socket.socket() as probe:  # the server's port is free again (closed connections may linger in TIME_WAIT)
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        probe.bind(("127.0.0.1", int(seen["url"].rsplit(":", 1)[1])))
+    def launcher(setting):
+        asked.append(setting)
+        return window
+
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", claude=runner, ready=ready, out=quiet,
+                                              launcher=launcher), 60)
+    assert code == 0 and seen["health"] == {"ok": True} and seen["home"] and seen["opened"] is window
+    assert time.monotonic() - seen["closed_at"] < run.WINDOW_GRACE + 2
+    assert asked == ["auto"] and window.urls[0].startswith(seen["url"] + "/open?code=") and window.closed
+    assert servers[0].window_seen and not (tmp_path / "home" / "app" / "extension").exists()
+    assert port_free(seen["url"])
 
 
-@pytest.mark.posix_only
 @CHROME
-async def test_run_app_refuses_a_profile_already_in_use(fake_claude, tmp_path):
-    from ai_browser.app.run import run_app
-    from ai_browser.appbrowser import app_profile, launch_app_browser, prepare_extension
+async def test_a_reload_doesnt_end_it(fake_claude, tmp_path, window, monkeypatch, servers):
+    from ai_browser.app import run
 
     runner, _, _ = fake_claude
-    other = launch_app_browser(app_profile(tmp_path / "home"),
-                               prepare_extension(tmp_path / "other", "http://127.0.0.1:1", "t"), headless=True)
+    monkeypatch.setattr(run, "WINDOW_GRACE", 1)
+    stop, seen, jobs = asyncio.Event(), {}, []
+
+    async def check(page):
+        await page("location.reload(); true")
+        await asyncio.sleep(2.5)  # more than twice the grace
+        seen["running"], seen["windows"] = not running.done(), servers[0].window_count
+        stop.set()
+
+    async def ready(url, opened):
+        page = await window.page()
+        assert await until(page, "document.getElementById('status').dataset.state === 'connected'")
+        jobs.append(asyncio.create_task(check(page)))
+
+    running = asyncio.create_task(run.run_app(tmp_path / "home", claude=runner, ready=ready, stop=stop, out=quiet,
+                                              launcher=lambda setting: window))
+    assert await asyncio.wait_for(running, 60) == 0 and seen["running"] and seen["windows"] == 1
+
+
+@CHROME
+async def test_a_popup_keeps_it_alive(fake_claude, tmp_path, window, monkeypatch, servers):
+    from ai_browser.app import run
+
+    runner, _, _ = fake_claude
+    monkeypatch.setattr(run, "WINDOW_GRACE", 1)
+    seen, jobs = {}, []
+
+    async def check(page):
+        await click_as_user(page, "#mission")  # Mission Control opens in a window of its own
+        [mission] = await wait_targets(window.cdp, "/mission")
+        assert await until(await page_js(window.cdp, mission),
+                           "document.getElementById('status')?.dataset.state === 'connected'")
+        await window.cdp.send("Target.closeTarget", {"targetId": window.targets[0]})  # the main window closes
+        await asyncio.sleep(2.5)
+        seen["alive"] = not running.done()
+        await window.cdp.send("Target.closeTarget", {"targetId": mission})  # then the last one
+        seen["closed_at"] = time.monotonic()
+
+    async def ready(url, opened):
+        page = await window.page()
+        assert await until(page, "document.getElementById('status').dataset.state === 'connected'")
+        jobs.append(asyncio.create_task(check(page)))
+
+    running = asyncio.create_task(run.run_app(tmp_path / "home", claude=runner, ready=ready, out=quiet,
+                                              launcher=lambda setting: window))
+    assert await asyncio.wait_for(running, 60) == 0 and seen["alive"]
+    assert time.monotonic() - seen["closed_at"] < run.WINDOW_GRACE + 2
+
+
+class Nothing:
+    """A window whose page never connects (its browser started, and nothing else happened)."""
+    id, name, note = "chrome", "Google Chrome", ""
+
+    def __init__(self):
+        self.launched, self.closed = [], False
+
+    def launch(self, url):
+        self.launched.append(url)
+
+    def close(self):
+        self.closed = True
+        return ""
+
+
+async def test_a_window_that_never_connects_ends_the_start(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import run
+
+    runner, _, _ = fake_claude
+    monkeypatch.setattr(run, "WINDOW_START_WAIT", 1)
+    nothing, lines = Nothing(), []
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", claude=runner, out=lines.append,
+                                              launcher=lambda setting: nothing), 30)
+    assert code == 1 and nothing.launched and nothing.closed
+    assert ("AI Browser's window didn't open: Google Chrome started, but the page never connected. Try again, or pick "
+            "another browser with `ai-browser app --window brave`") in lines
+
+
+async def test_stop_before_the_window_connects_still_closes_it(fake_claude, tmp_path):  # Review Focus 1
+    from ai_browser.app import run
+
+    runner, _, _ = fake_claude
+    nothing, lines, stop = Nothing(), [], asyncio.Event()
+    asyncio.get_running_loop().call_later(1, stop.set)  # Ctrl-C while the window is still opening
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", claude=runner, stop=stop, out=lines.append,
+                                              launcher=lambda setting: nothing), 30)
+    assert code == 0 and nothing.launched and nothing.closed
+    assert not any("didn't open" in line for line in lines)
+
+
+async def test_no_browser_for_the_window_is_said_plainly(fake_claude, tmp_path):
+    from ai_browser.app import run
+    from ai_browser.app.window import NO_BROWSER, WindowError
+
+    runner, _, _ = fake_claude
     lines = []
-    try:
-        code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner,
-                                              out=lines.append), 30)
-    finally:
-        other.close()
-    assert code == 1 and any("already open" in line for line in lines)
+
+    def launcher(setting):
+        raise WindowError(NO_BROWSER)
+
+    assert await asyncio.wait_for(run.run_app(tmp_path / "home", claude=runner, out=lines.append,
+                                              launcher=launcher), 30) == 1
+    assert f"error: {NO_BROWSER}" in lines and not (tmp_path / "home" / "app" / "link.json").exists()
 
 
-@pytest.mark.posix_only
-@CHROME
-async def test_a_second_run_changes_nothing_for_the_running_one(fake_claude, tmp_path):
-    from ai_browser.app.run import run_app
-
-    runner, _, _ = fake_claude
-    config = tmp_path / "home" / "app" / "extension" / "config.json"
-    seen = {}
-    stop = asyncio.Event()
-
-    async def ready(url, app):
-        before, lines = config.read_text(encoding="utf-8"), []
-        seen["code"] = await run_app(tmp_path / "home", headless=True, claude=runner, out=lines.append)
-        seen["lines"], seen["unchanged"] = lines, config.read_text(encoding="utf-8") == before
-        stop.set()
-
-    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
-                                          stop=stop, out=lambda *args: None), 60)
-    assert code == 0 and seen["code"] == 1
-    assert any("already running" in line for line in seen["lines"]) and seen["unchanged"]
-
-
-@pytest.mark.posix_only
-@CHROME
-async def test_run_app_ends_when_the_last_window_closes(fake_claude, tmp_path):
-    from ai_browser.app.run import run_app
-    from ai_browser.cdp import CDP
+async def test_the_setting_picks_the_window_and_window_overrides_it_once(fake_claude, tmp_path):
+    from ai_browser.app import run
+    from ai_browser.app.window import WindowError
+    from ai_browser.settings import Settings, read_settings
 
     runner, _, _ = fake_claude
-    seen = {}
+    home, asked = tmp_path / "home", []
+    Settings(home).set("window_browser", "brave")
 
-    async def ready(url, app):
-        seen["app"] = app
-        await page_urls(app)  # AI Home has opened (the worker opens it when the extension is installed)
-        cdp = await CDP.connect(app.ws_url)
-        for info in (await cdp.send("Target.getTargets"))["targetInfos"]:
-            if info["type"] == "page":  # like closing the last window on macOS: Chrome itself keeps running
-                await cdp.send("Target.closeTarget", {"targetId": info["targetId"]})
-        await cdp.close()
+    def launcher(setting):
+        asked.append(setting)
+        raise WindowError("no window in this test")
 
-    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
-                                          out=lambda *args: None), 30)
-    assert code == 0 and seen["app"].closed  # the command ended and quit AI Browser
+    assert await run.run_app(home, claude=runner, out=quiet, launcher=launcher) == 1
+    assert await run.run_app(home, claude=runner, out=quiet, launcher=launcher, window_browser="chrome") == 1
+    assert asked == ["brave", "chrome"] and read_settings(home)["window_browser"] == "brave"  # --window saves nothing
+    lines = []
+    assert await run.run_app(home, out=lines.append, window_browser="firefox", launcher=launcher) == 1
+    assert lines == ["error: --window must be auto, chrome, brave or edge, not 'firefox'"]
 
 
-@CHROME
-async def test_first_start_opens_the_setup_steps(fake_claude, tmp_path, monkeypatch):
+async def test_the_window_notes_are_printed(fake_claude, tmp_path, servers):
     from ai_browser.app import run
 
     runner, _, _ = fake_claude
-    lines, seen = [], {}
-    stop = asyncio.Event()
-
-    async def ready(url, app):
-        seen["pages"] = await page_urls(app)
-        async with httpx.AsyncClient() as client:
-            seen["status"] = (await client.get(url + "/setup/status")).json()
-        stop.set()
-
-    shown = []
-    monkeypatch.setattr(run, "reveal", shown.append)  # on a Mac: a Finder window with the folder selected
-    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=runner,
-                                              ready=ready, stop=stop, out=lines.append), 60)
-    assert shown == [str((tmp_path / "home" / "app" / "extension").resolve())]
-    printed = "\n".join(lines)
-    assert code == 0 and "Developer mode" in printed and str((tmp_path / "home" / "app" / "extension").resolve()) in printed
-    assert "chrome://extensions/" in seen["pages"] and any(url.endswith("/setup") for url in seen["pages"])
-    assert seen["status"] == {"watcher": False}
+    note = "Brave isn't installed: the window uses Google Chrome. Change it in Settings."
+    handed = "AI Browser's window was opened by a browser already running on its profile: quit it yourself (⌘Q)"
+    window, lines, stop = SocketWindow(servers, note=note, close_note=handed), [], asyncio.Event()
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", claude=runner, ready=lambda url, opened: stop.set(),
+                                              stop=stop, out=lines.append, launcher=lambda setting: window), 60)
+    assert code == 0 and note in lines and lines[-1] == handed and window.closed
+    assert servers[0].window_info["using"] == "chrome" and servers[0].window_info["note"] == note
 
 
-@CHROME
-async def test_a_stale_install_record_still_gets_the_setup_steps(fake_claude, tmp_path, monkeypatch):
-    from ai_browser.app import run
-    from ai_browser.extension_id import extension_id_for
+async def test_the_retired_ai_browser_choice_is_refused(tmp_path, monkeypatch):
+    from ai_browser.app.run import RETIRED_APP, run_app
 
-    runner, _, _ = fake_claude
-    monkeypatch.setattr(run, "EXTENSION_WAIT", 1)
-    monkeypatch.setattr(run, "reveal", lambda folder: None)
-    folder = tmp_path / "home" / "app" / "extension"
-    prefs = tmp_path / "home" / "browser" / "Default" / "Secure Preferences"
-    prefs.parent.mkdir(parents=True)
-    # what a one-run install (an older ai-browser, over the pipe) leaves behind: Chrome does not load it again
-    prefs.write_text(json.dumps({"extensions": {"settings": {extension_id_for(folder): {"path": str(folder),
-                                                                                        "location": 4}}}}),
-                     encoding="utf-8")
-    lines, seen = [], {}
-    stop = asyncio.Event()
-
-    async def ready(url, app):
-        seen["pages"] = await page_urls(app)
-        stop.set()
-
-    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=runner,
-                                              ready=ready, stop=stop, out=lines.append), 60)
-    assert code == 0 and "Developer mode" in "\n".join(lines)
-    assert any(url.endswith("/setup") for url in seen["pages"])
+    launched = []
+    for browser, env in (("app", None), (" APP ", None), (None, "app")):
+        if env:
+            monkeypatch.setenv("AIB_APP_BROWSER", env)
+        lines = []
+        assert await run_app(tmp_path / "home", browser=browser, out=lines.append, launcher=launched.append) == 1
+        assert lines == [f"error: {RETIRED_APP}"]
+    assert launched == [] and RETIRED_APP == (
+        "AI Browser's own Chrome is gone: agents browse in your browser (Brave or Chrome). Drop --browser app (and "
+        "AIB_APP_BROWSER).")
 
 
-async def opened(app, ending, seconds=10) -> bool:
-    from ai_browser.cdp import CDP
+def test_agents_always_browse_in_the_users_browser(tmp_path, monkeypatch):
+    from ai_browser.app.run import RETIRED_APP, app_browser, brave_env
 
-    cdp = await CDP.connect(app.ws_url)
-    try:
-        for _ in range(int(seconds * 10)):
-            if any(info["url"].endswith(ending) for info in (await cdp.send("Target.getTargets"))["targetInfos"]):
-                return True
-            await asyncio.sleep(0.1)
-        return False
-    finally:
-        await cdp.close()
-
-
-@pytest.mark.posix_only
-@CHROME
-async def test_first_start_also_sets_up_the_watcher(fake_claude, tmp_path, monkeypatch):
-    from ai_browser.app import run
-
-    runner, _, _ = fake_claude
-    lines, seen, shown = [], {}, []
-    monkeypatch.setattr(run, "reveal", shown.append)
-    stop = asyncio.Event()
-
-    async def ready(url, app):
-        async with httpx.AsyncClient() as client:
-            seen["status"] = (await client.get(url + "/setup/status")).json()
-        seen["brave_page"] = await opened(app, "/setup#brave")
-        stop.set()
-
-    home = tmp_path / "home"
-    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready, stop=stop,
-                                              out=lines.append), 60)
-    watcher = str((home / "app" / "watcher").resolve())
-    printed = "\n".join(lines)
-    assert code == 0 and "brave://extensions" in printed and watcher in printed
-    assert shown == [watcher] and seen["brave_page"]
-    assert seen["status"] == {"watcher": False}
-    again = asyncio.Event()
-
-    async def ready_again(url, app):
-        again.set()
-
-    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready_again, stop=again,
-                                              out=lines.append), 60)
-    assert code == 0 and shown == [watcher]  # the Finder window, once; the printed steps until it is set up
-
-
-@pytest.mark.posix_only
-@CHROME
-async def test_the_brain_survives_a_restart(fake_claude, tmp_path):
-    from websockets.asyncio.client import connect
-
-    from ai_browser.app.run import run_app
-    from ai_browser.brain.store import BrainStore, Item
-
-    runner, _, _ = fake_claude
-    home = tmp_path / "home"
-    BrainStore(home).put(Item(id="gmail:t1", site="gmail", raw_id="t1", sender="Maria", subject="Launch",
-                              kind="needs_reply", summary="Move the launch?"))
-    seen = {}
-
-    async def ready(url, app):
-        token = json.loads((home / "app" / "extension" / "config.json").read_text(encoding="utf-8"))["token"]
-        async with connect(url.replace("http", "ws") + "/ws?token=" + token,
-                           origin=f"chrome-extension://{app.extension_id}") as ws:
-            await ws.send(json.dumps({"type": "brain"}))
-            while "snapshot" not in seen:
-                message = json.loads(await asyncio.wait_for(ws.recv(), 10))
-                if message["type"] == "brain_snapshot":
-                    seen["snapshot"] = message
-        app.process.kill()
-
-    code = await asyncio.wait_for(run_app(home, headless=True, claude=runner, ready=ready,
-                                          out=lambda *args: None), 60)
-    assert code == 0 and [item["id"] for item in seen["snapshot"]["items"]] == ["gmail:t1"]
-
-
-@pytest.mark.posix_only
-@CHROME
-async def test_scheduled_workflows_tick_while_the_app_runs(fake_claude, tmp_path, monkeypatch):
-    from ai_browser.app import run
-    from ai_browser.brain import workflows as workflow_module
-    from ai_browser.brain.workflows import WorkflowStore
-    from test_bridge import EVENTS
-
-    runner, log, script = fake_claude
-    script.write_text(json.dumps(EVENTS), encoding="utf-8")
-    home = tmp_path / "home"
-    WorkflowStore(home).save({"name": "Hourly check", "instructions": "Check the sites and tell me what changed",
-                              "trigger": "schedule", "schedule": "every 15m"})
-    clock = [1_000_000.0]
-    monkeypatch.setattr(workflow_module, "_now", lambda: clock[0])
-    monkeypatch.setattr(run, "TICK", 0.1)
-    seen = {}
-
-    def users():
-        if not log.exists():
-            return []
-        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if '"type": "user"' in line]
-
-    async def ready(url, app):
-        await asyncio.sleep(0.5)  # the first tick starts the schedule's clock: nothing missed is caught up
-        assert users() == []
-        clock[0] += 16 * 60
-        for _ in range(100):
-            if users():
-                break
-            await asyncio.sleep(0.1)
-        seen["users"] = users()
-        app.process.kill()
-
-    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready,
-                                              out=lambda *args: None), 60)
-    assert code == 0 and seen["users"][0]["message"]["content"].startswith("Check the sites and tell me what changed")
-
-
-def test_the_app_picks_brave_when_its_folder_exists(tmp_path, monkeypatch):  # Review Focus 5
-    from ai_browser.app.run import app_browser, brave_env
-
-    monkeypatch.delenv("AIB_APP_BROWSER")
-    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
-    assert app_browser() == "app"  # no browser folder: AI Browser, as before
-    folder.mkdir(parents=True)
-    assert app_browser() == "brave"
-    assert app_browser("app") == "app" and app_browser(" Brave ") == "brave"
-    monkeypatch.setenv("AIB_APP_BROWSER", "APP")
-    assert app_browser() == "app"
-    with pytest.raises(ValueError, match="--browser must be brave or app"):
+    monkeypatch.delenv("AIB_APP_BROWSER", raising=False)
+    monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path / "missing"))
+    assert app_browser() == "brave"  # no browser folder: still the user's browser, never AI Browser's own
+    assert app_browser(" Brave ") == "brave"
+    with pytest.raises(ValueError) as refused:
+        app_browser("app")
+    assert str(refused.value) == RETIRED_APP
+    with pytest.raises(ValueError, match="--browser must be brave, not 'firefox'"):
         app_browser("firefox")
-    assert brave_env(folder) == {"AIB_BROWSER": "chrome", "AIB_CHROME_DIR": str(folder)}
+    assert brave_env(tmp_path) == {"AIB_BROWSER": "chrome", "AIB_CHROME_DIR": str(tmp_path)}
 
 
-@pytest.mark.posix_only
-@CHROME
-async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_claude, tmp_path, monkeypatch):
-    from websockets.asyncio.client import connect
+async def test_a_bad_browser_choice_is_refused(tmp_path):
+    from ai_browser.app.run import run_app
 
+    lines = []
+    assert await run_app(tmp_path / "home", browser="firefox", out=lines.append) == 1
+    assert lines == ["error: --browser must be brave, not 'firefox'"]
+
+
+async def test_brave_the_relay_and_the_windows_origin_are_wired(fake_claude, tmp_path, monkeypatch, servers):
     from ai_browser.app import run
 
     runner, _, _ = fake_claude
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
     folder.mkdir(parents=True)  # Brave is installed; its switch is off
     monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
-    home, lines, seen = tmp_path / "home", [], {}
+    home, lines, seen, stop = tmp_path / "home", [], {}, asyncio.Event()
 
-    async def ready(url, app):
+    async def ready(url, opened):
         link = home / "app" / "link.json"
-        seen["mode"] = file_mode(link)
-        seen["link"] = json.loads(link.read_text(encoding="utf-8"))
-        seen["url"] = url
-        token = json.loads((home / "app" / "extension" / "config.json").read_text(encoding="utf-8"))["token"]
-        async with connect(url.replace("http", "ws") + "/ws?token=" + token,
-                           origin=f"chrome-extension://{app.extension_id}") as ws:
+        seen["mode"], seen["link"], seen["url"] = file_mode(link), json.loads(link.read_text(encoding="utf-8")), url
+        seen["env"] = dict(servers[0].agents.env)
+        async with ui_socket(servers[0], url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            seen["browser"] = json.loads(await asyncio.wait_for(ws.recv(), 10))["browser"]
             for request in ("r1", "r2"):
                 await ws.send(json.dumps({"type": "new_task", "text": "look around", "request": request}))
             created = 0
             while created < 2:
-                message = json.loads(await asyncio.wait_for(ws.recv(), 10))
-                if message["type"] == "snapshot":
-                    seen["browser"] = message["browser"]
-                elif message["type"] == "created":
+                if json.loads(await asyncio.wait_for(ws.recv(), 10))["type"] == "created":
                     created += 1
         for agent in ("a1", "a2"):
             mcp = home / "app" / "agents" / agent / "mcp.json"
@@ -347,48 +306,63 @@ async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_
                     break
                 await asyncio.sleep(0.1)
             seen[agent] = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]["ai-browser"]["env"]
-        app.process.kill()
+        stop.set()
 
-    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready,
-                                              out=lines.append, browser="brave"), 60)
-    printed = "\n".join(lines)
-    cdp = seen["url"].replace("http://", "ws://", 1) + "/cdp"
+    code = await asyncio.wait_for(run.run_app(home, claude=runner, ready=ready, stop=stop, out=lines.append,
+                                              launcher=lambda setting: SocketWindow(servers)), 60)
+    url = seen["url"]
+    cdp = url.replace("http://", "ws://", 1) + "/cdp"
     assert code == 0 and seen["mode"] in (0o600, None)
-    assert seen["link"] == {"events": seen["url"] + "/agent-events", "session_token": seen["link"]["session_token"],
+    assert seen["link"] == {"events": url + "/agent-events", "session_token": seen["link"]["session_token"],
                             "pid": os.getpid(), "cdp": cdp, "browser_dir": str(folder)}
     assert seen["browser"] == {"kind": "brave", "name": "Brave", "state": "off", "groups": "no_watcher"}
+    env = seen["env"]
+    assert (env["AIB_APP_ORIGIN"], env["AIB_APP_CDP"], env["AIB_BROWSER"], env["AIB_CHROME_DIR"]) == (
+        url, cdp, "chrome", str(folder))
+    assert not {"AIB_APP_PROFILE", "AIB_APP_EXTENSION", "AIB_APP_AGENT_TOKEN"} & set(env)  # each agent has its own
     for agent in ("a1", "a2"):
-        env = seen[agent]
-        assert env["AIB_BROWSER"] == "chrome" and env["AIB_CHROME_DIR"] == str(folder) and env["AIB_APP_CDP"] == cdp
+        agent_env = seen[agent]
+        assert (agent_env["AIB_APP_ORIGIN"], agent_env["AIB_APP_CDP"], agent_env["AIB_BROWSER"],
+                agent_env["AIB_CHROME_DIR"]) == (url, cdp, "chrome", str(folder))
     tokens = {seen["a1"]["AIB_APP_AGENT_TOKEN"], seen["a2"]["AIB_APP_AGENT_TOKEN"]}
     assert len(tokens) == 2 and seen["link"]["session_token"] not in tokens  # each agent its own
-    assert "brave://inspect/#remote-debugging" in printed
+    printed = "\n".join(lines)
+    assert "brave://inspect/#remote-debugging" in printed and "asks once each time AI Browser starts" in printed
     assert "any program on this computer can reach your Brave" in printed
     assert not (home / "app" / "link.json").exists()  # removed at exit
 
 
-@pytest.mark.posix_only
-@CHROME
-async def test_quitting_while_brave_asks_says_to_click_cancel(fake_claude, tmp_path, monkeypatch):
+def test_the_switch_text_says_once_per_run():
+    from ai_browser.app.run import SWITCH
+
+    text = " ".join(SWITCH.split())
+    assert "asks once each time AI Browser starts" in text and "it isn't AI Browser" in text
+    assert "lists everything connected, with Disconnect" in text
+    assert "each agent first uses the browser" not in text
+
+
+async def test_quitting_while_brave_asks_says_to_click_cancel(fake_claude, tmp_path, monkeypatch, servers):
     """Brave's question outlives the app that asked (app/cdprelay.py): an Allow after AI Browser has quit opens a
     connection nobody holds, and Brave's bar then stays until Brave restarts. So quitting while it asks says so."""
     from ai_browser.app import run
-    from fake_brave import FakePort, until
+    from fake_brave import FakePort
+    from fake_brave import until as settled
 
     runner, _, _ = fake_claude
+    monkeypatch.setattr(run, "WINDOW_GRACE", 1)
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
     port = FakePort(folder, answer="silent")  # the switch is on, and nobody answers Brave's question
     await port.start()
     monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
-    lines = []
+    lines, window = [], SocketWindow(servers)
 
-    async def ready(url, app):
-        assert await until(lambda: port.sessions == 1)  # the app asked as it started
-        app.process.kill()  # the user closes AI Browser while Brave still asks
+    async def ready(url, opened):
+        assert await settled(lambda: port.sessions == 1)  # the app asked as it started
+        await window.ws.close()  # the user closes AI Browser's window while Brave still asks
 
     try:
-        code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
-                                                  out=lines.append, browser="brave"), 60)
+        code = await asyncio.wait_for(run.run_app(tmp_path / "home", claude=runner, ready=ready, out=lines.append,
+                                                  launcher=lambda setting: window), 60)
     finally:
         await port.stop()
     assert code == 0 and port.sessions == 1
@@ -396,163 +370,12 @@ async def test_quitting_while_brave_asks_says_to_click_cancel(fake_claude, tmp_p
                for line in lines), lines
 
 
-async def test_a_bad_browser_choice_is_refused(tmp_path):
-    from ai_browser.app.run import run_app
-
-    lines = []
-    assert await run_app(tmp_path / "home", browser="firefox", out=lines.append) == 1
-    assert lines == ["error: --browser must be brave or app, not 'firefox'"]
-
-
-@CHROME
-async def test_first_start_in_brave_mode_names_the_extension_folder(fake_claude, tmp_path, monkeypatch):
-    from ai_browser.app import run
-
-    runner, _, _ = fake_claude
-    brave = tmp_path / "BraveSoftware" / "Brave-Browser"
-    brave.mkdir(parents=True)  # Brave is installed; its switch is off
-    monkeypatch.setenv("AIB_CHROME_DIR", str(brave))
-    lines, shown, stop = [], [], asyncio.Event()
-    monkeypatch.setattr(run, "reveal", shown.append)
-    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, pipe_install=False, claude=runner,
-                                              ready=lambda url, app: stop.set(), stop=stop, out=lines.append,
-                                              browser="brave"), 60)
-    extension = str((tmp_path / "home" / "app" / "extension").resolve())
-    assert code == 0 and shown == [extension]  # the extension's folder in Finder, never the user's Brave folder
-    assert extension in "\n".join(lines)
-
-
-@pytest.mark.posix_only
-@CHROME
-async def test_the_app_can_hear_with_its_models_folder(fake_claude, tmp_path):
-    from websockets.asyncio.client import connect
-
-    from ai_browser.app.run import run_app
-
-    runner, _, _ = fake_claude
-    seen = {}
-
-    async def ready(url, app):
-        config = json.loads((tmp_path / "home" / "app" / "extension" / "config.json").read_text(encoding="utf-8"))
-        socket_url = url.replace("http", "ws") + "/ws?token=" + config["token"]
-        async with connect(socket_url, origin=f"chrome-extension://{app.extension_id}") as ws:
-            await ws.send(json.dumps({"type": "hearing"}))
-            while (message := json.loads(await asyncio.wait_for(ws.recv(), 10)))["type"] != "hearing_status":
-                pass
-            seen["status"] = message
-        app.process.kill()  # the user closes AI Browser
-
-    code = await asyncio.wait_for(run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
-                                          out=lambda *args: None), 30)
-    status = seen["status"]
-    assert code == 0 and status["folder"] == str(tmp_path / "home" / "models" / "faster-whisper-base.en")
-    assert status["size_bytes"] == 147_769_510 and status["model"] == "Whisper base.en"
-    assert status["state"] in ("no_engine", "no_model")  # never ready by itself: the model comes only on Download
-
-
-@CHROME
-async def test_the_setup_steps_show_the_path_the_id_is_hashed_from(fake_claude, tmp_path, monkeypatch):
-    import os
-
-    from conftest import symlink_or_skip
-
-    from ai_browser.app import run
-    from ai_browser.extension_id import extension_id_for, extension_path
-
-    runner, _, _ = fake_claude
-    real = tmp_path / "real"
-    real.mkdir()
-    if os.name == "nt":  # a junction needs no rights; Chrome doesn't resolve it
-        import _winapi
-
-        _winapi.CreateJunction(str(real), str(tmp_path / "link"))
-    else:
-        symlink_or_skip(real, tmp_path / "link")
-    home = tmp_path / "link" / "home"
-    folder = home / "app" / "extension"
-    lines, shown = [], []
-    stop = asyncio.Event()
-
-    async def ready(url, app):
-        stop.set()
-
-    monkeypatch.setattr(run, "reveal", shown.append)
-    code = await asyncio.wait_for(run.run_app(home, headless=True, pipe_install=False, claude=runner,
-                                              ready=ready, stop=stop, out=lines.append), 60)
-    expected = extension_path(folder)
-    assert code == 0 and shown == [expected] and expected in "\n".join(lines)
-    assert extension_id_for(expected) == extension_id_for(folder)
-    if os.name == "nt":
-        assert expected == str(folder)  # the junction's path, as Chrome sees it, not the resolved one
-
-
-def test_the_terminal_steps_are_worded_for_each_computer():
-    from ai_browser.app.run import brave_text, ready_text, setup_text
-
-    folder, watcher = "C:\\Users\\me\\.ai-browser\\app\\extension", "C:\\Users\\me\\.ai-browser\\app\\watcher"
-    windows = [ready_text("win32"), setup_text(folder, "win32"), brave_text(watcher, "win32")]
-    assert "Ctrl+Shift+Y" in windows[0]
-    assert all("⌘" not in text and "Finder" not in text for text in windows)
-    assert "File Explorer" in windows[1] and "address bar" in windows[1] and folder in windows[1]
-    assert "address bar" in windows[2] and watcher in windows[2] and "brave://extensions" in windows[2]
-    mac = [ready_text("darwin"), setup_text("/x/extension", "darwin"), brave_text("/x/watcher", "darwin")]
-    assert "⌘⇧Y" in mac[0] and "Finder" in mac[1] and "⌘⇧G" in mac[1] and "/x/extension" in mac[1]
-    assert "⌘⇧G" in mac[2] and "/x/watcher" in mac[2]
-
-
-def test_the_switch_text_says_once_per_run():
-    from ai_browser.app.run import SWITCH
-
-    text = SWITCH.format(name="Brave", inspect="brave://inspect/#remote-debugging")
-    assert "asks once each time AI Browser starts" in text and "it isn't AI Browser" in text
-    assert "lists everything connected, with Disconnect" in text
-    assert "each agent first uses the browser" not in text
-
-
-@pytest.mark.posix_only
-@CHROME
-async def test_agents_end_before_the_relay_closes(fake_claude, tmp_path, monkeypatch):
-    from ai_browser.app import run
-    from ai_browser.app.bravelink import BraveLink
-    from ai_browser.app.server import AppServer
-
-    order = []
-    stop, close = AppServer.stop, BraveLink.close
-
-    async def stopping(self):
-        order.append("server.stop")
-        await stop(self)
-
-    async def closing(self):
-        order.append("brave.close")
-        await close(self)
-
-    monkeypatch.setattr(AppServer, "stop", stopping)
-    monkeypatch.setattr(BraveLink, "close", closing)
-    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    folder.mkdir(parents=True)
-    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
-    runner, _, _ = fake_claude
-
-    async def ready(url, app):
-        app.process.kill()
-
-    code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
-                                              out=lambda line: None, browser="brave"), 60)
-    assert code == 0 and order == ["server.stop", "brave.close"]  # no agent sees its browser vanish while it runs
-
-
-@pytest.mark.posix_only
-@CHROME
-async def test_brave_mode_gives_the_link_the_watchers_id(fake_claude, tmp_path, monkeypatch):
+async def test_brave_mode_gives_the_link_the_watchers_id(fake_claude, tmp_path, monkeypatch, servers):
     from ai_browser.app import run
     from ai_browser.extension_id import extension_id_for
 
     runner, _, _ = fake_claude
-    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    folder.mkdir(parents=True)  # Brave is installed; its switch is off
-    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
-    home, made = tmp_path / "home", []
+    home, made, stop = tmp_path / "home", [], asyncio.Event()
     real = run.BraveLink
 
     def recording(*args, **kwargs):
@@ -561,11 +384,212 @@ async def test_brave_mode_gives_the_link_the_watchers_id(fake_claude, tmp_path, 
         return link
 
     monkeypatch.setattr(run, "BraveLink", recording)
-
-    async def ready(url, app):
-        app.process.kill()
-
-    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready, out=lambda line: None,
-                                              browser="brave"), 60)
+    code = await asyncio.wait_for(run.run_app(home, claude=runner, ready=lambda url, opened: stop.set(), stop=stop,
+                                              out=quiet, launcher=lambda setting: SocketWindow(servers)), 60)
     assert code == 0 and len(made) == 1
     assert made[0].watcher_id == extension_id_for(home / "app" / "watcher") != ""  # the id the app allows
+    assert made[0].app_origin == servers[0].origin  # a copy of our pages in Brave is never one of the user's tabs
+
+
+async def test_the_watchers_steps_show_the_path_the_id_is_hashed_from(fake_claude, tmp_path, monkeypatch, servers):
+    from conftest import symlink_or_skip
+
+    from ai_browser.app import run
+    from ai_browser.extension_id import extension_id_for, extension_path
+
+    runner, _, _ = fake_claude
+    real = tmp_path / "real"
+    real.mkdir()
+    if os.name == "nt":  # a junction needs no rights; Brave doesn't resolve it
+        import _winapi
+
+        _winapi.CreateJunction(str(real), str(tmp_path / "link"))
+    else:
+        symlink_or_skip(real, tmp_path / "link")
+    home = tmp_path / "link" / "home"
+    folder = home / "app" / "watcher"
+    lines, shown, stop = [], [], asyncio.Event()
+    monkeypatch.setattr(run, "reveal", shown.append)
+    code = await asyncio.wait_for(run.run_app(home, claude=runner, ready=lambda url, opened: stop.set(), stop=stop,
+                                              out=lines.append, launcher=lambda setting: SocketWindow(servers)), 60)
+    expected = extension_path(folder)
+    assert code == 0 and shown == [expected] and expected in "\n".join(lines)
+    assert extension_id_for(expected) == extension_id_for(folder)
+    if os.name == "nt":
+        assert expected == str(folder)  # the junction's path, as Brave sees it, not the resolved one
+
+
+async def test_the_window_closes_first_and_the_relay_last(fake_claude, tmp_path, monkeypatch, servers):
+    from ai_browser.app import run
+    from ai_browser.app.bravelink import BraveLink
+    from ai_browser.app.server import AppServer
+
+    runner, _, _ = fake_claude
+    order, stop = [], asyncio.Event()
+    window = SocketWindow(servers)
+    real_close, real_unlink = window.close, run.platforms.unlink
+
+    async def close():
+        order.append("window")
+        return await real_close()
+
+    def unlink(path, missing_ok=False):
+        if Path(path).name == "link.json":
+            order.append("link")
+        return real_unlink(path, missing_ok=missing_ok)
+
+    async def server_stop(self, original=AppServer.stop):
+        order.append("server")
+        await original(self)
+
+    async def brave_close(self, original=BraveLink.close):
+        order.append("brave")
+        await original(self)
+
+    window.close = close
+    monkeypatch.setattr(run.platforms, "unlink", unlink)
+    monkeypatch.setattr(AppServer, "stop", server_stop)
+    monkeypatch.setattr(BraveLink, "close", brave_close)
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", claude=runner, ready=lambda url, opened: stop.set(),
+                                              stop=stop, out=quiet, launcher=lambda setting: window), 60)
+    assert code == 0 and order == ["window", "link", "server", "brave"]  # no agent sees its browser vanish first
+
+
+async def test_a_second_run_changes_nothing_for_the_running_one(fake_claude, tmp_path, servers):
+    from ai_browser.app import run
+
+    runner, _, _ = fake_claude
+    home, seen, stop = tmp_path / "home", {}, asyncio.Event()
+
+    def files():
+        return {name: (home / "app" / name).read_bytes() for name in ("link.json", "port")} | {
+            "watcher": (home / "app" / "watcher" / "config.json").read_bytes()}
+
+    async def ready(url, opened):
+        before, lines = files(), []
+        seen["code"] = await run.run_app(home, claude=runner, out=lines.append,
+                                         launcher=lambda setting: pytest.fail("a second window"))
+        seen["lines"], seen["unchanged"] = lines, files() == before
+        stop.set()
+
+    code = await asyncio.wait_for(run.run_app(home, claude=runner, ready=ready, stop=stop, out=quiet,
+                                              launcher=lambda setting: SocketWindow(servers)), 60)
+    assert code == 0 and seen["code"] == 1 and seen["unchanged"]
+    assert any(line.startswith("error: AI Browser is already running: its window is open (look for it in")
+               for line in seen["lines"])
+
+
+async def test_first_start_shows_the_watchers_steps_once(fake_claude, tmp_path, monkeypatch, servers):
+    from ai_browser.app import run
+
+    runner, _, _ = fake_claude
+    shown, lines, home = [], [], tmp_path / "home"
+    monkeypatch.setattr(run, "reveal", shown.append)
+    for _ in range(2):
+        stop = asyncio.Event()
+        code = await asyncio.wait_for(run.run_app(home, claude=runner, ready=lambda url, opened: stop.set(),
+                                                  stop=stop, out=lines.append,
+                                                  launcher=lambda setting: SocketWindow(servers)), 60)
+        assert code == 0
+    watcher = os.path.realpath(home / "app" / "watcher")
+    printed = "\n".join(lines)
+    assert shown == [watcher]  # the folder window once; the printed steps until the watcher is set up
+    assert printed.count("brave://extensions") == 2 and "Type ai and a space in Brave's address bar" in printed
+
+
+async def test_the_brain_survives_a_restart(fake_claude, tmp_path, servers):
+    from ai_browser.app import run
+    from ai_browser.brain.store import BrainStore, Item
+
+    runner, _, _ = fake_claude
+    home, seen, stop = tmp_path / "home", {}, asyncio.Event()
+    BrainStore(home).put(Item(id="gmail:t1", site="gmail", raw_id="t1", sender="Maria", subject="Launch",
+                              kind="needs_reply", summary="Move the launch?"))
+
+    async def ready(url, opened):
+        async with ui_socket(servers[0], url) as ws:
+            await ws.send(json.dumps({"type": "brain"}))
+            while "snapshot" not in seen:
+                message = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if message["type"] == "brain_snapshot":
+                    seen["snapshot"] = message
+        stop.set()
+
+    code = await asyncio.wait_for(run.run_app(home, claude=runner, ready=ready, stop=stop, out=quiet,
+                                              launcher=lambda setting: SocketWindow(servers)), 60)
+    assert code == 0 and [item["id"] for item in seen["snapshot"]["items"]] == ["gmail:t1"]
+
+
+async def test_scheduled_workflows_tick_while_the_app_runs(fake_claude, tmp_path, monkeypatch, servers):
+    from ai_browser.app import run
+    from ai_browser.brain import workflows as workflow_module
+    from ai_browser.brain.workflows import WorkflowStore
+    from test_bridge import EVENTS
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    home, seen, stop = tmp_path / "home", {}, asyncio.Event()
+    WorkflowStore(home).save({"name": "Hourly check", "instructions": "Check the sites and tell me what changed",
+                              "trigger": "schedule", "schedule": "every 15m"})
+    clock = [1_000_000.0]
+    monkeypatch.setattr(workflow_module, "_now", lambda: clock[0])
+    monkeypatch.setattr(run, "TICK", 0.1)
+
+    def users():
+        if not log.exists():
+            return []
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if '"type": "user"' in line]
+
+    async def ready(url, opened):
+        await asyncio.sleep(0.5)  # the first tick starts the schedule's clock: nothing missed is caught up
+        assert users() == []
+        clock[0] += 16 * 60
+        for _ in range(100):
+            if users():
+                break
+            await asyncio.sleep(0.1)
+        seen["users"] = users()
+        stop.set()
+
+    code = await asyncio.wait_for(run.run_app(home, claude=runner, ready=ready, stop=stop, out=quiet,
+                                              launcher=lambda setting: SocketWindow(servers)), 60)
+    assert code == 0 and seen["users"][0]["message"]["content"].startswith("Check the sites and tell me what changed")
+
+
+async def test_the_app_can_hear_with_its_models_folder(fake_claude, tmp_path, servers):
+    from ai_browser.app import run
+
+    runner, _, _ = fake_claude
+    seen, stop = {}, asyncio.Event()
+
+    async def ready(url, opened):
+        async with ui_socket(servers[0], url) as ws:
+            await ws.send(json.dumps({"type": "hearing"}))
+            while (message := json.loads(await asyncio.wait_for(ws.recv(), 10)))["type"] != "hearing_status":
+                pass
+            seen["status"] = message
+        stop.set()
+
+    code = await asyncio.wait_for(run.run_app(tmp_path / "home", claude=runner, ready=ready, stop=stop, out=quiet,
+                                              launcher=lambda setting: SocketWindow(servers)), 60)
+    status = seen["status"]
+    assert code == 0 and status["folder"] == str(tmp_path / "home" / "models" / "faster-whisper-base.en")
+    assert status["size_bytes"] == 147_769_510 and status["model"] == "Whisper base.en"
+    assert status["state"] in ("no_engine", "no_model")  # never ready by itself: the model comes only on Download
+
+
+def test_the_terminal_texts_name_no_extension_and_no_panel():
+    from ai_browser.app.run import brave_text, ready_text
+
+    expected = ("AI Browser is open in its own window: AI Home shows every agent, tab and skill.\n"
+                "With the watcher in Brave, type ai and a space in Brave's address bar to start a task from there.\n"
+                "Close the window, or press Ctrl-C here, to stop.")
+    assert ready_text("darwin") == ready_text("win32") == expected
+    for system, folder in (("darwin", "/x/watcher"), ("win32", "C:\\Users\\me\\.ai-browser\\app\\watcher")):
+        for text in (ready_text(system), brave_text(folder, system)):
+            assert "⌘⇧Y" not in text and "Ctrl+Shift+Y" not in text and "chrome://extensions" not in text
+            assert "Pin the AI Browser icon" not in text
+        assert "4. Type ai and a space in Brave's address bar to start a task" in brave_text(folder, system)
+    windows = brave_text("C:\\Users\\me\\.ai-browser\\app\\watcher", "win32")
+    assert "address bar at the top of the folder window" in windows and "⌘" not in windows
+    assert "⌘⇧G" in brave_text("/x/watcher", "darwin")

@@ -93,10 +93,6 @@ class TabWatch:
         return {worker["context"] for worker in self._workers.values()
                 if worker["url"].startswith(prefix) and worker["context"]}
 
-    def has_pages(self) -> bool:
-        """Whether AI Browser still shows anything at all (a tab, AI Home, the side panel). A worker isn't a page."""
-        return bool(self._pages)
-
     def _on_target(self, params: dict, session: str | None) -> None:
         info = params.get("targetInfo", {})
         if info.get("type") == "page":

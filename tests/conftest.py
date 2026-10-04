@@ -54,12 +54,12 @@ def file_mode(path) -> int | None:
 @pytest.fixture(autouse=True)
 def _never_the_users_browsers(monkeypatch, tmp_path_factory):
     """No test may reach the user's own Brave or Chrome. With AIB_BROWSER unset the engine uses the user's browser,
-    which would ask "Allow remote debugging?", so every test runs with the sandbox and the app with AI Browser. Tests
-    of the new defaults change these with monkeypatch, and tests that need a browser launch a throwaway one.
+    which would ask "Allow remote debugging?", so every test runs with the sandbox, and `ai-browser app` with BraveLink
+    off (no browser folder). Tests of the new defaults change these with monkeypatch, and tests that need a browser
+    launch a throwaway one.
     Detection (`browsers.installed()`, `os_default()`) sees no app folder, no registry and no LaunchServices file of
     this computer."""
     monkeypatch.setenv("AIB_BROWSER", "sandbox")
-    monkeypatch.setenv("AIB_APP_BROWSER", "app")
     monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path_factory.getbasetemp() / "no-chrome-here"))
     from ai_browser import browsers, platforms
 
@@ -73,6 +73,20 @@ def _never_the_users_browsers(monkeypatch, tmp_path_factory):
         for name, fake in fakes.items():
             if hasattr(module, name):
                 monkeypatch.setattr(module, name, fake)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_window(monkeypatch):
+    """No test opens AI Browser's real window: run_app's tests pass a launcher (tests/fake_window.py)."""
+    import ai_browser.app.run as run
+    from ai_browser.app.window import WindowError
+
+    def launcher(home):
+        def refuse(setting):
+            raise WindowError("tests never open AI Browser's real window: pass launcher=")
+        return refuse
+
+    monkeypatch.setattr(run, "default_launcher", launcher)
 
 
 @pytest.fixture(autouse=True)

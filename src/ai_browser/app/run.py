@@ -1,8 +1,10 @@
-"""`ai-browser app`: the agents, the app server and AI Browser together, until the user is done.
+"""`ai-browser app`: the agents, the app server and AI Browser's window together, until the user is done.
 
-The first start, before the extension is in AI Browser's profile, opens chrome://extensions and the setup page with
-the four steps; from then on AI Browser opens on AI Home. The app ends when AI Browser quits, when its last window
-closes (on macOS Chrome itself keeps running then), or on Ctrl-C, which quits AI Browser too."""
+AI Browser's window is an installed browser in --app mode on a profile of the app's own, with no debugging port
+(app/window.py). It opens on a one-time code the server swaps for the window's cookie. The app ends when the last of
+its windows has been closed for a few seconds (on macOS the browser keeps running with no window, so the windows'
+sockets tell), or on Ctrl-C, which closes the window too. Agents browse in the user's own browser through the app's
+one connection (the relay); the first start shows the watcher's steps, once."""
 
 from __future__ import annotations
 
@@ -11,18 +13,17 @@ import contextlib
 import inspect
 import json
 import os
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .. import platforms
-from ..appbrowser import AppBrowserError, app_profile, extension_installed, launch_app_browser, prepare_extension
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillWriter
 from ..brain.store import BrainStore
 from ..brain.tools import ToolsConfig
 from ..brain.watcher import prepare_watcher
 from ..brain.workflows import WorkflowRunner, WorkflowStore
-from ..cdp import CDP, CDPError
 from ..chrome import inspect_address, own_browser_dir
 from ..extension_id import extension_id_for, extension_path
 from ..hearing.engine import WhisperEngine
@@ -32,11 +33,16 @@ from ..syncdir import write_atomic
 from .agents import AgentManager
 from .bravelink import BraveLink
 from .server import AppServer, reveal_folder
-from .tabs import TabWatch
+from .window import WINDOW_CHOICES, WindowError, choices, default_launcher
 
-WINDOW_CHECKS = 3  # one second apart: this long without any page means the user closed AI Browser's last window
 TICK = 30  # seconds between two looks at the scheduled workflows
-EXTENSION_WAIT = 6  # seconds for an installed extension to connect; a record Chrome no longer loads never does
+WINDOW_START_WAIT = 60  # seconds for the window's page to connect once its browser has started
+WINDOW_GRACE = 5  # seconds with no AI Browser window before the app ends: a reload or a page change is back sooner
+POLL = 0.25  # seconds between two looks at the windows' sockets (time.monotonic stands still while the Mac sleeps)
+NO_WINDOW = ("AI Browser's window didn't open: {name} started, but the page never connected. Try again, or pick "
+             "another browser with `ai-browser app --window brave`")
+RETIRED_APP = ("AI Browser's own Chrome is gone: agents browse in your browser (Brave or Chrome). Drop --browser app "
+               "(and AIB_APP_BROWSER).")
 
 
 def _goto(folder: str, system: str | None) -> str:
@@ -46,21 +52,9 @@ def _goto(folder: str, system: str | None) -> str:
 
 
 def ready_text(system: str | None = None) -> str:
-    keys = platforms.shortcut("⌘⇧Y", "Ctrl+Shift+Y", system)  # the manifest maps both
-    return ("AI Browser is open: AI Home is the first tab (every agent, tab and skill). Click the AI Browser icon or "
-            f"press {keys} to chat beside any page, or type ai and a space in the address bar.\n"
-            "Press Ctrl-C here to close it.")
-
-
-def setup_text(folder: str, system: str | None = None) -> str:
-    manager = platforms.file_manager(system)
-    return f"""AI Browser needs its extension, once (a {manager} window shows its folder):
-  1. In the chrome://extensions tab, turn on Developer mode (top right).
-  2. Drag the "extension" folder from {manager} onto that page.
-     (Or click Load unpacked, {_goto(folder, system)}.)
-  3. Pin the AI Browser icon from the puzzle-piece menu.
-Already listed there but switched off? Switch it on. If Chrome asks about the new tab page, choose Keep it.
-The setup tab says "All set" when it's done. Press Ctrl-C here to close AI Browser."""
+    return ("AI Browser is open in its own window: AI Home shows every agent, tab and skill.\n"
+            "With the watcher in Brave, type ai and a space in Brave's address bar to start a task from there.\n"
+            "Close the window, or press Ctrl-C here, to stop.")
 
 
 def brave_text(folder: str, system: str | None = None) -> str:
@@ -69,10 +63,11 @@ def brave_text(folder: str, system: str | None = None) -> str:
   2. Drag the "watcher" folder onto that page.
      (Or click Load unpacked, {_goto(folder, system)}.)
   3. Click the watcher's icon to open the Brain, and switch on the sites to watch.
+  4. Type ai and a space in Brave's address bar to start a task.
 It reads new messages in tabs you have open and never sends anything."""
 
 
-BROWSERS = ("brave", "app")
+BROWSERS = ("brave",)
 SWITCH = """Agents browse in your {name}, but its remote-debugging switch is off, so nothing reaches it yet. Once:
   1. In {name}, open {inspect}.
   2. Tick "Allow remote debugging for this browser instance".
@@ -89,7 +84,7 @@ Once the switch is on, AI Home's browser card has a Connect button."""
 LEFT_ASKING = ('{name} is still showing "Allow remote debugging?" from this AI Browser: click Cancel there. AI Browser '
                "has closed, so Allow would connect nothing and keep {name}'s \"controlled by automated test software\" "
                "bar up until {name} restarts.")
-reveal = reveal_folder  # a file manager window with the extension folder selected (tests replace it)
+reveal = reveal_folder  # a file manager window with the watcher's folder selected (tests replace it)
 
 
 def _max_agents() -> int:
@@ -100,17 +95,19 @@ def _max_agents() -> int:
 
 
 def app_browser(choice: str | None = None) -> str:
-    """Where agents browse: --browser, else $AIB_APP_BROWSER, else the user's Brave when its folder exists."""
+    """Where agents browse: always the user's own browser. AI Browser's own Chrome is gone, so "app" (from --browser
+    or $AIB_APP_BROWSER) is refused with a plain message, and anything else that names no browser too: never a
+    guess."""
     value = (choice or os.environ.get("AIB_APP_BROWSER") or "").strip().lower()
-    if not value:
-        return "brave" if own_browser_dir().is_dir() else "app"
-    if value not in BROWSERS:
-        raise ValueError(f"--browser must be brave or app, not {value!r}")
-    return value
+    if value == "app":
+        raise ValueError(RETIRED_APP)
+    if value and value not in BROWSERS:
+        raise ValueError(f"--browser must be brave, not {value!r}")
+    return "brave"
 
 
 def brave_env(folder: Path) -> dict[str, str]:
-    """Every agent's engine drives the user's own browser (this overrides the bridge's AIB_BROWSER=app)."""
+    """Every agent's engine drives the user's own browser."""
     return {"AIB_BROWSER": "chrome", "AIB_CHROME_DIR": str(folder)}
 
 
@@ -125,49 +122,29 @@ def write_link(home: Path, url: str, token: str, cdp: str | None = None, browser
     return path
 
 
-async def run_app(home: Path, model: str = "sonnet", headless: bool = False,
-                  claude: str | Sequence[str] | None = None, ready: Callable | None = None,
-                  stop: asyncio.Event | None = None, out: Callable[[str], None] = print,
-                  pipe_install: bool | None = None, browser: str | None = None) -> int:
-    """0 once AI Browser is closed (or `stop` is set); 1 with a message when it can't start."""
+async def run_app(home: Path, model: str = "sonnet", claude: str | Sequence[str] | None = None,
+                  ready: Callable | None = None, stop: asyncio.Event | None = None,
+                  out: Callable[[str], None] = print, browser: str | None = None, window_browser: str | None = None,
+                  launcher: Callable | None = None) -> int:
+    """0 once AI Browser's window is closed (or `stop` is set); 1 with a message when it can't start. `launcher` takes
+    the window's setting and returns the window (default_launcher; tests pass their own)."""
     home = Path(home)
     try:
-        where = app_browser(browser)
+        app_browser(browser)
+        if window_browser is not None and window_browser not in WINDOW_CHOICES:
+            raise ValueError(f"--window must be auto, chrome, brave or edge, not {window_browser!r}")
     except ValueError as exc:
         out(f"error: {exc}")
         return 1
-    lock = _lock(home)  # before anything is touched: a second run must not disturb the first one's pages
+    lock = _lock(home)  # before anything is touched: a second run must not disturb the first one's files
     if lock is None:
-        out(f"error: AI Browser is already running (another `ai-browser app` uses {home}): use that one, or stop it "
-            "first")
+        out("error: AI Browser is already running: its window is open (look for it in "
+            f"{platforms.shortcut('the Dock', 'the taskbar')})")
         return 1
     try:
-        return await _run(home, model, headless, claude, ready, stop, out, pipe_install, where)
+        return await _run(home, model, claude, ready, stop or asyncio.Event(), out, window_browser, launcher)
     finally:
         lock.close()
-
-
-def _setup_pages(url: str) -> list[str]:
-    """The one-time setup: its steps, and the page they happen on."""
-    return [f"{url}/setup", "chrome://extensions/"]
-
-
-async def _connected(server: AppServer, seconds: float) -> bool:
-    for _ in range(int(seconds * 10)):
-        if server.extension_seen:
-            return True
-        await asyncio.sleep(0.1)
-    return server.extension_seen
-
-
-async def _open(ws_url: str, urls: list[str]) -> None:
-    cdp = await CDP.connect(ws_url)
-    try:
-        for page in urls:
-            with contextlib.suppress(CDPError):
-                await cdp.send("Target.createTarget", {"url": page})
-    finally:
-        await cdp.close()
 
 
 async def _tick(runner: WorkflowRunner) -> None:
@@ -184,9 +161,42 @@ def _lock(home: Path):
     return platforms.lock_file(folder / "lock")
 
 
-async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[str] | None, ready: Callable | None,
-               stop: asyncio.Event | None, out: Callable[[str], None], pipe_install: bool | None,
-               where: str) -> int:
+async def _call(method, *args):
+    """A window's launch or close: a coroutine is awaited (the tests' windows); a plain call runs in a thread, because
+    closing waits up to 10 s for the browser to quit."""
+    if inspect.iscoroutinefunction(method):
+        return await method(*args)
+    return await asyncio.to_thread(method, *args)
+
+
+async def _first_window(server: AppServer, stop: asyncio.Event) -> bool:
+    """True once the window's first socket is in; False after WINDOW_START_WAIT, or when `stop` is set first."""
+    deadline = time.monotonic() + WINDOW_START_WAIT
+    while not server.window_seen:
+        if stop.is_set() or time.monotonic() >= deadline:
+            return False
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), POLL)
+    return True
+
+
+async def _until_closed(server: AppServer, stop: asyncio.Event) -> None:
+    """Until `stop`, or until no window socket has been open for WINDOW_GRACE seconds in a row."""
+    empty_since: float | None = None
+    while not stop.is_set():
+        if server.window_count:
+            empty_since = None
+        elif empty_since is None:
+            empty_since = time.monotonic()
+        elif time.monotonic() - empty_since >= WINDOW_GRACE:
+            return
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), POLL)
+
+
+async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready: Callable | None,
+               stop: asyncio.Event, out: Callable[[str], None], window_browser: str | None,
+               launcher: Callable | None) -> int:
     agents = AgentManager(home, claude=claude, max_working=_max_agents())
     brain = BrainService(BrainStore(home), agents, claude=claude, agent_model=model)
     workflows = WorkflowStore(home)
@@ -194,91 +204,78 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
     skills = SkillWriter(Path.home() / ".claude" / "skills", claude=claude, cwd=home / "brain" / "calls")
     hearing = HearingService(ModelStore(home / "models"), WhisperEngine())  # talking; the model only on Download
     server = AppServer(home, agents, default_model=model, brain=brain, tools=ToolsConfig(home), workflows=workflows,
-                       runner=runner, skill_writer=skills, hearing=hearing)
+                       runner=runner, skill_writer=skills, hearing=hearing, port_file=home / "app" / "port")
     server.out = out
-    app = watch = ticker = brave = link_file = None
+    window = ticker = brave = link_file = None
     try:
         try:
             url = await server.start()
-            folder = prepare_extension(home, url, server.token)
-            watcher, server.watcher_build = prepare_watcher(home, url, server.token)  # Brave's watcher, updated
-            server.watcher_folder = extension_path(watcher)
-            pipe = headless if pipe_install is None else pipe_install
-            # Installed (over the pipe now, or by the user before): the extension's worker opens AI Home itself.
-            installed = pipe or extension_installed(app_profile(home), folder)
-            urls = [] if installed else _setup_pages(url)
-            app = await asyncio.to_thread(launch_app_browser, app_profile(home), folder, headless, pipe, urls)
-        except (AppBrowserError, RuntimeError) as exc:
+        except RuntimeError as exc:
             out(f"error: {exc}")
             return 1
-        server.allow_origin(f"chrome-extension://{app.extension_id}")
-        server.allow_origin(f"chrome-extension://{extension_id_for(watcher)}", watcher=True)
-        agents.env.update({"AIB_APP_PROFILE": str(app.profile), "AIB_APP_EXTENSION": app.extension_id,
-                           "AIB_APP_EVENTS": f"{url}/agent-events"})  # each agent's own token comes from create()
-        if where == "brave":  # agents browse in the user's own Brave; AI Browser is the control room
-            own = own_browser_dir()  # not `folder`: that is the extension's, which the setup steps name
-            # its relay: the one connection every agent shares; the watcher's id: whose profile AI Home lists
-            brave = BraveLink(own, watcher_id=extension_id_for(watcher), tokens=server.tokens)
-            relay = url.replace("http://", "ws://", 1) + "/cdp"
-            agents.env.update({**brave_env(own), "AIB_APP_CDP": relay})
-            server.attach_brave(brave)
-            agents.close_tabs = brave.close_targets
-            link_file = write_link(home, url, server.session_token, relay, own)
-            await brave.start()  # looks at the switch; it never connects by itself
-        watch = TabWatch(app.ws_url, f"chrome-extension://{app.extension_id}")  # AI Browser's own tabs: its last window closing ends the app
-        await watch.start()
-        if brave is None:
-            server.attach_tabs(watch)
-            agents.close_tabs = watch.close_targets
-        if installed and not pipe and not await _connected(server, EXTENSION_WAIT):
-            # The profile remembers the extension, but Chrome didn't load it (a one-run install by an older
-            # ai-browser leaves such a record): the setup steps after all.
-            installed = False
-            await _open(app.ws_url, _setup_pages(url))
-        if not installed:
-            reveal(extension_path(folder))
-        out(ready_text() if installed else setup_text(extension_path(folder)))
-        if brave is not None:
-            if brave.state == "off":
-                out(SWITCH.format(name=brave.name, inspect=inspect_address(brave.folder)))
-            else:
-                server.connect_brave("start")  # once, as the app starts: Brave asks "Allow remote debugging?"
+        watcher, server.watcher_build = prepare_watcher(home, url, server.token)  # Brave's watcher, updated
+        server.watcher_folder = extension_path(watcher)
+        watcher_id = extension_id_for(watcher)
+        server.allow_watcher(f"chrome-extension://{watcher_id}")
+        own = own_browser_dir()  # the user's own browser (Brave first): where agents browse
+        cdp = url.replace("http://", "ws://", 1) + "/cdp"
+        brave = BraveLink(own, watcher_id=watcher_id, tokens=server.tokens, app_origin=url)
+        agents.env.update({"AIB_APP_EVENTS": f"{url}/agent-events", "AIB_APP_CDP": cdp, "AIB_APP_ORIGIN": url,
+                           **brave_env(own)})
+        server.attach_brave(brave)
+        agents.close_tabs = brave.close_targets
+        link_file = write_link(home, url, server.session_token, cdp, own)
+        await brave.start()  # looks at the switch; it never connects by itself
+        try:
+            window = (launcher or default_launcher(home))(window_browser or server.settings.get()["window_browser"])
+        except WindowError as exc:
+            out(f"error: {exc}")
+            return 1
+        if window.note:
+            out(window.note)
+        server.window_info = {"using": window.id, "name": window.name, "note": window.note,
+                              "choices": await asyncio.to_thread(choices)}  # detection once, at start
+        try:
+            await _call(window.launch, f"{url}/open?code={server.new_launch_code()}")
+        except WindowError as exc:
+            out(f"error: {exc}")
+            return 1
+        if not await _first_window(server, stop):
+            if stop.is_set():
+                return 0
+            out(NO_WINDOW.format(name=window.name))
+            return 1
+        out(ready_text())
         if not brain.store.watcher_seen:  # the Brain's watcher isn't in Brave yet: its steps, until it is
             out(brave_text(server.watcher_folder))
-            if installed and not brain.store.watcher_prompted:  # one Finder window at a time, and only once
+            if not brain.store.watcher_prompted:  # one folder window, once
                 brain.store.set_watcher_prompted()
                 reveal(server.watcher_folder)
-                await _open(app.ws_url, [f"{url}/setup#brave"])
+        if brave.state == "off":
+            out(SWITCH.format(name=brave.name, inspect=inspect_address(brave.folder)))
+        else:
+            server.connect_brave("start")  # once, as the app starts: Brave asks "Allow remote debugging?"
         ticker = asyncio.create_task(_tick(runner))  # scheduled workflows run while the app does
         if ready is not None:
-            result = ready(url, app)
+            result = ready(url, window)
             if inspect.isawaitable(result):
                 await result
-        stop = stop or asyncio.Event()
-        windowless = 0
-        while not stop.is_set() and not app.closed:
-            try:
-                await asyncio.wait_for(stop.wait(), 1)
-            except TimeoutError:
-                pass
-            # On macOS Chrome keeps running after its last window closes: that, too, means the user is done.
-            windowless = 0 if watch.has_pages() else windowless + 1
-            if windowless >= WINDOW_CHECKS:
-                break
+        await _until_closed(server, stop)
         return 0
     finally:
         asking = brave is not None and brave.state == "asking"  # Brave's question outlives this run (app/cdprelay.py)
         if ticker is not None:
             ticker.cancel()
+        if window is not None:  # first, so the window goes at once (after a hand-off it ends nothing, and says so)
+            with contextlib.suppress(Exception):
+                note = await _call(window.close)
+                if note:
+                    out(note)
         if link_file is not None:
             with contextlib.suppress(OSError):
                 platforms.unlink(link_file, missing_ok=True)
-        await server.stop()  # every agent's Claude Code process ends, then their connections (1001)
+        await server.stop()  # every agent's Claude Code process ends, and the relay's clients with them
         if brave is not None:
-            await brave.close()  # then the one connection: the agents' tabs and groups stay in Brave
+            await brave.close()  # the one connection to Brave closes last; the agents' tabs and groups stay there
         if asking:
             out(LEFT_ASKING.format(name=brave.name))
-        if watch is not None:
-            await watch.close()
-        if app is not None:
-            await asyncio.to_thread(app.close)

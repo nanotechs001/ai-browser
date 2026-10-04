@@ -144,7 +144,7 @@ async def test_contexts_workers_and_the_default_on_a_fake_port(tmp_path):
         assert watch.default_context == "C2"
         await port.destroy("U1")
         assert await until(lambda: watch.pages() == [])
-        assert watch.tabs() == [] and not watch.has_pages()  # a worker is never a page
+        assert watch.tabs() == []  # a worker is never a page
         assert watch.worker_contexts("abc") == {"W"}
         await port.destroy("SW1")  # the worker sleeps
         assert await until(lambda: watch.worker_contexts("abc") == set())
