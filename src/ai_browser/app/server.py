@@ -1379,13 +1379,14 @@ class AppServer:
             if all(isinstance(message.get(key), str) for key in ("agent", "request", "answer")):
                 self.agents.answer_permission(message["agent"], message["request"], message["answer"])
             return
-        tools = self.tools
+        account = message.get("account") if isinstance(message.get("account"), str) else "default"
+        tools = self._tools_of(account)  # one account's tools at a time (AI accounts); Default when none is named
         if tools is None:
             return
         if kind == "tools":
-            queue.put_nowait(self._tools_snapshot())
+            queue.put_nowait(self._tools_snapshot(account, tools))
             if message.get("refresh") is True:
-                self._job(self.probe_tools())
+                self._job(self.probe_tools(account))
             return
         if kind == "tool_set" and isinstance(message.get("server"), str):
             tools.set_enabled(message["server"], message.get("on") is True)
@@ -1395,12 +1396,22 @@ class AppServer:
             tools.forget(message["tool"])
         else:
             return
-        self._send_all(self._tools_snapshot())
+        self._send_all(self._tools_snapshot(account, tools))
 
-    async def probe_tools(self) -> None:
-        """Which claude.ai connectors Claude Code loads for the user now (and their tools)."""
-        if self.tools is not None and await self.tools.probe(self.agents.claude):
-            self._send_all(self._tools_snapshot())
+    def _tools_of(self, account: str):
+        """An account's ToolsConfig, by the id a page sent: Default's, or a listed account's; None for any other."""
+        if self.tools is None:
+            return None
+        if account == "default":
+            return self.tools
+        accounts = self.agents.accounts
+        return self.agents.tools_for(account) if accounts is not None and accounts.get(account) is not None else None
+
+    async def probe_tools(self, account: str = "default") -> None:
+        """Which claude.ai connectors Claude Code loads for that account now (and their tools)."""
+        tools = self._tools_of(account)
+        if tools is not None and await tools.probe(self.agents.claude):
+            self._send_all(self._tools_snapshot(account, tools))
 
     async def _workflow_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
         request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
@@ -1482,8 +1493,10 @@ class AppServer:
                      for workflow in self.workflows.all()]
         return {"type": "workflows_snapshot", "workflows": workflows, "problems": self.workflows.problems()}
 
-    def _tools_snapshot(self) -> dict:
-        return {"type": "tools_snapshot", "servers": self.tools.servers(), "always": sorted(self.tools.always())}
+    def _tools_snapshot(self, account: str = "default", tools=None) -> dict:
+        tools = tools if tools is not None else self.tools
+        return {"type": "tools_snapshot", "account": account, "servers": tools.servers(),
+                "always": sorted(tools.always())}
 
     def _snapshot(self) -> dict:
         return {"type": "snapshot", "agents": self.agents.snapshot()["agents"],

@@ -178,7 +178,7 @@ class AgentManager:
         if self.mint_token is not None:  # its own token: the app knows who reports, claims and connects
             env["AIB_APP_AGENT_TOKEN"] = self.mint_token(agent_id)
         bridge = ClaudeBridge(self.home, model=model, claude=self.claude, env=env, agent_id=agent_id,
-                              tools=self.tools, servers=servers,
+                              tools=self.tools_for(chosen["id"]), servers=servers,
                               on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request),
                               environment=self._environment(chosen["id"]))
         if self.accounts is not None:  # its account must be signed in before its Claude Code starts
@@ -209,6 +209,14 @@ class AgentManager:
     def _environment(self, account_id: str) -> dict[str, str]:
         """Claude Code's environment on that account: CLAUDE_CONFIG_DIR, and never the API variables."""
         return self.accounts.env_for(account_id) if self.accounts is not None else clean_env()
+
+    def tools_for(self, account_id: str):
+        """An account's tools (AI Home → Tools, one account at a time): its own servers, switches and always-allowed
+        tools. Default's are `self.tools`; None without Tools."""
+        if self.tools is None or self.accounts is None or account_id == DEFAULT:
+            return self.tools
+        return self.tools.for_account(account_id, self.accounts.claude_home(account_id),
+                                      self.accounts.env_for(account_id))
 
     async def _sign_in_problem(self, agent_id: str) -> str:
         """Before an agent's Claude Code starts: "" when its account is signed in, or Claude Code can't tell (it then
@@ -290,7 +298,8 @@ class AgentManager:
         agent = self.agents.get(agent_id)
         if agent is None:
             return "deny"
-        if self.tools is not None and request["tool"] in self.tools.always():
+        tools = self.tools_for(agent.account["id"])  # its own account's always-allowed tools, never another's
+        if tools is not None and request["tool"] in tools.always():
             return "once"  # allowed always since this agent started
         future = asyncio.get_running_loop().create_future()
         self._asks[agent_id] = future
@@ -314,8 +323,9 @@ class AgentManager:
                 or agent.permission["request"] != request:
             return
         answer = answer if answer in ("once", "always") else "deny"
-        if answer == "always" and self.tools is not None:
-            self.tools.allow_always(agent.permission["tool"])
+        tools = self.tools_for(agent.account["id"])
+        if answer == "always" and tools is not None:  # remembered for its own account
+            tools.allow_always(agent.permission["tool"])
         future.set_result(answer)
 
     def working(self, agent_id: str) -> bool:

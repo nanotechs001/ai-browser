@@ -265,3 +265,123 @@ def test_a_damaged_tools_file_still_starts(tmp_path):
                                                  "connectors": "claude_ai_X"}), encoding="utf-8")
     tools = ToolsConfig(home, claude_home=tmp_path / "nobody")
     assert tools.servers() == [] and tools.always() == set() and tools.enabled() == set()
+
+
+def jira_folder(folder):
+    """A second account's Claude Code folder, with a server of its own."""
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / ".claude.json").write_text(json.dumps({"mcpServers": {
+        "jira": {"type": "http", "url": "https://mcp.example/jira"}}}), encoding="utf-8")
+    return folder
+
+
+async def socket_until(ws, accept):
+    while True:
+        message = json.loads(await asyncio.wait_for(ws.recv(), 10))
+        if accept(message):
+            return message
+
+
+def test_each_account_has_its_own_tools_in_one_file(tmp_path):
+    from ai_browser.brain.tools import ToolsConfig
+
+    home = tmp_path / "home"
+    default = ToolsConfig(home, claude_home=user_config(tmp_path))
+    folder = jira_folder(tmp_path / "work-claude")
+    work = default.for_account("acct-1a2b3c", folder, {"CLAUDE_CONFIG_DIR": str(folder)})
+    assert default.for_account("default", tmp_path, {}) is default
+    assert default.for_account("acct-1a2b3c", tmp_path, {}) is work  # made once
+    assert {server["name"] for server in work.servers()} == {"jira"}
+    assert "jira" not in {server["name"] for server in default.servers()}
+    work.set_enabled("jira", True)
+    work.allow_always("mcp__jira__get_issue")
+    default.set_enabled("clickup", True)
+    data = json.loads((home / "tools.json").read_text(encoding="utf-8"))
+    assert data["enabled"] == ["clickup"] and data["always"] == []
+    assert data["accounts"]["acct-1a2b3c"]["enabled"] == ["jira"]
+    assert data["accounts"]["acct-1a2b3c"]["always"] == ["mcp__jira__get_issue"]
+    again = ToolsConfig(home, claude_home=tmp_path / "user")
+    assert again.enabled() == {"clickup"} and again.for_account("acct-1a2b3c", folder, {}).enabled() == {"jira"}
+    assert file_mode(home / "tools.json") in (0o600, None)
+
+
+async def test_an_agent_gets_only_its_accounts_tools_and_allows(fake_claude, tmp_path):
+    from pathlib import Path
+
+    from ai_browser.accounts import Accounts
+    from fake_accounts import sign_in
+    from test_app_server import wait_for
+
+    agents, tools, log = manager(fake_claude, tmp_path, asking("mcp__jira__get_issue"))
+    accounts = Accounts(tmp_path / "home", claude=fake_claude[0])
+    work = accounts.add("Work")
+    sign_in(work.folder)
+    jira_folder(Path(work.folder))
+    agents.accounts = accounts
+    tools.set_enabled("clickup", True)  # Default's switch: never Work's
+    tools.allow_always("mcp__jira__get_issue")  # Default's allow: it doesn't count on Work
+    work_tools = agents.tools_for(work.id)
+    work_tools.set_enabled("jira", True)
+    try:
+        agent = await agents.create("look at the issue", account=work.id)
+        await wait_for(lambda: agent.permission is not None)  # asked: Work allows nothing always yet
+        config = json.loads((tmp_path / "home" / "app" / "agents" / agent.id / "mcp.json").read_text(
+            encoding="utf-8"))
+        assert set(config["mcpServers"]) == {"ai-browser", "jira"}  # never Default's clickup
+        argv = commands(log)[-1]
+        assert "mcp__jira__get_issue" not in argv[argv.index("--allowedTools") + 1]
+        agents.answer_permission(agent.id, agent.permission["request"], "always")
+        await settled(agents, agent.id)
+        assert work_tools.always() == {"mcp__jira__get_issue"}  # remembered on Work, its own account
+    finally:
+        await agents.close_all()
+
+
+async def test_the_probe_runs_on_the_accounts_folder(fake_claude, tmp_path, monkeypatch):
+    import os
+
+    from ai_browser.brain.tools import ToolsConfig
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([{"type": "system", "subtype": "init", "session_id": "s",
+                                   "mcp_servers": [{"name": "claude.ai Linear", "status": "connected"}],
+                                   "tools": []}, {"sleep": 30}]), encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    default = ToolsConfig(tmp_path / "home", claude_home=tmp_path / "nobody")
+    work = default.for_account("acct-1a2b3c", tmp_path / "work",
+                               {**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path / "work")})
+    assert await work.probe(runner)
+    env = json.loads(log.with_name(log.name + ".env").read_text(encoding="utf-8"))
+    assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "work") and env["ANTHROPIC_API_KEY"] is None
+    assert {server["name"] for server in work.servers()} == {"claude_ai_Linear"} and default.servers() == []
+
+
+async def test_the_server_shows_and_changes_one_accounts_tools(fake_claude, tmp_path):
+    from pathlib import Path
+
+    from ai_browser.accounts import Accounts
+    from ai_browser.app.server import AppServer
+
+    agents, tools, _ = manager(fake_claude, tmp_path, asking())
+    accounts = Accounts(tmp_path / "home", claude=fake_claude[0])
+    work = accounts.add("Work")
+    jira_folder(Path(work.folder))
+    agents.accounts = accounts
+    server = AppServer(tmp_path / "home", agents, tools=tools)
+    url = await server.start()
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            await ws.send(json.dumps({"type": "tools", "account": work.id}))
+            shown = await socket_until(ws, lambda m: m["type"] == "tools_snapshot")
+            assert shown["account"] == work.id and {item["name"] for item in shown["servers"]} == {"jira"}
+            await ws.send(json.dumps({"type": "tool_set", "account": work.id, "server": "jira", "on": True}))
+            await socket_until(ws, lambda m: m["type"] == "tools_snapshot" and m["account"] == work.id
+                               and any(item["enabled"] for item in m["servers"]))
+            await ws.send(json.dumps({"type": "tools", "account": "acct-000000"}))  # not listed: nothing
+            await ws.send(json.dumps({"type": "tools"}))  # no account: Default's, as before
+            shown = await socket_until(ws, lambda m: m["type"] == "tools_snapshot")
+            assert shown["account"] == "default" and "jira" not in {item["name"] for item in shown["servers"]}
+        assert tools.enabled() == set() and agents.tools_for(work.id).enabled() == {"jira"}
+    finally:
+        await server.stop()
