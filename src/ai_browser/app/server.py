@@ -226,6 +226,50 @@ def _refused_page(text: str) -> HTMLResponse:
                         f"</head><body><p>{html.escape(text, quote=False)}</p></body></html>\n", status_code=403)
 
 
+def _strict_headers(host: str, port: int) -> list[tuple[bytes, bytes]]:
+    """On every HTTP answer: scripts and styles from our own files only, sockets only to /ws, fetches only to /setup/
+    (so a page's script can never reach /cdp or /agent-*), no sniffing, no referrer, nothing cached."""
+    origin = f"{host}:{port}"
+    csp = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+           f"connect-src ws://{origin}/ws http://{origin}/setup/; base-uri 'none'; form-action 'none'; "
+           "frame-ancestors 'none'")
+    return [(b"content-security-policy", csp.encode()), (b"x-content-type-options", b"nosniff"),
+            (b"referrer-policy", b"no-referrer"), (b"cache-control", b"no-store"),
+            (b"cross-origin-resource-policy", b"same-origin")]
+
+
+class _Guard:
+    """The whole app, HTTP and WebSocket alike, behind one check: the Host header must be exactly 127.0.0.1:<port>,
+    which blocks DNS rebinding (Starlette's TrustedHostMiddleware ignores the port, so it isn't used). Every HTTP
+    answer, a refusal too, carries the strict headers."""
+
+    def __init__(self, app, server: AppServer):
+        self.app, self.server = app, server
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        strict = self.server.strict_headers
+        names = {name for name, _ in strict}
+
+        async def send_strict(message):
+            if message["type"] == "http.response.start":
+                kept = [(name, value) for name, value in message.get("headers", []) if name.lower() not in names]
+                message = {**message, "headers": kept + strict}
+            await send(message)
+
+        host = next((value.decode("latin-1") for key, value in scope["headers"] if key == b"host"), "")
+        if self.server.port is None or host != self.server.host_header:
+            if scope["type"] == "websocket":
+                await receive()  # websocket.connect
+                await send({"type": "websocket.close", "code": 1008})  # before accept: the client reads HTTP 403
+            else:
+                await PlainTextResponse("refused", status_code=403)(scope, receive, send_strict)
+            return
+        await self.app(scope, receive, send_strict if scope["type"] == "http" else send)
+
+
 class AppServer:
     def __init__(self, home: Path, agents: AgentManager, tabs=None, catalog: Catalog | None = None,
                  host: str = "127.0.0.1", ports: range = APP_PORTS, default_model: str = "sonnet",
@@ -270,6 +314,7 @@ class AppServer:
         self._sweeper: asyncio.Task | None = None
         self.url: str | None = None
         self.port: int | None = None  # the bound port, once start() has one
+        self.strict_headers: list[tuple[bytes, bytes]] = []  # every HTTP answer's headers, once the port is known
         self.ui_secret = secrets.token_urlsafe(32)  # the window's session cookie: set only by swapping a start code
         self._codes: dict[str, float] = {}  # one-time start codes -> when they expire (_clock)
         self._files = {path.name for path in UI.iterdir() if path.is_file() and path.suffix in FILE_TYPES}
@@ -374,19 +419,19 @@ class AppServer:
         return {"type": "tabs", "tabs": listing, **({"tab_scope": scope} if scope is not None else {})}
 
     async def start(self) -> str:
-        app = Starlette(routes=[Route("/", self._root), Route("/open", self._open),
-                                Route("/home", self._page), Route("/mission", self._page),
-                                Route("/settings", self._page),
-                                Route("/health", self._health), Route("/setup", self._setup),
-                                Route("/setup/status", self._setup_status),
-                                Route("/setup/reveal", self._setup_reveal, methods=["POST"]),
-                                Route("/agent-events", self._agent_events, methods=["POST"]),
-                                Route("/agent-claim", self._agent_claim, methods=["POST"]),
-                                Route("/agent-status", self._agent_status),
-                                Route("/agent-hello", self._agent_hello, methods=["POST"]),
-                                Route("/agent-bye", self._agent_bye, methods=["POST"]),
-                                Route("/{name}", self._file),
-                                WebSocketRoute("/ws", self._socket), WebSocketRoute("/cdp", self._cdp)])
+        app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open),
+                                       Route("/home", self._page), Route("/mission", self._page),
+                                       Route("/settings", self._page),
+                                       Route("/health", self._health), Route("/setup", self._setup),
+                                       Route("/setup/status", self._setup_status),
+                                       Route("/setup/reveal", self._setup_reveal, methods=["POST"]),
+                                       Route("/agent-events", self._agent_events, methods=["POST"]),
+                                       Route("/agent-claim", self._agent_claim, methods=["POST"]),
+                                       Route("/agent-status", self._agent_status),
+                                       Route("/agent-hello", self._agent_hello, methods=["POST"]),
+                                       Route("/agent-bye", self._agent_bye, methods=["POST"]),
+                                       Route("/{name}", self._file),
+                                       WebSocketRoute("/ws", self._socket), WebSocketRoute("/cdp", self._cdp)]), self)
         self._fanout = asyncio.create_task(self._forward())
         self._sweeper = asyncio.create_task(self._sweep_sessions())
         if self.brain is not None:
@@ -396,6 +441,7 @@ class AppServer:
             if sock is None:
                 continue
             self.port = port
+            self.strict_headers = _strict_headers(self.host, port)
             # websockets-sansio: no handshake timeout, so the relay can hold one while the user answers Allow
             self._server = _QuietServer(uvicorn.Config(app, host=self.host, port=port, log_level="warning",
                                                        access_log=False, lifespan="off", ws="websockets-sansio"))

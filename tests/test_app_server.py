@@ -1654,3 +1654,46 @@ async def test_pages_need_the_windows_cookie(fake_claude, tmp_path):
             assert (await fetch("GET", url + path, headers=ui_cookie(server))).status_code == 404, path
     finally:
         await server.stop()
+
+
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src "
+       "ws://127.0.0.1:{port}/ws http://127.0.0.1:{port}/setup/; base-uri 'none'; form-action 'none'; "
+       "frame-ancestors 'none'")
+
+
+async def test_every_route_checks_the_host(fake_claude, tmp_path):
+    from fake_brave import add_agent
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    port = server.port
+    try:
+        add_agent(server.agents)
+        assert (await fetch("GET", url + "/setup", headers={"Host": f"rebind.example:{port}"})).status_code == 403
+        assert (await fetch("GET", url + "/health", headers={"Host": f"localhost:{port}"})).status_code == 403
+        report = {"agent": "a1", "kind": "tab_opened", "target": "T", "adopted": False}
+        wrong = {"X-AIB-Agent-Token": server.token_for("a1"), "Host": f"evil.example:{port}"}
+        assert (await fetch("POST", url + "/agent-events", json=report, headers=wrong)).status_code == 403
+        with pytest.raises(InvalidStatus) as refused:  # the WebSocket is refused before accept: an HTTP 403
+            async with connect(f"ws://localhost:{port}/ws?token={server.token}", host="127.0.0.1", port=port,
+                               origin=ORIGIN, proxy=None):
+                pass
+        assert refused.value.response.status_code == 403
+        assert (await fetch("GET", url + "/health")).status_code == 200  # 127.0.0.1:<port> itself
+    finally:
+        await server.stop()
+
+
+async def test_every_answer_carries_the_strict_headers(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        for path, headers in (("/home", ui_cookie(server)), ("/home", {}), ("/setup", {}),
+                              ("/home.js", ui_cookie(server)), ("/health", {}), ("/nothing-here.js", {}),
+                              ("/setup", {"Host": f"rebind.example:{server.port}"})):
+            answer = await fetch("GET", url + path, headers=headers)
+            assert answer.headers["content-security-policy"] == CSP.format(port=server.port), path
+            assert answer.headers["x-content-type-options"] == "nosniff", path
+            assert answer.headers["referrer-policy"] == "no-referrer", path
+            assert answer.headers["cache-control"] == "no-store", path
+            assert answer.headers["cross-origin-resource-policy"] == "same-origin", path
+    finally:
+        await server.stop()
