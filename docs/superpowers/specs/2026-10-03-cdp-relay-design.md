@@ -17,6 +17,34 @@ Brave profile the user is signed in to (wave 4), and AI Browser's own Chrome for
 **The brief:** `docs/superpowers/specs/2026-10-03-app-as-an-app-overview.md`, section 2. **The evidence:**
 `docs/superpowers/specs/2026-10-03-app-as-an-app-investigation.json`, topic `relay`.
 
+## Amendment (2026-10-04): the question never runs out of time
+
+**What was found** while the user tested with their own Brave: the "Allow remote debugging?" question isn't tied to the
+handshake that asked.
+- Chromium's `devtools_connection_dialog.cc` has no time limit. Allow answers yes; Cancel, "Disable", closing the
+  question and a window with no browser all answer no.
+- `devtools_http_handler.cc` adds a client only once the user allows (`HandleDebuggingApproval`). So `OnClose` for a
+  handshake still waiting erases nothing, and a later Allow adds a client for a connection that is already closed.
+  That client never leaves, so the count stays above zero and the automation bar comes back until the browser
+  restarts or the switch is turned off and on.
+
+So this spec's 60 s wait (Decision 10) left the question on screen, and an Allow after it opened a connection nobody
+held, while the next Connect asked a second time.
+
+**What changed:**
+- **The relay's handshake waits until the user answers** (`open_timeout=None`).
+  - A client (an agent or a session) waits at most `ALLOW_WAIT` (60 s). Then it gets 409: '{name} is asking "Allow
+    remote debugging?" for AI Browser: ask the user to click Allow there, then try again'.
+  - Connect and Try again join the same question.
+- **`refused` means no.** A handshake that ends with no answer at all (the browser quit) is `lost`.
+- **AI Home's note for `refused`:** "{name} said no."
+- **A session connecting by itself** (the app isn't running) does the same: a call waits 60 s and says the browser is
+  still asking, the next call joins the same handshake, and the session closes it when it ends.
+- **Quitting the app while the question is up** still ends the handshake: the process ends. An Allow after that opens a
+  connection nobody holds, as above, so the user should answer Cancel to a question left from a run that has ended.
+
+The report: `docs/superpowers/reports/2026-10-04-allow-once.md`.
+
 **What was found**, so the reasons below rest on facts:
 - **Brave asks once per connection, and remembers nothing.** With the `brave://inspect` switch on, the debugging
   server runs in "approval mode": every websocket to `/devtools/browser/*` gets its own "Allow remote debugging?"
@@ -152,7 +180,7 @@ Success means:
 - **Brave quits or restarts:** AI Home says "closed". Every agent and session loses the browser at once. The first of
   these asks once: Connect, a new task or message, Continue on a bot check, a session's browser call, or the next
   browser step of an agent that was working (once Brave is open again). Everyone waiting shares that one question.
-- **The user clicks Deny** (or nobody answers in 60 s): AI Home says "not allowed" with **Try again**. Agents and
+- **The user clicks Deny** (the question itself has no time limit: see the amendment): AI Home says "not allowed" with **Try again**. Agents and
   sessions waiting get "Brave said no to AI Browser's connection: ask the user to click Try again in AI Home". Nothing
   asks again by itself. The next Connect, Try again, or agent's turn (a new task, a message, Continue) asks once more.
 - **The user unticks the switch:** Brave closes the connection. Everything is cut off, as today.
@@ -434,7 +462,7 @@ interfaces, **Texts**.
   - "During its turn" is `AgentManager.working(agent id)`.
   - A cut-off identity (Decision 14) opens nothing: its turn doesn't call `open`, and its handshake gets 410 first.
 - **One shared attempt:** `open()` is single-flight. A second caller while `asking` waits on the same attempt. A
-  client's handshake is held, not yet accepted, for up to `ALLOW_WAIT` (60 s), and then accepted or refused. So
+  client's handshake is held, not yet accepted, for up to `ALLOW_WAIT` (60 s), and then accepted, refused, or told the question is still open (amendment). So
   everyone waiting sees one question. The pinned `websockets-sansio` server has no handshake timeout (Decision 8), so
   holding it is safe. The engine's connect waits `RELAY_WAIT` = 65 s, so the relay's answer comes first.
 - **Deny is never retried:** `refused` stays until Connect, Try again, or a new turn. A client's own connect never
@@ -609,7 +637,7 @@ interfaces, **Texts**.
   - `on_state(cb(state))`, `on_change(cb())`, `on_grant(cb(identity, target))`.
 - **Inside:**
   - `Upstream`: one `websockets` client connection to `find_ws_url(folder)` (`max_size=None`, `ping_interval=None`,
-    `open_timeout=allow_wait`, `proxy=None`), a reader task and a send lock;
+    `open_timeout=None`: it waits for the answer (amendment), `proxy=None`), a reader task and a send lock;
   - `Client`: identity, socket, outbound queue and byte count, discovery flag, bound session ids, seen download guids;
   - `targets`: `{target id: {type, url, title, openerId, browserContextId}}` from discovery and every `getTargets`
     answer that passes;
