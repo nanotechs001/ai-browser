@@ -100,6 +100,18 @@ def _no_finder_windows(monkeypatch):
     monkeypatch.setattr(server, "reveal_folder", lambda path: True)
 
 
+@pytest.fixture(autouse=True)
+def _never_the_users_claude_folder(monkeypatch, tmp_path_factory):
+    """No test reads or writes the user's own Claude Code folder (~/.claude). The Default account's folder,
+    CLAUDE_CONFIG_DIR, is a throwaway in every test. It is signed in for the fake claude, as the user's own login
+    normally is (fake_accounts.sign_out undoes that), and the fake keeps its conversations there."""
+    from fake_accounts import sign_in
+
+    folder = tmp_path_factory.mktemp("claude-default")
+    sign_in(folder)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(folder))
+
+
 USERS_APP_PORT = 8792  # APP_PORTS' first: the port the user's own `ai-browser app` remembers and comes back on
 
 
