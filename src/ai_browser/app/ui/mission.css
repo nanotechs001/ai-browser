@@ -341,3 +341,11 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .talk-form input { flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
                    background: var(--bg); }
 .talk-note { margin: 0; font-size: 12px; }
+/* AI accounts: the drawer's account, its move line, and its ask at a limit (accountui.js) */
+.chip.account { background: transparent; border: 1px solid var(--line); }
+#drawer-body .moved { color: var(--ok); }
+.ask-slot:empty { display: none; }
+.account-ask { border-color: var(--wait); display: flex; flex-direction: column; gap: 6px; }
+.account-ask p { margin: 0; }
+.account-ask-head { font-weight: 600; }
+.account-ask-buttons, .account-move { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }

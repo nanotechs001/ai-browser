@@ -18,6 +18,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .. import platforms
+from ..accounts import DEFAULT, Accounts
+from ..brain.account import BrainAccount
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillWriter
 from ..brain.store import BrainStore
@@ -197,14 +199,19 @@ async def _until_closed(server: AppServer, stop: asyncio.Event) -> None:
 async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready: Callable | None,
                stop: asyncio.Event, out: Callable[[str], None], window_browser: str | None,
                launcher: Callable | None) -> int:
-    agents = AgentManager(home, claude=claude, max_working=_max_agents())
-    brain = BrainService(BrainStore(home), agents, claude=claude, agent_model=model)
+    accounts = Accounts(home, claude=claude)  # Settings → Accounts: Default, and the logins the user added
+    agents = AgentManager(home, claude=claude, max_working=_max_agents(), accounts=accounts)
+    brain_account = BrainAccount(accounts)  # the Brain's and its skill writer's calls, on the Brain's account
+    brain = BrainService(BrainStore(home), agents, ask=brain_account, claude=claude, agent_model=model)
     workflows = WorkflowStore(home)
     runner = WorkflowRunner(workflows, agents)
-    skills = SkillWriter(Path.home() / ".claude" / "skills", claude=claude, cwd=home / "brain" / "calls")
+    skills = SkillWriter(Path.home() / ".claude" / "skills", ask=brain_account, claude=claude,
+                         cwd=home / "brain" / "calls")  # personal skills stay in ~/.claude/skills (plan decision 14)
     hearing = HearingService(ModelStore(home / "models"), WhisperEngine())  # talking; the model only on Download
-    server = AppServer(home, agents, default_model=model, brain=brain, tools=ToolsConfig(home), workflows=workflows,
-                       runner=runner, skill_writer=skills, hearing=hearing, port_file=home / "app" / "port")
+    tools = ToolsConfig(home, claude_home=accounts.claude_home(DEFAULT))  # Default's .claude.json (Review Focus 1)
+    server = AppServer(home, agents, default_model=model, brain=brain, tools=tools, workflows=workflows,
+                       runner=runner, skill_writer=skills, hearing=hearing, port_file=home / "app" / "port",
+                       accounts=accounts, brain_account=brain_account)
     server.out = out
     window = ticker = brave = link_file = None
     try:

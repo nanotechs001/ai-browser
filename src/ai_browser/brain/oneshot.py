@@ -10,11 +10,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..accounts import clean_env
 from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
 
 NO_SERVERS = json.dumps({"mcpServers": {}})
@@ -33,14 +33,14 @@ def command(claude: str | Sequence[str] | None, model: str) -> list[str]:
 
 
 async def ask_claude(prompt: str, model: str = "haiku", claude: str | Sequence[str] | None = None,
-                     cwd: Path | None = None, timeout: float = 120, think: bool = False) -> OneShot:
+                     cwd: Path | None = None, timeout: float = 120, think: bool = False,
+                     env: dict[str, str] | None = None) -> OneShot:
     """Claude's answer to `prompt`, or a plain error (and empty text) when Claude Code can't give one. Quick work
     (sorting, a reply) goes without extended thinking: measured, it made sorting four emails take 10-28 s instead of
-    5 s."""
+    5 s. `env` is the account's environment (BrainAccount: the Brain's account); None: this process's own."""
     folder = Path(cwd) if cwd is not None else Path.home() / ".ai-browser" / "brain" / "calls"
     folder.mkdir(parents=True, exist_ok=True)
-    env = {key: value for key, value in os.environ.items()  # the user's own login, never API credentials
-           if key not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    env = clean_env(env)  # the user's own login, on the Brain's account; never API credentials
     if not think:
         env["MAX_THINKING_TOKENS"] = "0"
     try:

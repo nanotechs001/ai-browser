@@ -93,9 +93,17 @@ export function createChat(container, { onPage = () => {} } = {}) {
         bubble = null;
         add(el("div", "meta", event.stopped ? "Stopped" : `Done in ${event.seconds} s`));
         break;
+      case "note": // a line from AI Browser itself (a move's hand-over note): set as text
+        bubble = null;
+        add(el("div", "meta", event.text || ""));
+        break;
       case "error":
         bubble = null;
         add(el("div", "msg error", event.text || "Something went wrong"));
+        break;
+      case "limit": // its account hit its usage limit: its row says which, and when it resets
+        bubble = null;
+        add(el("div", "msg error", "Stopped at the account's usage limit."));
         break;
     }
   }

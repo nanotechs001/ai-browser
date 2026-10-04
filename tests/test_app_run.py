@@ -607,3 +607,34 @@ def test_the_terminal_texts_name_no_extension_and_no_panel():
     windows = brave_text("C:\\Users\\me\\.ai-browser\\app\\watcher", "win32")
     assert "address bar at the top of the folder window" in windows and "⌘" not in windows
     assert "⌘⇧G" in brave_text("/x/watcher", "darwin")
+
+
+async def test_the_app_runs_on_accounts(fake_claude, tmp_path, servers):  # Review Focus 1, end to end
+    from ai_browser.accounts import Accounts
+    from ai_browser.app import run
+    from ai_browser.brain.account import BrainAccount
+
+    runner, _, _ = fake_claude
+    home, seen, stop = tmp_path / "home", {}, asyncio.Event()
+    work = Accounts(home).add("Work")
+    mine = Path(os.environ["CLAUDE_CONFIG_DIR"])  # the user's environment names their Claude Code folder
+    (mine / ".claude.json").write_text(json.dumps({"mcpServers": {"from-my-folder": {"command": "x"}}}),
+                                       encoding="utf-8")
+
+    async def ready(url, opened):
+        async with ui_socket(servers[0], url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            seen["snapshot"] = json.loads(await asyncio.wait_for(ws.recv(), 10))
+            await ws.send(json.dumps({"type": "tools"}))
+            while (message := json.loads(await asyncio.wait_for(ws.recv(), 10)))["type"] != "tools_snapshot":
+                pass
+            seen["tools"] = message
+        stop.set()
+
+    code = await asyncio.wait_for(run.run_app(home, claude=runner, ready=ready, stop=stop, out=quiet,
+                                              launcher=lambda setting: SocketWindow(servers)), 60)
+    server = servers[0]
+    assert code == 0 and [row["id"] for row in seen["snapshot"]["accounts"]] == ["default", work.id]
+    assert [item["name"] for item in seen["tools"]["servers"]] == ["from-my-folder"]  # Default's own folder
+    assert isinstance(server.brain_account, BrainAccount) and server.brain.ask is server.brain_account
+    assert server.skill_writer.ask is server.brain_account and server.agents.accounts is server.accounts

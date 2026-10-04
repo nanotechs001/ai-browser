@@ -1,6 +1,7 @@
-// Settings, in its tab of AI Browser's window: which browser draws that window (wave C adds where agents browse).
-// The choices come from the app; a change is saved there, and applies the next time AI Browser starts. Every name is
-// set as text.
+// Settings, in its tab of AI Browser's window: which browser draws that window, and the Accounts section (AI
+// accounts; wave C adds where agents browse). The choices come from the app; a change is saved there, and the window's
+// browser applies the next time AI Browser starts. Every name is set as text.
+import { mountAccounts } from "./accountsettings.js";
 import { connect } from "./link.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
 
@@ -47,17 +48,32 @@ function handle(message) {
   if (message.type === "snapshot") {
     current = message.settings || null;
     renderWindow();
+    accounts.setRows(message.accounts || []);
+    link.send({ type: "accounts" }); // each account's status, now
   } else if (message.type === "settings") {
     current = message;
     $("window-error").textContent = "";
     renderWindow();
+  } else if (message.type === "accounts") {
+    accounts.setRows(message.accounts || []);
+  } else if (message.type === "account_added" || message.type === "account_signin") {
+    accounts.onMessage(message);
   } else if (message.type === "error" && message.request === "window") {
     $("window-error").textContent = message.text || "";
     renderWindow(); // the saved choice stays checked
+  } else if (message.type === "error" && String(message.request || "").startsWith("acct-")) {
+    accounts.onMessage(message);
   }
 }
+
+const accounts = mountAccounts({ // Settings → Accounts (AI accounts)
+  list: $("accounts"), pickDefault: $("account-default"), pickBrain: $("account-brain"), name: $("account-name"),
+  existing: $("account-existing"), folder: $("account-folder"), add: $("account-add"), error: $("accounts-error"),
+}, (message) => link.send(message));
 
 const link = connect({ view: "settings", onMessage: handle, onState: setStatus });
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
+// Shown again (its tab, or the window after the user signed in in a terminal): each account's status, now
+window.addEventListener("focus", () => link.send({ type: "accounts" }));
 $("home-link").addEventListener("click", () => openTab("/home"));

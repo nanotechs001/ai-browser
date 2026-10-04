@@ -10,11 +10,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 import re
 from collections.abc import Sequence
 from pathlib import Path
 
+from ..accounts import clean_env
 from ..claudecli import claude_argv, spawn_options, track
 from ..syncdir import write_atomic
 
@@ -33,9 +33,13 @@ def server_of(tool: str) -> str:
 
 
 class ToolsConfig:
-    def __init__(self, home: Path, claude_home: Path | None = None):
+    def __init__(self, home: Path, claude_home: Path | None = None, account: str = "default",
+                 env: dict[str, str] | None = None):
         self.path = Path(home) / "tools.json"
         self.claude_home = Path(claude_home) if claude_home is not None else Path.home()
+        self.account = account  # Default's lists are the file's top level; another account's are under "accounts"
+        self.env = dict(env) if env is not None else None  # the account's environment, for the probe
+        self._others: dict[str, ToolsConfig] = {}  # the other accounts' lists, made once each
         data = self._read()
 
         def listed(key: str) -> list:  # a damaged file is read as far as it makes sense
@@ -48,6 +52,15 @@ class ToolsConfig:
                        for server, tools in known.items() if isinstance(tools, list)}
         self._connectors = {str(item["name"]): str(item.get("status", "")) for item in listed("connectors")
                             if isinstance(item, dict) and isinstance(item.get("name"), str)}
+
+    def for_account(self, account: str, claude_home: Path, env: dict[str, str] | None) -> ToolsConfig:
+        """Another account's tools (AI accounts): its own servers, from its own .claude.json, and its own switches
+        and always-allowed tools, in the same tools.json. Default's are this object's."""
+        if account == self.account:
+            return self
+        if account not in self._others:
+            self._others[account] = ToolsConfig(self.path.parent, claude_home, account, env)
+        return self._others[account]
 
     # ---- what the user has -------------------------------------------------------------------------------
 
@@ -144,8 +157,7 @@ class ToolsConfig:
         it before it answers."""
         folder = self.path.parent / "app" / "probe"
         folder.mkdir(parents=True, exist_ok=True)
-        env = {key: value for key, value in os.environ.items()
-               if key not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        env = clean_env(self.env)  # this account's login (AI accounts); never API credentials
         try:
             process = await asyncio.create_subprocess_exec(
                 *claude_argv(claude), "-p", PROBE_PROMPT, "--model", "haiku", "--tools", "", "--setting-sources",
@@ -181,15 +193,32 @@ class ToolsConfig:
 
     # ---- the file ----------------------------------------------------------------------------------------
 
-    def _read(self) -> dict:
+    def _whole(self) -> dict:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
         return data if isinstance(data, dict) else {}
 
+    def _read(self) -> dict:
+        """This account's lists: the file's top level for Default, else its section under "accounts"."""
+        data = self._whole()
+        if self.account == "default":
+            return data
+        others = data.get("accounts")
+        section = others.get(self.account) if isinstance(others, dict) else None
+        return section if isinstance(section, dict) else {}
+
     def _save(self) -> None:
+        """This account's lists, written into the file: every other account's section, and every key this build
+        doesn't know, stay as they are."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"enabled": sorted(self._enabled), "always": sorted(self._always), "known": self._known,
-                "connectors": [{"name": name, "status": status} for name, status in self._connectors.items()]}
-        write_atomic(self.path, json.dumps(data).encode("utf-8"), 0o600)
+        whole = self._whole()
+        section = {"enabled": sorted(self._enabled), "always": sorted(self._always), "known": self._known,
+                   "connectors": [{"name": name, "status": status} for name, status in self._connectors.items()]}
+        if self.account == "default":
+            whole.update(section)
+        else:
+            others = whole.get("accounts") if isinstance(whole.get("accounts"), dict) else {}
+            whole["accounts"] = {**others, self.account: section}
+        write_atomic(self.path, json.dumps(whole).encode("utf-8"), 0o600)

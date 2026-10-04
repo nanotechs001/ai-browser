@@ -14,13 +14,15 @@ import contextlib
 import ctypes
 import functools
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import IO, BinaryIO
 
 WINDOWS = os.name == "nt"
@@ -256,7 +258,80 @@ def open_url(url: str, browser=None, system: str | None = None) -> bool:
     return True
 
 
-RETRY_WAITS = (0.05, 0.1, 0.2, 0.4)  # seconds between tries: Defender, Brave or an editor holds a file that long
+API_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")  # never reach Claude Code: it always uses a login
+
+
+def _ps_quote(text: str) -> str:
+    """One PowerShell word: in single quotes, where only a quote needs doubling."""
+    return "'" + text.replace("'", "''") + "'"
+
+
+def signin_command(claude: Sequence[str], folder: str | None, system: str | None = None) -> str:
+    """What the user pastes in their own terminal to sign an account in (Settings → Accounts → Copy the command):
+    Claude Code with CLAUDE_CONFIG_DIR set to the account's folder (None: Default's own login, as the terminal has
+    it), and without ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN, whatever the user's shell exports. PowerShell's words
+    on Windows (they clear the two in that window), a POSIX shell's elsewhere (`env -u`: only Claude Code goes
+    without them). Every part is quoted."""
+    if _system(system) == "win32":
+        cleared = "".join(f"$env:{name} = $null; " for name in API_VARIABLES)
+        program = "& " + " ".join(_ps_quote(str(part)) for part in claude)
+        return cleared + (f"$env:CLAUDE_CONFIG_DIR = {_ps_quote(folder)}; {program}" if folder else program)
+    cleared = "env " + " ".join(f"-u {name}" for name in API_VARIABLES)
+    program = " ".join(shlex.quote(str(part)) for part in claude)
+    return f"{cleared} CLAUDE_CONFIG_DIR={shlex.quote(folder)} {program}" if folder else f"{cleared} {program}"
+
+
+_PROGRAM = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")  # a program's plain name, safe on cmd.exe's command line
+
+
+def terminal_command(claude: Sequence[str], folder: str | None, system: str | None = None,
+                     env: Mapping | None = None) -> tuple[list[str] | str, dict[str, str]] | None:
+    """How Open Terminal starts a terminal window running Claude Code on one account: (the command, the environment
+    it starts with), or None where it can't.
+    - macOS: Terminal, told by osascript to run signin_command(), which clears the two API variables itself: Terminal
+      runs it in the user's own login shell, whose profile may export them. The command is quoted for the shell, then
+      for AppleScript. An argv.
+    - Windows: `cmd /c start "" cmd /k set "ANTHROPIC_API_KEY=" ^& set "ANTHROPIC_AUTH_TOKEN=" ^& <program>`, one
+      command line, which Windows reads as it is (`^&` reaches the new window's cmd as `&`). The folder and the
+      program's own folder go in the environment, so nothing of ours but the program's plain name is on the command
+      line. A program that isn't one plain .exe gets None.
+    - Elsewhere: None. Copy the command still works there."""
+    system, environment = _system(system), dict(_env(env))
+    if system == "darwin":
+        script = signin_command(claude, folder, "darwin").replace("\\", "\\\\").replace('"', '\\"')
+        return (["osascript", "-e", f'tell application "Terminal" to do script "{script}"',
+                 "-e", 'tell application "Terminal" to activate'], environment)
+    if system == "win32" and len(claude) == 1:
+        program = PureWindowsPath(str(claude[0]))
+        if not _PROGRAM.match(program.stem) or program.suffix.lower() not in ("", ".exe"):
+            return None
+        if folder:
+            environment["CLAUDE_CONFIG_DIR"] = folder
+        if str(program.parent) != ".":
+            environment["PATH"] = ";".join(part for part in (str(program.parent), environment.get("PATH", ""))
+                                           if part)
+        cleared = "".join(f'set "{name}=" ^& ' for name in API_VARIABLES)
+        return (f'cmd /c start "" cmd /k {cleared}{program.stem}', environment)
+    return None
+
+
+def open_terminal(claude: Sequence[str], folder: str | None, env: Mapping | None = None,
+                  system: str | None = None) -> bool:
+    """Open Terminal (Settings → Accounts → Sign in): a terminal window running Claude Code on the account's folder,
+    where the user signs in with their browser. True when the command started; nothing waits for the window."""
+    found = terminal_command(claude, folder, system, env)
+    if found is None:
+        return False
+    command, environment = found
+    try:
+        subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    except OSError:
+        return False
+    return True
+
+
+RETRY_WAITS =(0.05, 0.1, 0.2, 0.4)  # seconds between tries: Defender, Brave or an editor holds a file that long
 
 
 def _retrying(action):

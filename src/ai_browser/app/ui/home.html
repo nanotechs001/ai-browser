@@ -43,6 +43,7 @@
         <option value="opus">Opus · best</option>
         <option value="haiku">Haiku · fastest</option>
       </select>
+      <select id="task-account" aria-label="Account" hidden></select>
       <span class="muted grow">Or type <kbd>ai</kbd> and a space in Brave's address bar</span>
       <button id="start" class="primary">Start</button>
     </div>
@@ -53,6 +54,7 @@
     <section aria-label="Agents">
       <section aria-label="Brain">
         <h2>Brain <span class="muted">· new messages, and the ones that need you</span></h2>
+        <div id="brain-limit" class="card account-ask" role="status" hidden></div>
         <div id="brain"></div>
       </section>
       <h2>Agents</h2>

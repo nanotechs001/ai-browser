@@ -23,6 +23,28 @@
     <p class="muted">The microphone is allowed per browser: after a switch, the window asks for it once more.</p>
     <p id="window-error" class="muted" role="status"></p>
   </section>
+  <section id="accounts-section" class="card" aria-labelledby="accounts-title">
+    <h2 id="accounts-title">Accounts</h2>
+    <p class="muted">Your Claude logins. New agents use the default one, and each agent keeps its own until you move
+      it.</p>
+    <div id="accounts" class="accounts"></div>
+    <div class="account-choice">
+      <label for="account-default">Default account for new agents</label>
+      <select id="account-default"></select>
+      <label for="account-brain">The Brain's account</label>
+      <select id="account-brain"></select>
+    </div>
+    <div class="account-add">
+      <input id="account-name" type="text" maxlength="40" autocomplete="off" placeholder="Name, for example Work"
+             aria-label="The new account's name">
+      <label class="check"><input id="account-existing" type="checkbox"> Use a Claude Code folder I already
+        have</label>
+      <input id="account-folder" type="text" maxlength="1000" autocomplete="off" placeholder="The folder's full path"
+             aria-label="The folder's full path" hidden>
+      <button id="account-add" type="button">Add</button>
+    </div>
+    <p id="accounts-error" class="muted" role="status"></p>
+  </section>
 </main>
 <script type="module" src="settings.js"></script>
 </body>
