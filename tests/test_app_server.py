@@ -1963,3 +1963,105 @@ async def test_websites_open_in_the_users_browser(fake_claude, tmp_path, monkeyp
         assert opened == ["https://example.com/pricing?a=1", "https://example.com"]  # never from the watcher
     finally:
         await server.stop()
+
+
+async def watcher_hello(server, url):
+    """Brave's watcher on the app's socket (its token and origin), after its hello."""
+    server.allow_watcher(WATCHER)
+    ws = await connect(socket_url(server, url), origin=WATCHER, proxy=None)
+    await ws.send(json.dumps({"type": "hello", "view": "watcher"}))
+    return ws
+
+
+async def keyword_server(fake_claude, tmp_path, names):
+    """(server, agents, slugs, ran): a server with workflows `names`, whose runner records (slug, text) and makes an
+    agent with no process behind it (ids from a9 down, so they never meet AgentManager's own a1, a2…)."""
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
+
+    runner_bin, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    home = tmp_path / "home"
+    agents = AgentManager(home, claude=runner_bin)
+    store = WorkflowStore(home)
+    for name in names:
+        store.save({"name": name, "instructions": f"Run {name}", "trigger": "manual"})
+    slugs = {workflow.name: workflow.slug for workflow in store.all()}
+    runner = WorkflowRunner(store, agents)
+    ran = []
+
+    async def run(slug, text=None, page=None):
+        ran.append((slug, text))
+        return add_agent(agents, f"a{10 - len(ran)}", name=f"Run {slug}").id
+
+    runner.run = run
+    server = AppServer(home, agents, workflows=store, runner=runner)
+    await server.start()
+    return server, agents, slugs, ran
+
+
+async def test_the_keyword_starts_an_agent_from_the_watcher_only(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    server.settings.set("model", "opus")
+    try:
+        ws = await watcher_hello(server, url)
+        await ws.send(json.dumps({"type": "ai_keyword", "text": "  check the shop  ", "request": "k1",
+                                  "adopt": "U1", "tab": {"url": "https://mail.example/", "title": "Mail"}}))
+        answer = (await until(ws, lambda message: message["type"] == "keyword_started"))[-1]
+        assert answer == {"type": "keyword_started", "request": "k1", "id": "a1", "number": 1,
+                          "name": "check the shop"}
+        agent = server.agents.agents["a1"]
+        assert agent.model == "opus" and agent.adopted == [] and agent.working_tab is None  # typing hands no tab
+        await ws.send(json.dumps({"type": "ai_keyword", "text": "   ", "request": "k2"}))
+        await asyncio.sleep(0.3)
+        assert list(server.agents.agents) == ["a1"]  # an empty text does nothing
+        await ws.close()
+        async with ui_socket(server, url) as page:  # AI Home never sends it: its own Start does that
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            await recv(page)
+            await page.send(json.dumps({"type": "ai_keyword", "text": "from a page", "request": "k3"}))
+            await asyncio.sleep(0.3)
+        assert list(server.agents.agents) == ["a1"]
+    finally:
+        await server.stop()
+
+
+async def test_the_keyword_runs_a_workflow_by_its_name(fake_claude, tmp_path):
+    server, agents, slugs, ran = await keyword_server(fake_claude, tmp_path, ("qa", "qa site"))
+    try:
+        assert server._keyword_workflow("qa site example.com") == (slugs["qa site"], "example.com")  # longest wins
+        assert server._keyword_workflow("QA SITE") == (slugs["qa site"], "")
+        assert server._keyword_workflow("qasite") is None and server._keyword_workflow("check qa") is None
+        ws = await watcher_hello(server, server.url)
+        await ws.send(json.dumps({"type": "ai_keyword", "text": "qa site example.com", "request": "k1"}))
+        answer = (await until(ws, lambda message: message["type"] == "keyword_started"))[-1]
+        assert ran == [(slugs["qa site"], "example.com")]
+        assert (answer["id"], answer["number"], answer["name"]) == ("a9", 9, "Run " + slugs["qa site"])
+        await ws.send(json.dumps({"type": "ai_keyword", "text": "qa", "request": "k2"}))
+        await until(ws, lambda message: message["type"] == "keyword_started")
+        assert ran[1] == (slugs["qa"], None)  # nothing after the name: the workflow alone
+        await ws.close()
+    finally:
+        await server.stop()
+
+
+async def test_the_keyword_ignores_case_spaces_and_trims_long_text(fake_claude, tmp_path):  # Review Focus 4
+    server, agents, slugs, ran = await keyword_server(fake_claude, tmp_path, ("qa site",))
+    try:
+        ws = await watcher_hello(server, server.url)
+        await ws.send(json.dumps({"type": "ai_keyword", "text": "QA Site   example.com ", "request": "k1"}))
+        await until(ws, lambda message: message["type"] == "keyword_started")
+        assert ran == [(slugs["qa site"], "example.com")]
+        await ws.send(json.dumps({"type": "ai_keyword", "text": "x" * 3000, "request": "k2"}))
+        answer = (await until(ws, lambda message: message["type"] == "keyword_started"))[-1]
+        agent = agents.agents[answer["id"]]
+        for _ in range(100):  # the agent's turn starts with the user's words
+            if any(event.get("type") == "user" for event in agent.events):
+                break
+            await asyncio.sleep(0.05)
+        assert [event["text"] for event in agent.events if event.get("type") == "user"] == ["x" * 2000]
+        assert len(ran) == 1  # one agent, no workflow
+        await ws.close()
+    finally:
+        await server.stop()

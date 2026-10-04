@@ -256,21 +256,6 @@ async def test_a_workflow_loads_its_skills_and_only_its_tools(fake_claude, tmp_p
     await agents.close_all()
 
 
-@CHROME
-async def test_ai_and_a_workflow_name_in_the_address_bar(home):
-    js, worker_js, stack = home
-    stack["workflows"].save({**FOOTER, "trigger": "manual", "tools": [], "skills": []})
-    stack["server"].workflows_changed()
-    await asyncio.sleep(1)  # the worker hears of the new workflow
-    await worker_js("startTask('Footer Fix the header'); true")
-    for _ in range(100):
-        if user_messages(stack["log"]):
-            break
-        await asyncio.sleep(0.1)
-    content = user_messages(stack["log"])[0]["message"]["content"]
-    assert content.startswith("Open the site, fix the footer") and content.rstrip().endswith("The user adds: the header")
-
-
 def test_workflows_and_skills_keep_arrows_emoji_and_cjk(tmp_path):
     from ai_browser.brain.skillwriter import SkillWriter
     from ai_browser.brain.workflows import WorkflowStore

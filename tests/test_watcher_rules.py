@@ -44,6 +44,7 @@ SENDS = {
     **{kind: (True, False) for kind in ("watch", "events", "thumbs")},
     "settings_set": (True, False),  # app-window: the model, Voice and the window's browser
     "open_url": (True, False),  # app-window: a website link in our pages
+    "ai_keyword": (False, True),  # app-window: Brave's address bar, through the watcher's omnibox
 }
 
 
@@ -51,9 +52,9 @@ def test_the_message_table_has_exactly_the_written_down_types():
     from ai_browser.app.server import MESSAGE_RULES
 
     assert set(MESSAGE_RULES) == set(SENDS)
-    assert len(SENDS) == 59
+    assert len(SENDS) == 60
     assert sum(1 for app, _ in SENDS.values() if app) == 52
-    assert sum(1 for _, watcher in SENDS.values() if watcher) == 22  # the two conditional rows count as allowed
+    assert sum(1 for _, watcher in SENDS.values() if watcher) == 23  # the two conditional rows count as allowed
 
 
 @pytest.mark.parametrize("kind", sorted(SENDS))
@@ -366,7 +367,8 @@ async def test_show_me_with_no_tab_source_does_nothing(fake_claude, tmp_path):  
 RECEIVES = {"ping", "error", "watcher_hello", "watch_list", "notify", "permission_request", "check_request",
             "group_tab", "ungroup_tabs", "open_thread", "fill_reply",  # the worker's
             "snapshot", "agent", "agent_closed", "brain_snapshot", "brain_item", "brain_item_gone",
-            "brain_state"}  # the Brain page's
+            "brain_state",  # the Brain page's
+            "keyword_started"}  # app-window: the ai keyword's answer
 NEVER = {"tabs", "thumb", "thumbs", "sessions", "browser", "agent_event", "agent_events", "created", "brain_activity",
          "brain_answer", "hearing_status", "heard", "tools_snapshot", "workflows_snapshot", "workflow_saved", "skills",
          "skill_drafted", "skill_diff", "skill_saved",
@@ -383,7 +385,7 @@ AGENT_ROW = {"id": "a1", "name": "Fix the footer", "color": "blue", "model": "so
 def test_what_the_watcher_receives_is_a_fixed_list():
     from ai_browser.app.server import WATCHER_AGENT_FIELDS, WATCHER_RECEIVES, for_watcher
 
-    assert WATCHER_RECEIVES == RECEIVES and len(RECEIVES) == 18
+    assert WATCHER_RECEIVES == RECEIVES and len(RECEIVES) == 19
     assert WATCHER_AGENT_FIELDS == ("id", "name", "color", "state", "permission")
     for kind in RECEIVES | NEVER:
         assert (for_watcher({"type": kind}) is not None) is (kind in RECEIVES), kind

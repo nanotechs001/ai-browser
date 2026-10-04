@@ -79,6 +79,7 @@ OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own fi
 CODE_TTL = 60  # seconds a one-time start code is good for
 SETTING_KEYS = ("model", "voice", "window_browser")
 URL_LIMIT = 2000  # characters of a website address a page may ask the user's browser to open
+KEYWORD_LIMIT = 2000  # characters of what the user typed after "ai" in Brave's address bar
 NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
 USED_CODE = "This start link was used already or has expired. Start AI Browser again."
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
@@ -137,6 +138,7 @@ MESSAGE_RULES: dict[str, Rule] = {
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
     "settings_set": Rule(app=True, watcher=False),  # the window's Settings, AI Home's and Mission Control's picks
     "open_url": Rule(app=True, watcher=False),  # a website link in one of our pages
+    "ai_keyword": Rule(app=False, watcher=True),  # Brave's address bar: only the watcher's omnibox handler
 }
 
 
@@ -160,6 +162,7 @@ WATCHER_RECEIVES = frozenset({
     "ping", "error", "watcher_hello", "watch_list", "notify", "permission_request", "check_request", "group_tab",
     "ungroup_tabs", "open_thread", "fill_reply",  # for the worker
     "snapshot", "agent", "agent_closed", "brain_snapshot", "brain_item", "brain_item_gone", "brain_state",  # Brain page
+    "keyword_started",  # the worker: the answer to the ai keyword
 })
 WATCHER_AGENT_FIELDS = ("id", "name", "color", "state", "permission")  # what the Brain page reads of an agent
 
@@ -477,6 +480,40 @@ class AppServer:
         browser = await asyncio.to_thread(self._agents_browser)
         if not await asyncio.to_thread(platforms.open_url, url, browser):
             queue.put_nowait({"type": "error", "text": "Couldn't open that address in your browser"})
+
+    def _keyword_workflow(self, text: str) -> tuple[str, str] | None:
+        """The workflow a keyword's text starts with: the longest name it starts with, then a space or nothing more,
+        without regard to case. (slug, the rest of the text), or None."""
+        if self.workflows is None:
+            return None
+        lower, found = text.lower(), None
+        for workflow in self.workflows.all():
+            name = workflow.name.lower()
+            if (lower == name or lower.startswith(f"{name} ")) and (found is None or len(name) > len(found[0])):
+                found = (name, workflow.slug)
+        return None if found is None else (found[1], text[len(found[0]):].strip())
+
+    async def _keyword(self, queue: asyncio.Queue, message: dict) -> None:
+        """"ai", a space and a task in Brave's address bar: the user's own Enter, like Start in AI Home. It never
+        goes through the Brain, and it never hands over a tab: adopt and tab are ignored here."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        text = message.get("text").strip()[:KEYWORD_LIMIT].strip() if isinstance(message.get("text"), str) else ""
+        if not text:
+            return
+        try:
+            found = self._keyword_workflow(text)
+            if found is not None and self.runner is not None:
+                agent_id = await self.runner.run(found[0], text=found[1] or None)
+            else:
+                model = self.settings.get()["model"] or self.default_model
+                agent_id = (await self.agents.create(text, [], model)).id
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "request": request, "text": str(exc)})
+            return
+        agent = self.agents.agents.get(agent_id)
+        queue.put_nowait({"type": "keyword_started", "request": request, "id": agent_id,
+                          "number": agent.number if agent is not None else int(agent_id[1:]),
+                          "name": agent.name if agent is not None else ""})
 
     def _saved_port(self) -> int | None:
         """The port this home used before (the microphone grant belongs to that address), if it is one of ours."""
@@ -1153,6 +1190,8 @@ class AppServer:
             self._settings_set(queue, message)
         elif kind == "open_url":
             self._job(self._open_url(queue, message))
+        elif kind == "ai_keyword":
+            await self._keyword(queue, message)
         elif kind == "new_task":
             request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
             text = _text(message.get("text"))
