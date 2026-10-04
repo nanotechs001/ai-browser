@@ -125,7 +125,7 @@ def agent_engine(server, front: Path, tmp_path: Path, monkeypatch, agent: str) -
 @pytest.mark.parametrize("binary", BROWSERS)
 async def test_one_question_for_the_app_two_agents_and_a_session(binary, tmp_path, monkeypatch):
     process = approval_mode_browser(binary, tmp_path / "browser")
-    counter = server = brave = None
+    counter = server = brave = starting = again = None
     engines = []
     try:
         port, path = await active_port(tmp_path / "browser")
@@ -154,11 +154,11 @@ async def test_one_question_for_the_app_two_agents_and_a_session(binary, tmp_pat
         assert counter.questions == 1  # the app, two agents and a session: one question, shared
 
         texts = [result.text for result in await asyncio.gather(*calls)]  # nobody clicks Allow
-        await starting
-        assert brave.state == "refused"
-        assert all("Brave said no to AI Browser's connection" in text for text in texts), texts
+        assert brave.state == "asking" and not starting.done()  # the question stays until the user answers it
+        assert all('is asking "Allow remote debugging?"' in text for text in texts), texts
+        again = asyncio.ensure_future(brave.connect("connect"))  # Connect pressed again: the same question
         await asyncio.sleep(2)
-        assert counter.questions == 1  # and nothing asks again by itself
+        assert counter.questions == 1 and not again.done()  # nothing asks again, by itself or on Connect
 
         for _ in range(2):  # the contrast: connections of their own (as engines made before) ask once each
             with pytest.raises(Exception):
@@ -171,7 +171,8 @@ async def test_one_question_for_the_app_two_agents_and_a_session(binary, tmp_pat
         if server is not None:
             await server.stop()
         if brave is not None:
-            await brave.close()
+            await brave.close()  # ends the question's handshake: the waiting connects return
+        await asyncio.gather(*[task for task in (starting, again) if task is not None], return_exceptions=True)
         if counter is not None:
             counter.stop()
         process.terminate()

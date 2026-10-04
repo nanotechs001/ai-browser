@@ -32,7 +32,7 @@ from .tasklog import TaskLog, new_task_id
 from .workfs import PathError, WorkDir
 
 DESCRIPTION_LIMIT = 160
-CHROME_ALLOW_WAIT = 60  # seconds to wait for the user to click "Allow" in Chrome
+CHROME_ALLOW_WAIT = 60  # seconds a call waits for the user's "Allow"; the question itself stays until they answer
 RECONNECTED = {"chrome": "(reconnected to your {name}: earlier tabs and element ids from this session are gone)\n",
                "app": "(reconnected to AI Browser: earlier tabs and element ids from this session are gone)\n"}
 BROWSER_KINDS = {"": "chrome", "own": "chrome", "chrome": "chrome", "brave": "chrome", "sandbox": "sandbox",
@@ -97,6 +97,17 @@ def _alive(pid: int) -> bool:
     return platforms.pid_alive(pid)
 
 
+_CLOSING: set[asyncio.Task] = set()  # closes of direct connections nobody uses any more, kept until they finish
+
+
+def _close_if_allowed(asking: asyncio.Future) -> None:
+    """A done-callback for a direct handshake nobody waits for: if the user allowed it, close the connection at once."""
+    if not asking.cancelled() and asking.exception() is None:
+        task = asyncio.ensure_future(asking.result().close())
+        _CLOSING.add(task)
+        task.add_done_callback(_CLOSING.discard)
+
+
 def _clean(text: str) -> str:
     """Replace lone UTF-16 surrogates (half an emoji) so tool text is always valid UTF-8."""
     return re.sub("[\ud800-\udfff]", "�", text)
@@ -153,6 +164,7 @@ class Engine:
         self._direct_ok = False  # sandbox_start(chrome=true): the user chose a direct connection
         self._folder: Path | None = None  # the browser folder this session connects to (its name in every text)
         self._note = ""
+        self._asking: dict[str, asyncio.Future] = {}  # ws url -> a direct handshake whose question is still open
 
     @property
     def catalog(self) -> Catalog:
@@ -230,13 +242,10 @@ class Engine:
             cdp = await self._through_relay(route)
             self._relayed = self._via_relay = True
             self._direct_ok = False
+            self._drop_direct()
         else:
             name = self._browser_name() if mode == "chrome" else "Chrome"
-            try:
-                cdp = await CDP.connect(ws_url, open_timeout=CHROME_ALLOW_WAIT)
-            except Exception as exc:
-                raise ChromeError(f"{name} didn't accept the connection ({type(exc).__name__}): when {name} asks "
-                                  "\"Allow remote debugging?\", click Allow, then try again") from None
+            cdp = await self._direct(ws_url, name)
         work_host = self.home / "sandboxes" / "chrome" / "work"  # shared with the shell container of both modes
         work = WorkDir(work_host, self.task_id)
         adopt = os.environ.get("AIB_APP_ADOPT", "") if agent else ""
@@ -303,6 +312,36 @@ class Engine:
         if self._via_relay and not self._direct_ok:
             raise ChromeError(APP_GONE.format(name=browser_name(self._folder or own_browser_dir())))
         return Route("direct", own_browser_dir(), link=link)
+
+    async def _direct(self, ws_url: str, name: str) -> CDP:
+        """A connection of this session's own (no app). The browser's "Allow remote debugging?" isn't tied to the
+        handshake that asked: one given up on leaves the question on screen, and Allow there later opens a connection
+        nobody holds (see app/cdprelay.py). So the handshake stays until the user answers: a call waits
+        CHROME_ALLOW_WAIT for the answer, and the next call joins the same handshake instead of asking again."""
+        asking = self._asking.get(ws_url)
+        if asking is None or asking.cancelled() or (asking.done() and asking.exception() is not None):
+            asking = self._asking[ws_url] = asyncio.ensure_future(CDP.connect(ws_url, open_timeout=None))
+        try:
+            cdp = await asyncio.wait_for(asyncio.shield(asking), CHROME_ALLOW_WAIT)
+        except TimeoutError:
+            raise ChromeError(f"{name} is asking \"Allow remote debugging?\": ask the user to click Allow there, then "
+                              "try again (the next call uses the same question)") from None
+        except Exception as exc:
+            if self._asking.get(ws_url) is asking:
+                del self._asking[ws_url]
+            raise ChromeError(f"{name} didn't accept the connection ({type(exc).__name__}): when {name} asks "
+                              "\"Allow remote debugging?\", click Allow, then try again") from None
+        self._asking.pop(ws_url, None)
+        return cdp
+
+    def _drop_direct(self) -> None:
+        """The app's relay serves this session now. A connection the session's own question opened is closed, not held
+        unused (the browser would count two, and its bar would come back whenever one opened or closed). A question
+        still open is left to the user's answer, since ending its handshake would leave it on screen with nothing
+        behind it; if they allow it, that connection closes at once."""
+        for asking in self._asking.values():
+            asking.add_done_callback(_close_if_allowed)
+        self._asking.clear()
 
     async def _through_relay(self, route: Route) -> CDP:
         """The app's relay: an agent with its own token; a session says hello first, for its token. An error here is
@@ -986,3 +1025,8 @@ class Engine:
             await self._link.flush()
         if self.live is not None:
             await self.live.stop()
+        for asking in self._asking.values():  # a handshake still waiting for an answer ends with the session
+            asking.cancel()
+            if asking.done() and not asking.cancelled() and asking.exception() is None:
+                await asking.result().close()  # allowed after the last call: nobody holds it
+        self._asking.clear()

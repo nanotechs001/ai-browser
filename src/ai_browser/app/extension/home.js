@@ -245,7 +245,7 @@ function renderBrowser() {
     ready: `${name} will ask "Allow remote debugging?" once for AI Browser: click Allow`,
     asking: `${name} is asking "Allow remote debugging?": click Allow there (or Deny). Everything waiting for `
             + `${name} shares this one question.`,
-    refused: `${name} said no, or nobody answered.`,
+    refused: `${name} said no.`,
     lost: `${name} quit or restarted.`,
   }[browser.state]);
   const why = { no_watcher: `Load the watcher in ${name} to group the AI's tabs; until then they open in a window of `

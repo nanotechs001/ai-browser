@@ -63,12 +63,11 @@ async def test_the_states_follow_the_switch_and_the_users_answer(tmp_path):
         await link.close()
 
 
-@pytest.mark.parametrize("answer", ["refuse", "silent"])
-async def test_deny_or_no_answer_is_refused_and_never_retried(tmp_path, answer):
+async def test_deny_is_refused_and_never_retried(tmp_path):
     from ai_browser.app.bravelink import BraveLink
 
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    port = FakePort(folder, answer=answer)
+    port = FakePort(folder, answer="refuse")
     await port.start()
     link = BraveLink(folder, allow_wait=0.5, every=0.1)
     await link.start()
@@ -78,6 +77,32 @@ async def test_deny_or_no_answer_is_refused_and_never_retried(tmp_path, answer):
         assert link.state == "refused" and port.sessions == 1
         await asyncio.sleep(0.5)
         assert link.state == "refused" and port.sessions == 1  # it never asks again by itself
+    finally:
+        await link.close()
+        await port.stop()
+
+
+async def test_no_answer_keeps_the_one_question_open(tmp_path):
+    """Nobody answers yet: the question stays (cdprelay never gives up on it), and Connect pressed again joins it
+    instead of asking a second time."""
+    from ai_browser.app.bravelink import BraveLink
+
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder, answer="silent")
+    await port.start()
+    link = BraveLink(folder, allow_wait=0.5, every=0.1)
+    await link.start()
+    try:
+        first = asyncio.ensure_future(link.connect())
+        assert await until(lambda: link.state == "asking")
+        await asyncio.sleep(1.5)  # three times allow_wait
+        again = asyncio.ensure_future(link.connect())  # AI Home's Connect, pressed again
+        await asyncio.sleep(0.3)
+        assert link.state == "asking" and port.sessions == 1 and not first.done() and not again.done()
+        port.answer = "accept"
+        port.release.set()  # the user clicks Allow
+        await asyncio.wait_for(asyncio.gather(first, again), 10)
+        assert link.state == "connected" and port.sessions == 1
     finally:
         await link.close()
         await port.stop()

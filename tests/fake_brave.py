@@ -42,7 +42,8 @@ class FakePort:
         self._targets = self._sessions = 0
 
     async def start(self):
-        self.server = await serve(self._handler, "127.0.0.1", 0, process_request=self._process, max_size=None)
+        self.server = await serve(self._handler, "127.0.0.1", 0, process_request=self._process, max_size=None,
+                                  open_timeout=None)  # like Brave: a handshake waits for its answer
         port = self.server.sockets[0].getsockname()[1]
         self.folder.mkdir(parents=True, exist_ok=True)
         (self.folder / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/fake\n", encoding="utf-8")
@@ -51,6 +52,9 @@ class FakePort:
         self.sessions += 1  # a debugging session asked for: the moment the real Brave would ask "Allow?"
         if self.answer == "silent":
             await asyncio.wait_for(self.release.wait(), 30)
+        if self.answer == "vanish":  # Brave quits while it asks: the handshake ends with no answer at all
+            connection.transport.abort()
+            return connection.respond(500, "")  # never reaches the client
         if self.answer == "refuse":
             return connection.respond(403, "Denied\n")
         return None
