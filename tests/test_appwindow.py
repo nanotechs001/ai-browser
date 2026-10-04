@@ -298,3 +298,19 @@ def test_the_docs_say_the_window_is_never_automated():
     assert flat("plans/2026-10-02-ai-home.md").count(CORRECTED) == 1
     assert ("the user's own browser is chosen before a task, for their logins; it is never a way around a block. A "
             "bot check is handed to the user in every mode.") in flat("specs/2026-10-02-own-chrome-mode-design.md")
+
+
+def test_the_readme_describes_the_window():
+    from ai_browser.config import project_root
+
+    text = " ".join((project_root() / "README.md").read_text(encoding="utf-8").split())
+    assert "uv run ai-browser app [--window auto|chrome|brave|edge]" in text
+    assert "AI Browser's window has no debugging port, and no agent browses there." in text
+    assert "~/.ai-browser/browser/" in text and "delete them by hand" in text
+    section = text.split("## AI Browser (its own window", 1)[1].split("## The Brain", 1)[0]
+    for gone in ("Load unpacked", "chrome://extensions", "⌘⇧Y", "Debugging port:", "toolbar badge",
+                 "pinned first tab", "Keep it"):
+        assert gone not in section, gone
+    for kept in ("Settings", "Mission Control", "open only in its own window", "Ctrl-C"):
+        assert kept in section, kept
+    assert "--browser app" not in text and "AIB_APP_BROWSER=app" not in text

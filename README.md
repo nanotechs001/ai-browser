@@ -17,7 +17,7 @@ Claude is the worker, so no LLM API keys are needed.
 Three parts, with designs and plans in `docs/superpowers/`:
 - **the engine** (tools, sandbox, your-own-browser mode);
 - **Website QA** (`qa` tool and skill);
-- **the AI Browser app** (a Chrome with a Claude side panel).
+- **the AI Browser app** (its own window: AI Home, Mission Control and the Brain).
 
 WordPress and Elementor skills come next.
 
@@ -58,13 +58,9 @@ ai-browser runs natively on Windows 10 (22H2) and Windows 11, 64-bit. In PowerSh
    ```powershell
    claude mcp add ai-browser --scope user -e PYTHONUTF8=1 -- uv run --directory C:\dev\ai-browser ai-browser mcp
    ```
-5. **AI Browser:** `uv run ai-browser app`.
-   - The setup page and `chrome://extensions` open, and File Explorer shows the `extension` folder, selected.
-   - Drag that folder onto the page, or click **Load unpacked** and paste the path into the address bar at the top
-     of the folder window.
-   - The page then says **All set**. The chat shortcut is **Ctrl+Shift+Y**.
-   - **Google sign-in:** sites can see that AI Browser is automated, and Google refuses to sign in there. For Google
-     work, use your everyday Brave (step 6), chosen before the task.
+5. **AI Browser:** `uv run ai-browser app`. It opens in a window of its own, drawn by Microsoft Edge (or the
+   browser you pick in AI Browser's Settings), with nothing to load by hand. Close the window, or press Ctrl-C in
+   the terminal, to stop it.
 6. **Brave, once, after step 5** (the first `ai-browser app` makes the watcher's folder):
    - open `brave://extensions`, turn on **Developer mode**, click **Load unpacked** and pick
      `%USERPROFILE%\.ai-browser\app\watcher`;
@@ -94,7 +90,7 @@ ai-browser runs natively on Windows 10 (22H2) and Windows 11, 64-bit. In PowerSh
   full path of `claude.exe`.
 - **Chrome in an unusual place:** set `AIB_CHROME_BINARY` to the full path of `chrome.exe`.
 - **`~` in PowerShell:** native programs don't expand it. Use `$HOME` or `$env:USERPROFILE`.
-- **Files that hold tokens** (the extension's `config.json`, each agent's `mcp.json`, `link.json`) keep Windows'
+- **Files that hold tokens** (the watcher's `config.json`, each agent's `mcp.json`, `link.json`) keep Windows'
   per-user permissions on your folder: you, SYSTEM and Administrators.
 - **Running inside WSL2** works with the Linux code, but needs Linux Chrome and Brave inside WSL.
 
@@ -121,8 +117,6 @@ as a way around a block:
   browser's folder is found by itself, Brave first, or set `AIB_CHROME_DIR`.
 - **The Docker sandbox:** call `sandbox_start()` in a session, or set `AIB_BROWSER=sandbox` for one. Setting only
   `AIB_PROFILE` (a sandbox profile, see [Logging in to sites](#logging-in-to-sites)) chooses it too.
-- **AI Browser:** `ai-browser app --browser app` (or `AIB_APP_BROWSER=app`). Agents then browse in AI Browser's own
-  Chrome, as before.
 
 If your Brave can't be reached, the agent says how to turn the switch on and asks you. It never moves to another
 browser by itself. Website QA (`qa`) crawls in the Docker sandbox, unless you ask for your own browser first
@@ -142,42 +136,38 @@ Ctrl-C when done; the login stays saved. In Claude Code, use `sandbox_start(prof
 `AIB_PROFILE=client-acme` for the session: with no `AIB_BROWSER` set, that chooses the sandbox up front, with that
 profile's logins. If `AIB_BROWSER` names your Brave, the profile isn't used, and the status line says so.
 
-## AI Browser (a browser with AI Home and Claude agents)
+## AI Browser (its own window: AI Home, Mission Control and the Brain)
 
 ```bash
 uv run ai-browser app            # add --model haiku for the fastest replies, or opus for the most capable
 ```
 
-AI Browser is a Google Chrome with a profile of its own (`~/.ai-browser/browser/`), with its own logins and
-extensions, apart from your everyday browser. Agents drive it through Chrome's debugging port, and that port alone puts
-Chrome in automation mode: every page reads `navigator.webdriver` as true (measured with Chrome 154). Sites can see
-that AI Browser is automated, and Google refuses to sign in there ("This browser or app may not be secure"). Nothing
-hides this. Agents browse in your everyday Brave by default ([Which browser](#which-browser)), where you are signed in
-yourself: chosen before the task, for your logins, and nothing switches browsers on its own after a block. AI Browser
-is their control room: AI Home, Mission Control and the chat panel. With `--browser app`, agents browse in AI Browser
-itself, as before. When a site answers with a bot check, the agent stops and hands it to you
-([Bot checks](#bot-checks)).
+AI Browser opens in a window of its own: a title bar only, with no tabs and no address bar. An installed browser
+draws it in its app mode, on a profile of AI Browser's own (`~/.ai-browser/app/window/<browser>/`), with no
+debugging port. Nothing drives that window, so it never asks "Allow remote debugging?" and shows no automation bar,
+and no agent browses there. Agents browse in your everyday Brave ([Which browser](#which-browser)), where you are
+signed in yourself: chosen before the task, for your logins, and nothing switches browsers on its own after a
+block. When a site answers with a bot check, the agent stops and hands it to you ([Bot checks](#bot-checks)).
 
-**First start (once).** AI Browser opens a setup page and `chrome://extensions`, and a Finder window shows the
-extension folder:
-1. Turn on **Developer mode** (top right of `chrome://extensions`).
-2. Drag the **extension** folder from Finder onto that page. Alternatively, click **Load unpacked**, press ⌘⇧G, paste
-   `~/.ai-browser/app/extension`, press Enter, then click **Select**.
-3. Pin the AI Browser icon from the puzzle-piece menu.
+**Which browser draws the window:** Settings → App window offers **Auto**, **Google Chrome**, **Brave**, and
+**Microsoft Edge** on Windows. Auto picks Google Chrome on a Mac whose everyday browser is Brave, so a link clicked
+in another app never lands in AI Browser's window, and Microsoft Edge on Windows. The Dock (the taskbar on Windows)
+shows that browser's icon while AI Browser is open. A change applies at the next start;
+`uv run ai-browser app --window brave` picks one for a single run.
 
-If AI Browser is already listed there but switched off, switch it on. When Chrome asks whether to keep the new tab
-page, choose **Keep it**: AI Home is the new tab page, and "Change it back" switches AI Browser off.
+**First start (once):** there is nothing to load in the window. The terminal shows the watcher's steps for Brave,
+and Finder (File Explorer on Windows) shows the watcher's folder. AI Home's browser card and the Brain's **Set it
+up** open the same steps in a small window.
 
-The extension stays installed. From then on, AI Browser opens on AI Home.
-
-**AI Home** is the pinned first tab, and every new tab.
-- **Start a task:** pick skills and a model if you like. You can also type `ai`, a space and the task in the address
-  bar.
+**AI Home** is the window's first page.
+- **Start a task:** pick skills and a model if you like. In Brave you can also type `ai`, a space and the task in
+  the address bar: the watcher passes it on, and Brave says "Started 4 · Fix the footer".
 - **Agents:**
   - Up to 3 work at once (`AIB_APP_MAX_AGENTS`); the rest wait in line.
-  - Each row shows what the agent is doing now, its last action with timing, a small picture of its tab, and its time
-    and cost.
+  - Each row shows what the agent is doing now, its last action with timing, a small picture of its tab, and its
+    time and cost.
   - Each row has **Watch**, **Chat**, **Stop** and **Close**.
+  - The window's title counts the agents at work: "(2) AI Home".
 - **Your browser:** a card at the top says where agents browse and whether your Brave is connected. When Brave's
   switch is off, it shows the steps; when Brave asks "Allow remote debugging?", it says so.
 - **Tabs:** the web tabs of the Brave profile the watcher is in (without the watcher, the profile you used last),
@@ -189,29 +179,34 @@ The extension stays installed. From then on, AI Browser opens on AI Home.
 - **Skills:**
   - every one of Claude's skills (personal, plugins, claude.ai, ai-browser), and which ones each agent loaded;
   - add one to a new task, or ask a running agent to use it.
+- **Settings** (beside **Mission Control**): which browser draws the window. The model you pick and Voice are
+  remembered by AI Browser itself, in every window and across restarts.
 
-**In the browser:**
-- Each agent's tabs sit in a coloured tab group in your Brave, named after its task. The Brain's watcher makes the
-  groups. Without the watcher, each tab the AI opens gets a window of its own.
-- The toolbar badge shows how many agents are working.
-- The chat beside the page in AI Browser (its toolbar icon, or ⌘⇧Y) shows the agent that was active last, and a
-  task typed there starts an agent that works in your Brave. With `--browser app`, it follows the tab you are on,
-  shows that tab's agent, or starts one right there, in your tab, which the agent never closes.
+**Windows and links:** Mission Control, Settings, the setup steps and an agent's live view open as small windows of
+their own; a second click brings the open one forward. A link to a website opens in your Brave, never in AI
+Browser's window. Each agent's tabs sit in a coloured tab group in your Brave, named after its task. The Brain's
+watcher makes the groups. Without the watcher, each tab the AI opens gets a window of its own.
 
 How it works:
-- **Claude:** each agent is Claude Code on this Mac (`claude -p`), signed in with your Claude account, with no API
-  keys. Its only tools are ai-browser's. Shell commands and skill scripts run in the Docker sandbox.
-- **Background agents:** tasks from AI Home or the address bar work in background tabs. They never take your focus,
-  and they stay at full speed. **Watch** brings one to the front.
+- **Claude:** each agent is Claude Code on this computer (`claude -p`), signed in with your Claude account, with no
+  API keys. Its only tools are ai-browser's. Shell commands and skill scripts run in the Docker sandbox.
+- **Background agents:** tasks from AI Home, Mission Control or Brave's address bar work in background tabs. They
+  never take your focus, and they stay at full speed. **Watch** brings one to the front.
 - **Stop and Close:** **Stop** interrupts an agent and keeps its tabs. **Close** ends it and closes the tabs it
   opened; your own tabs stay open.
-- **Logins:** log in yourself, in the window. Claude never types passwords, and risky buttons (⚠) need your yes in
-  that agent's chat.
-- **Downloads** go to your Downloads folder.
-- **Closing:** quit AI Browser (⌘Q), close its last window, or press Ctrl-C in the terminal. The Docker shell
-  container keeps running for the next start; stop it with `uv run ai-browser stop chrome`.
-- **Debugging port:** like any Chrome started with a debugging port, other programs on this Mac could connect to AI
-  Browser while it runs. Use it for your work, not for your bank.
+- **Logins:** log in yourself, in that tab in Brave. Claude never types passwords, and risky buttons (⚠) need your
+  yes in that agent's chat.
+- **Downloads** go to your Downloads folder, and only after your OK.
+- **Only the window gets in:** AI Browser's window starts with a one-time code that the app swaps for a cookie
+  only that window holds. The same address typed into Brave shows "AI Browser's pages open only in its own window".
+- **Closing:** close the window (⌘Q on a Mac), or press Ctrl-C in the terminal: the agents end with it. A Mission
+  Control or Settings window still open keeps AI Browser running until the last of its windows closes. The Docker
+  shell container keeps running for the next start; stop it with `uv run ai-browser stop chrome`.
+- **The microphone** is asked for once, in the window, and kept across restarts: AI Browser comes back on the same
+  address.
+- **Old folders:** `~/.ai-browser/browser/` (AI Browser's old Chrome profile, which may hold logins you made there)
+  and `~/.ai-browser/app/extension/` (its old extension) are no longer used. AI Browser never deletes them; delete
+  them by hand if you like.
 
 ## The Brain (watches your messages, tells you what needs you)
 
@@ -336,7 +331,8 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
 
 ## Mission Control (your agents at work, in 3D)
 
-**Mission Control**, in AI Home's header, opens a dark control room:
+**Mission Control**, in AI Home's header, opens a dark control room in a window of its own (a second click brings
+it forward):
 - **Stations:** every agent works at its own little desk, where a chibi office worker in a tie of the agent's colour
   sits beside the monitor. The art is drawn in code on this computer: nothing is downloaded.
   - Its monitor shows the tab it works in (the same pictures as AI Home), and the ticker its last action
@@ -363,7 +359,8 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
   draft that is ready, an agent that is done, failed, or waits for a permission. More than three at once become one
   summary. Only names and the Brain's one-line summaries are used, never a message's text.
 - **Voice** (top bar): the updates are also spoken, only with a voice that runs on this Mac, so nothing is sent
-  anywhere. It is off by default and remembered. Without such a voice, it says so and stays off.
+  anywhere. It is off by default, and AI
+  Browser remembers it. Without such a voice, it says so and stays off.
 - **The task bar** at the bottom starts an agent, like AI Home's box. The mic button beside **Start** talks to the
   Brain (see "Talking to the Brain", below).
 - **Moving around:** drag to turn the room, scroll to zoom, double-click to reset. Keys: ← → turn, ↑ ↓ tilt, + − zoom,
@@ -397,8 +394,9 @@ turn stops by itself at 30 seconds. The **Ask the Brain** box does the same, typ
      base.en from Hugging Face, pinned to one revision and checked before use), saved in
      `~/.ai-browser/models/faster-whisper-base.en` (or under `$AIB_HOME`). Nothing else is downloaded, and only when
      you click.
-  3. AI Browser then asks to use the microphone: choose **Allow while visiting the site**, not **Allow this time**.
-     macOS may also ask once whether Google Chrome may use the microphone.
+  3. AI Browser's window then asks to use the microphone: choose **Allow while visiting the site**, not **Allow
+     this time**. It asks once: AI Browser comes back on the same address after a restart. macOS may also ask once
+     whether the browser that draws the window (Google Chrome on a Mac) may use the microphone.
 - **Speed:** a 5-second question becomes text in about 1.5 s on an Apple silicon Mac (an estimate, until it is
   measured here). The first turn after the app starts takes a few seconds longer while the model loads.
 - **Windows:** the same on 64-bit Windows. On Windows on Arm the extra can't install (CTranslate2 has no wheel there),
@@ -413,7 +411,6 @@ turn stops by itself at 30 seconds. The **Ask the Brain** box does the same, typ
 | Mode | What sites can see |
 |---|---|
 | Sandbox | Headless Chromium in Docker. Its user agent says `HeadlessChrome`, the clock is UTC, there is no GPU, and the profile is often new. |
-| AI Browser | Google Chrome on its own profile; `navigator.webdriver` is true. |
 | Your everyday Brave | Your own browser, logins and history, with Brave's remote-debugging switch on. Pages read `navigator.webdriver` false (measured with Brave on a Chromium 152 base). That is Brave's own behaviour, not something ai-browser sets, and sites can still notice automation in other ways. |
 
 Nothing is faked in any mode.
@@ -560,9 +557,9 @@ slower, so 30 pages of a typical site take about three minutes.
 ## Commands
 
 ```bash
-uv run ai-browser app [--browser brave|app]  # AI Browser; agents browse in your Brave (default) or in AI Browser
+uv run ai-browser app [--window auto|chrome|brave|edge]  # AI Browser's window; agents browse in your Brave
 uv run ai-browser doctor [--own]             # health check (the sandbox, or your own Brave or Chrome)
-uv run ai-browser doctor --setup             # quick check, no Docker: Python, Claude Code, Chrome, Brave, ports, config
+uv run ai-browser doctor --setup             # quick check, no Docker: Python, Claude Code, the window's browser, Brave, ports, config
 uv run ai-browser bench                      # speed vs budgets
 uv run ai-browser live [--profile P]         # watch / log in
 uv run ai-browser stop [P | --all]           # stop containers (logins kept); `stop chrome` = own-Chrome shell
@@ -571,6 +568,9 @@ uv run ai-browser build                      # rebuild the image
 
 ## Safety notes
 
+- AI Browser's window has no debugging port, and no agent browses there. Its pages need a cookie only that window
+  holds, every request must name `127.0.0.1:<port>` exactly, and a strict content policy runs no script but the
+  pages' own.
 - ⚠ risky buttons are refused unless `confirmed=true`; Claude asks you first. Page dialogs are treated the same way:
   - Alerts are accepted and reported.
   - `confirm()`, `prompt()` and "leave page with unsaved changes?" are dismissed unless the step was confirmed.
