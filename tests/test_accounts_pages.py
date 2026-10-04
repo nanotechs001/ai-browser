@@ -237,3 +237,31 @@ async def test_the_tools_section_shows_one_accounts_tools_at_a_time(home):
     await js("document.querySelector('#tools .tool-server .on').click(); true")
     assert await eventually(lambda: server.agents.tools_for(work.id).enabled() == {"jira"})
     assert stack["tools"].enabled() == set()  # Default's switches are its own
+
+
+@CHROME
+async def test_mission_control_picks_the_account_and_its_drawer_asks_at_a_limit(stack):
+    from test_mission import open_mission, station
+
+    server, accounts = stack["server"], stack["accounts"]
+    stack["script"].write_text(json.dumps(LIMIT_SCRIPT), encoding="utf-8")
+    work = accounts.add("Work")
+    sign_in(work.folder)
+    js = await open_mission(stack)
+    pick = "document.getElementById('task-account')"
+    assert await until(js, f"{pick}.hidden === false && {pick}.options.length === 2")
+    await js("document.getElementById('task').value = 'check the shop';"
+             "document.getElementById('start').click(); true")
+    assert await eventually(lambda: "a1" in server.agents.agents)
+    assert server.agents.agents["a1"].account["id"] == "default"  # the picker's default
+    assert await until(js, f"{station('a1')} !== null")
+    await js(f"{station('a1')}.click(); true")
+    drawer = "document.querySelector('#drawer:not([hidden])')"
+    assert await until(js, f"!!{drawer}?.querySelector('.account-ask')", 15)
+    assert await js(f"{drawer}.querySelector('.chip.account').textContent") == "Default"
+    assert await js(f"{drawer}.querySelector('.account-ask-head').textContent") == (
+        f"Default hit its usage limit (resets {reset_words(RESETS)}).")
+    await js(f"{drawer}.querySelector('.account-ask .continue').click(); true")
+    assert await until(js, f"{drawer}.querySelector('.moved').textContent === "
+                           "'Moved to Work with its conversation'", 15)
+    assert await js(f"{drawer}.querySelector('.chip.account').textContent") == "Work"

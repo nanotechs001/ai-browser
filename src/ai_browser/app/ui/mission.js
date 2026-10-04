@@ -1,5 +1,6 @@
 // Mission Control: the user's AI team at work. One station per agent in a 3D room (scene.js), the Brain in the
 // middle, on the same line to the app as AI Home (link.js), sending only the messages AI Home sends.
+import { askBox, askKey, fillPicker, pickDefault } from "./accountui.js";
 import { createBlob } from "./blob.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
@@ -30,6 +31,7 @@ let talk = null; // the talk panel, mounted once the line to the app exists
 let tabs = []; // the browser's tab list (snapshot.tabs, then each "tabs" message): the drawer's Your tabs
 let tabScope = null; // which profile that list comes from, and how many tabs it leaves out (only numbers)
 let browser = null; // where agents browse: {kind, name, state} (snapshot.browser, then each "browser" message)
+let accountRows = []; // Settings → Accounts as the app lists them: names and "signed in", never an email
 
 const scene = createScene($("scene"), { onSelect: select, onCamera: aimBrain });
 const brainButton = el("button", "brain");
@@ -156,7 +158,9 @@ function told(before, agent) { // an agent's change worth a word from the Brain 
   const now = stateOf(agent);
   if (was === now) return;
   if (now === "your_turn") voice.say(brief(`${agent.name} is done`));
-  else if (now === "failed") voice.say(brief(`${agent.name} hit a problem`));
+  else if (now === "failed") {
+    voice.say(brief(agent.limit ? `${agent.name} stopped at a usage limit` : `${agent.name} hit a problem`));
+  }
   else if (now === "needs_you") {
     voice.say(brief(agent.check ? `${agent.name} hit a bot check on ${agent.check.site}. It's waiting for you`
       : `${agent.name} wants to use ${toolLabel(agent.permission)}. It's waiting for you`));
@@ -248,7 +252,9 @@ function openAgent(id, { tabs: showTabs = false } = {}) {
   const parts = { state: el("span", "chip"), status: el("div", "status muted"), buttons: el("div", "row buttons"),
                   permission: el("div", "permission-slot"), yourTabs: el("details", "your-tabs"),
                   messages: el("div", "messages"),
-                  composer: el("div", "composer"), input: el("textarea"), card: null };
+                  composer: el("div", "composer"), input: el("textarea"), card: null,
+                  account: el("span", "chip account"), moved: el("div", "status muted moved"),
+                  askSlot: el("div", "ask-slot"), ask: null, askKey: "" };
   parts.watch = button("watch", "Watch", () => {
     const current = agents.get(id);
     if (current?.working_tab) link.send({ type: "watch", target: current.working_tab });
@@ -257,7 +263,7 @@ function openAgent(id, { tabs: showTabs = false } = {}) {
   parts.stop = button("stop", "Stop", () => link.send({ type: "stop", id }));
   parts.close = button("close ghost", "Close", () => link.send({ type: "close", id }));
   parts.close.title = "End this agent and close the tabs it opened (your own tabs stay open)";
-  parts.buttons.append(parts.state, parts.watch, parts.stop, parts.close);
+  parts.buttons.append(parts.state, parts.account, parts.watch, parts.stop, parts.close);
   parts.input.rows = 1;
   parts.input.placeholder = "Message this agent";
   parts.input.setAttribute("aria-label", "Message this agent");
@@ -271,8 +277,8 @@ function openAgent(id, { tabs: showTabs = false } = {}) {
   });
   drawer.yourTabs = mountYourTabs(parts.yourTabs, { send: (message) => link.send(message), agentId: () => id });
   parts.yourTabs.open = showTabs; // folded, unless the Brain pointed here to hand a tab over
-  $("drawer-body").replaceChildren(parts.status, parts.buttons, parts.permission, parts.yourTabs, parts.messages,
-                                   parts.composer);
+  $("drawer-body").replaceChildren(parts.status, parts.moved, parts.buttons, parts.permission, parts.askSlot,
+                                   parts.yourTabs, parts.messages, parts.composer);
   showList(false); // the drawer takes the List's place
   drawer.parts = parts;
   drawer.chat = createChat(parts.messages);
@@ -288,8 +294,20 @@ function fillDrawer(agent) { // the drawer's agent changed: its parts are update
   const state = stateOf(agent);
   $("drawer-dot").style.background = COLORS[agent.color] || COLORS.grey;
   setText($("drawer-title"), agentLabel(agent));
-  setText(parts.state, STATES[state] || state);
-  parts.state.className = `chip ${state}`;
+  const paused = Boolean(agent.limit) && state === "failed"; // at a usage limit: paused, not failed
+  setText(parts.state, paused ? "paused" : STATES[state] || state);
+  parts.state.className = `chip ${paused ? "waiting" : state}`;
+  setText(parts.account, agent.account?.name || "");
+  parts.account.hidden = accountRows.length < 2; // one account: nothing to tell apart
+  setText(parts.moved, agent.moved || "");
+  parts.moved.hidden = !agent.moved;
+  const key = askKey(agent, accountRows); // the same ask as AI Home's row
+  if (key !== parts.askKey) {
+    parts.ask?.remove();
+    parts.ask = askBox(agent, accountRows, (message) => link.send(message));
+    if (parts.ask) parts.askSlot.append(parts.ask);
+    parts.askKey = key;
+  }
   setText(parts.status, agent.status || agent.last_action || "");
   parts.status.hidden = !parts.status.textContent;
   parts.watch.disabled = !agent.working_tab;
@@ -362,7 +380,8 @@ function start() {
   if (pending) return;
   pending = `m${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   $("start").disabled = true;
-  if (!link.send({ type: "new_task", text, skills: [], model: $("task-model").value, request: pending })) {
+  const account = $("task-account").hidden ? {} : { account: $("task-account").value }; // the picked account
+  if (!link.send({ type: "new_task", text, skills: [], model: $("task-model").value, request: pending, ...account })) {
     finishStart();
     note("Not connected: is `ai-browser app` running?");
     return;
@@ -422,6 +441,9 @@ function handle(message) {
       renderEmptyList();
       defaultModel = message.default_model || defaultModel;
       applySettings(message.settings);
+      accountRows = message.accounts || [];
+      fillPicker($("task-account"), accountRows);
+      link.send({ type: "accounts" }); // each account's status, now
       if (message.settings?.voice && !$("voice").checked) setVoice(true); // Voice was on: it comes back on
       if (pending) finishStart(); // a new connection: an unanswered Start can be pressed again
       if (drawer.id) link.send({ type: "events", id: drawer.id });
@@ -439,10 +461,16 @@ function handle(message) {
         for (const event of message.events || []) drawer.chat.append(event);
       }
       break;
+    case "accounts":
+      accountRows = message.accounts || [];
+      fillPicker($("task-account"), accountRows);
+      if (drawer.id && agents.has(drawer.id)) fillDrawer(agents.get(drawer.id));
+      break;
     case "created":
       if (pending && message.request === pending) {
         finishStart();
         $("task").value = "";
+        pickDefault($("task-account"), accountRows);
       }
       talk?.onMessage(message); // a start from the talk's card, or a spoken yes
       break;
