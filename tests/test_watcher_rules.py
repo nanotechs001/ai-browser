@@ -46,6 +46,9 @@ SENDS = {
     "settings_set": (True, False),  # app-window: the model, Voice and the window's browser
     "open_url": (True, False),  # app-window: a website link in our pages
     "ai_keyword": (False, True),  # app-window: Brave's address bar, through the watcher's omnibox
+    **{kind: (True, False) for kind in ("accounts", "account_add", "account_add_existing", "account_remove",
+                                        "account_default", "account_brain", "account_signin",
+                                        "account_move")},  # AI accounts: only AI Browser's own pages
 }
 
 
@@ -53,8 +56,8 @@ def test_the_message_table_has_exactly_the_written_down_types():
     from ai_browser.app.server import MESSAGE_RULES
 
     assert set(MESSAGE_RULES) == set(SENDS)
-    assert len(SENDS) == 60
-    assert sum(1 for app, _ in SENDS.values() if app) == 52
+    assert len(SENDS) == 68
+    assert sum(1 for app, _ in SENDS.values() if app) == 60
     assert sum(1 for _, watcher in SENDS.values() if watcher) == 23  # the two conditional rows count as allowed
 
 
@@ -374,6 +377,7 @@ NEVER = {"tabs", "thumb", "thumbs", "sessions", "browser", "agent_event", "agent
          "skill_drafted", "skill_diff", "skill_saved",
          "browser_clients",  # cdp-relay's list of connected clients
          "settings",  # app-window: the window's settings go to AI Browser's own pages only
+         "accounts", "account_added", "account_signin", "brain_limit",  # AI accounts: no account data
          "a_type_added_later"}
 AGENT_ROW = {"id": "a1", "name": "Fix the footer", "color": "blue", "model": "sonnet", "state": "needs_you",
              "status": "", "last_action": "", "tabs": ["T1"], "adopted": ["U2"], "working_tab": "T1",

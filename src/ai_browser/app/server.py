@@ -33,12 +33,14 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .. import browsers, platforms
+from ..accounts import Accounts
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
 from ..chrome import own_browser_dir
+from ..claudecli import claude_argv
 from ..config import LIVE_PORTS, load_config, project_root
 from ..engine import _alive
 from ..extension_id import extension_path
@@ -94,6 +96,11 @@ SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser"
 SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (cc-<task id>)
 AGENT_ID = re.compile(r"^a[0-9]{1,9}$")  # an agent's id (a<number>)
 SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
+ACCOUNT_MESSAGES = {"accounts", "account_add", "account_add_existing", "account_remove", "account_default",
+                    "account_brain", "account_signin", "account_move"}  # AI accounts: AI Browser's own pages only
+SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
+SIGNIN_WAIT = 600  # seconds the app keeps looking
+IN_USE = "{name} is in use by {label}: move or close that agent first"
 YOU = {"kind": "you"}
 
 
@@ -146,6 +153,10 @@ MESSAGE_RULES: dict[str, Rule] = {
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
     "settings_set": Rule(app=True, watcher=False),  # the window's Settings, AI Home's and Mission Control's picks
     "open_url": Rule(app=True, watcher=False),  # a website link in one of our pages
+    # AI accounts: Settings → Accounts, the Account pickers and Continue on. The watcher, the Brain and voice never
+    # add, sign in, choose or move (the spec's Safety)
+    "accounts": APP_ONLY, "account_add": APP_ONLY, "account_add_existing": APP_ONLY, "account_remove": APP_ONLY,
+    "account_default": APP_ONLY, "account_brain": APP_ONLY, "account_signin": APP_ONLY, "account_move": APP_ONLY,
     "ai_keyword": Rule(app=False, watcher=True),  # Brave's address bar: only the watcher's omnibox handler
 }
 
@@ -197,6 +208,7 @@ def for_watcher(message: dict) -> dict | None:
 
 
 reveal_folder = platforms.reveal  # a file manager window with the folder selected; False when none could open
+open_terminal = platforms.open_terminal  # Settings → Accounts → Open Terminal (tests replace it: never a real window)
 GOTO_MAC = "press ⌘⇧G, paste the path and press Enter"
 GOTO_OTHER = "click the address bar at the top of the folder window, paste the path and press Enter"
 
@@ -329,7 +341,8 @@ class AppServer:
                  brain: BrainService | None = None, tools: ToolsConfig | None = None,
                  workflows: WorkflowStore | None = None, runner: WorkflowRunner | None = None,
                  skill_writer: SkillWriter | None = None, hearing: HearingService | None = None,
-                 settings: Settings | None = None, port_file: Path | None = None):
+                 settings: Settings | None = None, port_file: Path | None = None,
+                 accounts: Accounts | None = None):
         self.home = Path(home)
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
@@ -345,6 +358,12 @@ class AppServer:
         self.tools = tools  # the user's MCP servers for the agents (AI Home → Tools)
         if tools is not None:
             agents.tools = tools
+        self.accounts = accounts  # AI accounts (Settings → Accounts); None: Default only, as before
+        if accounts is not None:
+            agents.accounts = accounts
+            agents.on_limit = lambda account: self._accounts_changed()  # the pickers' "at its limit until"
+        self.open_terminal = open_terminal
+        self._signing_in: dict[str, asyncio.Task] = {}  # account id -> the look at its sign-in
         self.workflows, self.runner = workflows, runner  # the user's workflows (AI Home → Workflows)
         if runner is not None:
             runner.on_change = self.workflows_changed
@@ -634,7 +653,8 @@ class AppServer:
         if self.brave is not None:  # the agents have ended: their sockets close (1001) before uvicorn stops
             with contextlib.suppress(Exception):
                 await self.brave.relay.close_clients(1001)
-        for task in [self._fanout, self._sweeper, *self._jobs, *(state["task"] for state in self._thumbs.values())]:
+        for task in [self._fanout, self._sweeper, *self._jobs, *(state["task"] for state in self._thumbs.values()),
+                     *self._signing_in.values()]:
             if task is not None:
                 task.cancel()
         self.agents.unsubscribe(self._feed)
@@ -1190,6 +1210,8 @@ class AppServer:
             self._hearing_command(ws, queue, kind, message)
         elif kind in TALK_MESSAGES:
             self._talk_command(queue, kind, message)
+        elif kind in ACCOUNT_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            await self._account_command(queue, kind, message)
         elif kind == "hello":
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
@@ -1214,7 +1236,12 @@ class AppServer:
                                   "text": "That tab can't be handed over: it is closed, or an agent works in it"})
                 return
             model = message.get("model") if message.get("model") in MODELS else self.default_model
-            agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")))
+            account = message.get("account") if isinstance(message.get("account"), str) else None
+            try:  # an account that isn't listed any more is said, never swapped for another
+                agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account)
+            except ValueError as exc:
+                queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+                return
             if handed is not None:
                 self._own(adopt, self._owner_of(agent.id, handed=True))
                 self._job(self._group(agent.id, agent.name, agent.color, adopt, {"url": handed["url"]}))
@@ -1505,7 +1532,113 @@ class AppServer:
                 "skills_summary": self._skills_summary(), "max_working": self.agents.max_working,
                 "default_model": self.default_model, "browser": self._browser_info(),
                 "sessions": self._session_list(), "browser_clients": self._browser_clients(),
-                "settings": self._settings_payload()}
+                "settings": self._settings_payload(), "accounts": self._account_rows()}
+
+    # ---- AI accounts: Settings → Accounts, the pickers and Continue on (AI Browser's own pages only) -------------
+
+    def _account_rows(self) -> list[dict]:
+        return self.accounts.rows() if self.accounts is not None else []
+
+    def _accounts_changed(self) -> None:
+        self._send_all({"type": "accounts", "accounts": self._account_rows()})  # never the watcher's (WATCHER_RECEIVES)
+
+    async def _refresh_accounts(self) -> None:
+        """A page of ours opened: each account's status (kept 5 s), then the list to every page."""
+        await self.accounts.refresh()
+        self._accounts_changed()
+
+    async def _account_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        if self.accounts is None:
+            return
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        account_id = message.get("id") if isinstance(message.get("id"), str) else ""
+        if kind == "accounts":
+            self._job(self._refresh_accounts())
+            return
+        if kind == "account_move":
+            self._job(self._move(queue, request, message))
+            return
+        if kind == "account_signin":
+            await self._sign_in(queue, account_id, message.get("how"))
+            return
+        try:
+            if kind == "account_add":
+                account = self.accounts.add(message.get("name"))
+                queue.put_nowait({"type": "account_added", "id": account.id, "request": request})
+            elif kind == "account_add_existing":
+                account = self.accounts.add_existing(message.get("name"), message.get("folder"))
+                queue.put_nowait({"type": "account_added", "id": account.id, "request": request})
+                self._job(self._refresh_accounts())  # a folder signed in already says so at once
+            elif kind == "account_remove":
+                self._check_unused(account_id)
+                self.accounts.remove(account_id)
+            elif kind == "account_default":
+                self.accounts.set_default(account_id)
+            elif kind == "account_brain":
+                self.accounts.set_brain(account_id)
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        except OSError as exc:  # a read-only home, a full disk: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't save that: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._accounts_changed()
+
+    def _check_unused(self, account_id: str) -> None:
+        """Remove only forgets, so an open agent on that account would fail at its next start: it is refused."""
+        account = self.accounts.get(account_id)
+        using = next((agent for agent in self.agents.agents.values() if agent.account["id"] == account_id), None)
+        if account is not None and using is not None:
+            raise ValueError(IN_USE.format(name=account.name, label=f"{using.number} · {using.name}"))
+
+    async def _sign_in(self, queue: asyncio.Queue, account_id: str, how) -> None:
+        """Sign in (Settings → Accounts). Open Terminal opens a terminal window running Claude Code on the account's
+        folder; Copy the command is the page's own. Either way the app then looks at the account's status every
+        SIGNIN_EVERY seconds until it is signed in, for SIGNIN_WAIT seconds at most. The user signs in there and in
+        their browser: AI Browser never sees a password or a token."""
+        account = self.accounts.get(account_id)
+        if account is None or how not in ("terminal", "copy"):
+            return
+        if how == "terminal":
+            try:
+                claude = claude_argv(self.accounts.claude)
+            except OSError:  # an npm claude.cmd on Windows (ClaudeNotUsable): Copy the command still works
+                claude = None
+            opened = claude is not None and await asyncio.to_thread(
+                self.open_terminal, claude, self.accounts.signin_folder(account.id), self.accounts.env_for(account.id))
+            queue.put_nowait({"type": "account_signin", "id": account.id, "opened": bool(opened)})
+        task = self._signing_in.get(account.id)
+        if task is None or task.done():
+            self._signing_in[account.id] = asyncio.ensure_future(self._until_signed_in(account.id))
+
+    async def _until_signed_in(self, account_id: str) -> None:
+        deadline, last = time.monotonic() + SIGNIN_WAIT, None
+        while time.monotonic() < deadline and self.accounts.get(account_id) is not None:
+            status = await self.accounts.status(account_id, fresh=True)
+            if status != last:
+                last = status
+                self._accounts_changed()
+            if status["signed_in"] is True:
+                return
+            await asyncio.sleep(SIGNIN_EVERY)
+
+    async def _move(self, queue: asyncio.Queue, request, message: dict) -> None:
+        """Continue on another account: the user's click on an agent's row or drawer. Its open tabs go into the
+        hand-over note by their titles and addresses, as page data."""
+        agent_id, account_id = message.get("id"), message.get("account")
+        if not isinstance(agent_id, str) or not isinstance(account_id, str):
+            return
+        agent = self.agents.agents.get(agent_id)
+        if agent is None:
+            return
+        listed = {tab["target"]: tab for tab in (self.tabs.tabs() if self.tabs is not None else [])
+                  if isinstance(tab, dict) and isinstance(tab.get("target"), str)}
+        tabs = [{"url": str(listed[target].get("url", "")), "title": str(listed[target].get("title", ""))}
+                for target in [*agent.tabs, *agent.adopted] if target in listed]
+        error = await self.agents.move(agent_id, account_id, tabs)
+        if error:
+            queue.put_nowait({"type": "error", "text": error, "request": request})
 
     # ---- skills -----------------------------------------------------------------------------------------------
 

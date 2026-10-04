@@ -92,12 +92,14 @@ def _no_real_window(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_finder_windows(monkeypatch):
-    """No test may open a file manager window on the machine running the suite (tests that check it patch it again)."""
+    """No test may open a file manager window on the machine running the suite, and no terminal window (tests that
+    check it patch it again)."""
     import ai_browser.app.run as run
     import ai_browser.app.server as server
 
     monkeypatch.setattr(run, "reveal", lambda path: True)
     monkeypatch.setattr(server, "reveal_folder", lambda path: True)
+    monkeypatch.setattr(server, "open_terminal", lambda *args, **kwargs: True)  # never a real terminal window
 
 
 @pytest.fixture(autouse=True)
