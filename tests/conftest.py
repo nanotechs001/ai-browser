@@ -55,10 +55,24 @@ def file_mode(path) -> int | None:
 def _never_the_users_browsers(monkeypatch, tmp_path_factory):
     """No test may reach the user's own Brave or Chrome. With AIB_BROWSER unset the engine uses the user's browser,
     which would ask "Allow remote debugging?", so every test runs with the sandbox and the app with AI Browser. Tests
-    of the new defaults change these with monkeypatch, and tests that need a browser launch a throwaway one."""
+    of the new defaults change these with monkeypatch, and tests that need a browser launch a throwaway one.
+    Detection (`browsers.installed()`, `os_default()`) sees no app folder, no registry and no LaunchServices file of
+    this computer."""
     monkeypatch.setenv("AIB_BROWSER", "sandbox")
     monkeypatch.setenv("AIB_APP_BROWSER", "app")
     monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path_factory.getbasetemp() / "no-chrome-here"))
+    from ai_browser import browsers, platforms
+
+    nothing = tmp_path_factory.getbasetemp() / "no-apps-here"
+    nothing.mkdir(exist_ok=True)
+    fakes = {"app_folders": lambda system=None, env=None: [nothing],
+             "windows_browser_commands": lambda: [],
+             "windows_https_progid": lambda: None,
+             "launch_services_file": lambda: nothing / "no-launch-services.plist"}
+    for module in (platforms, browsers):  # browsers.py may hold its own reference to one of them
+        for name, fake in fakes.items():
+            if hasattr(module, name):
+                monkeypatch.setattr(module, name, fake)
 
 
 @pytest.fixture(autouse=True)
