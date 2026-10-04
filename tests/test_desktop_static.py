@@ -98,3 +98,20 @@ def test_staging_copies_exactly_the_apps_files(tmp_path):
     assert sorted(path.name for path in (tmp_path / "app").iterdir()) == sorted([*APP_FILES, "icon.png"])
     assert (tmp_path / "app" / "icon.png").read_bytes() == ICON.read_bytes()
     assert part_hash() == part_hash() and part_hash(b"x") != part_hash()
+
+
+def test_the_product_never_passes_a_debugging_switch():
+    from ai_browser.desktop import launch
+
+    mac = launch.mac_command(Path("/x/AI Browser.app"), Path("/t/aib-1/line"))
+    windows = launch.windows_command(Path("/x/AI Browser/AI Browser.exe"))
+    assert mac == ["open", "-n", "-W", "-a", str(Path("/x/AI Browser.app")), "--args",
+                   f"--aib-line={Path('/t/aib-1/line')}"]
+    assert windows == [str(Path("/x/AI Browser/AI Browser.exe"))]
+    banned = ("--remote-debugging", "--inspect", "--remote-allow-origins", "--js-flags", "--enable-logging",
+              "--auto-open-devtools", "--user-data-dir", "--load-extension")
+    assert not [arg for arg in mac + windows if arg.startswith(banned)]
+    for path in sorted((SRC / "desktop").glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for word in ("remote-debugging", "--inspect", "ELECTRON_RUN_AS_NODE", "openDevTools"):
+            assert word not in source, (path.name, word)
