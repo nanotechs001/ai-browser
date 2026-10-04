@@ -18,6 +18,7 @@ from typing import ClassVar
 
 from ..accounts import DEFAULT, DEFAULT_NAME, GONE, NOT_SIGNED_IN, clean_env
 from ..checks import KINDS
+from . import move as moving
 from .bridge import ClaudeBridge
 
 COLORS = ("blue", "green", "cyan", "pink", "yellow", "red", "grey")  # Brave's group colours, minus the Brain's
@@ -32,6 +33,13 @@ CONTINUE_TEXT = "I've dealt with the bot check. Call observe and carry on with t
 SKIP_TEXT = ("Skip the site with the bot check: I closed its tab. Carry on without it, and tell me what you couldn't "
              "do.")
 LIMIT_STATUS = "Hit its usage limit"  # an agent's status line when its account hit its usage limit
+CONTINUE_TASK = "Continue the task."  # the first message on the new account, when its conversation came along
+MOVING = "Moving to {name}…"
+MOVED = "Moved to {name} with its conversation"
+FRESH = "Started fresh on {name} with a hand-over note"
+FRESH_NOTE = "Started fresh with a hand-over note"  # the chat's line: no account name (other views may get it)
+BUSY_MOVE = "{label} is still working: stop it, or wait for its turn to end, then move it"
+NO_CONVERSATION = "no conversation found"
 _SCHEME = re.compile(r"\bhttps?://(?:www\.)?", re.IGNORECASE)
 _FILLER = {"and", "or", "then", "to", "the", "a", "an", "of", "in", "on", "with", "for", "from"}
 _AGENT_ID = re.compile(r"a([0-9]{1,9})")  # the ids the server and the relay accept: ^a[0-9]{1,9}$
@@ -58,6 +66,13 @@ def _name(text: str) -> str:
     while len(parts) > 1 and parts[-1].lower().strip(",.;:") in _FILLER:
         parts.pop()
     return " ".join(parts).rstrip(",.;:") or "task"
+
+
+def _not_resumed(event: dict, started: bool) -> bool:
+    """A resume that didn't take: Claude Code ended before its init event, or said it has no such conversation. (A
+    sign-in check that stopped it isn't one: the next message tries the resume again.)"""
+    return event.get("type") == "error" and ((bool(event.get("ended")) and not started)
+                                             or NO_CONVERSATION in str(event.get("text", "")).lower())
 
 
 @dataclass
@@ -89,6 +104,8 @@ class Agent:
     limit: dict | None = None  # {"account": id, "resets_at": seconds since 1970, or None}
     moved: str = ""  # how its last move went: "Moved to Work with its conversation"
     task: str = field(default="", repr=False)  # its first words: the hand-over note (wave C's Restart in too)
+    handover: str | None = field(default=None, repr=False)  # the note a resume that doesn't take falls back to
+    moving: bool = field(default=False, repr=False)  # one move at a time
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
@@ -234,7 +251,7 @@ class AgentManager:
             return False
         agent.limit = None  # the user's own message: it tries again, on the same account
         agent.pending.append((text, tab or {}, []))
-        if agent_id in self._turns or agent_id in self._line:  # it gets its turn after the current one
+        if agent_id in self._turns or agent_id in self._line or agent.moving:  # after the current turn, or the move
             self._record(agent, {"type": "queued", "text": text})
             self._changed(agent)  # the row's queued count
             return True
@@ -476,10 +493,21 @@ class AgentManager:
             while agent.pending and agent.id in self.agents and agent.limit is None:  # a limit pauses the agent
                 text, tab, skills = agent.pending.pop(0)
                 self._changed(agent)  # one fewer waiting: the row's queued count drops
-                self._record(agent, {"type": "user", "text": text})
+                if tab.get("handover"):  # a move's hand-over note: the chat gets one line, never the whole note
+                    self._record(agent, {"type": "note", "text": FRESH_NOTE})
+                else:
+                    self._record(agent, {"type": "user", "text": text})
+                resuming, started = agent.handover is not None, False  # the first turn after a move that copied
                 async for event in agent.bridge.send(text, tab.get("url", ""), tab.get("title", ""), skills,
                                                      tab.get("label", "panel")):
+                    started = started or event.get("type") == "status"
+                    if resuming and _not_resumed(event, started):
+                        resuming = False
+                        self._moved(agent, resumed=False)  # the hand-over note goes next, in a fresh session
+                        continue
                     self._on_event(agent, event)
+                if resuming and started:
+                    self._moved(agent, resumed=True)
         except Exception as exc:  # the row must always learn that the turn ended
             self._on_event(agent, {"type": "error", "text": f"{type(exc).__name__}: {exc}"})
         finally:
@@ -533,3 +561,66 @@ class AgentManager:
         if self.on_limit is not None:
             with contextlib.suppress(Exception):
                 self.on_limit(account)
+
+    async def move(self, agent_id: str, account_id: str, tabs=()) -> str:
+        """Continue on another account (a click in AI Home or Mission Control; app-only in MESSAGE_RULES). One move
+        per agent at a time, and only while it isn't working:
+        1. its Claude Code process ends (it ended its turn already);
+        2. its conversation is copied to the other account's folder;
+        3. it resumes there with CONTINUE_TASK; when nothing could be copied, or that resume doesn't take (_run), a
+           fresh session there starts with the hand-over note.
+        Its tabs stay its own: the browser connection doesn't change. "" once the move is under way, else why not."""
+        agent = self.agents.get(agent_id)
+        if agent is None or self.accounts is None:
+            return "That agent has closed"
+        if agent.moving:
+            return ""  # a second move while one runs does nothing
+        label = f"{agent.number} · {agent.name}"
+        target = self.accounts.get(account_id)
+        if target is None:
+            return GONE
+        if target.id == agent.account["id"]:
+            return f"{label} is on {target.name} already"
+        if agent_id in self._turns or agent_id in self._line or agent.permission is not None \
+                or agent.check is not None:
+            return BUSY_MOVE.format(label=label)
+        agent.moving = True
+        try:
+            if (await self.accounts.status(target.id))["signed_in"] is False:
+                return NOT_SIGNED_IN.format(name=target.name)
+            source, session = self.accounts.get(agent.account["id"]), agent.bridge.session_id
+            note = moving.handover_note(agent, tabs)  # from AI Browser's own log, before anything more is added
+            await agent.bridge.switch(self.accounts.env_for(target.id), self.tools_for(target.id))
+            copied = bool(moving.CARRY_CONVERSATION and session and source is not None and await asyncio.to_thread(
+                moving.move_conversation, source.folder, target.folder, session))
+            if agent_id not in self.agents:
+                return ""  # closed meanwhile
+            agent.account, agent.limit = {"id": target.id, "name": target.name}, None
+            if copied:
+                agent.handover, agent.moved = note, MOVING.format(name=target.name)
+                agent.pending.insert(0, (CONTINUE_TASK, {}, []))
+            else:
+                agent.bridge.reset()
+                agent.handover, agent.moved = None, FRESH.format(name=target.name)
+                agent.pending.insert(0, (note, {"handover": True}, []))
+            agent.state = "waiting"
+            self._changed(agent)
+            if agent_id not in self._line:
+                self._line.append(agent_id)
+            self._pump()
+            return ""
+        finally:
+            agent.moving = False
+
+    def _moved(self, agent: Agent, resumed: bool) -> None:
+        """How the move went, once its first turn tells: resumed, or not, and then the hand-over note goes first, in
+        a fresh session."""
+        name = agent.account["name"]
+        if resumed:
+            agent.moved = MOVED.format(name=name)
+        else:
+            agent.bridge.reset()
+            agent.pending.insert(0, (agent.handover, {"handover": True}, []))
+            agent.moved = FRESH.format(name=name)
+        agent.handover = None
+        self._changed(agent)

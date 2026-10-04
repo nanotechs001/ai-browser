@@ -143,3 +143,158 @@ async def test_without_accounts_agents_run_as_before(fake_claude, tmp_path):
             await manager.create("check the blog", account="acct-000000")
     finally:
         await manager.close_all()
+
+
+SESSION_EVENTS = [{**EVENTS[0], "session_id": "$session"}, *EVENTS[1:-1], {**EVENTS[-1], "session_id": "$session"}]
+
+
+def transcripts(folder):
+    return sorted((Path(folder) / "projects").glob("*/*.jsonl"))
+
+
+async def test_a_move_carries_the_conversation_and_resumes_it(fake_claude, tmp_path):
+    from ai_browser.app.bridge import RESTARTED
+
+    manager, _, work, log = rig(fake_claude, tmp_path, SESSION_EVENTS)
+    try:
+        agent = await manager.create("check the shop")  # on Default
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn")
+        manager.tab_event(agent.id, "tab_opened", "T1")
+        session = agent.bridge.session_id
+        [original] = transcripts(os.environ["CLAUDE_CONFIG_DIR"])
+        before = original.read_bytes()
+        assert await manager.move(agent.id, work.id, [{"url": "https://shop.example/", "title": "Shop"}]) == ""
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn"
+                            and agent.moved == "Moved to Work with its conversation")
+        assert argvs(log)[-1][argvs(log)[-1].index("--resume") + 1] == session
+        assert given(log)["CLAUDE_CONFIG_DIR"] == work.folder
+        [copy] = transcripts(work.folder)
+        assert copy.name == f"{session}.jsonl" and copy.parent.name == original.parent.name
+        assert original.read_bytes() == before  # the original stays as it was
+        assert told(log)[-1] == f"{RESTARTED}\nContinue the task."
+        assert agent.account == {"id": work.id, "name": "Work"} and agent.tabs == ["T1"]  # its tabs stay its own
+    finally:
+        await manager.close_all()
+
+
+async def test_a_resume_that_ends_at_once_starts_fresh_with_the_note(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import move as moving
+
+    manager, _, work, log = rig(fake_claude, tmp_path, SESSION_EVENTS)
+    monkeypatch.setattr(moving, "move_conversation", lambda *args: True)  # says copied, copies nothing
+    try:
+        agent = await manager.create("check the shop")
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn")
+        assert await manager.move(agent.id, work.id) == ""
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn"
+                            and agent.moved == "Started fresh on Work with a hand-over note")
+        assert "--resume" in argvs(log)[-2] and "--resume" not in argvs(log)[-1]  # it ended at once, then fresh
+        assert told(log)[-1].startswith("You are taking over a task") and "check the shop" in told(log)[-1]
+        events = manager.events_of(agent.id)
+        assert {"type": "note", "text": "Started fresh with a hand-over note"} in events
+        assert not any("No conversation found" in json.dumps(event) for event in events)
+        assert not any(str(event.get("text", "")).startswith("You are taking over") for event in events)
+    finally:
+        await manager.close_all()
+
+
+async def test_no_conversation_to_carry_starts_fresh_with_the_note(fake_claude, tmp_path):
+    manager, _, work, log = rig(fake_claude, tmp_path, SESSION_EVENTS)
+    try:
+        agent = await manager.create("check the shop")
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn")
+        old = agent.bridge.session_id
+        for path in transcripts(os.environ["CLAUDE_CONFIG_DIR"]):
+            path.unlink()  # nothing to copy
+        assert await manager.move(agent.id, work.id) == ""
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn"
+                            and agent.moved == "Started fresh on Work with a hand-over note")
+        assert "--resume" not in argvs(log)[-1] and told(log)[-1].startswith("You are taking over a task")
+        assert old not in [path.stem for path in transcripts(work.folder)]  # a new conversation there
+    finally:
+        await manager.close_all()
+
+
+async def test_a_second_move_while_one_runs_does_nothing(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import move as moving
+    from ai_browser.app.bridge import RESTARTED
+
+    manager, accounts, work, log = rig(fake_claude, tmp_path, SESSION_EVENTS)
+    personal = accounts.add("Personal")
+    sign_in(personal.folder)
+    copies, real = [], moving.move_conversation
+
+    def slow(*args):
+        copies.append(args)
+        time.sleep(1)
+        return real(*args)
+
+    monkeypatch.setattr(moving, "move_conversation", slow)
+    try:
+        agent = await manager.create("check the shop")
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn")
+        first = asyncio.ensure_future(manager.move(agent.id, work.id))
+        await asyncio.sleep(0.4)  # the move is under way
+        assert await manager.move(agent.id, personal.id) == ""  # does nothing
+        await manager.send(agent.id, "and then the cart")  # waits for the move
+        assert await first == ""
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn" and not agent.pending)
+        assert len(copies) == 1 and agent.account["id"] == work.id
+        assert told(log)[-2:] == [f"{RESTARTED}\nContinue the task.", "and then the cart"]
+    finally:
+        await manager.close_all()
+
+
+async def test_two_agents_move_to_the_same_account_at_once(fake_claude, tmp_path):  # Review Focus 3
+    manager, _, work, log = rig(fake_claude, tmp_path, SESSION_EVENTS)
+    try:
+        one, two = await manager.create("check the shop"), await manager.create("check the blog")
+        assert await settle(manager, lambda agents: all(state(agents, agent.id) == "your_turn"
+                                                        for agent in (one, two)))
+        sessions = {one.bridge.session_id, two.bridge.session_id}
+        assert len(sessions) == 2
+        assert await asyncio.gather(manager.move(one.id, work.id), manager.move(two.id, work.id)) == ["", ""]
+        assert await settle(manager, lambda agents: all(
+            state(agents, agent.id) == "your_turn" and agent.moved == "Moved to Work with its conversation"
+            for agent in (one, two)))
+        assert {path.stem for path in transcripts(work.folder)} == sessions  # each its own copy, nothing overwritten
+        resumed = [argv[argv.index("--resume") + 1] for argv in argvs(log) if "--resume" in argv]
+        assert sorted(resumed) == sorted(sessions)
+    finally:
+        await manager.close_all()
+
+
+async def test_a_move_needs_an_idle_agent_and_a_signed_in_account(fake_claude, tmp_path):
+    manager, accounts, work, _ = rig(fake_claude, tmp_path, [EVENTS[0], {"sleep": 30}])
+    try:
+        agent = await manager.create("keep working")
+        assert await settle(manager, lambda agents: any(event["type"] == "status"
+                                                        for event in manager.events_of(agent.id)))  # mid-turn
+        assert await manager.move(agent.id, work.id) == (
+            "1 · keep working is still working: stop it, or wait for its turn to end, then move it")
+        await manager.stop(agent.id)
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "stopped")
+        sign_out(work.folder)
+        accounts._status.clear()  # it signed out a moment ago
+        assert await manager.move(agent.id, work.id) == "Work isn't signed in: sign in from Settings → Accounts"
+        assert agent.account["id"] == "default" and agent.bridge._process is not None  # nothing changed
+        assert await manager.move(agent.id, "acct-000000") == "That account isn't in Settings → Accounts any more"
+        assert await manager.move(agent.id, "default") == "1 · keep working is on Default already"
+    finally:
+        await manager.close_all()
+
+
+async def test_when_conversations_cant_be_carried_every_move_starts_fresh(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import move as moving
+
+    monkeypatch.setattr(moving, "CARRY_CONVERSATION", False)  # Task 0's ruling, if the probe failed
+    manager, _, work, log = rig(fake_claude, tmp_path, SESSION_EVENTS)
+    try:
+        agent = await manager.create("check the shop")
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn")
+        assert await manager.move(agent.id, work.id) == ""
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn"
+                            and agent.moved == "Started fresh on Work with a hand-over note")
+        assert "--resume" not in argvs(log)[-1] and told(log)[-1].startswith("You are taking over a task")
+    finally:
+        await manager.close_all()

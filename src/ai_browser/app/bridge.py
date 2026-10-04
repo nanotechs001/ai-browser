@@ -288,7 +288,8 @@ class ClaudeBridge:
         if hit is not None and not self._limit_seen:  # an older Claude Code said it on stderr and ended
             self._limit_seen = True
             return {"type": "limit", "resets_at": hit.resets_at}
-        return {"type": "error", "text": f"Claude Code stopped unexpectedly (exit {code})" + (f": {tail}" if tail else "")}
+        return {"type": "error", "text": f"Claude Code stopped unexpectedly (exit {code})" + (f": {tail}" if tail else ""),
+                "ended": True}
 
     def _translate(self, event: dict) -> list[dict]:
         kind = event.get("type")
@@ -446,6 +447,14 @@ class ClaudeBridge:
         """A new chat: the next message starts a fresh conversation in a new Claude Code process."""
         self.session_id = None
         self._renew, self._restarted = True, False
+
+    async def switch(self, environment: dict[str, str], tools: ToolsConfig | None) -> None:
+        """Another account (AI accounts): its Claude Code process ends now, and the next message starts it again with
+        this environment and these tools, resuming the same session. Claude hears RESTARTED with it, because its
+        tabs may be gone and its element numbers have changed."""
+        await self.close()
+        self.environment, self.tools = dict(environment), tools
+        self._restarted = True
 
     async def close(self) -> None:
         if self._stop_task is not None:

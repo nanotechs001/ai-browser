@@ -93,6 +93,10 @@ export function createChat(container, { onPage = () => {} } = {}) {
         bubble = null;
         add(el("div", "meta", event.stopped ? "Stopped" : `Done in ${event.seconds} s`));
         break;
+      case "note": // a line from AI Browser itself (a move's hand-over note): set as text
+        bubble = null;
+        add(el("div", "meta", event.text || ""));
+        break;
       case "error":
         bubble = null;
         add(el("div", "msg error", event.text || "Something went wrong"));
