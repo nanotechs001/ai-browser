@@ -9,6 +9,9 @@ from ai_browser.chrome import chrome_binary
 from test_bridge import EVENTS
 from test_home import HOSTILE, open_page, post_tab, stack, until  # noqa: F401 (stack is a fixture)
 
+pytestmark = pytest.mark.skip(reason="AI Browser's side panel retired in wave B (the app window); the side-chat "
+                                     "plan (wave D) ports these tests to the watcher")
+
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 
 

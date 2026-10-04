@@ -130,3 +130,8 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .clients li::before { content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none;
   background: var(--client-color, transparent); }
 .clients li span { flex: 1; }
+.header-buttons { display: flex; gap: 4px; }
+.settings { max-width: 720px; }
+.settings .choices { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.settings .choices label { display: flex; align-items: center; gap: 8px; }
+.settings .choices label:has(input:disabled) { color: var(--muted); }

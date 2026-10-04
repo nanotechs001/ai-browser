@@ -1,5 +1,7 @@
-"""The app's own view of AI Browser: every tab, Watch (bring a tab to the front), closing an agent's tabs when the user
-closes the agent, and small thumbnails of the tabs agents work in. One CDP connection, apart from the agents' own.
+"""The app's view of a browser's tabs (BraveLink's, over the relay's one connection): every tab, Watch (bring a tab to
+the front), closing an agent's tabs when the user closes the agent, a tab's text for a skill draft, and small
+thumbnails of the tabs agents work in. AI Browser's own pages (its origin, http://127.0.0.1:<port>) are never listed:
+only its window shows them, and a copy the user opened in Brave is a 403 page, not one of their tabs.
 
 It also knows each page's browser context (its profile, or a private window), the service workers, and the context the
 browser used last, for BraveLink's one-profile list; all of it from the target list, never by attaching."""
@@ -29,9 +31,9 @@ def _worker(info: dict) -> dict:
 
 
 class TabWatch:
-    def __init__(self, ws_url: str, extension_id: str, open_timeout: float = 10, cdp=None):
+    def __init__(self, ws_url: str, hidden_origin: str = "", open_timeout: float = 10, cdp=None):
         self.ws_url = ws_url
-        self.extension_id = extension_id
+        self.hidden_origin = hidden_origin.rstrip("/")
         self.open_timeout = open_timeout
         self._given = cdp  # the relay's in-process client (brave mode): nothing to connect
         self._cdp: CDP | None = None
@@ -41,6 +43,11 @@ class TabWatch:
         self._callbacks: list[Callable[[list[dict]], None]] = []
         self._notify: asyncio.Task | None = None
         self._poll: asyncio.Task | None = None
+
+    def _hidden(self, url: str) -> bool:
+        """AI Browser's own pages (the app's origin) and the new tab page are never anybody's tab."""
+        return url.startswith("chrome://newtab") or (bool(self.hidden_origin)
+                                                     and url.startswith(self.hidden_origin + "/"))
 
     async def start(self) -> None:
         self._cdp = self._given if self._given is not None else await CDP.connect(self.ws_url,
@@ -70,15 +77,13 @@ class TabWatch:
         self._callbacks.append(callback)
 
     def tabs(self) -> list[dict]:
-        """The user's and the agents' tabs; AI Browser's own pages (AI Home, the panel) are left out. Each row has
+        """The user's and the agents' tabs; AI Browser's own pages (the app's origin) are left out. Each row has
         exactly target, url and title."""
         return [{key: page[key] for key in ("target", "url", "title")} for page in self.pages()]
 
     def pages(self) -> list[dict]:
         """The same pages as tabs(), each with its browser context (for BraveLink, which never sends it on)."""
-        own = f"chrome-extension://{self.extension_id}/"
-        return [dict(page) for page in self._pages.values()
-                if not page["url"].startswith(own) and not page["url"].startswith("chrome://newtab")]
+        return [dict(page) for page in self._pages.values() if not self._hidden(page["url"])]
 
     def worker_contexts(self, extension_id: str) -> set[str]:
         """The contexts of that extension's running service workers (a sleeping worker isn't listed)."""
@@ -87,10 +92,6 @@ class TabWatch:
         prefix = f"chrome-extension://{extension_id}/"
         return {worker["context"] for worker in self._workers.values()
                 if worker["url"].startswith(prefix) and worker["context"]}
-
-    def has_pages(self) -> bool:
-        """Whether AI Browser still shows anything at all (a tab, AI Home, the side panel). A worker isn't a page."""
-        return bool(self._pages)
 
     def _on_target(self, params: dict, session: str | None) -> None:
         info = params.get("targetInfo", {})

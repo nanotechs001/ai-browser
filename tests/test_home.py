@@ -1,5 +1,5 @@
-"""AI Home, the extension worker, tab groups and the `ai` keyword: the extension in a throwaway headless AI Browser,
-talking to a real app server (agents run the fake claude)."""
+"""AI Home and its window: the pages over http, opened the way AI Browser's window opens them (a one-time code swapped
+for the window's cookie) in a throwaway headless Chrome, talking to a real app server (agents run the fake claude)."""
 
 import asyncio
 import contextlib
@@ -32,7 +32,7 @@ async def until(js, expression, seconds=8):
 
 
 async def open_page(cdp, url, background=False):
-    """(target, js) for a new tab showing `url`, once it has left about:blank."""
+    """(target, js) for a new tab showing `url`, once it has left about:blank. js.cdp and js.session drive it."""
     params = {"url": url, **({"background": True} if background else {})}
     target = (await cdp.send("Target.createTarget", params))["targetId"]
     session = (await cdp.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
@@ -40,33 +40,75 @@ async def open_page(cdp, url, background=False):
     async def js(expression):
         return await evaluate(cdp, session, expression)
 
+    js.cdp, js.session = cdp, session
     await until(js, "location.protocol !== 'about:' && document.readyState === 'complete'")
     return target, js
 
 
+async def page_js(cdp, target):
+    """js(expression) in a page that is already open (a window one of ours opened)."""
+    session = (await cdp.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
+
+    async def js(expression):
+        return await evaluate(cdp, session, expression)
+
+    js.cdp, js.session = cdp, session
+    return js
+
+
+async def click_as_user(js, selector):
+    """A click the browser counts as the user's own (Runtime.evaluate with userGesture): window.open needs one."""
+    result = await js.cdp.send("Runtime.evaluate", {
+        "expression": f"document.querySelector({json.dumps(selector)}).click(); true", "userGesture": True,
+        "returnByValue": True}, session_id=js.session)
+    return result.get("result", {}).get("value")
+
+
+async def page_targets(cdp, ending) -> list[str]:
+    """The page targets whose address ends with `ending` ("/mission", "/setup#brave")."""
+    infos = (await cdp.send("Target.getTargets"))["targetInfos"]
+    return [info["targetId"] for info in infos if info["type"] == "page" and info["url"].endswith(ending)]
+
+
+async def wait_targets(cdp, ending, count=1, seconds=10) -> list[str]:
+    for _ in range(int(seconds * 10)):
+        found = await page_targets(cdp, ending)
+        if len(found) >= count:
+            return found
+        await asyncio.sleep(0.1)
+    return await page_targets(cdp, ending)
+
+
+WINDOW_INFO = {"using": "chrome", "name": "Google Chrome", "note": "",
+               "choices": [{"id": "auto", "name": "Auto (Google Chrome)", "installed": True},
+                           {"id": "chrome", "name": "Google Chrome", "installed": True},
+                           {"id": "brave", "name": "Brave", "installed": True}]}
+
+
 @pytest.fixture
 async def stack(fake_claude, tmp_path):
-    """A real app server (agents on the fake claude), a headless AI Browser with the extension, the TabWatch."""
+    """A real app server (agents on the fake claude) and its pages in a throwaway headless Chrome, opened the way AI
+    Browser's window opens them: a one-time code swapped for the window's cookie. The throwaway keeps its debugging
+    port because the tests drive the pages through it; the product's window never has one. Agents browse in the
+    user's browser, here a FakeBrave with no tabs (a test that needs tabs attaches its own)."""
     from ai_browser.app.agents import AgentManager
     from ai_browser.app.server import AppServer
-    from ai_browser.app.tabs import TabWatch
-    from ai_browser.appbrowser import launch_app_browser, prepare_extension
     from ai_browser.brain.service import BrainService
+    from ai_browser.brain.skillwriter import SkillWriter
     from ai_browser.brain.store import BrainStore
+    from ai_browser.brain.tools import ToolsConfig
+    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
     from ai_browser.cdp import CDP
+    from ai_browser.chrome import find_ws_url, launch
+    from ai_browser.hearing.service import HearingService
+    from fake_brave import FakeBrave
+    from fake_engine import FakeEngine, tiny_store
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
     home = tmp_path / "home"
     agents = AgentManager(home, claude=runner)
-    from ai_browser.brain.skillwriter import SkillWriter
-    from ai_browser.brain.tools import ToolsConfig
-    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
-
     brain = BrainService(BrainStore(home), agents, claude=runner)
-    from ai_browser.hearing.service import HearingService
-    from fake_engine import FakeEngine, tiny_store
-
     engine = FakeEngine(answers=["what is fix the footer doing"])
     hearing = HearingService(tiny_store(home / "models"), engine)  # talking is ready: the tiny model is in place
     workflows = WorkflowStore(home)
@@ -75,45 +117,32 @@ async def stack(fake_claude, tmp_path):
     server = AppServer(home, agents, brain=brain, workflows=workflows, runner=WorkflowRunner(workflows, agents),
                        tools=tools, skill_writer=skills, hearing=hearing)
     url = await server.start()
-    folder = prepare_extension(home, url, server.token)
-    app = launch_app_browser(tmp_path / "profile", folder, headless=True)
-    server.allow_origin(f"chrome-extension://{app.extension_id}")
-    watch = TabWatch(app.ws_url, app.extension_id)
-    await watch.start()
-    server.attach_tabs(watch)
-    agents.close_tabs = watch.close_targets
-    cdp = await CDP.connect(app.ws_url)
-    state = {"server": server, "app": app, "cdp": cdp, "url": url, "folder": folder, "home": home, "log": log,
-             "runner": runner, "script": script, "brain": brain, "workflows": workflows, "tools": tools,
-             "hearing": hearing, "engine": engine, "user": tmp_path / "user"}
+    server.window_info = WINDOW_INFO  # Chrome draws it; Chrome and Brave installed, whatever this computer has
+    brave = FakeBrave([])
+    server.attach_brave(brave)
+    agents.close_tabs = brave.close_targets
+    profile = tmp_path / "profile"
+    process = launch(profile, headless=True)
+    ws_url = find_ws_url(profile, timeout=20)
+    cdp = await CDP.connect(ws_url)
+    target, js = await open_page(cdp, f"{url}/open?code={server.new_launch_code()}")  # the cookie, the real way
+    assert await until(js, "location.pathname === '/home'")
+    state = {"server": server, "cdp": cdp, "url": url, "ws_url": ws_url, "home": home, "log": log, "runner": runner,
+             "script": script, "brain": brain, "workflows": workflows, "tools": tools, "hearing": hearing,
+             "engine": engine, "user": tmp_path / "user", "brave": brave, "home_js": js, "home_target": target}
     yield state
     await cdp.close()
-    await watch.close()
     await state["server"].stop()
-    app.close()
+    process.terminate()
+    process.wait(timeout=15)
 
 
 @pytest.fixture
 async def home(stack):
-    """(js in AI Home, js in the extension's worker, stack)."""
-    app, cdp = stack["app"], stack["cdp"]
-    _, js = await open_page(cdp, f"chrome-extension://{app.extension_id}/home.html")
-    worker_session = None
-    for _ in range(50):
-        workers = [t for t in (await cdp.send("Target.getTargets"))["targetInfos"]
-                   if t["type"] == "service_worker" and app.extension_id in t["url"]]
-        if workers:
-            worker_session = (await cdp.send("Target.attachToTarget", {"targetId": workers[0]["targetId"],
-                                                                       "flatten": True}))["sessionId"]
-            break
-        await asyncio.sleep(0.1)
-    assert worker_session, "the extension's worker is not running"
-
-    async def worker_js(expression):
-        return await evaluate(cdp, worker_session, expression)
-
+    """(js in AI Home, the page the window opened; stack)."""
+    js = stack["home_js"]
     assert await until(js, "document.getElementById('status').dataset.state === 'connected'")
-    return js, worker_js, stack
+    return js, stack
 
 
 async def post_tab(stack, agent, kind, target):
@@ -124,122 +153,111 @@ async def post_tab(stack, agent, kind, target):
 
 @CHROME
 async def test_ai_home_shows_agents_tabs_and_skills_as_text(home):
-    js, _, stack = home
+    from fake_brave import FakeBrave
+
+    js, stack = home
     await stack["server"].agents.create(HOSTILE)
     assert await until(js, "document.querySelectorAll('#agents .agent').length === 1")
     assert "<img" in await js("document.querySelector('#agents .agent .name').textContent")
     assert await js("document.querySelectorAll('#agents img:not(.thumb)').length") == 0
     assert await js("document.title") != "pwned"
     assert await until(js, "/\\d/.test(document.querySelector('#skills .count').textContent)")
-    _, _ = await open_page(stack["cdp"], "data:text/html,<title>Shop page</title>", background=True)
+    stack["server"].attach_brave(FakeBrave([{"target": "S1", "url": "https://shop.example/", "title": "Shop page"}]))
     assert await until(js, "document.getElementById('tabs').textContent.includes('Shop page')")
 
 
 @CHROME
+async def test_ai_home_connects_over_http_with_the_windows_cookie(home):
+    js, stack = home
+    assert await js("location.origin") == stack["url"] and stack["server"].window_count >= 1
+    assert await js("document.cookie") == ""  # HttpOnly: the page's own script can't read the window's cookie
+
+
+@CHROME
+async def test_an_old_window_is_refused_after_the_app_restarts(home):
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+
+    js, stack = home
+    port = stack["server"].port
+    await stack["server"].stop()
+    assert await until(js, "document.getElementById('status').dataset.state !== 'connected'")
+    server = AppServer(stack["home"], AgentManager(stack["home"], claude=stack["runner"]), ports=range(port, port + 1))
+    stack["server"] = server
+    try:
+        await server.start()  # the same address, a new run: the window's cookie holds the old secret
+    except RuntimeError:
+        pytest.skip("this system still holds the old address")
+    assert await until(js, "document.getElementById('status').dataset.state === 'refused'", 15)
+    assert await js("document.getElementById('status').title") == (
+        "This window wasn't opened by this run of ai-browser app: close it")
+    await asyncio.sleep(2)
+    assert await js("document.getElementById('status').dataset.state") == "refused"  # it stopped trying
+    assert server.window_count == 0
+
+
+@CHROME
+async def test_rows_are_updated_in_place_so_clicks_land(home):
+    from fake_brave import FakeBrave
+
+    js, stack = home
+    server = stack["server"]
+    stack["script"].write_text(json.dumps([EVENTS[0], {"sleep": 4}, *EVENTS[1:]]),
+                               encoding="utf-8")  # it keeps working a while
+    server.attach_brave(FakeBrave([{"target": "P1", "url": "https://some.example/", "title": "Some page"}]))
+    agent = await server.agents.create("keep working")
+    row = f"#agents .agent[data-id='{agent.id}']"
+    assert await until(js, f"!!document.querySelector(\"{row} .stop\") && "
+                           "document.getElementById('tabs').textContent.includes('Some page')")
+    await js(f"window.held = [document.querySelector(\"{row} .stop\"), document.querySelector('#tabs .tab')]; true")
+    for step in range(3):  # each change of the agent redraws its row: in place
+        agent.status = f"step {step}"
+        server.agents._changed(agent)
+        await asyncio.sleep(0.1)
+    await asyncio.sleep(0.5)
+    assert await js(f"document.querySelector(\"{row} .status\").textContent") == "step 2"
+    assert await js("window.held.every(node => node.isConnected)")  # the same elements: a click can't be lost
+
+
+@CHROME
+async def test_the_pages_csp_blocks_injected_script_and_the_other_routes(home):
+    js, _ = home
+    await js("window.violations = 0;"
+             "document.addEventListener('securitypolicyviolation', () => { window.violations += 1; });"
+             "const script = document.createElement('script'); script.textContent = 'window.pwned = true';"
+             "document.body.append(script); true")
+    assert await until(js, "window.violations >= 1")
+    assert await js("window.pwned === undefined")
+    assert await js("fetch('/agent-status').then(() => 'reached', () => 'blocked')") == "blocked"
+
+
+@CHROME
+async def test_a_page_opened_any_other_way_gets_no_socket(home):
+    js, stack = home
+    cdp, server = stack["cdp"], stack["server"]
+    before = server.window_count
+    context = (await cdp.send("Target.createBrowserContext"))["browserContextId"]  # no cookie there, as in Brave
+    try:
+        target = (await cdp.send("Target.createTarget", {"url": stack["url"] + "/home",
+                                                         "browserContextId": context}))["targetId"]
+        other = await page_js(cdp, target)
+        assert await until(other, "document.body !== null && "
+                                  "document.body.textContent.includes('open only in its own window')")
+        await asyncio.sleep(1)
+        assert server.window_count == before and await other("document.scripts.length") == 0
+    finally:
+        await cdp.send("Target.disposeBrowserContext", {"browserContextId": context})
+
+
+@CHROME
 async def test_a_task_starts_once_from_ai_home(home):
-    js, _, stack = home
+    js, stack = home
     await js("document.getElementById('task').value = 'check the shop'; "
              "document.getElementById('start').click(); document.getElementById('start').click(); true")
     assert await until(js, "document.querySelectorAll('#agents .agent').length === 1")
     await asyncio.sleep(1)
     assert len(stack["server"].agents.agents) == 1  # a double click makes one agent
     assert await until(js, "!document.getElementById('start').disabled")
-
-
-@CHROME
-async def test_the_address_bar_keyword_starts_a_task(home):
-    _, worker_js, stack = home
-    await worker_js("startTask('check example.com'); true")
-    for _ in range(50):
-        if stack["server"].agents.agents:
-            break
-        await asyncio.sleep(0.1)
-    assert [agent.name for agent in stack["server"].agents.agents.values()] == ["check example.com"]
-
-
-@CHROME
-async def test_agent_tabs_are_grouped_once(home):
-    js, _, stack = home
-    page, _ = await open_page(stack["cdp"], "data:text/html,<title>Agent page</title>", background=True)
-    agent = await stack["server"].agents.create("group me")
-    await post_tab(stack, agent.id, "tab_opened", page)
-    titles = "chrome.tabGroups.query({}).then(groups => groups.map(group => group.title))"
-    assert await until(js, f"{titles}.then(names => names.includes('group me'))")
-    tab_id = await js("chrome.tabs.query({}).then(tabs => tabs.find(tab => tab.title === 'Agent page').id)")
-    await js(f"chrome.tabs.ungroup({tab_id}).then(() => true)")
-    await post_tab(stack, agent.id, "working_tab", page)  # the agent keeps working there
-    await asyncio.sleep(2)
-    assert await js(f"chrome.tabs.get({tab_id}).then(tab => tab.groupId)") == -1  # the user's move stands
-
-
-@CHROME
-async def test_pages_reconnect_after_the_app_restarts(home):
-    from ai_browser.app.agents import AgentManager
-    from ai_browser.app.server import AppServer
-
-    js, _, stack = home
-    await stack["server"].stop()
-    assert await until(js, "document.getElementById('status').dataset.state !== 'connected'")
-    agents = AgentManager(stack["home"], claude=stack["runner"])
-    server = AppServer(stack["home"], agents)
-    url = await server.start()
-    server.allow_origin(f"chrome-extension://{stack['app'].extension_id}")
-    stack["server"] = server
-    (stack["folder"] / "config.json").write_text(json.dumps({"server": url, "token": server.token}), encoding="utf-8")
-    await agents.create("after the restart")
-    assert await until(js, "document.getElementById('status').dataset.state === 'connected'", 10)
-    assert await until(js, "document.getElementById('agents').textContent.includes('after the restart')")
-
-
-@CHROME
-async def test_ai_home_is_the_new_tab_page(home):
-    _, _, stack = home
-    _, js = await open_page(stack["cdp"], "chrome://newtab/")
-    assert await until(js, "!!document.getElementById('agents')")
-
-
-@CHROME
-async def test_rows_are_updated_in_place_so_clicks_land(home):
-    js, _, stack = home
-    stack["script"].write_text(json.dumps([EVENTS[0], {"sleep": 4}, *EVENTS[1:]]),
-                               encoding="utf-8")  # it keeps working a while
-    page, _ = await open_page(stack["cdp"], "data:text/html,<title>Some page</title>", background=True)
-    agent = await stack["server"].agents.create("keep working")
-    row = "#agents .agent[data-id='a1']"
-    assert await until(js, f"!!document.querySelector(\"{row} .stop\") && "
-                           "document.getElementById('tabs').textContent.includes('Some page')")
-    await js(f"window.held = [document.querySelector(\"{row} .stop\"), document.querySelector('#tabs .tab')]; true")
-    for n in range(3):  # each report changes the agent, and so its row
-        await post_tab(stack, agent.id, "tab_opened", f"T{n}")
-    await post_tab(stack, agent.id, "working_tab", page)
-    await asyncio.sleep(0.5)
-    assert await js("window.held.every(node => node.isConnected)")  # the same elements: a click can't be lost
-
-
-@CHROME
-async def test_ai_home_is_one_pinned_tab_in_front_after_a_start(home):
-    js, worker_js, stack = home
-    home_url = f"chrome-extension://{stack['app'].extension_id}/home.html"
-    await js(f"chrome.tabs.create({{url: '{home_url}', pinned: true}}).then(() => true)")  # a restored duplicate
-    await open_page(stack["cdp"], "data:text/html,<title>Restored tab</title>")  # in front, as after a restore
-    await worker_js("ensureHome().then(() => true)")  # what the worker does when AI Browser starts
-    homes = await js(f"chrome.tabs.query({{}}).then(tabs => tabs.filter(tab => (tab.url || tab.pendingUrl || '')"
-                     f".startsWith('{home_url}')).map(tab => [tab.pinned, tab.active, tab.index]))")
-    assert [tab for tab in homes if tab[0]] == [[True, True, 0]]  # one pinned AI Home, first and in front
-
-
-@CHROME
-async def test_ai_browser_groups_nothing_when_agents_browse_in_brave(home):
-    from fake_brave import FakeBrave
-
-    js, _, stack = home
-    stack["server"].attach_brave(FakeBrave([]))
-    await asyncio.sleep(0.5)  # the worker hears that agents browse in Brave
-    page, _ = await open_page(stack["cdp"], "data:text/html,<title>Agent page</title>", background=True)
-    agent = await stack["server"].agents.create("group me")
-    await post_tab(stack, agent.id, "tab_opened", page)
-    await asyncio.sleep(2)
-    assert await js("chrome.tabGroups.query({}).then(groups => groups.length)") == 0
 
 
 CHIP = "(target => document.querySelector(`#tabs .tab[data-target='${target}'] .chip`)?.textContent)"
@@ -253,7 +271,7 @@ def in_row(target, selector):
 async def test_the_tab_list_marks_owners_and_hands_tabs_over(home):
     from fake_brave import FakeBrave
 
-    js, _, stack = home
+    js, stack = home
     server = stack["server"]
     agent = await server.agents.create("Fix the footer")
     brave = FakeBrave([{"target": "T1", "url": "https://shop.example/cart", "title": "Agent page"},
@@ -304,7 +322,7 @@ NO_PROFILE = "Your tabs aren't listed: AI Browser can't tell which Brave profile
 async def test_the_tab_list_counts_what_it_doesnt_show(home):
     from fake_brave import FakeBrave
 
-    js, _, stack = home
+    js, stack = home
     brave = FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
     brave.set_scope("watcher", 3)
     stack["server"].attach_brave(brave)
@@ -360,8 +378,8 @@ async def test_while_brave_connects_ai_home_claims_no_profile(home, tmp_path):  
     from ai_browser.app.bravelink import BraveLink
     from fake_brave import FakePort
 
-    js, _, stack = home
-    server, app = stack["server"], stack["app"]
+    js, stack = home
+    server = stack["server"]
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
     port = FakePort(folder, pages=[{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
     port.hold = {"Target.getBrowserContexts"}  # the tab list's first read waits: the moment right after Allow
@@ -377,7 +395,7 @@ async def test_while_brave_connects_ai_home_claims_no_profile(home, tmp_path):  
             if brave.state == "connected" and port.held:
                 break
             await asyncio.sleep(0.05)
-        _, late = await open_page(stack["cdp"], f"chrome-extension://{app.extension_id}/home.html")  # loads now
+        _, late = await open_page(stack["cdp"], stack["url"] + "/home")  # loads now, with the window's cookie
         assert await until(late, "document.getElementById('browser-card').dataset.state === 'connected'")
         assert await until(late, f"({empty}) !== null")  # its snapshot is drawn
         assert await late(source) is None and await late(empty) == "No web pages open in your browser."
@@ -397,7 +415,7 @@ async def test_while_brave_connects_ai_home_claims_no_profile(home, tmp_path):  
 async def test_ai_home_shows_numbers_on_rows_and_give_to(home):
     from fake_brave import FakeBrave
 
-    js, _, stack = home
+    js, stack = home
     server = stack["server"]
     await server.agents.create("Fix the footer")
     server.attach_brave(FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}]))
@@ -413,7 +431,7 @@ async def test_ai_home_shows_numbers_on_rows_and_give_to(home):
 async def test_the_connected_list_names_agents_like_every_other_list(home):
     from fake_brave import FakeBrave
 
-    js, _, stack = home
+    js, stack = home
     stack["server"].attach_brave(FakeBrave([]))
     stack["server"]._send_all({"type": "browser_clients", "clients": [
         {"id": "a3", "kind": "agent", "number": None, "name": "Fix the footer", "color": "blue", "tabs": 2,
@@ -427,7 +445,7 @@ async def test_the_connected_list_names_agents_like_every_other_list(home):
 async def test_the_browser_card_follows_brave(home):
     from fake_brave import FakeBrave
 
-    js, _, stack = home
+    js, stack = home
     brave = FakeBrave([], state="off")
     stack["server"].attach_brave(brave)
     title = "document.getElementById('browser-title').textContent"
@@ -455,16 +473,10 @@ async def test_the_browser_card_follows_brave(home):
 
 
 @CHROME
-async def test_ai_browser_mode_says_so(home):
-    js, _, _ = home
-    assert await until(js, "document.getElementById('browser-title').textContent === 'Agents browse in AI Browser'")
-
-
-@CHROME
 async def test_ai_home_lists_connected_clients_with_disconnect(home):
     from fake_brave import FakeBrave
 
-    js, _, stack = home
+    js, stack = home
     brave = FakeBrave([], state="connected")
     stack["server"].attach_brave(brave)
     rows = [
@@ -500,7 +512,7 @@ async def test_ai_home_lists_connected_clients_with_disconnect(home):
 async def test_the_browser_card_says_one_question(home):
     from fake_brave import FakeBrave
 
-    js, _, stack = home
+    js, stack = home
     brave = FakeBrave([], state="ready")
     stack["server"].attach_brave(brave)
     note = "document.getElementById('browser-note').textContent"
@@ -510,3 +522,104 @@ async def test_the_browser_card_says_one_question(home):
     assert await until(js, f"{note}.includes('Everything waiting for Brave shares this one question.')")
     brave.set_state("refused")  # only a no: the question never runs out of time (app/cdprelay.py)
     assert await until(js, f"{note} === 'Brave said no.'")
+
+
+@CHROME
+async def test_the_setup_steps_open_in_a_small_window(home):
+    js, stack = home
+    cdp = stack["cdp"]
+    assert await until(js, "document.querySelector('#brain .brain-setup') !== null")  # the watcher isn't connected
+    await click_as_user(js, "#brain .brain-setup")
+    [setup] = await wait_targets(cdp, "/setup#brave")
+    assert await (await page_js(cdp, setup))("window.name") == "aib-setup"
+    stack["brave"].set_state("off")
+    assert await until(js, "document.getElementById('browser-action').textContent === 'Show me how'")
+    await click_as_user(js, "#browser-action")
+    assert await wait_targets(cdp, "/setup#switch") == [setup]  # the same small window, now on the switch's steps
+
+
+@CHROME
+async def test_links_go_to_the_users_browser_or_a_window_of_ours(home, monkeypatch):
+    from ai_browser import platforms
+
+    js, stack = home
+    opened = []
+    monkeypatch.setattr(platforms, "open_url", lambda url, browser=None, system=None: opened.append(url) or True)
+    before = await js("location.href")
+    await js("const site = document.createElement('a'); site.id = 'site'; site.href = 'https://example.com/pricing';"
+             "site.textContent = 'pricing'; document.body.append(site);"
+             "const ours = document.createElement('a'); ours.id = 'ours'; ours.href = '/mission';"
+             "ours.target = '_blank'; ours.textContent = 'Mission Control'; document.body.append(ours); true")
+    await js("document.getElementById('site').click(); true")
+    for _ in range(50):
+        if opened:
+            break
+        await asyncio.sleep(0.1)
+    assert opened == ["https://example.com/pricing"] and await js("location.href") == before  # never in the window
+    await click_as_user(js, "#ours")
+    [mission] = await wait_targets(stack["cdp"], "/mission")
+    await asyncio.sleep(0.5)
+    assert await page_targets(stack["cdp"], "/mission") == [mission]
+    assert await (await page_js(stack["cdp"], mission))("window.name") == "aib-mission"  # a _blank open has no name
+
+
+@CHROME
+async def test_settings_opens_as_a_small_window_and_saves_the_choice(home):
+    from ai_browser.settings import read_settings
+
+    js, stack = home
+    await click_as_user(js, "#settings")
+    [target] = await wait_targets(stack["cdp"], "/settings")
+    settings = await page_js(stack["cdp"], target)
+    assert await until(settings, "document.querySelectorAll('#window-choices input').length === 3")
+    assert await settings("window.name") == "aib-settings"
+    labels = "[...document.querySelectorAll('#window-choices label')].map((label) => label.textContent)"
+    assert await settings(labels) == ["Auto (Google Chrome)", "Google Chrome", "Brave"]
+    assert await settings("document.querySelector('#window-choices input[value=auto]').checked") is True
+    assert await settings("document.getElementById('window-using').textContent") == (
+        "This window: Google Chrome. A change applies the next time AI Browser starts.")
+    await settings("document.querySelector('#window-choices input[value=brave]').click(); true")
+    for _ in range(50):
+        if read_settings(stack["home"]).get("window_browser") == "brave":
+            break
+        await asyncio.sleep(0.1)
+    assert read_settings(stack["home"])["window_browser"] == "brave"
+    assert await until(settings, "document.querySelector('#window-choices input[value=brave]').checked")
+
+
+@CHROME
+async def test_a_browser_that_isnt_installed_is_greyed_out(home):
+    js, stack = home
+    stack["server"].window_info = {
+        "using": "chrome", "name": "Google Chrome",
+        "note": "Brave isn't installed: the window uses Google Chrome. Change it in Settings.",
+        "choices": [{"id": "auto", "name": "Auto (Google Chrome)", "installed": True},
+                    {"id": "chrome", "name": "Google Chrome", "installed": True},
+                    {"id": "brave", "name": "Brave", "installed": False}]}
+    await click_as_user(js, "#settings")
+    [target] = await wait_targets(stack["cdp"], "/settings")
+    settings = await page_js(stack["cdp"], target)
+    assert await until(settings, "document.querySelectorAll('#window-choices input').length === 3")
+    assert await settings("document.querySelector('#window-choices input[value=brave]').disabled") is True
+    assert await settings("document.querySelectorAll('#window-choices label')[2].textContent") == (
+        "Brave · not installed")
+    assert (await settings("document.getElementById('window-note').textContent")).startswith("Brave isn't installed")
+
+
+@CHROME
+async def test_ai_homes_words_for_the_window(home):
+    js, _ = home
+    assert await js("document.querySelector('.new-task .grow').textContent") == (
+        "Or type ai and a space in Brave's address bar")
+    assert await until(js, "document.querySelector('#agents .empty')?.textContent === "
+                           "'No agents yet. Start a task above.'")
+
+
+@CHROME
+async def test_the_title_counts_the_working_agents(home):
+    js, stack = home
+    stack["script"].write_text(json.dumps([EVENTS[0], {"sleep": 30}]), encoding="utf-8")  # it stays at work
+    agent = await stack["server"].agents.create("keep working")
+    assert await until(js, "document.title === '(1) AI Home'")
+    await stack["server"].agents.stop(agent.id)
+    assert await until(js, "document.title === 'AI Home'")

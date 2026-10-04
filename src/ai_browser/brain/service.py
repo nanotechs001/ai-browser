@@ -15,7 +15,7 @@ from collections.abc import Callable, Sequence
 
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
-from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HAND_OVER_ANY_SAY, HAND_OVER_APP_SAY, HAND_OVER_SAY, HIDDEN,
+from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HAND_OVER_ANY_SAY, HAND_OVER_SAY, HIDDEN,
                    NO_AGENT_SAY, NO_SUCH_SAY, NOTHING_OPEN, NOTHING_OPEN_WAITING, NOTHING_TO_CANCEL, PRESSED,
                    QUEUED_LINE_SAY, QUEUED_PERMISSION_SAY, QUEUED_WORKING_SAY, RELAY, SECRET_ANSWER, SEND_SAY, SENT_SAY,
                    START_SAY, STARTED_SAY, TELL_NO_AGENT, TELL_SEND, TELL_START, TELL_WHICH, WATCHER_CARD, WHICH_SAY,
@@ -736,10 +736,6 @@ class BrainService:
         rows = self.agents.snapshot()["agents"] if self.agents is not None else []
         return [row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)]
 
-    def _in_users_browser(self) -> bool:
-        """The agents work in the user's own browser, so the user can hand them a tab (AgentManager)."""
-        return bool(getattr(self.agents, "in_users_browser", False))
-
     async def _respond(self, talk: str, text: str, proposal_id: str | None, task: str | None,
                        model: str | None) -> dict:
         """In this order: the open card, a bare yes or no, a secret, a pending "which agent?" question, then
@@ -858,9 +854,6 @@ class BrainService:
         row = self._row(rows, pick.ids[0]) if pick.outcome == "one" else None
         if row is not None:
             self.talks.set_last(talk, row["id"])
-        if not self._in_users_browser():  # AI Browser mode: agents can't take the user's tabs
-            return {"say": HAND_OVER_APP_SAY.format(label=label(row) if row is not None else "the agent"),
-                    **({"open": {"agent": row["id"]}} if row is not None else {})}
         if row is None:
             return {"say": HAND_OVER_ANY_SAY}
         return {"say": HAND_OVER_SAY.format(label=label(row)), "open": {"agent": row["id"], "tabs": True}}
@@ -868,7 +861,7 @@ class BrainService:
     def _start_card(self, talk: str, words: str) -> dict:
         """A start card holding the user's own words; it says how to hand over a tab when the words point at one."""
         card = self.talks.propose(talk, "start_agent", task=words, model=self.agent_model,
-                                  tab_hint=self._in_users_browser() and tab_hint(words))
+                                  tab_hint=tab_hint(words))
         return card.public(self.talks.expires_in(card))
 
     def _answer_pick(self, talk: str, pick: Pick, words: str, rows: list[dict]) -> dict:
@@ -900,7 +893,7 @@ class BrainService:
         card = self.talks.propose(talk, "message_agent", task=words, agent=row["id"], number=number_of(row),
                                   name=str(row.get("name") or ""), color=str(row.get("color") or ""),
                                   target_state=target_state(row),
-                                  tab_hint=self._in_users_browser() and tab_hint(words))
+                                  tab_hint=tab_hint(words))
         return {"say": SEND_SAY.format(label=label(row)), "proposal": card.public(self.talks.expires_in(card))}
 
     async def _send(self, card, body: str) -> dict:

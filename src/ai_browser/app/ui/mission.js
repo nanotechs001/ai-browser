@@ -5,6 +5,7 @@ import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { agentLabel, createChat } from "./chat.js";
 import { connect } from "./link.js";
+import { focusHome, guardLinks, openWindow, WINDOWS } from "./nav.js";
 import { permissionCard } from "./permission.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
 import { mountTalk } from "./talk.js";
@@ -23,7 +24,7 @@ let brainKnown = false;
 let selected = null;
 let pending = null; // the new_task request waiting for its "created": one Start, one agent
 let pendingTimer = null;
-let storedModel = false;
+let defaultModel = "sonnet"; // ai-browser app --model, until the user picks one (the app remembers the pick)
 let talkState = "idle"; // the talk panel's state (talk.js): the Brain listens while the user talks
 let talk = null; // the talk panel, mounted once the line to the app exists
 let tabs = []; // the browser's tab list (snapshot.tabs, then each "tabs" message): the drawer's Your tabs
@@ -61,6 +62,7 @@ const voice = createVoice({
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
+guardLinks(link);
 talk = mountTalk({
   panel: $("talk"),
   micButton: $("mic"),
@@ -93,8 +95,15 @@ function stateOf(agent) {
 function setStatus(state) {
   talk?.connection(state); // a lost line ends a turn, or a question, at once
   $("status").dataset.state = state;
-  $("status").title = { connected: "Connected to ai-browser app", connecting: "Connecting…" }[state]
+  $("status").title = { connected: "Connected to ai-browser app", connecting: "Connecting…",
+                        refused: "This window wasn't opened by this run of ai-browser app: close it" }[state]
     || "Not connected: is `ai-browser app` running?";
+}
+
+function applySettings(settings) { // the model picked last, here or in AI Home: the app keeps it
+  if (!settings) return;
+  const model = settings.model ?? defaultModel;
+  if ([...$("task-model").options].some((option) => option.value === model)) $("task-model").value = model;
 }
 
 // ---- the agents ----------------------------------------------------------------------------------------------
@@ -210,7 +219,8 @@ function openBrain() {
   $("drawer-dot").style.background = "var(--accent)";
   const root = el("div", "drawer-brain");
   $("drawer-body").replaceChildren(root);
-  drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id), cards: "confirm" });
+  drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id), cards: "confirm",
+                                          openSetup: () => openWindow("/setup#brave", ...WINDOWS["/setup"]) });
   $("drawer").hidden = false;
 }
 
@@ -407,7 +417,9 @@ function handle(message) {
       agentsKnown = true;
       renderCounts();
       renderEmptyList();
-      if (!storedModel && message.default_model) $("task-model").value = message.default_model;
+      defaultModel = message.default_model || defaultModel;
+      applySettings(message.settings);
+      if (message.settings?.voice && !$("voice").checked) setVoice(true); // Voice was on: it comes back on
       if (pending) finishStart(); // a new connection: an unanswered Start can be pressed again
       if (drawer.id) link.send({ type: "events", id: drawer.id });
       link.send({ type: "thumbs" }); // the latest pictures, for a page opened after they were taken
@@ -448,6 +460,9 @@ function handle(message) {
     case "browser":
       browser = { kind: message.kind, name: message.name, state: message.state };
       renderYourTabs();
+      break;
+    case "settings":
+      applySettings(message);
       break;
     case "agent":
       update(message.agent);
@@ -516,6 +531,7 @@ view.addEventListener("dblclick", (event) => {
 });
 
 $("drawer-close").addEventListener("click", closeDrawer);
+$("home-link").addEventListener("click", () => focusHome());
 brainButton.addEventListener("click", openBrain);
 bubble.addEventListener("click", openBrain);
 
@@ -528,9 +544,8 @@ async function setVoice(on) { // Voice: only a voice that runs on this computer;
 
 $("voice").addEventListener("change", async () => {
   const result = await setVoice($("voice").checked);
-  chrome.storage.local.set({ voice: result.on }).catch(() => {});
+  link.send({ type: "settings_set", key: "voice", value: result.on }); // remembered by the app, not the browser
 });
-chrome.storage.local.get("voice").then(({ voice: on }) => { if (on) setVoice(true); }).catch(() => {});
 $("start").addEventListener("click", start);
 $("task").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -539,14 +554,8 @@ $("task").addEventListener("keydown", (event) => {
   }
 });
 $("task-model").addEventListener("change", () => {
-  chrome.storage.local.set({ model: $("task-model").value }).catch(() => {});
+  link.send({ type: "settings_set", key: "model", value: $("task-model").value });
 });
-chrome.storage.local.get("model").then(({ model }) => { // the model last picked here or in AI Home
-  if (model && [...$("task-model").options].some((option) => option.value === model)) {
-    $("task-model").value = model;
-    storedModel = true;
-  }
-}).catch(() => {});
 $("list-button").addEventListener("click", () => showList($("list").hidden));
 renderCounts();
 renderEmptyList();

@@ -392,8 +392,6 @@ async def test_rows_carry_a_fixed_number_and_a_queued_count(fake_claude, tmp_pat
         assert await manager.send("a1", "are you there?") is False  # closed: nothing was sent
         assert [agent_number(value) for value in ("a1", "a12", "cc-123", "app", "a", "ab3", "", None)] == \
             [1, 12, None, None, None, None, None, None]
-        assert manager.in_users_browser is False
-        assert AgentManager(tmp_path / "other", env={"AIB_BROWSER": "chrome"}).in_users_browser is True
     finally:
         await manager.close_all()
 

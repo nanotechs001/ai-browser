@@ -1,27 +1,24 @@
-"""The app's own view of AI Browser's tabs: the tab list, Watch, closing an agent's tabs, thumbnails."""
+"""TabWatch, the app's view of a browser's tabs: the tab list (without AI Browser's own pages), Watch, closing an
+agent's tabs, thumbnails, and a tab's text for a skill draft. A throwaway headless Chrome stands in for the browser."""
 
 import asyncio
 
 import pytest
 
 from ai_browser.chrome import chrome_binary
-from test_appmode import front_url, settled
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 
 
 @pytest.fixture
-async def app_browser(tmp_path):
+async def pages(throwaway_chrome):
+    """(the throwaway Chrome's websocket, the test pages' base, another local origin standing in for the app's)."""
     from ai_browser import testpages
-    from ai_browser.appbrowser import launch_app_browser, prepare_extension
+    from ai_browser.chrome import find_ws_url
 
-    app = launch_app_browser(tmp_path / "profile", prepare_extension(tmp_path, "http://127.0.0.1:1", "t"),
-                             headless=True)
-    await settled(app)
-    base, _, stop = testpages.serve_host()
-    yield app, base
+    base, other, stop = testpages.serve_host()
+    yield find_ws_url(throwaway_chrome, timeout=20), base, other.rstrip("/")
     stop()
-    app.close()
 
 
 async def until(check, seconds=5):
@@ -32,23 +29,36 @@ async def until(check, seconds=5):
     return False
 
 
+def test_the_rows_leave_out_the_apps_origin_and_new_tab_pages():
+    from ai_browser.app.tabs import TabWatch
+
+    watch = TabWatch("ws://127.0.0.1:1/unused", hidden_origin="http://127.0.0.1:8792")
+    for target, url in (("U1", "https://mail.example/"), ("W1", "http://127.0.0.1:8792/home"),
+                        ("W2", "http://127.0.0.1:8792/open?code=x"), ("N1", "chrome://newtab/"),
+                        ("P1", "http://127.0.0.1:87921/x"), ("O1", "http://127.0.0.1:8793/home")):
+        watch._pages[target] = {"target": target, "url": url, "title": target}
+    assert [tab["target"] for tab in watch.tabs()] == ["U1", "P1", "O1"]  # another port is another origin
+    assert watch.hidden_origin == "http://127.0.0.1:8792"
+    assert [tab["target"] for tab in TabWatch("ws://127.0.0.1:1/unused").tabs()] == []
+
+
 @CHROME
-async def test_the_tab_list_follows_chrome_and_leaves_out_our_pages(app_browser):
+async def test_the_tab_list_follows_chrome_and_leaves_out_the_apps_pages(pages):
     from ai_browser.app.tabs import TabWatch
     from ai_browser.cdp import CDP
 
-    app, base = app_browser
-    watch = TabWatch(app.ws_url, app.extension_id)
+    ws_url, base, app_origin = pages
+    watch = TabWatch(ws_url, hidden_origin=app_origin)
     changes = []
     watch.on_change(changes.append)
     await watch.start()
-    cdp = await CDP.connect(app.ws_url)
+    cdp = await CDP.connect(ws_url)
     try:
         page = (await cdp.send("Target.createTarget", {"url": base + "privacy.html"}))["targetId"]
-        await cdp.send("Target.createTarget", {"url": f"chrome-extension://{app.extension_id}/panel.html"})
+        ours = (await cdp.send("Target.createTarget", {"url": app_origin + "/form.html"}))["targetId"]
         assert await until(lambda: any(t["target"] == page and t["title"] == "Privacy" for t in watch.tabs()))
-        assert changes and watch.has_pages()
-        assert not any(app.extension_id in tab["url"] for tab in watch.tabs())
+        await asyncio.sleep(0.5)
+        assert changes and not any(tab["target"] == ours for tab in watch.tabs())  # a 403 page in Brave isn't a tab
         shot = await watch.thumbnail(page)
         assert shot and shot[:2] == b"\xff\xd8" and len(shot) < 80_000  # a small JPEG
         await watch.close_targets([page, "no-such-target"])
@@ -59,34 +69,40 @@ async def test_the_tab_list_follows_chrome_and_leaves_out_our_pages(app_browser)
 
 
 @CHROME
-async def test_watch_brings_a_tab_to_the_front(app_browser):
+async def test_watch_asks_chrome_to_bring_the_tab_forward(pages, monkeypatch):
     from ai_browser.app.tabs import TabWatch
     from ai_browser.cdp import CDP
 
-    app, base = app_browser
-    watch = TabWatch(app.ws_url, app.extension_id)
+    ws_url, base, _ = pages
+    watch = TabWatch(ws_url)
     await watch.start()
-    cdp = await CDP.connect(app.ws_url)
+    cdp = await CDP.connect(ws_url)
+    sent, original = [], CDP.send
+
+    async def spy(self, method, params=None, *args, **kwargs):
+        sent.append((method, params))
+        return await original(self, method, params, *args, **kwargs)
+
     try:
         first = (await cdp.send("Target.createTarget", {"url": base + "privacy.html"}))["targetId"]
-        await cdp.send("Target.createTarget", {"url": base + "form.html"})
-        assert (await front_url(app, cdp)).endswith("form.html")
+        monkeypatch.setattr(CDP, "send", spy)
         await watch.watch(first)
-        assert (await front_url(app, cdp)).endswith("privacy.html")
+        assert ("Target.activateTarget", {"targetId": first}) in sent
     finally:
+        monkeypatch.undo()
         await cdp.close()
         await watch.close()
 
 
 @CHROME
-async def test_the_text_of_a_tab_for_a_skill_draft(app_browser):
+async def test_the_text_of_a_tab_for_a_skill_draft(pages):
     from ai_browser.app.tabs import TabWatch
     from ai_browser.cdp import CDP
 
-    app, base = app_browser
-    watch = TabWatch(app.ws_url, app.extension_id)
+    ws_url, base, _ = pages
+    watch = TabWatch(ws_url)
     await watch.start()
-    cdp = await CDP.connect(app.ws_url)
+    cdp = await CDP.connect(ws_url)
     try:
         page = (await cdp.send("Target.createTarget", {"url": base + "brain/orders.html"}))["targetId"]
         for _ in range(50):
@@ -128,7 +144,7 @@ async def test_contexts_workers_and_the_default_on_a_fake_port(tmp_path):
         assert watch.default_context == "C2"
         await port.destroy("U1")
         assert await until(lambda: watch.pages() == [])
-        assert watch.tabs() == [] and not watch.has_pages()  # a worker is never a page
+        assert watch.tabs() == []  # a worker is never a page
         assert watch.worker_contexts("abc") == {"W"}
         await port.destroy("SW1")  # the worker sleeps
         assert await until(lambda: watch.worker_contexts("abc") == set())
@@ -142,22 +158,20 @@ async def test_contexts_workers_and_the_default_on_a_fake_port(tmp_path):
 
 
 @CHROME
-async def test_pages_carry_their_context_and_workers_are_seen(app_browser):
+async def test_pages_carry_their_context_and_workers_are_seen(pages):
     from ai_browser.app.tabs import TabWatch
     from ai_browser.cdp import CDP
 
-    app, base = app_browser
-    watch = TabWatch(app.ws_url, app.extension_id)
+    ws_url, base, _ = pages
+    watch = TabWatch(ws_url)
     await watch.start()
-    cdp = await CDP.connect(app.ws_url)
+    cdp = await CDP.connect(ws_url)
     try:
         page = (await cdp.send("Target.createTarget", {"url": base + "privacy.html"}))["targetId"]
         assert await until(lambda: any(row["target"] == page for row in watch.pages()))
-        assert await until(lambda: bool(watch.worker_contexts(app.extension_id)), 10)
         contexts = {row["context"] for row in watch.pages()}
         assert len(contexts) == 1 and "" not in contexts  # one profile, one context
         assert watch.default_context in contexts
-        assert watch.worker_contexts(app.extension_id) == contexts
         assert all(set(tab) == {"target", "url", "title"} for tab in watch.tabs())
     finally:
         await cdp.close()

@@ -60,7 +60,7 @@ def row_card(agent) -> str:
 
 @CHROME
 async def test_ai_home_shows_the_card_and_its_buttons(home):
-    js, _, stack = home
+    js, stack = home
     seen = recorded(stack)
     agent = await checked(stack)
     agent.check = {**agent.check, "what": HOSTILE, "since": agent.check["since"] + 1}  # markup stays text
@@ -82,7 +82,7 @@ async def test_ai_home_shows_the_card_and_its_buttons(home):
 
 @CHROME
 async def test_skip_is_offered_only_for_the_agents_own_tab(home):
-    js, _, stack = home
+    js, stack = home
     seen = recorded(stack)
     own = await checked(stack, "Own tab")
     users = await checked(stack, "Your tab", target="U1", adopted=True)
@@ -100,6 +100,7 @@ async def test_skip_is_offered_only_for_the_agents_own_tab(home):
     assert await heard(seen, ("check_skip", own.id))
 
 
+@pytest.mark.skip(reason="AI Browser's side panel retired in wave B; the side-chat plan (wave D) moves this test")
 @CHROME
 async def test_the_panel_shows_the_same_card_for_the_users_own_tab(panel):
     js, user_tab, stack = panel

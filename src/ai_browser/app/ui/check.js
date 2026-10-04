@@ -6,6 +6,10 @@
 
 const LIVE = /^http:\/\/127\.0\.0\.1:\d{1,5}\/live\?token=[A-Za-z0-9_-]{1,64}$/; // an engine's live view, nothing else
 
+function openLive(url) { // an engine's live view, in a small window; noopener: it can't reach back into our pages
+  window.open(url, "aib-live", "popup,noopener,width=1280,height=860");
+}
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -29,7 +33,7 @@ export function checkCard(agent, send) {
   const done = el("span", "muted");
   const show = el("button", "show-me", "Show me");
   show.addEventListener("click", () => {
-    if (live) window.open(live, "_blank", "noopener");
+    if (live) openLive(live);
     else if (!check.live && check.target) send({ type: "watch", target: String(check.target) });
   });
   buttons.append(show);

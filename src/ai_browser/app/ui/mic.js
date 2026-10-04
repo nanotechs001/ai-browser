@@ -10,7 +10,7 @@ const FLUSH_WAIT = 300; // ms for the worklet to hand over the samples it still 
 async function graph(stream, rate) { // an AudioContext at `rate` (or the computer's own rate), with the worklet loaded
   const context = rate ? new AudioContext({ sampleRate: rate }) : new AudioContext();
   try {
-    await context.audioWorklet.addModule(chrome.runtime.getURL("mic-worklet.js"));
+    await context.audioWorklet.addModule(new URL("./mic-worklet.js", import.meta.url).href);
     return { context, source: context.createMediaStreamSource(stream) };
   } catch (error) {
     context.close().catch(() => {});

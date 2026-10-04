@@ -9,6 +9,9 @@ import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
 import { mountWorkflows } from "./workflows.js";
+import { guardLinks, openWindow, WINDOWS } from "./nav.js";
+
+window.name = "aib-home"; // Mission Control's AI Home button finds this window by its name
 
 const $ = (id) => document.getElementById(id);
 const COLORS = { grey: "#5f6368", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038",
@@ -25,7 +28,7 @@ let maxWorking = 3;
 let pending = null; // the new_task request waiting for its "created"
 let pendingTimer = null;
 let chatAgent = null;
-let storedModel = false; // the user picked a model here before: it wins over the app's default
+let defaultModel = "sonnet"; // ai-browser app --model, until the user picks one (the app remembers the pick)
 let browser = null; // where agents browse: {kind, name, state, groups}
 let browserClients = []; // what uses the user's browser through AI Browser's one connection (the relay)
 let handing = null; // one of the user's tabs the next new task starts in (Hand over → New agent…)
@@ -37,7 +40,9 @@ const SAYS = { connected: "connected", off: "switch off", ready: "ready", asking
                refused: "not allowed", lost: "closed" };
 const chat = createChat($("chat-messages"));
 const link = connect({ view: "home", onMessage: handle, onState: setStatus });
-const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id), cards: "confirm" });
+guardLinks(link);
+const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id), cards: "confirm",
+                                             openSetup: () => openWindow("/setup#brave", ...WINDOWS["/setup"]) });
 let watchSites = []; // the Brain's watch list: a message workflow's sites
 let switchedOn = []; // the MCP servers switched on: what a workflow may use
 const tools = mountTools($("tools"), link);
@@ -47,8 +52,15 @@ const train = mountTrain($("train"), link, { tabs: () => tabs, model: () => $("t
 
 function setStatus(state) {
   $("status").dataset.state = state;
-  $("status").title = { connected: "Connected to ai-browser app", connecting: "Connecting…" }[state]
+  $("status").title = { connected: "Connected to ai-browser app", connecting: "Connecting…",
+                        refused: "This window wasn't opened by this run of ai-browser app: close it" }[state]
     || "Not connected: is `ai-browser app` running?";
+}
+
+function applySettings(settings) { // the model picked last, here or in Mission Control: the app keeps it
+  if (!settings) return;
+  const model = settings.model ?? defaultModel;
+  if ([...$("task-model").options].some((option) => option.value === model)) $("task-model").value = model;
 }
 
 function flash(text) {
@@ -71,6 +83,13 @@ function renderCounts() {
   const waiting = all.filter((agent) => agent.state === "waiting").length;
   $("counts").textContent = all.length
     ? `${working} working${waiting ? ` · ${waiting} waiting` : ""} · up to ${maxWorking} at once` : "";
+  document.title = working ? `(${working}) AI Home` : "AI Home"; // the window's title: there is no toolbar badge
+  try {
+    if (working) navigator.setAppBadge?.(working)?.catch(() => {});
+    else navigator.clearAppBadge?.()?.catch(() => {});
+  } catch {
+    // not an installed app: the title says it
+  }
 }
 
 const rows = new Map(); // agent id -> its row, built once and then updated in place (a click must not be lost)
@@ -180,7 +199,7 @@ function renderAgents() {
     fillAgentRow(row, agent);
     previous = row;
   }
-  if (!all.length) list.append(el("p", "empty", "No agents yet. Start a task above, or open the chat beside any page."));
+  if (!all.length) list.append(el("p", "empty", "No agents yet. Start a task above."));
   renderCounts();
   if (chatAgent && agents.has(chatAgent)) {
     const agent = agents.get(chatAgent);
@@ -222,15 +241,8 @@ function renderBrowser() {
   const card = $("browser-card");
   if (!browser) return;
   card.hidden = false;
-  card.dataset.state = browser.kind === "brave" ? browser.state : "app";
+  card.dataset.state = browser.state;
   const action = $("browser-action");
-  if (browser.kind !== "brave") {
-    $("browser-title").textContent = "Agents browse in AI Browser";
-    for (const id of ["browser-steps", "browser-note", "browser-groups", "browser-warning"]) $(id).hidden = true;
-    action.hidden = true;
-    renderClients();
-    return;
-  }
   const name = browser.name || "Brave";
   const on = browser.state === "connected" && browser.groups === "on";
   $("browser-title").textContent = `Your ${name} · ${SAYS[browser.state] || browser.state}${on ? " · tab groups on" : ""}`;
@@ -288,15 +300,10 @@ function renderClients() { // what uses the user's browser through AI Browser's 
     + "AI Browser quits. Disconnect cuts one off; unticking the switch cuts off everything.";
 }
 
-async function browserAction() {
+function browserAction() {
   if (!browser || browser.kind !== "brave") return;
-  if (browser.state === "off") { // the setup page's steps, with their warning
-    try {
-      const config = await (await fetch(chrome.runtime.getURL("config.json"), { cache: "no-store" })).json();
-      await chrome.tabs.create({ url: `${config.server}/setup#switch` });
-    } catch {
-      flash("Not connected: is `ai-browser app` running?");
-    }
+  if (browser.state === "off") { // the setup page's steps, with their warning, in a small window
+    openWindow("/setup#switch", ...WINDOWS["/setup"]);
     return;
   }
   link.send({ type: "brave_connect" });
@@ -429,13 +436,17 @@ function handle(message) {
       renderBrowser();
       summary = message.skills_summary;
       maxWorking = message.max_working || 3;
-      if (!storedModel && message.default_model) $("task-model").value = message.default_model;
+      defaultModel = message.default_model || defaultModel;
+      applySettings(message.settings);
       if (pending) finishRequest(); // a new connection: an unanswered Start can be pressed again
       renderAgents();
       renderTabs();
       renderSkills();
       link.send({ type: "skills" });
       if (chatAgent) link.send({ type: "events", id: chatAgent });
+      break;
+    case "settings":
+      applySettings(message);
       break;
     case "agent":
       agents.set(message.agent.id, message.agent);
@@ -549,22 +560,8 @@ function sendChat() {
   else flash("Not connected: is `ai-browser app` running?");
 }
 
-let openingMission = null; // one click, one Mission Control: an open one is brought to the front
-
-async function openMission() {
-  const url = chrome.runtime.getURL("mission.html");
-  const open = (await chrome.tabs.query({})).find((tab) => tab.url === url || tab.pendingUrl === url);
-  if (open) {
-    await chrome.tabs.update(open.id, { active: true });
-    await chrome.windows.update(open.windowId, { focused: true }).catch(() => {});
-  } else {
-    await chrome.tabs.create({ url });
-  }
-}
-
-$("mission").addEventListener("click", () => {
-  openingMission ??= openMission().catch(() => {}).finally(() => { openingMission = null; });
-});
+$("mission").addEventListener("click", () => openWindow("/mission", ...WINDOWS["/mission"]));
+$("settings").addEventListener("click", () => openWindow("/settings", ...WINDOWS["/settings"]));
 $("start").addEventListener("click", start);
 $("browser-action").addEventListener("click", browserAction);
 $("handing-clear").addEventListener("click", () => setHanding(null));
@@ -572,7 +569,7 @@ $("task").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) start();
 });
 $("task-model").addEventListener("change", () => {
-  chrome.storage.local.set({ model: $("task-model").value }).catch(() => {});
+  link.send({ type: "settings_set", key: "model", value: $("task-model").value });
 });
 $("skill-search").addEventListener("input", renderSkills);
 $("chat-close").addEventListener("click", closeChat);
@@ -590,24 +587,3 @@ $("chat-input").addEventListener("keydown", (event) => {
     sendChat();
   }
 });
-
-(async () => {
-  try {
-    const stored = await chrome.storage.local.get("model");
-    if (stored.model) {
-      $("task-model").value = stored.model;
-      storedModel = true;
-    }
-  } catch {
-    // a convenience only
-  }
-  if (new URLSearchParams(location.search).get("pin") === "1") { // AI Home as the first, pinned tab
-    try {
-      const tab = await chrome.tabs.getCurrent();
-      if (tab && !tab.pinned) await chrome.tabs.update(tab.id, { pinned: true });
-      if (tab) await chrome.tabs.move(tab.id, { index: 0 });
-    } catch {
-      // the tab went away
-    }
-  }
-})();

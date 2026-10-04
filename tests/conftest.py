@@ -24,12 +24,12 @@ def _docker_unavailable() -> str | None:
 
 POSIX_ONLY = "needs macOS or Linux (file descriptors 3 and 4, or the DevTools pipe)"
 WINDOWS_ONLY = "Windows behaviour (junctions, msvcrt, Win32 APIs)"
-PIPE_FIXTURES = {"stack", "watcher", "app_browser", "app_engine"}  # they launch AI Browser over the DevTools pipe
+PIPE_FIXTURES = {"watcher"}  # it loads Brave's watcher into a throwaway Chrome over the DevTools pipe
 
 
 def platform_skip(item, windows: bool) -> str | None:
     """Why this test can't run on this OS, or None. On Windows: a posix_only test, or one that uses a fixture that
-    installs the extension over the DevTools pipe (item.fixturenames holds every fixture it needs, however deep)."""
+    loads the watcher over the DevTools pipe (item.fixturenames holds every fixture it needs, however deep)."""
     if windows and ("posix_only" in item.keywords or set(getattr(item, "fixturenames", ())) & PIPE_FIXTURES):
         return POSIX_ONLY
     if not windows and "windows_only" in item.keywords:
@@ -54,11 +54,40 @@ def file_mode(path) -> int | None:
 @pytest.fixture(autouse=True)
 def _never_the_users_browsers(monkeypatch, tmp_path_factory):
     """No test may reach the user's own Brave or Chrome. With AIB_BROWSER unset the engine uses the user's browser,
-    which would ask "Allow remote debugging?", so every test runs with the sandbox and the app with AI Browser. Tests
-    of the new defaults change these with monkeypatch, and tests that need a browser launch a throwaway one."""
+    which would ask "Allow remote debugging?", so every test runs with the sandbox, and `ai-browser app` with BraveLink
+    off (no browser folder). Tests of the new defaults change these with monkeypatch, and tests that need a browser
+    launch a throwaway one.
+    Detection (`browsers.installed()`, `os_default()`) sees no app folder, no registry and no LaunchServices file of
+    this computer."""
     monkeypatch.setenv("AIB_BROWSER", "sandbox")
-    monkeypatch.setenv("AIB_APP_BROWSER", "app")
+    monkeypatch.delenv("AIB_APP_BROWSER", raising=False)  # retired: a shell that still sets it can't change a test
     monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path_factory.getbasetemp() / "no-chrome-here"))
+    from ai_browser import browsers, platforms
+
+    nothing = tmp_path_factory.getbasetemp() / "no-apps-here"
+    nothing.mkdir(exist_ok=True)
+    fakes = {"app_folders": lambda system=None, env=None: [nothing],
+             "windows_browser_commands": lambda: [],
+             "windows_https_progid": lambda: None,
+             "launch_services_file": lambda: nothing / "no-launch-services.plist"}
+    for module in (platforms, browsers):  # browsers.py may hold its own reference to one of them
+        for name, fake in fakes.items():
+            if hasattr(module, name):
+                monkeypatch.setattr(module, name, fake)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_window(monkeypatch):
+    """No test opens AI Browser's real window: run_app's tests pass a launcher (tests/fake_window.py)."""
+    import ai_browser.app.run as run
+    from ai_browser.app.window import WindowError
+
+    def launcher(home):
+        def refuse(setting):
+            raise WindowError("tests never open AI Browser's real window: pass launcher=")
+        return refuse
+
+    monkeypatch.setattr(run, "default_launcher", launcher)
 
 
 @pytest.fixture(autouse=True)

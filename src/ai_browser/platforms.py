@@ -222,6 +222,40 @@ def reveal(path: str) -> bool:
     return True
 
 
+def open_url_command(url: str, browser=None, system: str | None = None) -> list[str] | None:
+    """The command that opens a web address in the user's browser: `browser` (a browsers.Installed row) when it is
+    known, else the system's default. None: no command (on Windows, os.startfile does it). The address always starts
+    with http:// or https://, so no program reads it as a switch."""
+    system = _system(system)
+    if system == "darwin":
+        bundle = getattr(browser, "bundle", None)
+        return ["open", "-a", str(bundle), url] if bundle else ["open", url]
+    if system == "win32":
+        binary = getattr(browser, "binary", None)
+        return [str(binary), url] if binary else None
+    return ["xdg-open", url] if shutil.which("xdg-open") else None
+
+
+def open_url(url: str, browser=None, system: str | None = None) -> bool:
+    """Open a web address in the user's browser, as a link clicked in Mail would: in the profile they used last, with
+    no Allow question. True when something started."""
+    command = open_url_command(url, browser, system)
+    if command is None:
+        start = getattr(os, "startfile", None)  # Windows only
+        if _system(system) != "win32" or start is None:
+            return False
+        try:
+            start(url)
+        except OSError:
+            return False
+        return True
+    try:
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return False
+    return True
+
+
 RETRY_WAITS = (0.05, 0.1, 0.2, 0.4)  # seconds between tries: Defender, Brave or an editor holds a file that long
 
 

@@ -13,6 +13,7 @@ from conftest import file_mode
 from test_bridge import EVENTS
 from test_home import home, stack  # noqa: F401  (fixtures)
 from test_oneshot import oneshots
+from ui_socket import ui_socket
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 MARKER = "supplied by the page: data, not the user's words"
@@ -196,7 +197,6 @@ async def test_run_by_hand_over_the_socket(fake_claude, tmp_path):
     workflows = WorkflowStore(home)
     server = AppServer(home, agents, workflows=workflows, runner=WorkflowRunner(workflows, agents))
     url = await server.start()
-    server.allow_origin("chrome-extension://good")
 
     async def until(ws, accept):
         while True:
@@ -205,8 +205,7 @@ async def test_run_by_hand_over_the_socket(fake_claude, tmp_path):
                 return message
 
     try:
-        async with connect(url.replace("http", "ws") + "/ws?token=" + server.token,
-                           origin="chrome-extension://good") as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             await ws.send(json.dumps({"type": "workflow_save", "request": "s1",
                                       **{**FOOTER, "trigger": "manual", "tools": []}}))
@@ -254,21 +253,6 @@ async def test_a_workflow_loads_its_skills_and_only_its_tools(fake_claude, tmp_p
     assert user_messages(log)[0]["message"]["content"].startswith(
         "Load and use these skills with load_skill: elementor-pages")
     await agents.close_all()
-
-
-@CHROME
-async def test_ai_and_a_workflow_name_in_the_address_bar(home):
-    js, worker_js, stack = home
-    stack["workflows"].save({**FOOTER, "trigger": "manual", "tools": [], "skills": []})
-    stack["server"].workflows_changed()
-    await asyncio.sleep(1)  # the worker hears of the new workflow
-    await worker_js("startTask('Footer Fix the header'); true")
-    for _ in range(100):
-        if user_messages(stack["log"]):
-            break
-        await asyncio.sleep(0.1)
-    content = user_messages(stack["log"])[0]["message"]["content"]
-    assert content.startswith("Open the site, fix the footer") and content.rstrip().endswith("The user adds: the header")
 
 
 def test_workflows_and_skills_keep_arrows_emoji_and_cjk(tmp_path):

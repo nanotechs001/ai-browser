@@ -58,7 +58,7 @@ async def start_server(home, agents, brain):
 async def watcher(fake_claude, tmp_path):
     from ai_browser import testpages
     from ai_browser.app.agents import AgentManager
-    from ai_browser.appbrowser import launch_app_browser
+    from pipe_chrome import launch_with_extension
     from ai_browser.brain.service import BrainService
     from ai_browser.brain.store import BrainStore
     from ai_browser.cdp import CDP
@@ -70,8 +70,8 @@ async def watcher(fake_claude, tmp_path):
     agents = AgentManager(home, claude=runner)
     brain = BrainService(BrainStore(home), agents, claude=runner, batch_wait=0.2, reader_timeout=2)
     server, folder = await start_server(home, agents, brain)
-    app = launch_app_browser(tmp_path / "profile", folder, headless=True)
-    server.allow_origin(f"chrome-extension://{app.extension_id}", watcher=True)
+    app = launch_with_extension(tmp_path / "profile", folder)
+    server.allow_watcher(f"chrome-extension://{app.extension_id}")
     from ai_browser.app.bravelink import BraveLink
 
     brave = BraveLink(tmp_path / "profile", watcher_id=app.extension_id, every=0.1,  # as run.py: the watcher's id
@@ -225,7 +225,7 @@ async def test_items_wait_while_the_app_is_off(watcher):
     brain = BrainService(BrainStore(watcher.home), watcher.server.agents, claude=watcher.runner, batch_wait=0.2,
                          reader_timeout=2)
     server, _ = await start_server(watcher.home, watcher.server.agents, brain)
-    server.allow_origin(f"chrome-extension://{watcher.app.extension_id}", watcher=True)
+    server.allow_watcher(f"chrome-extension://{watcher.app.extension_id}")
     watcher.server, watcher.brain = server, brain
     assert await watcher.until(lambda: watcher.raw_ids() == {"t1", "t2", "t3"}, 15)
     await asyncio.sleep(1)
@@ -435,3 +435,35 @@ def test_the_watcher_never_runs_in_private_windows():
                           .read_text(encoding="utf-8"))
     assert manifest.get("incognito", "spanning") == "spanning"  # its worker lives in the regular profile
     assert "debugger" not in manifest["permissions"]
+
+
+def test_the_watcher_has_the_ai_keyword():
+    from ai_browser.brain.watcher import WATCHER_SOURCE
+
+    manifest = json.loads((WATCHER_SOURCE / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["omnibox"] == {"keyword": "ai"} and manifest["version"] == "0.2.0"
+    assert "debugger" not in manifest["permissions"] and "incognito" not in manifest
+
+
+NOTES = ("chrome.storage.session.get('notes').then(({notes = {}}) => Object.values(notes)"
+         ".filter((note) => note.keyword).map((note) => note.keyword.message))")
+
+
+@CHROME
+async def test_the_keyword_starts_an_agent_and_says_so(watcher):
+    await watcher.worker_js("startKeywordTask('check the shop')")
+    assert await watcher.until(lambda: [agent.name for agent in watcher.server.agents.agents.values()]
+                               == ["check the shop"])
+    assert await until(watcher.worker_js, f"{NOTES}.then((messages) => messages.some((message) => "
+                                          "message.startsWith('Started 1 · check the shop')))")
+    assert await until(watcher.worker_js, "chrome.notifications.getAll().then((all) => Object.keys(all).length >= 1)")
+
+
+@CHROME
+async def test_with_the_app_stopped_the_keyword_says_so_and_sends_nothing(watcher):
+    await watcher.server.stop()
+    assert await until(watcher.worker_js, "chrome.action.getBadgeText({}).then((text) => text === 'off')", 15)
+    assert await watcher.worker_js("startKeywordTask('check the shop')") is False
+    assert await until(watcher.worker_js, f"{NOTES}.then((messages) => messages.includes("
+                                          "\"AI Browser isn't running: start it with `uv run ai-browser app`\"))")
+    assert watcher.server.agents.agents == {}

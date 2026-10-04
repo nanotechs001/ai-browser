@@ -17,7 +17,6 @@ from . import config, platforms
 from .agentlink import GROUPS_TTL, AgentLink
 from .browser import Browser, BrowserError, Tab
 from .cdp import CDP, CDPError
-from .appbrowser import app_profile
 from .checks import Check, CheckGate
 from .chrome import ChromeError, _same_folder, browser_name, find_ws_url, own_browser_dir
 from .config import READ_LIMIT, SHELL_LIMIT, load_config, project_root
@@ -33,11 +32,12 @@ from .workfs import PathError, WorkDir
 
 DESCRIPTION_LIMIT = 160
 CHROME_ALLOW_WAIT = 60  # seconds a call waits for the user's "Allow"; the question itself stays until they answer
-RECONNECTED = {"chrome": "(reconnected to your {name}: earlier tabs and element ids from this session are gone)\n",
-               "app": "(reconnected to AI Browser: earlier tabs and element ids from this session are gone)\n"}
-BROWSER_KINDS = {"": "chrome", "own": "chrome", "chrome": "chrome", "brave": "chrome", "sandbox": "sandbox",
-                 "app": "app"}  # AIB_BROWSER -> the browser: "chrome" is the user's own (Brave or Chrome)
-BAD_BROWSER = "AIB_BROWSER must be own, chrome, brave, sandbox or app"
+RECONNECTED = {"chrome": "(reconnected to your {name}: earlier tabs and element ids from this session are gone)\n"}
+BROWSER_KINDS = {"": "chrome", "own": "chrome", "chrome": "chrome", "brave": "chrome",
+                 "sandbox": "sandbox"}  # AIB_BROWSER -> the browser: "chrome" is the user's own (Brave or Chrome)
+BAD_BROWSER = "AIB_BROWSER must be own, chrome, brave or sandbox"
+RETIRED_BROWSER = ("AIB_BROWSER=app is retired: AI Browser's own Chrome is gone. Use own (your browser) or "
+                   "sandbox.")
 ASK_SESSION = ("Ask the user to turn the switch on, or whether they want the Docker sandbox instead "
                "(sandbox_start()).")
 ASK_AGENT = "Ask the user to turn the switch on (AI Home shows how)."
@@ -77,7 +77,7 @@ def _sandbox_profile() -> str:
 
 
 def browser_kind(value: str) -> str | None:
-    """The browser AIB_BROWSER names ("chrome": the user's own; "sandbox"; "app"), or None for anything else."""
+    """The browser AIB_BROWSER names ("chrome": the user's own; "sandbox"), or None for anything else."""
     return BROWSER_KINDS.get(value.strip().lower())
 
 
@@ -141,8 +141,7 @@ class Engine:
         if not os.environ.get("AIB_BROWSER", "").strip() and _sandbox_profile():
             self._kind = "sandbox"  # AIB_PROFILE alone (a client's logins) chooses the Docker sandbox up front
         self.default_chrome = self._kind == "chrome"  # the user's own browser (Brave or Chrome): the default
-        self.default_app = self._kind == "app"  # AI Browser (ai-browser app)
-        self._wanted: tuple[str, bool, str] | None = None  # (profile, fresh, sandbox|chrome|app) from sandbox_start
+        self._wanted: tuple[str, bool, str] | None = None  # (profile, fresh, sandbox|chrome) from sandbox_start
         self._catalog = catalog
         self.sandboxes: Sandboxes | None = None
         self.info: SandboxInfo | None = None
@@ -205,7 +204,7 @@ class Engine:
         cdp = None
         try:
             cdp = await CDP.connect(await asyncio.to_thread(self.sandboxes.ws_url, info))
-            browser = Browser(cdp, work, self.cfg)
+            browser = Browser(cdp, work, self.cfg, app_origin=os.environ.get("AIB_APP_ORIGIN", ""))
             self._wire(browser)
             await browser.start()
         except BaseException:  # keep no half-started state: the next call starts cleanly
@@ -222,29 +221,23 @@ class Engine:
 
     async def _start_chrome(self, mode: str = "chrome") -> None:
         """Connect to the user's own running browser (Brave or Chrome), through the app's relay while the app runs
-        (Decision 13), or in app mode to AI Browser, the agent's own Chrome started by `ai-browser app`."""
+        (Decision 13)."""
         agent = self._agent_id = os.environ.get("AIB_APP_AGENT", "")
         route, self._relayed, self._note = None, False, ""
-        if mode == "app":
+        route = self._route()
+        self._folder, self._note = route.folder, route.note
+        if route.kind == "direct":
             try:
-                ws_url = await asyncio.to_thread(find_ws_url, self._app_profile(), 2)
-            except ChromeError:
-                raise ChromeError("AI Browser isn't open: start it with `uv run ai-browser app`") from None
-        else:
-            route = self._route()
-            self._folder, self._note = route.folder, route.note
-            if route.kind == "direct":
-                try:
-                    ws_url = await asyncio.to_thread(find_ws_url, route.folder, 2)
-                except ChromeError as exc:
-                    raise ChromeError(f"{exc}. {ASK_AGENT if agent else ASK_SESSION}") from None
-        if route is not None and route.kind == "relay":
+                ws_url = await asyncio.to_thread(find_ws_url, route.folder, 2)
+            except ChromeError as exc:
+                raise ChromeError(f"{exc}. {ASK_AGENT if agent else ASK_SESSION}") from None
+        if route.kind == "relay":
             cdp = await self._through_relay(route)
             self._relayed = self._via_relay = True
             self._direct_ok = False
             self._drop_direct()
         else:
-            name = self._browser_name() if mode == "chrome" else "Chrome"
+            name = self._browser_name()
             cdp = await self._direct(ws_url, name)
         work_host = self.home / "sandboxes" / "chrome" / "work"  # shared with the shell container of both modes
         work = WorkDir(work_host, self.task_id)
@@ -260,14 +253,10 @@ class Engine:
                 rediscover = lambda: AgentLink.discover(self.home, self.task_id)  # noqa: E731
                 self._placer = Placer(route.link if route.link is not None else rediscover(), rediscover=rediscover)
         try:
-            if mode == "app":
-                # An agent started from AI Home works in background tabs; one started in the user's tab in front.
-                browser = Browser(cdp, work, self.cfg, mode="app",
-                                  hidden_extension=os.environ.get("AIB_APP_EXTENSION", ""),
-                                  front=bool(adopt) or not agent)
-            else:  # the user's own browser: background tabs only, each placed by the placer
-                browser = Browser(cdp, work, self.cfg, mode="chrome", placer=self._placer, keep_tabs=bool(agent),
-                                  handed=self._handed if agent else None)
+            # the user's own browser: background tabs only, each placed by the placer
+            browser = Browser(cdp, work, self.cfg, mode="chrome", placer=self._placer, keep_tabs=bool(agent),
+                              handed=self._handed if agent else None,
+                              app_origin=os.environ.get("AIB_APP_ORIGIN", ""))
             self._wire(browser)
             browser.on_tab_event(lambda kind, tab: self._report(f"tab_{kind}", tab))
             browser.on_tab_change(lambda tab: self._report("working_tab", tab))
@@ -288,7 +277,7 @@ class Engine:
         if mode == "chrome" and not agent and not self._relayed:  # the app cleans up for agents and relayed sessions
             await self._close_orphans()
             self._register()
-        if mode == "chrome":  # AI Browser is in plain sight: no live view needed
+        if mode == "chrome":  # the live view follows the session's tab in the user's browser too
             await self._attach_live()
 
     def _route(self) -> Route:
@@ -414,11 +403,10 @@ class Engine:
                 note = self._release("closed")  # wave 1's sync release: the site is skipped
         return note + await self.browser.let_go_of_taken_back()
 
-    def _app_profile(self) -> Path:
-        return Path(os.environ.get("AIB_APP_PROFILE") or app_profile(self.home)).expanduser()
-
     def _default_kind(self) -> str:
         """The browser this session uses until sandbox_start picks another: never a guess."""
+        if os.environ.get("AIB_BROWSER", "").strip().lower() == "app":
+            raise ValueError(RETIRED_BROWSER)
         if self._kind is None:
             raise ValueError(BAD_BROWSER)
         return self._kind
@@ -443,7 +431,7 @@ class Engine:
         return self.home / "sandboxes" / self.info.profile / "sessions"
 
     def _register(self) -> None:
-        if self.info is None or self.info.fresh or self.browser is None or self.browser.mode == "app" or \
+        if self.info is None or self.info.fresh or self.browser is None or \
                 self._agent_id or self._relayed:  # through the relay the app cleans up
             return
         try:
@@ -515,7 +503,7 @@ class Engine:
                         + await self._held_after_reconnect())
             await self._start(profile, fresh)
             return await self._held_after_reconnect()  # a hold from a browser that is gone ends here
-        if self.cdp.closed and self.info.chrome:  # the user's Chrome (or AI Browser) was closed or restarted
+        if self.cdp.closed and self.info.chrome:  # the user's browser was closed or restarted
             kind = self.browser.mode
             stale = [tab.target for tab in self.browser.owned.values() if not tab.adopted]
             await self._teardown(stop_container=False)
@@ -651,10 +639,6 @@ class Engine:
     def _status_text(self, placement: str = "") -> str:
         info = self.info
         live = self.live.url if self.live is not None and self.live.url else "not started"
-        if info.chrome and info.profile == "app":
-            return ("browser: AI Browser (the agent's own Chrome) · tabs list also shows the user's tabs there\n"
-                    f"work folder {self.work.sandbox_task} (on {platforms.this_computer()}: {self.work.host_task}; "
-                    "shell and skill scripts run in a Docker sandbox)")
         if info.chrome:
             where = f" · {placement}" if placement else ""
             through = ", through AI Browser's connection" if self._relayed else ""
@@ -680,9 +664,7 @@ class Engine:
                 return refused
             if chrome:
                 self._direct_ok = True  # the user's explicit choice (Decision 13, step 4)
-            # In AI Browser (AIB_BROWSER=app) a plain sandbox_start() keeps using it.
-            kind = "chrome" if chrome else "app" if self.default_app and not fresh and profile == "default" \
-                else "sandbox"
+            kind = "chrome" if chrome else "sandbox"
             self._wanted = (profile, fresh, kind)  # later calls restart this one, even if starting fails now
             live = self.info and self.browser and not self.cdp.closed
             same = live and kind == self.browser.mode and (
@@ -708,7 +690,7 @@ class Engine:
             name, profile, fresh = self.info.name, self.info.profile, self.info.fresh
             self._wanted = None  # the next browser call starts the default again
             if self.info.chrome:
-                where = "AI Browser" if self.info.profile == "app" else f"your {self._browser_name()}"
+                where = f"your {self._browser_name()}"
                 kept = self.browser.keep_tabs
                 await self._teardown(stop_container=False)  # the shell stays up for other sessions of this home
                 self.info = None
@@ -829,7 +811,7 @@ class Engine:
     def _qa_in_sandbox(self) -> bool:
         """QA's browser, by a fixed rule before the run (Decision 11): the Docker sandbox when this session browses
         in the user's own browser by default; their browser only after sandbox_start(chrome=true), which they asked
-        for. Any other session's browser (a sandbox, AI Browser) runs QA itself."""
+        for. Any other session's browser (a sandbox) runs QA itself."""
         return self._wanted is None and self._default_kind() == "chrome"
 
     def _qa_work(self) -> WorkDir:
@@ -849,7 +831,8 @@ class Engine:
             raise DockerError(f"{exc}; {QA_HINT}") from None
         cdp = await CDP.connect(await asyncio.to_thread(self.sandboxes.ws_url, info))
         try:
-            browser = Browser(cdp, self._qa_work(), self.cfg, key_prefix="q")
+            browser = Browser(cdp, self._qa_work(), self.cfg, key_prefix="q",
+                              app_origin=os.environ.get("AIB_APP_ORIGIN", ""))
             await browser.start(first_tab=False)
         except BaseException:
             await cdp.close()
@@ -903,8 +886,7 @@ class Engine:
         QA's browser closes (in that order, so the live view never streams from a closed connection)."""
         browser, self._qa_browser = self._qa_browser, None
         if self.live is not None:
-            if self.browser is not None and self.cdp is not None and not self.cdp.closed and \
-                    not (self.info is not None and self.info.chrome and self.info.profile == "app"):
+            if self.browser is not None and self.cdp is not None and not self.cdp.closed:
                 await self.live.attach(self.browser)
             else:
                 await self.live.detach()

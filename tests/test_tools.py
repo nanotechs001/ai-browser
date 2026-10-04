@@ -5,6 +5,7 @@ import asyncio
 import json
 
 from conftest import file_mode
+from ui_socket import ui_socket
 
 INIT = {"type": "system", "subtype": "init", "session_id": "s-1", "model": "claude-haiku",
         "mcp_servers": [{"name": "ai-browser", "status": "connected"}],
@@ -201,7 +202,6 @@ async def test_the_app_server_carries_tools_and_answers(fake_claude, tmp_path):
     agents, tools, log = manager(fake_claude, tmp_path, asking())
     server = AppServer(tmp_path / "home", agents, tools=tools)
     url = await server.start()
-    server.allow_origin("chrome-extension://good")
 
     async def until(ws, accept):
         while True:
@@ -210,8 +210,7 @@ async def test_the_app_server_carries_tools_and_answers(fake_claude, tmp_path):
                 return message
 
     try:
-        async with connect(url.replace("http", "ws") + "/ws?token=" + server.token,
-                           origin="chrome-extension://good") as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             await ws.send(json.dumps({"type": "tools"}))
             snapshot = await until(ws, lambda m: m["type"] == "tools_snapshot")

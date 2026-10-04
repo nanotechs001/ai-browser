@@ -1,8 +1,12 @@
-"""The AI Browser app server: AI Home's, the chat panel's and the extension worker's only way to the agents.
+"""The AI Browser app server: AI Home's, Mission Control's and Settings' only way to the agents, and Brave's
+watcher's.
 
-It listens on 127.0.0.1 only. UI sockets need the extension token and our extension's origin; the agents' engines
-report their tabs to /agent-events with a token of their own. Everything that happens to an agent is broadcast to
-every socket; an agent's conversation is sent on request (`events`), so a page opened later can draw it whole."""
+It listens on 127.0.0.1 only, and every route checks the Host header. AI Browser's pages are served here to its own
+window, which swaps a one-time code for an HttpOnly cookie; a window socket needs that cookie and our exact Origin
+and Host. Brave's watcher connects with its token from its own extension origin. The agents' engines report their
+tabs to /agent-events with tokens of their own, and reach the browser through /cdp. Everything that happens to an
+agent is broadcast to every socket (the watcher gets a trimmed copy); an agent's conversation is sent on request
+(`events`), so a page opened later can draw it whole."""
 
 from __future__ import annotations
 
@@ -18,28 +22,32 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from .. import platforms
-from ..appbrowser import extension_path
+from .. import browsers, platforms
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
+from ..chrome import own_browser_dir
 from ..config import load_config, project_root
 from ..engine import _alive
+from ..extension_id import extension_path
 from ..grouping import MARKER
 from ..hearing.service import HearingService, unavailable_status
 from ..live import _bind, _QuietServer, _serve
+from ..settings import Settings
 from ..skills import Catalog
-from .agents import Agent, AgentManager
+from ..syncdir import write_atomic
+from .agents import Agent, AgentManager, agent_number
 from .cdprelay import Tokens
 from .groups import GroupKeeper
 
@@ -67,7 +75,17 @@ CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{
 WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "schedule", "run", "tools", "skills",
                    "model")
 WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabled")
-SETUP_PAGE = Path(__file__).with_name("setup.html")
+UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
+SETUP_PAGE = UI / "setup.html"
+PAGES = {"/home": "home.html", "/mission": "mission.html", "/settings": "settings.html"}
+FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
+OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
+CODE_TTL = 60  # seconds a one-time start code is good for
+SETTING_KEYS = ("model", "voice", "window_browser")
+URL_LIMIT = 2000  # characters of a website address a page may ask the user's browser to open
+KEYWORD_LIMIT = 2000  # characters of what the user typed after "ai" in Brave's address bar
+NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
+USED_CODE = "This start link was used already or has expired. Start AI Browser again."
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
 SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (cc-<task id>)
 AGENT_ID = re.compile(r"^a[0-9]{1,9}$")  # an agent's id (a<number>)
@@ -122,6 +140,9 @@ MESSAGE_RULES: dict[str, Rule] = {
     "new_task": APP_ONLY,  # with or without adopt
     "send": APP_ONLY, "stop": APP_ONLY, "close": APP_ONLY, "model": APP_ONLY,
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
+    "settings_set": Rule(app=True, watcher=False),  # the window's Settings, AI Home's and Mission Control's picks
+    "open_url": Rule(app=True, watcher=False),  # a website link in one of our pages
+    "ai_keyword": Rule(app=False, watcher=True),  # Brave's address bar: only the watcher's omnibox handler
 }
 
 
@@ -145,6 +166,7 @@ WATCHER_RECEIVES = frozenset({
     "ping", "error", "watcher_hello", "watch_list", "notify", "permission_request", "check_request", "group_tab",
     "ungroup_tabs", "open_thread", "fill_reply",  # for the worker
     "snapshot", "agent", "agent_closed", "brain_snapshot", "brain_item", "brain_item_gone", "brain_state",  # Brain page
+    "keyword_started",  # the worker: the answer to the ai keyword
 })
 WATCHER_AGENT_FIELDS = ("id", "name", "color", "state", "permission")  # what the Brain page reads of an agent
 
@@ -175,12 +197,12 @@ GOTO_MAC = "press ⌘⇧G, paste the path and press Enter"
 GOTO_OTHER = "click the address bar at the top of the folder window, paste the path and press Enter"
 
 
-def setup_page(extension: str, watcher: str, key: str, system: str | None = None) -> str:
-    """The one-time setup page, worded for the computer it runs on; every value is escaped."""
+def setup_page(watcher: str, system: str | None = None) -> str:
+    """The one-time setup page (Brave's two steps), worded for the computer it runs on; every value is escaped. It
+    holds no secret: it is the one page of ours that opens anywhere."""
     values = {"{{FILE_MANAGER}}": platforms.file_manager(system),
               "{{GOTO}}": platforms.shortcut(GOTO_MAC, GOTO_OTHER, system),
-              "{{THIS_COMPUTER}}": platforms.this_computer(system),
-              "{{FOLDER}}": extension, "{{WATCHER}}": watcher, "{{KEY}}": key}
+              "{{THIS_COMPUTER}}": platforms.this_computer(system), "{{WATCHER}}": watcher}
     page = SETUP_PAGE.read_text(encoding="utf-8")
     for placeholder, value in values.items():
         page = page.replace(placeholder, html.escape(value))
@@ -209,13 +231,88 @@ def _valid_check(report: dict) -> bool:
             and (live is None or (isinstance(live, str) and CHECK_LIVE.fullmatch(live) is not None)))
 
 
+def _clock() -> float:
+    return time.monotonic()  # its own function, so a test moves the start codes' clock and nothing else
+
+
+def _refused_page(text: str) -> HTMLResponse:
+    """A plain 403 page: one line of text, no script."""
+    return HTMLResponse('<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>AI Browser</title>'
+                        f"</head><body><p>{html.escape(text, quote=False)}</p></body></html>\n", status_code=403)
+
+
+def _web_address(value) -> str | None:
+    """A link's address, if the user's browser may open it: http or https with a host, no user name or password, no
+    whitespace or control character, at most URL_LIMIT characters."""
+    if not isinstance(value, str) or not value.startswith(("http://", "https://")) or len(value) > URL_LIMIT:
+        return None
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
+        return None
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018  (a bad port raises here)
+    except ValueError:
+        return None
+    if not parts.hostname or parts.username is not None or parts.password is not None:
+        return None
+    return value
+
+
+def _strict_headers(host: str, port: int) -> list[tuple[bytes, bytes]]:
+    """On every HTTP answer: scripts and styles from our own files only, sockets only to /ws, fetches only to /setup/
+    (so a page's script can never reach /cdp or /agent-*), no sniffing, no referrer, nothing cached."""
+    origin = f"{host}:{port}"
+    csp = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+           f"connect-src ws://{origin}/ws http://{origin}/setup/; base-uri 'none'; form-action 'none'; "
+           "frame-ancestors 'none'")
+    return [(b"content-security-policy", csp.encode()), (b"x-content-type-options", b"nosniff"),
+            (b"referrer-policy", b"no-referrer"), (b"cache-control", b"no-store"),
+            (b"cross-origin-resource-policy", b"same-origin")]
+
+
+class _Guard:
+    """The whole app, HTTP and WebSocket alike, behind one check: the Host header must be exactly 127.0.0.1:<port>,
+    which blocks DNS rebinding (Starlette's TrustedHostMiddleware ignores the port, so it isn't used). Every HTTP
+    answer, a refusal too, carries the strict headers."""
+
+    def __init__(self, app, server: AppServer):
+        self.app, self.server = app, server
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        strict = self.server.strict_headers
+        names = {name for name, _ in strict}
+
+        async def send_strict(message):
+            if message["type"] == "http.response.start":
+                kept = [(name, value) for name, value in message.get("headers", []) if name.lower() not in names]
+                message = {**message, "headers": kept + strict}
+            await send(message)
+
+        host = next((value.decode("latin-1") for key, value in scope["headers"] if key == b"host"), "")
+        if self.server.port is None or host != self.server.host_header:
+            if scope["type"] == "websocket":
+                await receive()  # websocket.connect
+                await send({"type": "websocket.close", "code": 1008})  # before accept: the client reads HTTP 403
+            else:
+                await PlainTextResponse("refused", status_code=403)(scope, receive, send_strict)
+            return
+        await self.app(scope, receive, send_strict if scope["type"] == "http" else send)
+
+
 class AppServer:
     def __init__(self, home: Path, agents: AgentManager, tabs=None, catalog: Catalog | None = None,
                  host: str = "127.0.0.1", ports: range = APP_PORTS, default_model: str = "sonnet",
                  brain: BrainService | None = None, tools: ToolsConfig | None = None,
                  workflows: WorkflowStore | None = None, runner: WorkflowRunner | None = None,
-                 skill_writer: SkillWriter | None = None, hearing: HearingService | None = None):
+                 skill_writer: SkillWriter | None = None, hearing: HearingService | None = None,
+                 settings: Settings | None = None, port_file: Path | None = None):
         self.home = Path(home)
+        self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
+        self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
+        self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
         self.agents = agents
         self.brain = brain
         self.skill_writer = skill_writer  # skills the Brain drafts, written only on the user's Save
@@ -236,6 +333,9 @@ class AppServer:
         self.watcher_folder: str | None = None
         self._watcher_origins: set[str] = set()
         self._origin_of: dict[WebSocket, str] = {}
+        self._roles: dict[WebSocket, str] = {}  # "app" or "watcher", stored when a socket is accepted
+        self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: AI Home, Mission Control, Settings
+        self.window_seen = False  # the window's first socket has come in
         self._watcher: tuple[WebSocket, asyncio.Queue] | None = None  # Brave's watcher (the latest one to connect)
         if brain is not None:
             brain.broadcast = self._send_all
@@ -243,7 +343,7 @@ class AppServer:
         self.default_model = default_model if default_model in MODELS else "sonnet"  # ai-browser app --model
         self.host = host
         self.ports = ports
-        self.token = secrets.token_urlsafe(24)  # AI Home, the panel and the worker (in the extension's config.json)
+        self.token = secrets.token_urlsafe(24)  # Brave's watcher (in its config.json)
         self.tokens = Tokens()  # each agent's own token (and each session's for /cdp), new every run
         self.session_token = secrets.token_urlsafe(24)  # Claude Code sessions (in <home>/app/link.json, mode 0600)
         self.groups = GroupKeeper(self._to_watcher, on_change=self._browser_changed)  # tab groups, through the watcher
@@ -252,15 +352,16 @@ class AppServer:
         self._thread_urls: dict[str, str] = {}  # open_thread request -> its address (the Brain's group in AI Home)
         self._sweeper: asyncio.Task | None = None
         self.url: str | None = None
-        self.port = 0
-        self.extension_seen = False  # the extension has connected: the one-time setup is done
+        self.port: int | None = None  # the bound port, once start() has one
+        self.strict_headers: list[tuple[bytes, bytes]] = []  # every HTTP answer's headers, once the port is known
+        self.ui_secret = secrets.token_urlsafe(32)  # the window's session cookie: set only by swapping a start code
+        self._codes: dict[str, float] = {}  # one-time start codes -> when they expire (_clock)
+        self._files = {path.name for path in UI.iterdir() if path.is_file() and path.suffix in FILE_TYPES}
         self.origin_mismatch: str | None = None  # an extension with our token, from an origin we didn't compute
         self.out: Callable[[str], None] = print  # where the app's one-line notes go (run_app passes its own)
-        self.setup_key = secrets.token_urlsafe(16)  # only the setup page has it: other sites can't open Finder
         self.reveal = reveal_folder
         self.tabs = None
         self._catalog = catalog
-        self._origins: set[str] = set()
         self._sockets: dict[WebSocket, asyncio.Queue] = {}  # sockets that said hello: they get every broadcast
         self._writers: dict[WebSocket, asyncio.Task] = {}
         self._feed = agents.subscribe()
@@ -276,23 +377,161 @@ class AppServer:
         if tabs is not None:
             self.attach_tabs(tabs)
 
-    def allow_origin(self, origin: str, watcher: bool = False) -> None:
-        """An extension's origin (chrome-extension://<id>); nothing else may open a socket. Only the watcher's
-        origin may connect as the watcher and report what it reads."""
-        self._origins.add(origin)
-        if watcher:
-            self._watcher_origins.add(origin)
+    def allow_watcher(self, origin: str) -> None:
+        """Brave's watcher's origin (chrome-extension://<id>): the only origin that may connect with the token."""
+        self._watcher_origins.add(origin)
+
+    @property
+    def window_count(self) -> int:
+        return len(self._windows)  # a set: never below 0, never a socket twice
+
+    def _socket_kind(self, ws: WebSocket) -> str | None:
+        """Who opens this socket: AI Browser's window (its cookie, our exact Origin and Host), or Brave's watcher (the
+        token and a watcher origin). None: refused."""
+        origin = ws.headers.get("origin")
+        if origin == self.origin and ws.headers.get("host") == self.host_header and self._cookie_ok(ws):
+            return "window"
+        if not hmac.compare_digest(ws.query_params.get("token", "").encode(), self.token.encode()):
+            return None
+        if origin in self._watcher_origins:
+            return "watcher"
+        if self._watcher_origins and isinstance(origin, str) and origin.startswith("chrome-extension://"):
+            self._mismatch(origin)  # only once the app has allowed its computed ID: before that, no mismatch
+        return None
+
+    @property
+    def origin(self) -> str:
+        """AI Browser's pages' own origin: the only Origin a window socket may carry."""
+        return f"http://{self.host}:{self.port}"
+
+    @property
+    def host_header(self) -> str:
+        return f"{self.host}:{self.port}"
+
+    @property
+    def cookie_name(self) -> str:
+        return f"aib_ui_{self.port}"  # cookies on 127.0.0.1 reach every port: the name keeps two apps apart
+
+    def new_launch_code(self) -> str:
+        """A start code for the window's address: single use, CODE_TTL seconds. Expired ones are dropped here."""
+        now = _clock()
+        self._codes = {code: until for code, until in self._codes.items() if until > now}
+        code = secrets.token_urlsafe(32)
+        self._codes[code] = now + CODE_TTL
+        return code
+
+    def _take_code(self, given: str) -> bool:
+        now = _clock()
+        for code, until in list(self._codes.items()):
+            if hmac.compare_digest(code.encode(), given.encode()):
+                del self._codes[code]  # used: never again, valid or not
+                return until > now
+        return False
+
+    def _cookie_ok(self, connection) -> bool:
+        """The window's cookie on a request or a socket (Starlette gives both .cookies)."""
+        given = connection.cookies.get(self.cookie_name, "")
+        return bool(given) and hmac.compare_digest(given.encode(), self.ui_secret.encode())
+
+    def _settings_payload(self) -> dict:
+        return {**self.settings.get(), "window": dict(self.window_info)}
+
+    def _settings_set(self, queue: asyncio.Queue, message: dict) -> None:
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        key = message.get("key")
+        if key not in SETTING_KEYS:
+            queue.put_nowait({"type": "error", "text": "There is no such setting", "request": request})
+            return
+        try:
+            self.settings.set(key, message.get("value"))
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        except OSError as exc:  # a read-only home, a full disk: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't save that setting: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._send_all({"type": "settings", **self._settings_payload()})  # the watcher's filter keeps it out
+
+    def _agents_browser(self):
+        """The agents' browser, as an installed row (it opens a website the user clicked), or None for the system's
+        default. Wave C uses the saved place instead."""
+        facts = browsers.for_data_dir(own_browser_dir())
+        if facts is None:
+            return None
+        return next((row for row in browsers.installed() if row.id == facts.id), None)
+
+    async def _open_url(self, queue: asyncio.Queue, message: dict) -> None:
+        url = _web_address(message.get("url"))
+        if url is None:
+            queue.put_nowait({"type": "error", "text": "Only web addresses open from here"})
+            return
+        browser = await asyncio.to_thread(self._agents_browser)
+        if not await asyncio.to_thread(platforms.open_url, url, browser):
+            queue.put_nowait({"type": "error", "text": "Couldn't open that address in your browser"})
+
+    def _keyword_workflow(self, text: str) -> tuple[str, str] | None:
+        """The workflow a keyword's text starts with: the longest name it starts with, then a space or nothing more,
+        without regard to case. (slug, the rest of the text), or None."""
+        if self.workflows is None:
+            return None
+        lower, found = text.lower(), None
+        for workflow in self.workflows.all():
+            name = workflow.name.lower()
+            if (lower == name or lower.startswith(f"{name} ")) and (found is None or len(name) > len(found[0])):
+                found = (name, workflow.slug)
+        return None if found is None else (found[1], text[len(found[0]):].strip())
+
+    async def _keyword(self, queue: asyncio.Queue, message: dict) -> None:
+        """"ai", a space and a task in Brave's address bar: the user's own Enter, like Start in AI Home. It never
+        goes through the Brain, and it never hands over a tab: adopt and tab are ignored here."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        text = message.get("text").strip()[:KEYWORD_LIMIT].strip() if isinstance(message.get("text"), str) else ""
+        if not text:
+            return
+        try:
+            found = self._keyword_workflow(text)
+            if found is not None and self.runner is not None:
+                agent_id = await self.runner.run(found[0], text=found[1] or None)
+            else:
+                model = self.settings.get()["model"] or self.default_model
+                agent_id = (await self.agents.create(text, [], model)).id
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "request": request, "text": str(exc)})
+            return
+        agent = self.agents.agents.get(agent_id)
+        queue.put_nowait({"type": "keyword_started", "request": request, "id": agent_id,
+                          "number": agent.number if agent is not None else agent_number(agent_id),
+                          "name": agent.name if agent is not None else ""})
+
+    def _saved_port(self) -> int | None:
+        """The port this home used before (the microphone grant belongs to that address), if it is one of ours."""
+        if self.port_file is None:
+            return None
+        try:
+            port = int(self.port_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        return port if port in self.ports else None
+
+    def _remember_port(self, saved: int | None, port: int) -> None:
+        if self.port_file is None:
+            return
+        if saved is None:  # missing, unreadable, or not one of ours: this port from now on
+            with contextlib.suppress(OSError):
+                write_atomic(self.port_file, f"{port}\n".encode("utf-8"))
+        elif saved != port:  # busy this once: the file stays, so the next start goes back to the granted address
+            self.out(f"Port {saved} is busy: AI Browser uses {port} this time, and may ask for the microphone "
+                     "again.")
 
     def _mismatch(self, origin: str) -> None:
-        """Only an extension holding our config.json has the token: from an origin we didn't compute, it means an
+        """Only a watcher holding our config.json has the token: from an origin we didn't compute, it means an
         extension ID is computed wrong on this computer. The socket is still refused; this says so, once."""
         if origin == self.origin_mismatch:
             return
         self.origin_mismatch = origin
-        app = ", ".join(sorted(self._origins - self._watcher_origins)) or "?"
-        watcher = ", ".join(sorted(self._watcher_origins)) or "?"
-        self.out(f"An AI Browser extension connected as {origin}, but the app expected {app} (AI Browser) or "
-                 f"{watcher} (the watcher): please report this")
+        expected = ", ".join(sorted(self._watcher_origins)) or "?"
+        self.out(f"A watcher connected as {origin}, but the app expected {expected}: please report this")
 
     def token_for(self, agent_id: str) -> str:
         """An agent's own token (minted when it is created): its engine's key to the reports and to /cdp."""
@@ -321,23 +560,30 @@ class AppServer:
         return {"type": "tabs", "tabs": listing, **({"tab_scope": scope} if scope is not None else {})}
 
     async def start(self) -> str:
-        app = Starlette(routes=[Route("/health", self._health), Route("/setup", self._setup),
-                                Route("/setup/status", self._setup_status),
-                                Route("/setup/reveal", self._setup_reveal, methods=["POST"]),
-                                Route("/agent-events", self._agent_events, methods=["POST"]),
-                                Route("/agent-claim", self._agent_claim, methods=["POST"]),
-                                Route("/agent-status", self._agent_status),
-                                Route("/agent-hello", self._agent_hello, methods=["POST"]),
-                                Route("/agent-bye", self._agent_bye, methods=["POST"]),
-                                WebSocketRoute("/ws", self._socket), WebSocketRoute("/cdp", self._cdp)])
+        app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open),
+                                       Route("/home", self._page), Route("/mission", self._page),
+                                       Route("/settings", self._page),
+                                       Route("/health", self._health), Route("/setup", self._setup),
+                                       Route("/setup/status", self._setup_status),
+                                       Route("/setup/reveal", self._setup_reveal, methods=["POST"]),
+                                       Route("/agent-events", self._agent_events, methods=["POST"]),
+                                       Route("/agent-claim", self._agent_claim, methods=["POST"]),
+                                       Route("/agent-status", self._agent_status),
+                                       Route("/agent-hello", self._agent_hello, methods=["POST"]),
+                                       Route("/agent-bye", self._agent_bye, methods=["POST"]),
+                                       Route("/{name}", self._file),
+                                       WebSocketRoute("/ws", self._socket), WebSocketRoute("/cdp", self._cdp)]), self)
         self._fanout = asyncio.create_task(self._forward())
         self._sweeper = asyncio.create_task(self._sweep_sessions())
         if self.brain is not None:
             await self.brain.start()
-        for port in self.ports:
+        saved = self._saved_port()
+        for port in ([saved] if saved is not None else []) + [port for port in self.ports if port != saved]:
             sock = _bind(self.host, port)
             if sock is None:
                 continue
+            self.port = port
+            self.strict_headers = _strict_headers(self.host, port)
             # websockets-sansio: no handshake timeout, so the relay can hold one while the user answers Allow
             self._server = _QuietServer(uvicorn.Config(app, host=self.host, port=port, log_level="warning",
                                                        access_log=False, lifespan="off", ws="websockets-sansio"))
@@ -348,11 +594,12 @@ class AppServer:
                 await asyncio.sleep(0.01)
             if self._server.started:
                 self.url = f"http://{self.host}:{port}"
-                self.port = port
+                self._remember_port(saved, port)
                 if self.brave is not None:
                     self.brave.relay.port = port
                 return self.url
             sock.close()
+        self.port = None
         raise RuntimeError(f"no free port for the AI Browser app server ({self.ports.start}-{self.ports.stop - 1})")
 
     async def stop(self) -> None:
@@ -383,25 +630,54 @@ class AppServer:
     async def _health(self, request: Request) -> JSONResponse:
         return JSONResponse({"ok": True})
 
-    def _extension_folder(self) -> str:
-        return extension_path(self.home / "app" / "extension")
+    async def _root(self, request: Request) -> Response:
+        return RedirectResponse("/home", status_code=303)
+
+    async def _open(self, request: Request) -> Response:
+        """The window's start address: a valid code becomes the cookie, and the redirect drops the code from the
+        window's address and history. A used or unknown code is a 403, unless the cookie is already there (a
+        reload)."""
+        if self._take_code(request.query_params.get("code", "")):
+            response = RedirectResponse("/home", status_code=303)
+            response.set_cookie(self.cookie_name, self.ui_secret, httponly=True, samesite="strict", path="/")
+            return response
+        if self._cookie_ok(request):
+            return RedirectResponse("/home", status_code=303)
+        return _refused_page(USED_CODE)
+
+    async def _page(self, request: Request) -> Response:
+        if not self._cookie_ok(request):
+            return _refused_page(NOT_HERE)
+        path = UI / PAGES[request.url.path]
+        if not path.is_file():
+            return Response(status_code=404)
+        return HTMLResponse(path.read_text(encoding="utf-8"))
+
+    async def _file(self, request: Request) -> Response:
+        """A script, style or picture of app/ui: only names read at start, so no other path is ever served."""
+        name = request.path_params["name"]
+        if name not in self._files:
+            return Response(status_code=404)
+        if name not in OPEN_ANYWHERE and not self._cookie_ok(request):
+            return _refused_page(NOT_HERE)
+        return Response((UI / name).read_bytes(), media_type=FILE_TYPES[Path(name).suffix])
 
     def _watcher_folder(self) -> str:
         return extension_path(self.watcher_folder or self.home / "app" / "watcher")
 
     async def _setup(self, request: Request) -> HTMLResponse:
-        return HTMLResponse(setup_page(self._extension_folder(), self._watcher_folder(), self.setup_key))
+        return HTMLResponse(setup_page(self._watcher_folder()))
 
     async def _setup_reveal(self, request: Request) -> Response:
-        if not hmac.compare_digest(request.headers.get("x-aib-setup", "").encode(), self.setup_key.encode()):
+        """Show the watcher's folder: only from AI Browser's own window (its cookie and our exact Origin), so no
+        other page, in Brave or anywhere, can open a folder window."""
+        if not (self._cookie_ok(request) and request.headers.get("origin") == self.origin):
             return Response(status_code=403)
-        watcher = request.query_params.get("which") == "watcher"
-        shown = self.reveal(self._watcher_folder() if watcher else self._extension_folder())
+        shown = self.reveal(self._watcher_folder())
         return Response(status_code=204 if shown else 501)  # 501: nothing could show it (no file manager)
 
     async def _setup_status(self, request: Request) -> JSONResponse:
-        seen = self.brain is not None and self.brain.store.watcher_seen
-        answer = {"installed": self.extension_seen, "watcher": seen}
+        answer = {"watcher": self.brain is not None and self.brain.store.watcher_seen}
         if self.origin_mismatch:
             answer["mismatch"] = self.origin_mismatch
         return JSONResponse(answer)
@@ -633,7 +909,7 @@ class AppServer:
         self.brave = brave
         self.attach_tabs(brave)
         relay = brave.relay
-        relay.port = self.port
+        relay.port = self.port or 0  # 0 until the server listens (the relay's own default)
         relay.handed = self._handed_to
         relay.may_open = lambda identity: bool(SESSION_ID.match(identity)) or self.agents.working(identity)
         self.agents.own_tabs = relay.own_targets
@@ -682,8 +958,8 @@ class AppServer:
         self._send_all({"type": "browser_clients", "clients": self._browser_clients()})
 
     def _browser_info(self) -> dict:
-        if self.brave is None:
-            return {"kind": "app", "name": "AI Browser", "state": "connected", "groups": "on"}
+        if self.brave is None:  # no BraveLink attached (a server built alone, in tests): agents can't browse yet
+            return {"kind": "brave", "name": "Brave", "state": "off", "groups": self.groups.available()}
         return {"kind": "brave", "name": self.brave.name, "state": self.brave.state,
                 "groups": self.groups.available()}
 
@@ -752,19 +1028,15 @@ class AppServer:
 
     async def _socket(self, ws: WebSocket) -> None:
         await ws.accept()  # accept first, so a refusal arrives as a close code the page can read
-        token = ws.query_params.get("token", "")
-        origin = ws.headers.get("origin")
-        token_ok = hmac.compare_digest(token.encode(), self.token.encode())
-        if not token_ok or origin not in self._origins:
-            # Only once the app has allowed its computed IDs: during start-up the extension can connect before
-            # allow_origin runs (AI Browser is launched in a thread), and that is no mismatch.
-            if token_ok and self._origins and isinstance(origin, str) and origin.startswith("chrome-extension://"):
-                self._mismatch(origin)
+        kind = self._socket_kind(ws)
+        if kind is None:
             await ws.close(code=REFUSED)
             return
-        if origin not in self._watcher_origins:
-            self.extension_seen = True  # AI Browser's own extension (Brave's watcher is set up apart)
-        self._origin_of[ws] = origin
+        self._roles[ws] = "watcher" if kind == "watcher" else "app"
+        self._origin_of[ws] = ws.headers.get("origin", "")
+        if kind == "window":
+            self._windows.add(ws)
+            self.window_seen = True
         queue: asyncio.Queue = asyncio.Queue()
         self._writers[ws] = asyncio.create_task(self._write(ws, queue))
         try:
@@ -788,7 +1060,7 @@ class AppServer:
     async def _write(self, ws: WebSocket, queue: asyncio.Queue) -> None:
         """Every message to a socket passes here (answers, _send_all, _to_watcher), so a path added later is covered:
         a watcher-origin socket gets only for_watcher's part of each."""
-        watcher = self._role(ws) == "watcher"  # read once: the socket's origin is set before this task starts
+        watcher = self._role(ws) != "app"  # read once (set at accept): all but our own pages get the watcher's part
         with contextlib.suppress(Exception):
             while True:
                 message = await queue.get()
@@ -801,6 +1073,8 @@ class AppServer:
     def _unsubscribe(self, ws: WebSocket) -> None:
         self._sockets.pop(ws, None)
         self._origin_of.pop(ws, None)
+        self._roles.pop(ws, None)
+        self._windows.discard(ws)
         if self.hearing is not None:
             self.hearing.drop(ws)  # a closed page's turn, and its audio, go with it
         writer = self._writers.pop(ws, None)
@@ -846,10 +1120,10 @@ class AppServer:
         task.add_done_callback(self._jobs.discard)
 
     def _role(self, ws: WebSocket) -> str:
-        """ "watcher" for a socket from Brave's watcher's origin, else "app" (AI Browser's own pages). The origin was
-        checked when the socket opened, so every open socket has a role. (The app window, Wave B, maps its cookie to
-        "app" here; the table and the filter stay.)"""
-        return "watcher" if self._origin_of.get(ws) in self._watcher_origins else "app"
+        """The role stored when the socket was accepted: "app" (AI Browser's window, its cookie, Origin and Host; or,
+        until it retires, AI Browser's extension) or "watcher" (Brave's watcher: the token and a watcher origin). A
+        socket with no stored role is "none": it may send nothing (may_send), and gets no more than a watcher."""
+        return self._roles.get(ws, "none")
 
     async def _handle(self, ws: WebSocket, queue: asyncio.Queue, message: dict) -> None:
         if not may_send(self._role(ws), message):  # MESSAGE_RULES, before anything reads the message's fields
@@ -897,6 +1171,12 @@ class AppServer:
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
                 self._sockets[ws] = queue
+        elif kind == "settings_set":
+            self._settings_set(queue, message)
+        elif kind == "open_url":
+            self._job(self._open_url(queue, message))
+        elif kind == "ai_keyword":
+            await self._keyword(queue, message)
         elif kind == "new_task":
             request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
             text = _text(message.get("text"))
@@ -905,8 +1185,8 @@ class AppServer:
                 return
             skills = [skill for skill in message.get("skills") or [] if isinstance(skill, str)][:20]
             adopt = message.get("adopt") if isinstance(message.get("adopt"), str) and message.get("adopt") else None
-            handed = self._handable(adopt) if adopt and self.brave is not None else None
-            if adopt and self.brave is not None and handed is None:  # in brave mode: only a tab Brave lists
+            handed = self._handable(adopt) if adopt else None
+            if adopt and handed is None:  # only a tab the user's browser lists: never an unchecked target
                 queue.put_nowait({"type": "error", "request": request,
                                   "text": "That tab can't be handed over: it is closed, or an agent works in it"})
                 return
@@ -1188,7 +1468,8 @@ class AppServer:
                 "tab_scope": self._tab_scope(),
                 "skills_summary": self._skills_summary(), "max_working": self.agents.max_working,
                 "default_model": self.default_model, "browser": self._browser_info(),
-                "sessions": self._session_list(), "browser_clients": self._browser_clients()}
+                "sessions": self._session_list(), "browser_clients": self._browser_clients(),
+                "settings": self._settings_payload()}
 
     # ---- skills -----------------------------------------------------------------------------------------------
 

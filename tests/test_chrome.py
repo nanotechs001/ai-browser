@@ -22,8 +22,9 @@ def free_port() -> int:
 
 
 def test_tests_never_reach_the_real_browsers():
-    # With AIB_BROWSER unset the engine would use the user's own Brave, which would ask "Allow remote debugging?"
-    assert os.environ["AIB_BROWSER"] == "sandbox" and os.environ["AIB_APP_BROWSER"] == "app"
+    # With AIB_BROWSER unset the engine would use the user's own Brave, which would ask "Allow remote debugging?". The
+    # app's agents browse in the browser AIB_CHROME_DIR names: an empty folder here, so BraveLink stays off.
+    assert os.environ["AIB_BROWSER"] == "sandbox" and "AIB_APP_BROWSER" not in os.environ
     assert own_browser_dir() not in own_browser_dirs()
 
 
@@ -732,7 +733,7 @@ def test_download_is_a_risky_word_only_in_the_users_browser(tmp_path):
 
     work = WorkDir(tmp_path / "work", "t")
     assert re.search(Browser(NoCDP(), work, Config(), mode="chrome")._risky, "Download report", re.IGNORECASE)
-    for mode in ("sandbox", "app"):  # unchanged there
+    for mode in ("sandbox",):  # unchanged there
         assert not re.search(Browser(NoCDP(), work, Config(), mode=mode)._risky, "Download report", re.IGNORECASE)
 
 
@@ -916,3 +917,57 @@ def test_the_guard_ignores_case_on_windows(tmp_path, monkeypatch):
     with pytest.raises(ChromeError):
         launch(tmp_path / "bravesoftware" / "brave-browser" / "user data")
     assert not (tmp_path / "bravesoftware").exists()  # refused before anything was made
+
+
+@CHROME
+async def test_the_session_carries_on_when_the_user_closes_its_tab(chrome_engine):  # moved from test_appmode.py
+    from ai_browser.cdp import CDP
+    from ai_browser.chrome import find_ws_url
+
+    engine, base, folder = chrome_engine
+    await engine.sandbox_start(chrome=True)
+    user = await CDP.connect(find_ws_url(folder, timeout=20))  # stands in for the user's own clicks
+    try:
+        await engine.open(base + "form.html")
+        old = engine.browser.current.target
+        await user.send("Target.closeTarget", {"targetId": old})  # the user closes the session's tab
+        await asyncio.sleep(0.3)
+        assert "new tab" in (await engine.observe()).text
+        assert engine.browser.current.target != old
+    finally:
+        await user.close()
+
+
+@CHROME
+async def test_a_tab_the_user_opens_from_a_sessions_tab_stays_theirs(chrome_engine):  # moved from test_appmode.py
+    from ai_browser.cdp import CDP
+    from ai_browser.chrome import find_ws_url
+    from ai_browser.steps import parse_step
+
+    engine, base, folder = chrome_engine
+    await engine.sandbox_start(chrome=True)
+    user = await CDP.connect(find_ws_url(folder, timeout=20))
+    try:
+        await engine.open(base + "popup.html")  # the session's own (background) tab
+        own = engine.browser.current.target
+        session = (await user.send("Target.attachToTarget", {"targetId": own, "flatten": True}))["sessionId"]
+        await user.send("Runtime.evaluate", {"expression": f"window.open('{base}form.html', '_blank'); 1",
+                                             "userGesture": True}, session_id=session)
+        await asyncio.sleep(1)
+        users = [t["targetId"] for t in (await user.send("Target.getTargets"))["targetInfos"]
+                 if t["url"].endswith("form.html")]
+        assert users and not {tab.target for tab in engine.browser.owned.values()} & set(users)
+        reply = await engine.browser.act([parse_step("scroll down")])
+        assert "opened new tab" not in reply and engine.browser.current.target == own  # no jump into the user's tab
+    finally:
+        await user.close()
+
+
+@CHROME
+async def test_the_apps_pages_are_refused_through_the_engine(chrome_engine, monkeypatch):
+    engine, _, _ = chrome_engine
+    monkeypatch.setenv("AIB_APP_ORIGIN", "http://127.0.0.1:8799")  # as ai-browser app sets it for its agents
+    await engine.sandbox_start(chrome=True)
+    assert engine.browser.app_origin == "http://127.0.0.1:8799"
+    result = await engine.open("http://127.0.0.1:8799/setup")
+    assert result.text.startswith("error") and "AI Browser's own pages open only in its window" in result.text

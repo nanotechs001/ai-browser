@@ -30,8 +30,9 @@ __all__ = ["ALLOW_WAIT", "SWITCH_EVERY", "BraveLink"]
 
 class BraveLink:
     def __init__(self, folder: Path, watcher_id: str = "", allow_wait: float = ALLOW_WAIT, every: float = SWITCH_EVERY,
-                 tokens: Tokens | None = None):
+                 tokens: Tokens | None = None, app_origin: str = ""):
         self.folder = Path(folder)
+        self.app_origin = app_origin  # AI Browser's own pages: a copy opened in Brave is never one of the user's tabs
         self.watcher_id = watcher_id  # the watcher's extension id; "" = no watcher, so the profile used last
         self.relay = Relay(self.folder, tokens if tokens is not None else Tokens(), allow_wait=allow_wait,
                            every=every)
@@ -79,7 +80,7 @@ class BraveLink:
         return self._starting
 
     async def _start_watch(self) -> None:
-        watch = TabWatch("", "", cdp=self.relay.local())
+        watch = TabWatch("", hidden_origin=self.app_origin, cdp=self.relay.local())
         try:
             await watch.start()
         except Exception:  # the connection went again at once

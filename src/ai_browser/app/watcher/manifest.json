@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "AI Browser Watcher",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Tells the AI Browser Brain about new messages in the sites you pick. It never sends anything.",
+  "omnibox": {"keyword": "ai"},
   "permissions": ["scripting", "storage", "notifications", "tabs", "alarms", "tabGroups"],
   "host_permissions": ["https://mail.google.com/*", "https://app.slack.com/*", "https://app.asana.com/*",
                        "http://127.0.0.1/*", "http://localhost/*"],

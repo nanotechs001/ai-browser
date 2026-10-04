@@ -41,7 +41,7 @@ async def answered(log):
 
 @CHROME
 async def test_a_permission_prompt_is_answered_from_ai_home(home, tmp_path):
-    js, _, stack = home
+    js, stack = home
     ask_for_clickup(stack, tmp_path)
     agent = await stack["server"].agents.create("make a ClickUp task")
     row = f"document.querySelector('.agent[data-id=\"{agent.id}\"]')"
@@ -54,6 +54,7 @@ async def test_a_permission_prompt_is_answered_from_ai_home(home, tmp_path):
     assert await until(js, f"{row}.querySelector('.permission') === null")
 
 
+@pytest.mark.skip(reason="AI Browser's side panel retired in wave B; the side-chat plan (wave D) moves this test")
 @CHROME
 async def test_the_panel_shows_the_same_card(panel, tmp_path):
     js, user_tab, stack = panel
@@ -67,7 +68,7 @@ async def test_the_panel_shows_the_same_card(panel, tmp_path):
 
 @CHROME
 async def test_tools_page_switches_a_server_and_forgets_a_tool(home, tmp_path):
-    js, _, stack = home
+    js, stack = home
     user_config(tmp_path)
     stack["tools"].allow_always("mcp__figma__get_file")
     await js("document.getElementById('tools-section').open = true;"
@@ -92,7 +93,7 @@ async def test_tools_page_switches_a_server_and_forgets_a_tool(home, tmp_path):
 
 @CHROME
 async def test_a_workflow_is_saved_from_the_form_and_run(home):
-    js, _, stack = home
+    js, stack = home
     await js("document.getElementById('workflows-section').open = true; true")
     form = "document.querySelector('.workflow-form')"
     assert await until(js, f"{form} !== null")
@@ -119,7 +120,7 @@ async def test_a_workflow_is_saved_from_the_form_and_run(home):
 
 @CHROME
 async def test_train_a_new_agent_saves_a_skill_after_review(home, monkeypatch):
-    js, _, stack = home
+    js, stack = home
     monkeypatch.setenv("HOME", str(stack["user"]))  # the skills list reads ~/.claude/skills
     monkeypatch.setenv("USERPROFILE", str(stack["user"]))  # Path.home() on Windows
     stack["script"].write_text(json.dumps({"default": EVENTS, "You write a skill": [{"result": DRAFT}]}),

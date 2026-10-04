@@ -23,7 +23,7 @@ def test_platform_markers_skip_with_their_reason():
     def item(*markers, fixtures=()):
         return SimpleNamespace(keywords={name: True for name in markers}, fixturenames=list(fixtures))
 
-    assert PIPE_FIXTURES == {"stack", "watcher", "app_browser", "app_engine"}
+    assert PIPE_FIXTURES == {"watcher"}
     assert platform_skip(item("posix_only"), windows=True) == POSIX_ONLY
     assert platform_skip(item("posix_only"), windows=False) is None
     for fixture in sorted(PIPE_FIXTURES):  # they launch AI Browser over the DevTools pipe
@@ -183,7 +183,7 @@ def _docstrings(tree: ast.AST) -> set[int]:
 
 def test_no_mac_words_where_windows_shows_them():
     found = []
-    pages = [*(SRC / "app" / "extension").rglob("*"), *(SRC / "app" / "watcher").rglob("*"), SRC / "app" / "setup.html"]
+    pages = [*(SRC / "app" / "ui").rglob("*"), *(SRC / "app" / "watcher").rglob("*")]
     for path in sorted(pages):
         if path.is_file() and path.suffix in PAGE_SUFFIXES:
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

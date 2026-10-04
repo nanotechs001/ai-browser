@@ -35,12 +35,14 @@ def main(argv: list[str] | None = None) -> int:
     stop.add_argument("profile", nargs="?", default="default",
                       help="profile to stop (default: default), or chrome for the shell used with your own Chrome")
     stop.add_argument("--all", action="store_true", help="stop every ai-browser container")
-    app = commands.add_parser("app", help="open AI Browser: a Chrome of its own with a Claude chat side panel")
+    app = commands.add_parser("app", help="open AI Browser in its own window: AI Home, Mission Control and the Brain")
     app.add_argument("--model", choices=["sonnet", "opus", "haiku"], default="sonnet",
-                     help="Claude model for the chat (default: sonnet; it can be changed in the panel)")
-    app.add_argument("--browser", choices=["brave", "app"], default=None,
-                     help="where agents browse: your Brave (the default when it is installed) or AI Browser")
-    app.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)  # for tests
+                     help="Claude model for new agents until you pick one in AI Home (default: sonnet)")
+    app.add_argument("--browser", default=None, metavar="{brave}",
+                     help="where agents browse: your Brave (the only choice: AI Browser's own Chrome is gone)")
+    app.add_argument("--window", choices=["auto", "chrome", "brave", "edge"], default=None,
+                     help="which browser draws AI Browser's window, for this run only (default: the Settings "
+                          "choice)")
     args = parser.parse_args(argv)
     if args.command != "mcp":  # the mcp library writes its own UTF-8 stream
         _utf8_console()
@@ -73,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "app":
             from .app.run import run_app
 
-            return asyncio.run(run_app(home(), args.model, args.headless, browser=args.browser))
+            return asyncio.run(run_app(home(), args.model, browser=args.browser, window_browser=args.window))
     except KeyboardInterrupt:
         return 130
     return 2
@@ -128,7 +130,8 @@ def _first_free(ports: range) -> int | None:
 
 def _doctor_setup() -> int:
     """What `ai-browser app` needs, checked without Docker and without opening a DevTools connection, so no browser
-    asks Allow. Python, Claude Code, Chrome and a config.json that is there must pass; the rest is information."""
+    asks Allow. Python, Claude Code, a browser that can draw AI Browser's window and a config.json that is there must
+    pass; the rest is information."""
     import platform
 
     from .app.server import APP_PORTS
@@ -158,13 +161,24 @@ def _doctor_setup() -> int:
         else:
             report("✗", "Claude Code", f"not found ({claude}): install Claude Code, then sign in once with `claude`",
                    True)
+    from .app.window import pick
+    from .settings import Settings
+
+    setting = Settings(home()).get()["window_browser"]
+    found = pick(setting)  # reads installed apps' files only: no browser starts, nothing connects
+    if found is None:
+        report("✗", "window", "AI Browser needs Google Chrome, Brave or Microsoft Edge to draw its window: install "
+                              "one, or set AIB_CHROME_BINARY to the full path of chrome", True)
+    else:
+        report("✓", "window", f"{found.browser.name} ({'Auto' if setting == 'auto' else 'Settings'}) "
+                              f"{found.browser.binary}", True)
+        if found.note:
+            report("-", "window", found.note)
     chrome = chrome_binary()
     if chrome and Path(chrome).is_file():
-        report("✓", "Chrome", chrome, True)
+        report("✓", "Chrome", chrome)
     else:
-        found = f"{chrome} doesn't exist" if chrome else "not found"
-        report("✗", "Chrome", f"{found}: install Google Chrome, or set AIB_CHROME_BINARY to the full path of chrome",
-               True)
+        report("-", "Chrome", "not installed (optional: agents can browse in it)")
     brave = brave_binary()
     report("✓" if brave else "-", "Brave", brave or "not installed (optional: the Brain's watcher and your everyday "
                                                     "browser use it)")

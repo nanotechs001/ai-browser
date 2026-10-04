@@ -11,9 +11,10 @@ import pytest
 from websockets.asyncio.client import connect
 
 from fake_brave import FakeBrave, add_agent
-from test_app_server import (CHECK_REPORT, ORIGIN, WATCHER, quiet, recv, socket_url, started, until, wait_for,
+from test_app_server import (CHECK_REPORT, WATCHER, quiet, recv, socket_url, started, until, wait_for,
                              with_brain)
 from test_bridge import EVENTS
+from ui_socket import ui_socket
 
 ONLY_WITH_ITEM, ONCE_OR_DENY = "only with an item", "only once or deny"
 
@@ -42,6 +43,9 @@ SENDS = {
     "new_task": (True, False),  # with or without adopt
     **{kind: (True, False) for kind in ("send", "stop", "close", "model")},
     **{kind: (True, False) for kind in ("watch", "events", "thumbs")},
+    "settings_set": (True, False),  # app-window: the model, Voice and the window's browser
+    "open_url": (True, False),  # app-window: a website link in our pages
+    "ai_keyword": (False, True),  # app-window: Brave's address bar, through the watcher's omnibox
 }
 
 
@@ -49,9 +53,9 @@ def test_the_message_table_has_exactly_the_written_down_types():
     from ai_browser.app.server import MESSAGE_RULES
 
     assert set(MESSAGE_RULES) == set(SENDS)
-    assert len(SENDS) == 57
-    assert sum(1 for app, _ in SENDS.values() if app) == 50
-    assert sum(1 for _, watcher in SENDS.values() if watcher) == 22  # the two conditional rows count as allowed
+    assert len(SENDS) == 60
+    assert sum(1 for app, _ in SENDS.values() if app) == 52
+    assert sum(1 for _, watcher in SENDS.values() if watcher) == 23  # the two conditional rows count as allowed
 
 
 @pytest.mark.parametrize("kind", sorted(SENDS))
@@ -110,7 +114,7 @@ def log_text(log):
 
 async def test_the_watcher_cannot_start_an_agent_in_a_users_tab(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
-    server.allow_origin(WATCHER, watcher=True)
+    server.allow_watcher(WATCHER)
     brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"}])
     server.attach_brave(brave)
     try:
@@ -122,7 +126,7 @@ async def test_the_watcher_cannot_start_an_agent_in_a_users_tab(fake_claude, tmp
             seen = await quiet(watcher, 1.0)
         assert not any(m["type"] in ("created", "error") for m in seen)  # dropped, with no answer
         assert server.agents.agents == {} and "U1" not in brave.owners
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:  # AI Home may (the samples are real)
+        async with ui_socket(server, url) as page:  # AI Home may (the samples are real)
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(page)
             await page.send(json.dumps({"type": "new_task", "text": "look", "adopt": "U1", "request": "r3"}))
@@ -140,8 +144,7 @@ async def test_the_watcher_cannot_save_always_allow(fake_claude, tmp_path):
     tools.set_enabled("clickup", True)
     server = AppServer(tmp_path / "home", agents, tools=tools)
     url = await server.start()
-    server.allow_origin(ORIGIN)
-    server.allow_origin(WATCHER, watcher=True)
+    server.allow_watcher(WATCHER)
     try:
         agent = await agents.create("make a ClickUp task")
         await wait_for(lambda: agent.permission is not None)
@@ -194,8 +197,7 @@ async def test_the_watcher_origin_may_send_nothing_else(fake_claude, tmp_path):
                        skill_writer=SkillWriter(skills_dir, claude=runner, cwd=tmp_path / "calls"),
                        hearing=HearingService(tiny_store(home / "models"), engine))
     url = await server.start()
-    server.allow_origin(ORIGIN)
-    server.allow_origin(WATCHER, watcher=True)
+    server.allow_watcher(WATCHER)
     brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"},
                        {"target": "U2", "url": "https://mail.example/", "title": "Mail"}], state="ready")
     server.attach_brave(brave)
@@ -262,7 +264,7 @@ async def test_the_watcher_origin_may_send_nothing_else(fake_claude, tmp_path):
         assert not kinds & {"created", "error", "agent_events", "thumbs", "skills", "tools_snapshot",
                             "workflows_snapshot", "workflow_saved", "skill_drafted", "skill_saved", "hearing_status",
                             "heard", "brain_answer"}
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:  # the same close from AI Home works
+        async with ui_socket(server, url) as page:  # the same close from AI Home works
             await page.send(json.dumps({"type": "close", "id": "a1"}))
             await wait_for(lambda: "a1" not in agents.agents)
     finally:
@@ -273,9 +275,8 @@ async def test_the_watcher_origin_may_send_nothing_else(fake_claude, tmp_path):
     store2.save({"name": "Footer fix", "instructions": "Fix the footer", "trigger": "manual"})
     bare = AppServer(home2, agents2, workflows=store2, runner=WorkflowRunner(store2, agents2))
     url2 = await bare.start()
-    bare.allow_origin(ORIGIN)
     try:
-        async with connect(socket_url(bare, url2), origin=ORIGIN) as page:
+        async with ui_socket(bare, url2) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(page)
             await page.send(json.dumps({"type": "workflow_run", "slug": "footer-fix", "item": "gmail:t1",
@@ -293,16 +294,18 @@ async def test_a_malformed_type_is_dropped_and_the_socket_goes_on(fake_claude, t
     bad = [{"type": ["events"]}, {"type": 7}, {"type": None}, {"type": {"events": 1}}, {"id": "a1"},
            {"type": "x" * 10_000}]
     try:
-        for origin, view, ask, answer in ((ORIGIN, "home", {"type": "events", "id": "a1"}, "agent_events"),
-                                          (WATCHER, "brain", {"type": "brain"}, "brain_snapshot")):
-            async with connect(socket_url(server, url), origin=origin) as ws:
+        for opening, view, ask, answer in ((ui_socket(server, url), "home", {"type": "events", "id": "a1"},
+                                            "agent_events"),
+                                           (connect(socket_url(server, url), origin=WATCHER), "brain",
+                                            {"type": "brain"}, "brain_snapshot")):
+            async with opening as ws:
                 await ws.send(json.dumps({"type": "hello", "view": view}))
                 await until(ws, lambda m: m["type"] == "snapshot")
                 for message in bad:
                     await ws.send(json.dumps(message))
                 await ws.send(json.dumps(ask))
                 seen = await until(ws, lambda m, answer=answer: m["type"] == answer)
-                assert not any(m["type"] == "error" for m in seen), origin
+                assert not any(m["type"] == "error" for m in seen), view
     finally:
         await server.stop()
 
@@ -337,7 +340,7 @@ async def test_show_me_from_the_watcher_brings_the_checks_tab_forward(fake_claud
             await watcher.send(json.dumps({"type": "brain"}))  # handled in order: every message above came first
             await until(watcher, lambda m: m["type"] == "brain_snapshot")
         assert brave.watched == ["T1"] and agents.agents["a1"].check is not None  # Show me answers nothing
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:  # AI Home's own Watch still names a tab
+        async with ui_socket(server, url) as page:  # AI Home's own Watch still names a tab
             await page.send(json.dumps({"type": "watch", "target": "U1"}))
             await wait_for(lambda: brave.watched == ["T1", "U1"])
     finally:
@@ -364,11 +367,13 @@ async def test_show_me_with_no_tab_source_does_nothing(fake_claude, tmp_path):  
 RECEIVES = {"ping", "error", "watcher_hello", "watch_list", "notify", "permission_request", "check_request",
             "group_tab", "ungroup_tabs", "open_thread", "fill_reply",  # the worker's
             "snapshot", "agent", "agent_closed", "brain_snapshot", "brain_item", "brain_item_gone",
-            "brain_state"}  # the Brain page's
+            "brain_state",  # the Brain page's
+            "keyword_started"}  # app-window: the ai keyword's answer
 NEVER = {"tabs", "thumb", "thumbs", "sessions", "browser", "agent_event", "agent_events", "created", "brain_activity",
          "brain_answer", "hearing_status", "heard", "tools_snapshot", "workflows_snapshot", "workflow_saved", "skills",
          "skill_drafted", "skill_diff", "skill_saved",
          "browser_clients",  # cdp-relay's list of connected clients
+         "settings",  # app-window: the window's settings go to AI Browser's own pages only
          "a_type_added_later"}
 AGENT_ROW = {"id": "a1", "name": "Fix the footer", "color": "blue", "model": "sonnet", "state": "needs_you",
              "status": "", "last_action": "", "tabs": ["T1"], "adopted": ["U2"], "working_tab": "T1",
@@ -380,7 +385,7 @@ AGENT_ROW = {"id": "a1", "name": "Fix the footer", "color": "blue", "model": "so
 def test_what_the_watcher_receives_is_a_fixed_list():
     from ai_browser.app.server import WATCHER_AGENT_FIELDS, WATCHER_RECEIVES, for_watcher
 
-    assert WATCHER_RECEIVES == RECEIVES and len(RECEIVES) == 18
+    assert WATCHER_RECEIVES == RECEIVES and len(RECEIVES) == 19
     assert WATCHER_AGENT_FIELDS == ("id", "name", "color", "state", "permission")
     for kind in RECEIVES | NEVER:
         assert (for_watcher({"type": kind}) is not None) is (kind in RECEIVES), kind
@@ -419,7 +424,7 @@ async def test_watcher_sockets_get_no_target_ids(fake_claude, tmp_path):
     try:
         async with (connect(socket_url(server, url), origin=WATCHER) as worker,
                     connect(socket_url(server, url), origin=WATCHER) as page,
-                    connect(socket_url(server, url), origin=ORIGIN) as home):
+                    ui_socket(server, url) as home):
             await worker.send(json.dumps({"type": "hello", "view": "watcher"}))
             got = {"worker": await until(worker, lambda m: m["type"] == "watch_list")}
             await page.send(json.dumps({"type": "hello", "view": "brain"}))
@@ -458,7 +463,7 @@ def test_only_the_role_reads_the_watchers_origins():
 
     readers = sorted(name for name, member in vars(AppServer).items()
                      if inspect.isfunction(member) and "_watcher_origins" in inspect.getsource(member))
-    assert readers == ["__init__", "_mismatch", "_role", "_socket", "allow_origin"]  # the rest asks _role
+    assert readers == ["__init__", "_mismatch", "_socket_kind", "allow_watcher"]  # the role is fixed at accept
 
 
 def test_the_readme_says_what_ai_home_lists_and_where_always_allow_is():

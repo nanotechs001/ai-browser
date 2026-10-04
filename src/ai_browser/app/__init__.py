@@ -1,1 +1,1 @@
-"""AI Browser app: a dedicated Chrome with a Claude chat side panel, driven by the ai-browser engine."""
+"""AI Browser app: its own window (AI Home, Mission Control and the Brain), the agents, and the app server between."""

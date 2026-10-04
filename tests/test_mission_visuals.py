@@ -17,7 +17,7 @@ from test_mission import CHROME, WORKING, key, needs_reply, open_mission, open_w
 async def shape(stack, body):
     """Runs `body` (statements ending in a return) in Mission Control, with brainshape.js imported as `shape`."""
     js = await open_mission(stack)
-    return await js(f"(async () => {{ const shape = await import(chrome.runtime.getURL('brainshape.js')); {body} }})()")
+    return await js(f"(async () => {{ const shape = await import('/brainshape.js'); {body} }})()")
 
 
 # ---- brainshape.js ---------------------------------------------------------------------------------------------------
@@ -396,7 +396,7 @@ async def test_without_webgl_the_orb_is_a_dotted_brain(stack):
 POSE_STATES = ["working", "waiting", "needs_you", "your_turn", "failed", "stopped"]
 PARTS = ["body", "head", "face", "blink", "sweat", "arm-l", "arm-r", "arm-up", "arm-thumb", "sparkle"]
 POSES = """(async () => {
-  const chibi = await import(chrome.runtime.getURL('chibi.js'));
+  const chibi = await import('/chibi.js');
   chibi.ensureDefs(document);
   const box = document.createElement('div');
   box.id = 'poses';
@@ -599,7 +599,7 @@ async def test_twenty_working_agents_cause_no_layout(stack):
 PERF_ROOM = """(async () => {
   // PERF_ROOM: 20 working stand-in stations in a second room over Mission Control, for DevTools' Performance panel.
   // They are only drawn: nothing is sent to the app, and a reload removes them.
-  const { createScene } = await import(chrome.runtime.getURL('scene.js'));
+  const { createScene } = await import('/scene.js');
   const root = document.createElement('div');
   root.className = 'scene';
   root.id = 'perf-room';

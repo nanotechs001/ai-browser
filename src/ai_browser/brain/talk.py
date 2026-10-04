@@ -49,8 +49,6 @@ HAND_OVER_SAY = ("Only you can give {label} one of your tabs: under Your tabs, p
                  "it the page's address, and it opens it in a tab of its own, with your logins.")
 HAND_OVER_ANY_SAY = ("Only you can give an agent one of your tabs: open the agent, then under Your tabs press Give to "
                      "this agent. Or tell it the page's address.")
-HAND_OVER_APP_SAY = ("Agents here can't take your tabs: tell {label} the page's address, and it opens it in a tab of "
-                     "its own.")
 NOTHING_OPEN = "There's nothing open to say yes to."
 NOTHING_OPEN_WAITING = NOTHING_OPEN + " Allow, Deny and Continue are clicks on the agent's card."
 NOTHING_TO_CANCEL = "Nothing is open to cancel. To stop an agent, press Stop in its drawer."  # never "OK, I won't"

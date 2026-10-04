@@ -80,7 +80,9 @@ async function handle(message) {
   else if (message.type === "group_tab") link.send({ type: "tab_grouped", ...(await groupTab(message)) });
   else if (message.type === "ungroup_tabs") await ungroupTabs(message.tabs);
   else if (message.type === "open_thread") await openThread(message);
-  else if (message.type === "fill_reply") await fillReply(message);
+  else if (message.type === "keyword_started" || (message.type === "error" && keywordRequests.has(message.request))) {
+    await keywordAnswered(message);
+  } else if (message.type === "fill_reply") await fillReply(message);
 }
 
 async function checkBuild(build) { // the app has newer watcher files on disk: load them
@@ -333,11 +335,53 @@ chrome.notifications.onButtonClicked.addListener(async (id, index) => {
 chrome.notifications.onClicked.addListener(async (id) => {
   const note = await noteOf(id);
   chrome.notifications.clear(id);
+  if (note.keyword) return; // a keyword's notice: clicking it only dismisses it
   if (note.check) return doCheck(note, 0);
   await openBrain(note.item?.id);
 });
 
 chrome.action.onClicked.addListener(() => { openBrain().catch(() => {}); });
+
+// ---- the "ai" keyword: Brave's address bar starts an agent in AI Browser ---------------------------------------
+// Only this handler sends ai_keyword, with what the user typed after "ai" and a space. It never hands over a tab
+// (the app ignores any), never waits for the line, and with the app off it says so and queues nothing.
+
+const NOT_RUNNING = "AI Browser isn't running: start it with `uv run ai-browser app`";
+const keywordRequests = new Set();
+
+async function keywordNotice(message) { // set through the API, as text
+  const text = String(message).slice(0, 300);
+  const id = `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  await keepNote(id, { keyword: { message: text } });
+  await chrome.notifications.create(id, { type: "basic", iconUrl: "icon.png", priority: 1, title: "AI Browser",
+                                          message: text });
+}
+
+function startKeywordTask(text) {
+  const task = String(text || "").trim().slice(0, 2000);
+  if (!task) return false;
+  const request = `kw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  if (!link.send({ type: "ai_keyword", text: task, request })) {
+    keywordNotice(NOT_RUNNING).catch(() => {});
+    return false;
+  }
+  keywordRequests.add(request);
+  return true;
+}
+globalThis.startKeywordTask = startKeywordTask; // for the tests, as AI Browser's old worker had startTask
+
+async function keywordAnswered(message) {
+  if (!keywordRequests.delete(message.request)) return;
+  if (message.type === "keyword_started") {
+    await keywordNotice(`Started ${message.number} · ${message.name}. See it in AI Browser's window.`);
+  } else if (message.text) {
+    await keywordNotice(message.text);
+  }
+}
+
+chrome.omnibox.setDefaultSuggestion({ description: "Start an AI Browser agent: %s" });
+chrome.omnibox.onInputEntered.addListener((text) => { startKeywordTask(text); });
+
 
 // ---- the two things the watcher does in a page ----------------------------------------------------------------
 

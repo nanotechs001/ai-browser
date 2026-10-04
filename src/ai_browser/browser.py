@@ -36,8 +36,6 @@ LEAVE_BLOCKED = ("the page asks before leaving (it may have unsaved changes), so
                  "ask the user, then repeat with confirmed=true")
 LOG_KEEP = 200
 LOG_SHOW = 50
-NO_TAB = ("no tab to work in yet: open a page (open url), or adopt one of the user's tabs (tabs list, then tabs "
-          "switch uN)")
 NO_TAB_CHROME = ("no tab to work in yet: open a page (open url), or switch to a tab the user handed you (tabs list, "
                  "then tabs switch hN)")
 _MISSING = "__aib_missing__"
@@ -75,7 +73,7 @@ class Tab:
     requests: dict = field(default_factory=dict)  # requestId -> "GET url"
     dialogs: list = field(default_factory=list)  # (kind, message, accepted), answered automatically
     reported: int = 0  # dialogs already shown to the caller
-    adopted: bool = False  # a tab the user opened (AI Browser): left open when the session ends
+    adopted: bool = False  # a tab the user handed over: left open when the session ends
     handed: bool = False  # a tab the user handed this agent in AI Home: let go of when they take it back
     detached: bool = False  # the relay cut our session on this handed tab (Take back): let go of at the next call
     world: int | None = None  # the reader's isolated-world context in the current document (dropped on navigation)
@@ -119,25 +117,31 @@ def _forget(*futures: asyncio.Future) -> None:
             future.exception()  # mark as retrieved
 
 
-def url_problem(url: str, mode: str) -> str | None:
-    """Why a URL may not be opened, or None. The user's own Chrome runs on this Mac, so it opens web pages only;
-    AI Browser (app mode) also opens its extensions' pages; the sandbox may also open the files it shares with the
-    shell under file:///work/ (never its own profile)."""
+def _same_origin(parts, origin: str) -> bool:
+    try:
+        own = urlsplit(origin)
+        return (parts.scheme.lower(), parts.hostname or "", parts.port) == (own.scheme.lower(), own.hostname or "",
+                                                                            own.port)
+    except ValueError:
+        return False
+
+
+def url_problem(url: str, mode: str, app_origin: str = "") -> str | None:
+    """Why a URL may not be opened, or None. Never AI Browser's own pages (the app's origin): they open only in its
+    window, and an agent has no cookie for them anyway. The user's own browser runs on this computer, so it opens
+    web pages only; the sandbox may also open the files it shares with the shell under file:///work/ (never its own
+    profile)."""
     try:
         parts = urlsplit(url.strip())
     except ValueError as exc:
         return f"not a valid address ({exc})"
+    if app_origin and _same_origin(parts, app_origin):
+        return "AI Browser's own pages open only in its window"
     scheme = parts.scheme.lower()
     if scheme in {"http", "https", "data"} or (scheme == "about" and parts.path == "blank"):
         return None
     if not scheme:
         return "use a full address such as https://example.com"
-    if mode == "app":
-        if scheme == "chrome-extension":
-            return ("AI Browser's own pages and other extensions' pages don't open from here: if the user opened one, "
-                    "adopt it with tabs switch uN")
-        return (f"only web pages open in AI Browser: local files and chrome:// pages would reach "
-                f"{platforms.this_computer()} and Chrome's settings (use read_file for work files)")
     if mode == "chrome":
         return ("only web pages (http, https, data:, about:blank) open in your own Chrome: local files and chrome:// "
                 f"pages would reach {platforms.this_computer()} and Chrome's settings (use read_file for work files)")
@@ -148,18 +152,14 @@ def url_problem(url: str, mode: str) -> str | None:
 
 
 class Browser:
-    def __init__(self, cdp: CDP, work: WorkDir, cfg: Config, mode: str = "sandbox", hidden_extension: str = "",
-                 front: bool = True, placer=None, keep_tabs: bool = False, handed=None, key_prefix: str = "t"):
+    def __init__(self, cdp: CDP, work: WorkDir, cfg: Config, mode: str = "sandbox", placer=None,
+                 keep_tabs: bool = False, handed=None, key_prefix: str = "t", app_origin: str = ""):
         self.cdp = cdp
         self.work = work
         self.cfg = cfg
-        # "sandbox" (Docker Chromium), "chrome" (the user's own Chrome: change nothing, only our background tabs) or
-        # "app" (AI Browser, the agent's own Chrome: visible tabs, the user's tabs can be adopted)
+        # "sandbox" (Docker Chromium) or "chrome" (the user's own browser: change nothing, only our background tabs)
         self.mode = mode
-        self.hidden_extension = hidden_extension  # AI Browser's own side panel: never listed or touched
-        # In AI Browser: True when the user watches this session work (it started in their tab), so its tabs come to
-        # the front; an agent started from AI Home works in background tabs and never takes the user's focus.
-        self.front = front
+        self.app_origin = app_origin  # AI Browser's own origin: never opened here (url_problem)
         self.placer = placer  # grouping.Placer in the user's own browser: where each new tab of ours goes
         self.keep_tabs = keep_tabs  # an agent of ai-browser app: its tabs outlive this process (the app closes them)
         self.handed = handed  # async () -> the tabs the user handed this agent ([{"target", "title", "url"}])
@@ -167,7 +167,6 @@ class Browser:
         self._handed_keys: dict[str, str] = {}  # listing key (h1...) -> target id, until taken on
         self._placing: set[asyncio.Future] = set()  # reports of tabs our pages opened, waiting for their address
         self._tab_events: list[Callable[[str, Tab], None]] = []  # ("opened" | "closed", tab)
-        self._others: dict[str, str] = {}  # AI Browser tabs the user opened, by listing key (u1...) -> target id
         self.owned: dict[str, Tab] = {}
         self.current: Tab | None = None
         self._seq = 0
@@ -376,11 +375,11 @@ class Browser:
         return notes
 
     async def start(self, first_tab: bool = True) -> None:
-        if self.mode == "sandbox":  # a real Chrome (yours, or AI Browser) keeps the user's Downloads folder
+        if self.mode == "sandbox":  # the user's own browser keeps the user's Downloads folder
             await self.cdp.send("Browser.setDownloadBehavior", {
                 "behavior": "allow", "downloadPath": f"{self.work.sandbox_task}/downloads", "eventsEnabled": True})
         await self.cdp.send("Target.setDiscoverTargets", {"discover": True})
-        if self.mode == "sandbox" and first_tab:  # in the user's browser or AI Browser a blank tab would pop up
+        if self.mode == "sandbox" and first_tab:  # in the user's browser a blank tab would pop up
             await self._new_tab()
 
     def owned_targets(self) -> list[str]:
@@ -390,7 +389,7 @@ class Browser:
     async def close(self) -> None:
         for tab in list(self.owned.values()):
             try:
-                if tab.adopted or self.mode == "app" or self.keep_tabs:  # the user's tab, or the app closes ours
+                if tab.adopted or self.keep_tabs:  # the user's tab, or the app closes ours
                     await self.cdp.send("Target.detachFromTarget", {"sessionId": tab.session})
                 else:
                     await self.cdp.send("Target.closeTarget", {"targetId": tab.target})
@@ -406,17 +405,17 @@ class Browser:
         return await self.cdp.send(method, params, session_id=self.session_id, timeout=timeout)
 
     def _no_tab(self) -> str:
-        return NO_TAB if self.mode == "app" else NO_TAB_CHROME if self.mode == "chrome" else "no open tab"
+        return NO_TAB_CHROME if self.mode == "chrome" else "no open tab"
 
     def _check_url(self, url: str) -> None:
-        problem = url_problem(url, self.mode)
+        problem = url_problem(url, self.mode, self.app_origin)
         if problem:
             raise BrowserError(f"{url}: {problem}")
 
     async def _new_tab(self, url: str | None = None) -> Tab:
         if url:
             self._check_url(url)  # before a tab exists, so a refused URL leaves nothing behind
-        tab = await self.open_worker(background=self.mode == "chrome" or not self.front)
+        tab = await self.open_worker(background=self.mode == "chrome")
         await self._switch(tab)
         if url:
             await self._navigate(url)
@@ -431,7 +430,7 @@ class Browser:
             params, marker = await self.placer.create_params()
         else:
             params = {"url": "about:blank"}
-            if self.mode in ("chrome", "app") if background is None else background:
+            if self.mode == "chrome" if background is None else background:
                 params["background"] = True  # don't steal the user's focus
         target = (await self.cdp.send("Target.createTarget", params))["targetId"]
         try:
@@ -480,8 +479,8 @@ class Browser:
 
     async def ensure_tab(self) -> str:
         """Carry on after the tab in use was closed (in another of ours, or a new one); returns a note."""
-        if self.current is not None or (self._lost is None and self.mode in ("app", "chrome")):
-            return ""  # (in the user's browser and in AI Browser a session starts without a tab of its own)
+        if self.current is not None or (self._lost is None and self.mode == "chrome"):
+            return ""  # (in the user's browser a session starts without a tab of its own)
         lost, self._lost = self._lost or "in use", None
         fallback = self._fallback()
         if fallback is not None:
@@ -617,9 +616,6 @@ class Browser:
         self.current = tab
         for callback in self._tab_listeners:
             callback(tab)
-        if self.mode == "app" and self.front:  # the user sees the tab Claude works in
-            with contextlib.suppress(CDPError):
-                await self.cdp.send("Target.activateTarget", {"targetId": tab.target})
 
     async def _load(self, start: Awaitable[dict], history: bool = False) -> None:
         """Run a navigation command and wait until the new page has content."""
@@ -882,7 +878,7 @@ class Browser:
         return shots
 
     async def _emulate(self, name: str) -> None:
-        if name == "desktop" and self.mode in ("chrome", "app"):
+        if name == "desktop" and self.mode == "chrome":
             await self._call("Emulation.clearDeviceMetricsOverride")  # back to the real window
         else:
             width, height, mobile = SIZES[name]
@@ -1009,13 +1005,10 @@ class Browser:
         if action == "switch" and tab in self._handed_keys:  # a tab the user handed this agent: take it on
             await self.adopt(self._handed_keys.pop(tab))
             return await self.observe()
-        if action == "switch" and tab in self._others:  # a tab the user opened in AI Browser: adopt it
-            await self.adopt(self._others.pop(tab))
-            return await self.observe()
         if action in {"switch", "close"}:
             if tab not in self.owned:
                 raise BrowserError(f"no tab {tab}; open tabs: "
-                                   f"{', '.join([*self.owned, *self._others, *self._handed_keys]) or 'none'}")
+                                   f"{', '.join([*self.owned, *self._handed_keys]) or 'none'}")
             if action == "switch":
                 await self._switch(self.owned[tab])
                 return await self.observe()
@@ -1054,19 +1047,6 @@ class Browser:
                 self._handed_keys[key] = item["target"]
                 lines.append(f"  {key}  {json.dumps(info.get('title', ''), ensure_ascii=False)}  "
                              f"{info.get('url', '')}  (handed to you by the user)")
-        if self.mode == "app":  # AI Browser is the agent's: the user's tabs there may be used too (tabs switch u1)
-            self._others = {}
-            ours = {tab.target for tab in self.owned.values()}
-            for info in infos:
-                url = info.get("url", "")
-                if info.get("type") != "page" or info["targetId"] in ours or url in ("", "about:blank") or \
-                        url_problem(url, "app") or \
-                        (self.hidden_extension and url.startswith(f"chrome-extension://{self.hidden_extension}/")):
-                    continue  # empty tabs, chrome:// pages and our own side panel are never offered
-                key = f"u{len(self._others) + 1}"
-                self._others[key] = info["targetId"]
-                lines.append(f"  {key}  {json.dumps(info.get('title', ''), ensure_ascii=False)}  {url}  "
-                             "(not opened by this session)")
         return "\n".join(lines)
 
     # ---- acting -------------------------------------------------------------------------------
@@ -1292,7 +1272,7 @@ class Browser:
     def _upload_path(self, value: str) -> str:
         """The file path to hand the browser for an upload from the work folder."""
         missing = BrowserError(f"{value}: no such file in the work folder {self.work.sandbox_task}")
-        if self.mode in ("chrome", "app"):  # Chrome reads it from this Mac later: a copy the sandbox cannot swap
+        if self.mode == "chrome":  # Chrome reads it from this Mac later: a copy the sandbox cannot swap
             try:
                 return str(self.work.snapshot(value))
             except (FileNotFoundError, IsADirectoryError):

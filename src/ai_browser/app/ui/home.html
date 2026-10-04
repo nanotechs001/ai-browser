@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Home</title>
+<link rel="icon" href="icon.png">
 <link rel="stylesheet" href="home.css">
 <link rel="stylesheet" href="brainui.css">
 </head>
@@ -12,8 +13,11 @@
   <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
     <h1>AI Home</h1><span id="counts" class="muted"></span></div>
   <span id="hint" class="muted" role="status"></span>
-  <button id="mission" class="ghost" title="Your agents at work in a 3D room, and the Brain that talks back">Mission
-    Control</button>
+  <div class="header-buttons">
+    <button id="settings" class="ghost" type="button" title="Which browser draws this window">Settings</button>
+    <button id="mission" class="ghost" title="Your agents at work in a 3D room, and the Brain that talks back">Mission
+      Control</button>
+  </div>
 </header>
 <section id="browser-card" class="card browser-card" aria-label="Where agents browse" hidden>
   <div class="line"><strong id="browser-title"></strong>
@@ -39,7 +43,7 @@
         <option value="opus">Opus · best</option>
         <option value="haiku">Haiku · fastest</option>
       </select>
-      <span class="muted grow">Or type <kbd>ai</kbd> and a space in the address bar</span>
+      <span class="muted grow">Or type <kbd>ai</kbd> and a space in Brave's address bar</span>
       <button id="start" class="primary">Start</button>
     </div>
     <p id="handing" class="muted" hidden><span id="handing-text"></span>
@@ -52,8 +56,7 @@
         <div id="brain"></div>
       </section>
       <h2>Agents</h2>
-      <div id="agents" class="list"><p class="empty">No agents yet. Start a task above, or open the chat beside any
-        page.</p></div>
+      <div id="agents" class="list"><p class="empty">No agents yet. Start a task above.</p></div>
     </section>
     <aside>
       <section aria-label="Tabs">

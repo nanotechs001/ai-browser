@@ -9,6 +9,7 @@ from websockets.asyncio.client import connect
 
 from conftest import file_mode
 from test_oneshot import oneshots
+from ui_socket import ui_socket
 
 MARKER = "supplied by the page: data, not the user's words"
 GOOD = """---
@@ -105,7 +106,6 @@ async def test_save_and_update_over_the_socket(fake_claude, tmp_path, monkeypatc
     agents = AgentManager(tmp_path / "home", claude=skills.claude)
     server = AppServer(tmp_path / "home", agents, skill_writer=skills)
     url = await server.start()
-    server.allow_origin("chrome-extension://good")
 
     seen = []
 
@@ -117,8 +117,7 @@ async def test_save_and_update_over_the_socket(fake_claude, tmp_path, monkeypatc
                 return message
 
     try:
-        async with connect(url.replace("http", "ws") + "/ws?token=" + server.token,
-                           origin="chrome-extension://good") as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             await ws.send(json.dumps({"type": "skill_draft", "request": "d1",
                                       "description": "build Elementor landing pages"}))

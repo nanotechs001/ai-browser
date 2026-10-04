@@ -314,8 +314,6 @@ class Recorder:
     """Stands in for the AgentManager: shows `rows`, creates and sends, and records any other call, so a test can show
     there was none."""
 
-    in_users_browser = True  # brave mode: a class attribute, so __getattr__ never records it as a call
-
     def __init__(self, rows=()):
         self.rows, self.created, self.calls, self.sent, self.gone, self.made = list(rows), [], [], [], set(), 0
 
@@ -784,8 +782,6 @@ async def test_cards_get_a_tab_hint_for_this_tab_words(fake_claude, tmp_path):
     assert (await brain.respond("k1", "send this page to agent 1"))["proposal"]["tab_hint"] is True
     assert (await brain.respond("k1", "send the shop page to agent 1"))["proposal"]["tab_hint"] is False
     assert (await brain.respond("k1", "start an agent on the page I'm on"))["proposal"]["tab_hint"] is True
-    agents.in_users_browser = False  # AI Browser mode: no hand-over to point to
-    assert (await brain.respond("k1", "work in my tab"))["proposal"]["tab_hint"] is False
 
 
 async def test_message_while_a_permission_waits_doesnt_answer_it(fake_claude, tmp_path):
@@ -917,20 +913,17 @@ async def test_an_agent_that_closes_while_asked_about_is_no_longer_a_pick(fake_c
 
 
 async def test_hand_over_is_a_pointer_never_a_hand(fake_claude, tmp_path):
-    from ai_browser.brain.talk import HAND_OVER_ANY_SAY, HAND_OVER_APP_SAY, HAND_OVER_SAY
+    from ai_browser.brain.talk import HAND_OVER_ANY_SAY, HAND_OVER_SAY
 
     agents = Recorder([footer(), flights()])
     tabs = {"say": "Handing it over.", "action": "open", "target": "tabs", "agent": "a1"}
     tabs_any = {"say": "Handing it over.", "action": "open", "target": "tabs", "agent": ""}
     show = {"say": "Here.", "action": "open", "target": "agent", "agent": "a1"}
-    brain, sent, shown, log = brain_for(fake_claude, tmp_path, tabs, tabs_any, tabs_any, show, agents=agents)
+    brain, sent, shown, log = brain_for(fake_claude, tmp_path, tabs, tabs_any, show, agents=agents)
     assert await brain.respond("k1", "give agent 1 my Gmail tab") == {
         "say": HAND_OVER_SAY.format(label="1 · fix the footer"), "open": {"agent": "a1", "tabs": True}}
     assert brain.talks.last_agent("k1") == "a1"
     assert await brain.respond("k2", "use my mail tab") == {"say": HAND_OVER_ANY_SAY}  # no single agent: no open
-    agents.in_users_browser = False  # AI Browser mode: agents can't take the user's tabs
-    assert await brain.respond("k3", "give agent 2 my Gmail tab") == {
-        "say": HAND_OVER_APP_SAY.format(label="2 · check flights"), "open": {"agent": "a2"}}
     assert await brain.respond("k4", "show me agent 2") == {"say": "Here.", "open": {"agent": "a2"}}
     assert await brain.respond("k4", "show me agent 7") == {
         "say": "There's no agent 7 now. Open ones: 1 · fix the footer (blue), or 2 · check flights (green)."}
@@ -1022,3 +1015,10 @@ async def test_an_agent_reference_on_a_send_card_moves_it_and_keeps_its_words(fa
     again = (await brain.respond("k1", "agent 3"))["proposal"]
     assert (again["agent"], again["task"]) == ("a3", FOOTER_WORDS)
     assert agents.sent == [] and agents.created == []
+
+
+def test_ai_browser_modes_hand_over_line_is_gone():
+    import ai_browser.brain.talk as talk
+    from ai_browser.app.agents import AgentManager
+
+    assert not hasattr(talk, "HAND_OVER_APP_SAY") and not hasattr(AgentManager, "in_users_browser")
