@@ -1,0 +1,8 @@
+{
+  "name": "ai-browser-app",
+  "productName": "AI Browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Browser's own app: its window, its menu-bar icon, its shortcut and its notifications. No npm package.",
+  "main": "main.js"
+}

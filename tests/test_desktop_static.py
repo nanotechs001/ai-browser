@@ -1,0 +1,100 @@
+"""AI Browser's own app, read as files. There is no debugging and no DevTools anywhere in it, every window is locked
+down, the bridge holds named actions only, and there is no npm package. A real Electron drives it in
+test_desktop_electron.py, when there is one."""
+
+import json
+import re
+from pathlib import Path
+
+ELECTRON_DIR = Path(__file__).parents[1] / "src" / "ai_browser" / "desktop" / "electron"
+SRC = Path(__file__).parents[1] / "src" / "ai_browser"
+APP_FILES = ("package.json", "main.js", "preload.js", "policy.js", "line.js")
+REFUSED_LIST = re.compile(r"const DEBUG_SWITCHES = \[([^\]]*)\];")
+NEVER = ("openDevTools", "remote-debugging", "appendSwitch", "--inspect", "devTools: true", ".debugger",
+         "nodeIntegration: true", "contextIsolation: false", "sandbox: false", "webSecurity: false",
+         "allowRunningInsecureContent: true", "webviewTag: true", "nodeIntegrationInSubFrames: true", "openExternal",
+         "ELECTRON_RUN_AS_NODE", "enableBlinkFeatures", "experimentalFeatures", "console.", "remote-allow-origins",
+         "inspect-brk", "js-flags")
+
+
+def text(name: str) -> str:
+    return (ELECTRON_DIR / name).read_text(encoding="utf-8")
+
+
+def test_the_app_never_turns_debugging_on():
+    assert sorted(path.name for path in ELECTRON_DIR.iterdir() if not path.name.startswith(".")) == sorted(APP_FILES)
+    for name in APP_FILES:
+        source = REFUSED_LIST.sub("", text(name))  # policy.js names the debugging switches only to refuse them
+        for word in NEVER:
+            assert word not in source, (name, word)
+    refused = set(re.findall(r'"([a-z-]+)"', REFUSED_LIST.search(text("policy.js")).group(1)))
+    assert {"remote-debugging-port", "remote-debugging-pipe", "inspect", "inspect-brk", "js-flags"} <= refused
+    # A test's Electron only: Electron's own default app loaded this folder. app.isPackaged alone only compares the
+    # program's name with "electron", and the Mac app's program keeps Electron's name (Contents/MacOS/Electron).
+    assert "\nconst UNPACKAGED = !app.isPackaged && process.defaultApp === true;\n" in text("main.js")
+    assert re.search(r"if \(!UNPACKAGED && policy\.DEBUG_SWITCHES\.some\(\(name\) => "
+                     r"app\.commandLine\.hasSwitch\(name\)\)\) \{\n  app\.exit\(1\);[^\n]*\n\} else \{\n  main\(\);\n"
+                     r"\}\n$", text("main.js"))  # the packaged app's very first step
+    assert "if (given && UNPACKAGED) return given.slice(PROFILE.length);" in text("main.js")
+
+
+def test_every_window_is_locked_down():
+    main = text("main.js")
+    web = re.search(r"const WEB = Object\.freeze\(\{(.*?)\n\}\);", main, re.S).group(1)
+    for setting in ("contextIsolation: true", "sandbox: true", "nodeIntegration: false",
+                    "nodeIntegrationInWorker: false", "nodeIntegrationInSubFrames: false", "webSecurity: true",
+                    "allowRunningInsecureContent: false", "webviewTag: false", "devTools: false",
+                    "navigateOnDragDrop: false"):
+        assert setting in web, setting
+    assert main.count("new BrowserWindow(") == 1 and "webPreferences: { ...WEB }" in main  # every one: makeWindow
+    for needed in ('contents.setWindowOpenHandler(() => ({ action: "deny" }))',
+                   '["will-navigate", "will-frame-navigate", "will-redirect"]',
+                   "policy.mayNavigate(details.url, own, details.isMainFrame)", "setPermissionRequestHandler",
+                   "policy.mayRequest(permission, details, own)", "setPermissionCheckHandler",
+                   "setDevicePermissionHandler(() => false)", '"will-download"', '"will-attach-webview"',
+                   "requestSingleInstanceLock()", 'app.on("web-contents-created"', "policy.startOrigin(message.open)"):
+        assert needed in main, needed
+
+
+def test_the_bridge_holds_named_actions_only():
+    preload, main = text("preload.js"), text("main.js")
+    assert preload.count("exposeInMainWorld(") == 1
+    assert 'contextBridge.exposeInMainWorld("aib", Object.freeze(bridge));' in preload
+    assert "const ACTIONS = [];" in preload and "const ACTIONS = new Map();" in main  # part c adds chat, thisPage
+    assert "ipcRenderer.invoke(`aib:${name}`, ...args)" in preload
+    assert re.findall(r'require\("([^"]+)"\)', preload) == ["electron"]  # a sandboxed preload: the bridge alone
+    assert "frame !== event.sender.mainFrame || policy.originOf(frame.url) !== own" in main
+
+
+def test_no_npm_package_at_run_time():
+    package = json.loads(text("package.json"))
+    assert package["main"] == "main.js" and package["productName"] == "AI Browser" and package["private"] is True
+    assert not {"dependencies", "devDependencies", "optionalDependencies", "scripts"} & set(package)
+    for name in ("main.js", "preload.js", "policy.js", "line.js"):
+        modules = set(re.findall(r'require\("([^"]+)"\)', text(name)))
+        assert modules <= {"electron", "node:fs", "node:net", "node:path", "./policy.js", "./line.js"}, (name, modules)
+
+
+def test_the_menu_bar_icon_closing_and_quitting():  # Review Focus 4
+    main = text("main.js")
+    for item in ('label: "Open AI Browser"', 'label: "Show chat", enabled: false', 'label: "Quit"'):
+        assert item in main, item
+    assert 'win.on("close", (event) => {' in main and "win.hide();" in main  # closing hides it
+    assert 'send({ type: "quit" })' in main  # Quit tells the engine
+    assert re.search(r"\}, \(\) => \{\n    clearTimeout\(waiting\);\n    if \(started\) \{\n      engineQuit = true;\n"
+                     r"      app\.quit\(\);", main)  # the line's end (the engine gone) quits the app
+    assert main.count("new Notification(") == 1 and "policy.notice(message)" in main  # the engine's words only
+    assert "if (UNPACKAGED) return;" in main  # a test's Electron never adds a Start menu entry
+
+
+def test_staging_copies_exactly_the_apps_files(tmp_path):
+    from ai_browser.desktop.stage import APP_FILES as STAGED
+    from ai_browser.desktop.stage import ELECTRON, ICON, part_hash, stage_app
+
+    assert STAGED == APP_FILES and ELECTRON == ELECTRON_DIR and ICON == SRC / "app" / "ui" / "icon.png"
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "old.js").write_text("// from before", encoding="utf-8")
+    stage_app(tmp_path / "app")
+    assert sorted(path.name for path in (tmp_path / "app").iterdir()) == sorted([*APP_FILES, "icon.png"])
+    assert (tmp_path / "app" / "icon.png").read_bytes() == ICON.read_bytes()
+    assert part_hash() == part_hash() and part_hash(b"x") != part_hash()
