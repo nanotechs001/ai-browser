@@ -18,7 +18,7 @@ import re
 import secrets
 import time
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,6 +102,7 @@ class Accounts:
         self._status: dict[str, tuple[float, dict]] = {}  # account id -> (monotonic time, {"signed_in", "plan"})
         self._locks: dict[str, asyncio.Lock] = {}  # one `claude auth status` per account at a time
         self._limits: dict[str, float] = {}  # account id -> when its usage limit resets (this app run only)
+        self.on_change: Callable[[], None] | None = None  # set by the app: a status changed, so pages hear it
 
     # ---- reading -----------------------------------------------------------------------------------------------
 
@@ -278,7 +279,9 @@ class Accounts:
 
     async def status(self, account_id, fresh: bool = False) -> dict:
         """{"signed_in": True | False | None, "plan": "Pro" | None}, from `claude auth status` on the account's
-        folder (no model turn), kept STATUS_TTL seconds. None: Claude Code couldn't tell. It never raises."""
+        folder (no model turn), kept STATUS_TTL seconds. None: Claude Code couldn't tell. It never raises. An answer
+        that differs from the one kept (or the first one) calls on_change: whoever asked (a page, an agent's start, a
+        move), every page then shows it."""
         if self.get(account_id) is None:
             return dict(UNKNOWN)
         async with self._locks.setdefault(account_id, asyncio.Lock()):
@@ -287,6 +290,9 @@ class Accounts:
                 return dict(kept[1])
             found = await self._auth_status(account_id)
             self._status[account_id] = (time.monotonic(), found)
+            if (kept is None or kept[1] != found) and self.on_change is not None:
+                with contextlib.suppress(Exception):
+                    self.on_change()
             return dict(found)
 
     async def _auth_status(self, account_id: str) -> dict:

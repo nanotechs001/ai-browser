@@ -45,7 +45,8 @@ async def test_the_snapshot_and_the_accounts_message_list_the_accounts(fake_clau
             assert [(row["id"], row["name"], row["checked"]) for row in snapshot["accounts"]] == [
                 ("default", "Default", False), (work.id, "Work", False)]
             await ws.send(json.dumps({"type": "accounts"}))  # a page opened: each account's status, now
-            listed = (await until(ws, lambda m: m["type"] == "accounts"))[-1]["accounts"]
+            listed = (await until(ws, lambda m: m["type"] == "accounts"  # each status is sent as soon as it's known
+                                  and all(row["checked"] for row in m["accounts"])))[-1]["accounts"]
             assert [(row["signed_in"], row["plan"]) for row in listed] == [(True, "Pro"), (True, "Max")]
             await ws.send(json.dumps({"type": "new_task", "text": "check the shop", "account": work.id,
                                       "request": "r1"}))
@@ -115,8 +116,8 @@ async def test_open_terminal_and_the_sign_in_watch(fake_claude, tmp_path, monkey
             [(claude, named, env)] = opened
             assert claude == fake_claude[0] and named == folder
             assert env["CLAUDE_CONFIG_DIR"] == folder and "ANTHROPIC_API_KEY" not in env
-            waiting = (await until(ws, lambda m: m["type"] == "accounts"))[-1]["accounts"]
-            assert waiting[2]["signed_in"] is False  # watched: not signed in yet
+            waiting = (await until(ws, lambda m: m["type"] == "accounts" and m["accounts"][2]["checked"]))[-1]
+            assert waiting["accounts"][2]["signed_in"] is False  # checked at once, and watched: not signed in yet
             sign_in(folder)  # the user signs in, in that terminal and their browser
             done = (await until(ws, lambda m: m["type"] == "accounts" and m["accounts"][2]["signed_in"]))[-1]
             assert done["accounts"][2]["plan"] == "Pro"

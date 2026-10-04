@@ -61,6 +61,27 @@ export function askKey(agent, rows) { // what an agent's ask is drawn from: it i
                          agent.account || null, others(agent, rows).map((row) => [row.id, optionText(row)])]);
 }
 
+// A Continue on that was clicked waits for the app: a move under way changes the agent's row, and a refused one comes
+// back as an error naming the click's request, after which the button can be clicked again (askError).
+const asking = new Map(); // request id -> the button that sent it
+let asked = 0;
+
+function ask(send, message, button) {
+  asked += 1;
+  const request = `ask-${asked}`;
+  if (!send({ ...message, request })) return false;
+  asking.set(request, button);
+  return true;
+}
+
+export function askError(message) { // an error from the app: true when it answers a Continue on, now clickable again
+  const button = message.type === "error" ? asking.get(message.request) : undefined;
+  if (!button) return false;
+  asking.delete(message.request);
+  button.disabled = false;
+  return true;
+}
+
 function continueOn(choices, onPick) { // "Continue on Work", with a picker when there is more than one to choose from
   const parts = [];
   let choice = choices[0];
@@ -80,7 +101,7 @@ function continueOn(choices, onPick) { // "Continue on Work", with a picker when
     });
     parts.push(pick);
   }
-  go.addEventListener("click", () => { if (onPick(choice)) go.disabled = true; });
+  go.addEventListener("click", () => { if (onPick(choice, go)) go.disabled = true; });
   parts.push(go);
   return parts;
 }
@@ -96,8 +117,8 @@ export function askBox(agent, rows, send) {
   const box = el("div", limit ? "account-ask card" : "account-move");
   const buttons = el("div", "row account-ask-buttons");
   if (choices.length) {
-    buttons.append(...continueOn(choices, (choice) => send({ type: "account_move", id: agent.id,
-                                                             account: choice.id })));
+    buttons.append(...continueOn(choices, (choice, button) => ask(send, { type: "account_move", id: agent.id,
+                                                                          account: choice.id }, button)));
   }
   if (limit) {
     const name = agent.account?.name || "Its account";
@@ -130,7 +151,8 @@ export function brainCard(node, limit, rows, send) {
   const question = (choice) => `The Brain hit its limit on ${name}. Continue on ${choice.name}?`;
   const head = el("p", "account-ask-head", question(choices[0]));
   const buttons = el("div", "row account-ask-buttons");
-  buttons.append(...continueOn(choices, (choice) => send({ type: "account_brain", id: choice.id })));
+  buttons.append(...continueOn(choices, (choice, button) => ask(send, { type: "account_brain", id: choice.id },
+                                                                button)));
   const pick = buttons.querySelector(".continue-on");
   pick?.addEventListener("change", () => {
     head.textContent = question(choices.find((row) => row.id === pick.value) || choices[0]);

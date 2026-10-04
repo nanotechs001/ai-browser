@@ -1,6 +1,6 @@
 // AI Home: every agent and what it is doing, every tab, and all of Claude's skills. Everything from Claude, pages or
 // skills is set as text; thumbnails are JPEG data the app made from Chrome screenshots.
-import { askBox, askKey, brainCard, fillPicker, pickDefault } from "./accountui.js";
+import { askBox, askError, askKey, brainCard, fillPicker, pickDefault } from "./accountui.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { connect } from "./link.js";
@@ -43,6 +43,8 @@ const chat = createChat($("chat-messages"));
 const link = connect({ view: "home", onMessage: handle, onState: setStatus });
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
+// Shown again (its tab, or the window after the user signed in in a terminal): each account's status, now
+window.addEventListener("focus", () => link.send({ type: "accounts" }));
 const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id), cards: "confirm",
                                              openSetup: () => openTab("/setup#brave") });
 let watchSites = []; // the Brain's watch list: a message workflow's sites
@@ -558,6 +560,7 @@ function handle(message) {
       break;
     case "error":
       if (pending && message.request === pending) finishRequest();
+      askError(message); // a refused Continue on can be clicked again
       if (message.text) flash(message.text);
       break;
   }

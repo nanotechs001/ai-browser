@@ -362,6 +362,7 @@ class AppServer:
         if accounts is not None:
             agents.accounts = accounts
             agents.on_limit = lambda account: self._accounts_changed()  # the pickers' "at its limit until"
+            accounts.on_change = self._accounts_changed  # a status that changed, whoever asked: every page hears it
         self.open_terminal = open_terminal
         self._signing_in: dict[str, asyncio.Task] = {}  # account id -> the look at its sign-in
         self.brain_account = brain_account  # the Brain's and its skill writer's calls, on the Brain's account
@@ -1585,6 +1586,7 @@ class AppServer:
             if kind == "account_add":
                 account = self.accounts.add(message.get("name"))
                 queue.put_nowait({"type": "account_added", "id": account.id, "request": request})
+                self._job(self._refresh_accounts())  # its status at once, never "Checking…" until a page reopens
             elif kind == "account_add_existing":
                 account = self.accounts.add_existing(message.get("name"), message.get("folder"))
                 queue.put_nowait({"type": "account_added", "id": account.id, "request": request})

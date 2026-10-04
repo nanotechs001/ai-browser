@@ -74,4 +74,6 @@ const accounts = mountAccounts({ // Settings → Accounts (AI accounts)
 const link = connect({ view: "settings", onMessage: handle, onState: setStatus });
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
+// Shown again (its tab, or the window after the user signed in in a terminal): each account's status, now
+window.addEventListener("focus", () => link.send({ type: "accounts" }));
 $("home-link").addEventListener("click", () => openTab("/home"));

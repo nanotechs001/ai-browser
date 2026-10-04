@@ -1,6 +1,6 @@
 // Mission Control: the user's AI team at work. One station per agent in a 3D room (scene.js), the Brain in the
 // middle, on the same line to the app as AI Home (link.js), sending only the messages AI Home sends.
-import { askBox, askKey, fillPicker, pickDefault } from "./accountui.js";
+import { askBox, askError, askKey, fillPicker, pickDefault } from "./accountui.js";
 import { createBlob } from "./blob.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
@@ -66,6 +66,8 @@ for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voic
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
+// Shown again (its tab, or the window after the user signed in in a terminal): each account's status, now
+window.addEventListener("focus", () => link.send({ type: "accounts" }));
 talk = mountTalk({
   panel: $("talk"),
   micButton: $("mic"),
@@ -481,7 +483,8 @@ function handle(message) {
       break;
     case "error":
       if (pending && message.request === pending) finishStart();
-      if (message.text && (!message.request || String(message.request).startsWith("m"))) note(message.text);
+      if (askError(message)) note(message.text || ""); // a refused Continue on: why, and it can be clicked again
+      else if (message.text && (!message.request || String(message.request).startsWith("m"))) note(message.text);
       break;
     case "tabs":
       tabs = message.tabs || [];
