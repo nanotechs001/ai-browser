@@ -29,7 +29,7 @@ def show(brain, entry):
 
 @CHROME
 async def test_ai_home_shows_the_needs_you_items_as_text(home):
-    js, _, stack = home
+    js, stack = home
     show(stack["brain"], item(sender=HOSTILE, subject=HOSTILE, summary=HOSTILE))
     assert await until(js, "document.querySelectorAll('#brain .brain-item').length === 1")
     assert "<img" in await js("document.querySelector('#brain .brain-item .summary').textContent")
@@ -42,7 +42,7 @@ async def test_ai_home_shows_the_needs_you_items_as_text(home):
 
 @CHROME
 async def test_approve_sends_the_edited_text_once(home):
-    js, _, stack = home
+    js, stack = home
     brain, calls = stack["brain"], []
     real = brain.approve
 
@@ -106,7 +106,7 @@ async def test_two_brain_pages_fill_once(watcher):
 
 @CHROME
 async def test_hand_and_run_take_one_click(home):
-    js, _, stack = home
+    js, stack = home
     brain, calls = stack["brain"], []
 
     async def hand(item_id, instruction):
@@ -132,7 +132,7 @@ async def test_hand_and_run_take_one_click(home):
 async def test_tell_the_brain_shows_a_card_and_runs_only_on_start(home):
     from test_bridge import EVENTS
 
-    js, _, stack = home
+    js, stack = home
     brain, agents = stack["brain"], stack["server"].agents
     stack["script"].write_text(json.dumps({"default": EVENTS, "You map the user's answer": [
         {"result": json.dumps({"action": "agent"})}]}), encoding="utf-8")

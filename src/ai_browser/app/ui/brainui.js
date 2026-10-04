@@ -38,7 +38,7 @@ function el(tag, className, text) {
   return node;
 }
 
-export function mountBrain(root, link, { compact = false, openAgent = null, cards = "view" } = {}) {
+export function mountBrain(root, link, { compact = false, openAgent = null, cards = "view", openSetup = null } = {}) {
   const head = el("div", "brain-head");
   const counts = el("span", "brain-others muted");
   const watcher = el("span", "brain-watcher");
@@ -56,10 +56,12 @@ export function mountBrain(root, link, { compact = false, openAgent = null, card
   let setupUrl = null;
   let focusing = null;
 
-  fetch(chrome.runtime.getURL("config.json"), { cache: "no-store" }).then((answer) => answer.json()).then((config) => {
-    setupUrl = `${config.server}/setup#brave`;
-    renderHead();
-  }).catch(() => {});
+  if (!openSetup && location.protocol === "chrome-extension:") { // the watcher's Brain page: the server's address
+    fetch(chrome.runtime.getURL("config.json"), { cache: "no-store" }).then((answer) => answer.json()).then((config) => {
+      setupUrl = `${config.server}/setup#brave`;
+      renderHead();
+    }).catch(() => {});
+  }
   more.addEventListener("click", () => {
     showAll = !showAll;
     render();
@@ -266,8 +268,13 @@ export function mountBrain(root, link, { compact = false, openAgent = null, card
     watcher.replaceChildren();
     if (!watcherOn) {
       watcher.append("The watcher isn't connected in Brave");
-      if (setupUrl) {
-        const setup = el("a", "", "Set it up");
+      if (openSetup) { // AI Browser's window: the setup steps in a small window of their own
+        const setup = el("button", "brain-setup link", "Set it up");
+        setup.type = "button";
+        setup.addEventListener("click", () => openSetup());
+        watcher.append(" · ", setup);
+      } else if (setupUrl) { // the watcher's Brain page, in Brave: a new tab there is right
+        const setup = el("a", "brain-setup", "Set it up");
         setup.href = setupUrl;
         setup.target = "_blank";
         watcher.append(" · ", setup);

@@ -260,7 +260,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
         option.value = value;
         picker.append(option);
       }
-      const last = model(); // the model last picked (the task bar's, from chrome.storage.local)
+      const last = model(); // the model last picked (the task bar's, from the app's settings)
       picker.value = MODELS.some(([value]) => value === last) ? last : String(offer.model || "sonnet");
       entry.box = text;
       entry.picker = picker;

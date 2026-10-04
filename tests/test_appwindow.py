@@ -8,6 +8,9 @@ import sys
 import pytest
 
 from ai_browser.app import window
+from ai_browser.chrome import chrome_binary
+
+CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 
 MAC_BOTH = {"chrome": "/x/Google Chrome", "brave": "/x/Brave Browser"}
 ALL_THREE = {"edge": "C:\\Edge\\msedge.exe", "chrome": "C:\\Chrome\\chrome.exe", "brave": "C:\\Brave\\brave.exe"}
@@ -238,3 +241,36 @@ def test_the_default_launcher_picks_or_says_why(tmp_path, monkeypatch):
                                                          tmp_path / "app" / "window" / "chrome")
     if sys.platform in ("darwin", "win32"):
         assert app.note == "Brave isn't installed: the window uses Google Chrome. Change it in Settings."
+
+
+@CHROME
+async def test_the_real_window_connects_with_no_debugging_port_and_ends(fake_claude, tmp_path):
+    import asyncio
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+
+    runner, _, _ = fake_claude
+    home = tmp_path / "home"
+    server = AppServer(home, AgentManager(home, claude=runner))
+    url = await server.start()
+    app = None
+    try:
+        start = f"{url}/open?code={server.new_launch_code()}"
+        # Headless Chrome opens --app=<url> as the window would (measured by the plan's review): one page, so one
+        # window socket. --headless=new is the test's only extra argument; the product never passes one.
+        app = window.AppWindow(home, window.WindowBrowser("chrome", "Google Chrome", chrome_binary()),
+                               extra_args=("--headless=new",))
+        app.launch(start)
+        for _ in range(200):
+            if server.window_count >= 1:
+                break
+            await asyncio.sleep(0.1)
+        assert server.window_count == 1  # AI Home's page, over http, with the window's cookie
+        assert not (app.profile / "DevToolsActivePort").exists()  # no debugging port: nothing can drive it
+        assert await asyncio.to_thread(app.close) == ""
+        assert app.process.poll() is not None
+    finally:
+        if app is not None and app.process is not None and app.process.poll() is None:
+            app.process.kill()
+        await server.stop()

@@ -35,7 +35,7 @@ async def eventually(check, seconds=8.0):
 # ---- voice.js: the Brain's answers go first; while the user talks, nothing is spoken ---------------------------------
 
 VOICE = """(async () => {
-  const { createVoice, guardMs } = await import(chrome.runtime.getURL("voice.js"));
+  const { createVoice, guardMs } = await import("/voice.js");
   window.spoken = [];
   let current = null;
   window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
@@ -180,7 +180,7 @@ def crossings_per_second(samples):
 
 
 MIC_RUN = """(async () => {
-  const { openMic } = await import(chrome.runtime.getURL("mic.js"));
+  const { openMic } = await import("/mic.js");
   window.chunks = [];
   const mic = await openMic({ onChunk: (buffer) => window.chunks.push(Array.from(new Int16Array(buffer))),
                               onError: (error) => { window.micError = String(error); } });
@@ -192,7 +192,7 @@ MIC_RUN = """(async () => {
 })()"""
 
 MIC_CANCEL = """(async () => {
-  const { openMic } = await import(chrome.runtime.getURL("mic.js"));
+  const { openMic } = await import("/mic.js");
   let after = 0;
   let cancelled = false;
   const mic = await openMic({ onChunk: () => { if (cancelled) after += 1; } });
@@ -557,7 +557,7 @@ async def test_the_model_downloads_only_on_the_click(stack):
     shutil.rmtree(store.folder)
     store.fetch.delay = 0.4  # before each read: the download takes a couple of seconds
     js = await open_talk(stack, mic(), hearing="no_model")
-    assert await js("import(chrome.runtime.getURL('talk.js')).then((talk) => talk.megabytes(147769510))") == "148 MB"
+    assert await js("import('/talk.js').then((talk) => talk.megabytes(147769510))") == "148 MB"
     await tap(stack, js, SPACE, " ")
     assert await until(js, f"{CARD}.includes('Whisper tiny.en, 2 MB, from Hugging Face')")
     card = await js(CARD)
@@ -972,7 +972,6 @@ async def test_hand_over_hint_opens_this_agents_tab_list(stack):
                        {"target": "S1", "url": "https://s.example/", "title": "Session page"}])
     brave.owners.update({"T1": {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"},
                          "S1": {"kind": "session", "id": "cc-x", "name": "Claude Code", "color": "orange"}})
-    server.tabs._callbacks.clear()  # brave mode has no AI Browser TabWatch on the pages (run.py): only Brave's list
     server.attach_brave(brave)
     agents.env["AIB_BROWSER"] = "chrome"  # brave mode, as run.py's brave_env sets it
     js = await open_talk(stack, mic())
@@ -1012,7 +1011,6 @@ async def test_your_tabs_say_what_the_list_leaves_out(stack):
     await agents.create("Fix the footer")
     brave = FakeBrave([])
     brave.set_scope("none", 0)  # AI Browser can't tell which Brave profile is the user's yet
-    server.tabs._callbacks.clear()  # brave mode has no AI Browser TabWatch on the pages (run.py): only Brave's list
     server.attach_brave(brave)
     agents.env["AIB_BROWSER"] = "chrome"  # brave mode, as run.py's brave_env sets it
     js = await open_talk(stack, mic())

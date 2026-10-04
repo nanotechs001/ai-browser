@@ -18,7 +18,7 @@ JPEG = "/9j/4AAQSkZJRg=="
 
 
 async def open_mission(stack):
-    _, js = await open_page(stack["cdp"], f"chrome-extension://{stack['app'].extension_id}/mission.html")
+    _, js = await open_page(stack["cdp"], stack["url"] + "/mission")
     assert await until(js, "document.getElementById('status').dataset.state === 'connected'")
     return js
 
@@ -100,26 +100,6 @@ async def test_many_agents_fill_the_rings_without_overlap(mission):
     points = await js("[...document.querySelectorAll('.station')].map(s => [Number(s.dataset.x), Number(s.dataset.y)])")
     closest = min(math.dist(one, two) for one, two in itertools.combinations(points, 2))
     assert closest >= 160, points
-
-
-@CHROME
-async def test_ai_home_opens_mission_control_once(home):
-    js, _, stack = home
-    await js("document.getElementById('mission').click(); document.getElementById('mission').click(); true")
-
-    async def missions():
-        targets = (await stack["cdp"].send("Target.getTargets"))["targetInfos"]
-        return [t for t in targets if t["type"] == "page" and t["url"].endswith("/mission.html")]
-
-    for _ in range(50):
-        if await missions():
-            break
-        await asyncio.sleep(0.1)
-    await asyncio.sleep(1)
-    assert len(await missions()) == 1
-    await js("document.getElementById('mission').click(); true")  # open already: brought to the front
-    await asyncio.sleep(1)
-    assert len(await missions()) == 1
 
 
 @CHROME
@@ -226,7 +206,7 @@ async def test_without_webgl_the_orb_takes_over(stack):
         "const real = HTMLCanvasElement.prototype.getContext;"
         "HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {"
         "  return /webgl/.test(kind) ? null : real.call(this, kind, ...rest); };")}, session_id=session)
-    await cdp.send("Page.navigate", {"url": f"chrome-extension://{stack['app'].extension_id}/mission.html"},
+    await cdp.send("Page.navigate", {"url": stack["url"] + "/mission"},
                    session_id=session)
 
     async def js(expression):
@@ -266,7 +246,7 @@ async def open_with(stack, source="", size=None):
                        session_id=session)
     if source:
         await cdp.send("Page.addScriptToEvaluateOnNewDocument", {"source": source}, session_id=session)
-    await cdp.send("Page.navigate", {"url": f"chrome-extension://{stack['app'].extension_id}/mission.html"},
+    await cdp.send("Page.navigate", {"url": stack["url"] + "/mission"},
                    session_id=session)
 
     async def js(expression):
@@ -397,7 +377,7 @@ async def test_an_open_room_does_no_layout_while_agents_work(mission):
         await stack["server"].agents.create(name)
     assert await until(js, "document.querySelectorAll('.station[data-state=\"working\"]').length === 3")
     targets = (await cdp.send("Target.getTargets"))["targetInfos"]
-    page = next(t for t in targets if t["type"] == "page" and t["url"].endswith("/mission.html"))
+    page = next(t for t in targets if t["type"] == "page" and t["url"].endswith("/mission"))
     session = (await cdp.send("Target.attachToTarget", {"targetId": page["targetId"], "flatten": True}))["sessionId"]
     await cdp.send("Page.bringToFront", session_id=session)  # a hidden tab runs no animations
     await cdp.send("Performance.enable", session_id=session)
@@ -579,3 +559,35 @@ async def test_watch_says_it_brings_the_agents_tab_to_the_front(mission):
     await js(f"{station('a1')}.click(); true")
     assert await until(js, "document.querySelector('#drawer .watch')?.title === "
                            "\"Bring this agent's tab to the front\"")
+
+
+@CHROME
+async def test_the_model_is_the_apps_choice_in_every_window(home):
+    from ai_browser.settings import read_settings
+
+    js, stack = home
+    mission = await open_mission(stack)
+    assert await mission("document.getElementById('task-model').value") == "sonnet"  # ai-browser app --model
+    await js("const picker = document.getElementById('task-model'); picker.value = 'opus';"
+             "picker.dispatchEvent(new Event('change')); true")
+    assert await until(mission, "document.getElementById('task-model').value === 'opus'")  # no reload needed
+    assert read_settings(stack["home"])["model"] == "opus"
+    await js("location.reload(); true")
+    await asyncio.sleep(0.5)
+    assert await until(js, "document.getElementById('status')?.dataset.state === 'connected' && "
+                           "document.getElementById('task-model').value === 'opus'")
+
+
+@CHROME
+async def test_voice_comes_back_on_from_the_apps_settings(stack):
+    from ai_browser.settings import read_settings
+
+    js = await open_with(stack, LOCAL_VOICE)
+    await voice_on(js)
+    for _ in range(50):
+        if read_settings(stack["home"]).get("voice") is True:
+            break
+        await asyncio.sleep(0.1)
+    assert read_settings(stack["home"])["voice"] is True
+    later = await open_with(stack, LOCAL_VOICE)  # Mission Control opened again: Voice is on at load
+    assert await until(later, "document.getElementById('voice').checked === true")

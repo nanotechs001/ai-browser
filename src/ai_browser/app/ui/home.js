@@ -25,7 +25,7 @@ let maxWorking = 3;
 let pending = null; // the new_task request waiting for its "created"
 let pendingTimer = null;
 let chatAgent = null;
-let storedModel = false; // the user picked a model here before: it wins over the app's default
+let defaultModel = "sonnet"; // ai-browser app --model, until the user picks one (the app remembers the pick)
 let browser = null; // where agents browse: {kind, name, state, groups}
 let browserClients = []; // what uses the user's browser through AI Browser's one connection (the relay)
 let handing = null; // one of the user's tabs the next new task starts in (Hand over → New agent…)
@@ -47,8 +47,15 @@ const train = mountTrain($("train"), link, { tabs: () => tabs, model: () => $("t
 
 function setStatus(state) {
   $("status").dataset.state = state;
-  $("status").title = { connected: "Connected to ai-browser app", connecting: "Connecting…" }[state]
+  $("status").title = { connected: "Connected to ai-browser app", connecting: "Connecting…",
+                        refused: "This window wasn't opened by this run of ai-browser app: close it" }[state]
     || "Not connected: is `ai-browser app` running?";
+}
+
+function applySettings(settings) { // the model picked last, here or in Mission Control: the app keeps it
+  if (!settings) return;
+  const model = settings.model ?? defaultModel;
+  if ([...$("task-model").options].some((option) => option.value === model)) $("task-model").value = model;
 }
 
 function flash(text) {
@@ -429,13 +436,17 @@ function handle(message) {
       renderBrowser();
       summary = message.skills_summary;
       maxWorking = message.max_working || 3;
-      if (!storedModel && message.default_model) $("task-model").value = message.default_model;
+      defaultModel = message.default_model || defaultModel;
+      applySettings(message.settings);
       if (pending) finishRequest(); // a new connection: an unanswered Start can be pressed again
       renderAgents();
       renderTabs();
       renderSkills();
       link.send({ type: "skills" });
       if (chatAgent) link.send({ type: "events", id: chatAgent });
+      break;
+    case "settings":
+      applySettings(message);
       break;
     case "agent":
       agents.set(message.agent.id, message.agent);
@@ -572,7 +583,7 @@ $("task").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) start();
 });
 $("task-model").addEventListener("change", () => {
-  chrome.storage.local.set({ model: $("task-model").value }).catch(() => {});
+  link.send({ type: "settings_set", key: "model", value: $("task-model").value });
 });
 $("skill-search").addEventListener("input", renderSkills);
 $("chat-close").addEventListener("click", closeChat);
@@ -590,24 +601,3 @@ $("chat-input").addEventListener("keydown", (event) => {
     sendChat();
   }
 });
-
-(async () => {
-  try {
-    const stored = await chrome.storage.local.get("model");
-    if (stored.model) {
-      $("task-model").value = stored.model;
-      storedModel = true;
-    }
-  } catch {
-    // a convenience only
-  }
-  if (new URLSearchParams(location.search).get("pin") === "1") { // AI Home as the first, pinned tab
-    try {
-      const tab = await chrome.tabs.getCurrent();
-      if (tab && !tab.pinned) await chrome.tabs.update(tab.id, { pinned: true });
-      if (tab) await chrome.tabs.move(tab.id, { index: 0 });
-    } catch {
-      // the tab went away
-    }
-  }
-})();

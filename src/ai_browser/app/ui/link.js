@@ -1,30 +1,34 @@
-// The extension's line to `ai-browser app`. config.json (server address and token) is read again before every
-// attempt, so a restarted app, on a new port with a new token, is found again. Pings from the server keep the
-// service worker, and its socket, alive. Also: Chrome tab ids <-> DevTools target ids (the app speaks targets).
+// The line to `ai-browser app`, two ways in. AI Browser's window (an http page the app serves) opens /ws on its own
+// address: the window's cookie goes with it, and a page that this run of the app didn't open is refused (close code
+// 4403), so it stops trying. Brave's watcher (a chrome-extension page) reads config.json (the server's address and
+// token) again before every attempt, so a restarted app, on a new port with a new token, is found again. Pings from the
+// server keep the watcher's service worker, and its socket, alive. Also, until AI Browser's old extension retires:
+// Chrome tab ids <-> DevTools target ids.
 "use strict";
+
+const REFUSED = 4403; // the server's close code for a socket it won't take
+
+async function address() {
+  if (location.protocol === "http:") return `ws://${location.host}/ws`; // the window: its cookie goes along
+  const config = await (await fetch(chrome.runtime.getURL("config.json"), { cache: "no-store" })).json();
+  return `${config.server.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(config.token)}`;
+}
 
 export function connect({ view, onMessage = () => {}, onState = () => {} }) {
   let socket = null;
   let retries = 0;
+  let refused = false;
   const waiters = [];
 
   function retry() {
-    setTimeout(open, Math.min(5000, 250 * 2 ** retries++));
+    if (!refused) setTimeout(open, Math.min(5000, 250 * 2 ** retries++));
   }
 
   async function open() {
     onState("connecting");
-    let config;
-    try {
-      config = await (await fetch(chrome.runtime.getURL("config.json"), { cache: "no-store" })).json();
-    } catch {
-      onState("disconnected");
-      retry();
-      return;
-    }
     let ws;
     try {
-      ws = new WebSocket(`${config.server.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(config.token)}`);
+      ws = new WebSocket(await address());
     } catch {
       onState("disconnected");
       retry();
@@ -46,8 +50,13 @@ export function connect({ view, onMessage = () => {}, onState = () => {} }) {
       }
       if (message && message.type !== "ping") onMessage(message);
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (socket === ws) socket = null;
+      if (event.code === REFUSED && location.protocol === "http:") { // not this run's window: retrying can't help
+        refused = true;
+        onState("refused");
+        return;
+      }
       onState("disconnected");
       retry();
     };
