@@ -47,7 +47,7 @@ from ..live import _bind, _QuietServer, _serve
 from ..settings import Settings
 from ..skills import Catalog
 from ..syncdir import write_atomic
-from .agents import Agent, AgentManager
+from .agents import Agent, AgentManager, agent_number
 from .cdprelay import Tokens
 from .groups import GroupKeeper
 
@@ -501,7 +501,7 @@ class AppServer:
             return
         agent = self.agents.agents.get(agent_id)
         queue.put_nowait({"type": "keyword_started", "request": request, "id": agent_id,
-                          "number": agent.number if agent is not None else int(agent_id[1:]),
+                          "number": agent.number if agent is not None else agent_number(agent_id),
                           "name": agent.name if agent is not None else ""})
 
     def _saved_port(self) -> int | None:

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -144,7 +145,7 @@ async def test_missing_claude_and_early_exit_are_plain_errors(fake_claude, tmp_p
 
 
 async def test_the_open_tab_reaches_claude_as_labelled_page_data(fake_claude, tmp_path):
-    from ai_browser.app.bridge import PANEL_PROMPT, ClaudeBridge
+    from ai_browser.app.bridge import BRAVE_PROMPT, ClaudeBridge
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
@@ -157,7 +158,7 @@ async def test_the_open_tab_reaches_claude_as_labelled_page_data(fake_claude, tm
     assert first.startswith("[") and first.endswith("]") and first.count("[") == first.count("]") == 1
     assert "https://shop.example/pay" in first and "SECRET" not in first and "frag" not in first
     assert "not the user" in first and len(first) < 400
-    assert "never the user's words" in PANEL_PROMPT
+    assert "never the user's words" in BRAVE_PROMPT
     await bridge.close()
 
 
@@ -223,11 +224,13 @@ async def test_the_bridge_notes_loaded_skills_and_tool_ids(fake_claude, tmp_path
     assert done["id"] == "u9" and done["ms"] == 41
 
 
-def test_the_panel_prompt_hands_bot_checks_to_the_user():
-    from ai_browser.app.bridge import PANEL_PROMPT
+def test_ai_browsers_panel_prompt_is_gone():
+    import ai_browser.app.bridge as bridge
 
+    assert not hasattr(bridge, "PANEL_PROMPT")
     assert ("If a result says ⛔ bot check, stop and tell the user in one line: the tab is in front for them, and AI "
-            "Home shows Continue. Don't reload, retry or open the site another way.") in " ".join(PANEL_PROMPT.split())
+            "Home shows Continue. Don't reload, retry or open the site another way.") in " ".join(
+                bridge.BRAVE_PROMPT.split())
 
 
 def test_page_line_is_labelled_and_a_hostile_title_stays_on_its_line():  # Review Focus 4
@@ -241,7 +244,7 @@ def test_page_line_is_labelled_and_a_hostile_title_stays_on_its_line():  # Revie
 
 
 async def test_agents_in_brave_get_the_brave_prompt(fake_claude, tmp_path):
-    from ai_browser.app.bridge import BRAVE_PROMPT, PANEL_PROMPT, ClaudeBridge
+    from ai_browser.app.bridge import BRAVE_PROMPT, ClaudeBridge
 
     runner, log, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
@@ -261,10 +264,12 @@ async def test_agents_in_brave_get_the_brave_prompt(fake_claude, tmp_path):
         assert line in words
     await brave.close()
     log.write_text("", encoding="utf-8")
-    plain = ClaudeBridge(tmp_path / "home", claude=runner, agent_id="a2")
+    plain = ClaudeBridge(tmp_path / "home", claude=runner, agent_id="a2")  # no env: the user's browser all the same
     [event async for event in plain.send("two")]
     argv = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
-    assert argv[argv.index("--append-system-prompt") + 1] == PANEL_PROMPT
+    assert argv[argv.index("--append-system-prompt") + 1] == BRAVE_PROMPT
+    config = json.loads(Path(argv[argv.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
+    assert config["mcpServers"]["ai-browser"]["env"]["AIB_BROWSER"] == "chrome"
     await plain.close()
 
 

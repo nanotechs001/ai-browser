@@ -129,12 +129,6 @@ class AgentManager:
         newest_first = sorted(self.agents.values(), key=lambda agent: agent.number, reverse=True)
         return {"agents": [agent.public() for agent in newest_first]}
 
-    @property
-    def in_users_browser(self) -> bool:
-        """The agents work in the user's own browser (brave mode: run.py's brave_env sets AIB_BROWSER=chrome), so the
-        user can hand them one of their tabs."""
-        return self.env.get("AIB_BROWSER") == "chrome"
-
     def events_of(self, agent_id: str) -> list[dict]:
         agent = self.agents.get(agent_id)
         return list(agent.events) if agent else []

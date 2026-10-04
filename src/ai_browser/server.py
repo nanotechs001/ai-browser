@@ -29,9 +29,7 @@ Never try to solve or get around a bot check. A "bot check box" in a form is the
 Which browser to use is the user's choice, made before a task. Never switch browsers because a site blocked you.
 The shell is for files and scripts. Open web pages with open and whole sites with qa. If you must fetch a URL from
 the shell, use plain curl with its own user agent (never -A, --user-agent or a browser's User-Agent header), one
-request at a time, and stop at a 429 or 403.
-In AI Browser (AIB_BROWSER=app) the browser is already open beside the chat: don't call sandbox_start; tabs list shows
-the user's tabs there too (tabs switch u1 to work in one)."""
+request at a time, and stop at a 429 or 403."""
 
 Content = list[TextContent | ImageContent]
 
