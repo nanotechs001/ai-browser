@@ -15,8 +15,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .. import platforms
-from ..appbrowser import (AppBrowserError, app_profile, extension_id_for, extension_installed, extension_path,
-                          launch_app_browser, prepare_extension)
+from ..appbrowser import AppBrowserError, app_profile, extension_installed, launch_app_browser, prepare_extension
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillWriter
 from ..brain.store import BrainStore
@@ -25,6 +24,7 @@ from ..brain.watcher import prepare_watcher
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..cdp import CDP, CDPError
 from ..chrome import inspect_address, own_browser_dir
+from ..extension_id import extension_id_for, extension_path
 from ..hearing.engine import WhisperEngine
 from ..hearing.model import ModelStore
 from ..hearing.service import HearingService

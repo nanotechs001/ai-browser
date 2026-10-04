@@ -324,7 +324,8 @@ async def test_a_draft_without_the_watcher_says_so(fake_claude, tmp_path):
 
 
 def test_prepare_watcher_updates_its_folder_in_place(tmp_path):
-    from ai_browser.appbrowser import extension_id_for, prepare_extension
+    from ai_browser.appbrowser import prepare_extension
+    from ai_browser.extension_id import extension_id_for
     from ai_browser.brain.watcher import prepare_watcher
 
     folder, build = prepare_watcher(tmp_path, "http://127.0.0.1:8792", "secret")
@@ -1200,7 +1201,7 @@ async def test_the_setup_page_shows_the_path_the_id_is_hashed_from(fake_claude, 
 
     from ai_browser.app.agents import AgentManager
     from ai_browser.app.server import AppServer
-    from ai_browser.appbrowser import extension_id_for, extension_path
+    from ai_browser.extension_id import extension_id_for, extension_path
 
     real = tmp_path / "real"
     real.mkdir()
@@ -1231,7 +1232,7 @@ async def test_a_home_through_a_junction_keeps_the_path_chrome_sees(tmp_path):
 
     from ai_browser.app.agents import AgentManager
     from ai_browser.app.server import AppServer
-    from ai_browser.appbrowser import extension_path
+    from ai_browser.extension_id import extension_path
 
     real = tmp_path / "real-home"
     real.mkdir()

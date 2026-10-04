@@ -150,7 +150,7 @@ async def test_first_start_opens_the_setup_steps(fake_claude, tmp_path, monkeypa
 @CHROME
 async def test_a_stale_install_record_still_gets_the_setup_steps(fake_claude, tmp_path, monkeypatch):
     from ai_browser.app import run
-    from ai_browser.appbrowser import extension_id_for
+    from ai_browser.extension_id import extension_id_for
 
     runner, _, _ = fake_claude
     monkeypatch.setattr(run, "EXTENSION_WAIT", 1)
@@ -461,7 +461,7 @@ async def test_the_setup_steps_show_the_path_the_id_is_hashed_from(fake_claude, 
     from conftest import symlink_or_skip
 
     from ai_browser.app import run
-    from ai_browser.appbrowser import extension_id_for, extension_path
+    from ai_browser.extension_id import extension_id_for, extension_path
 
     runner, _, _ = fake_claude
     real = tmp_path / "real"
@@ -550,7 +550,7 @@ async def test_agents_end_before_the_relay_closes(fake_claude, tmp_path, monkeyp
 @CHROME
 async def test_brave_mode_gives_the_link_the_watchers_id(fake_claude, tmp_path, monkeypatch):
     from ai_browser.app import run
-    from ai_browser.appbrowser import extension_id_for
+    from ai_browser.extension_id import extension_id_for
 
     runner, _, _ = fake_claude
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"

@@ -27,7 +27,6 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .. import platforms
-from ..appbrowser import extension_path
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.tools import ToolsConfig
@@ -35,6 +34,7 @@ from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
 from ..config import load_config, project_root
 from ..engine import _alive
+from ..extension_id import extension_path
 from ..grouping import MARKER
 from ..hearing.service import HearingService, unavailable_status
 from ..live import _bind, _QuietServer, _serve
