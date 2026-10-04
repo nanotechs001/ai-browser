@@ -607,7 +607,7 @@ async def test_the_first_use_card_on_windows(stack):
 async def test_microphone_problems_become_plain_words(stack):
     stack["hearing"].platform = "mac"
     blocked = ("The microphone is blocked for AI Browser. Open Google Chrome's Settings → Privacy and security → Site "
-               "settings → Microphone, and allow AI Browser.")
+               f"settings → Microphone, and allow {stack['url'].removeprefix('http://')}.")
     cases = [
         (mic(error=("NotAllowedError", "Permission denied")), blocked),
         (mic(permission="denied"), blocked),
@@ -1063,3 +1063,12 @@ async def test_a_yes_never_runs_a_card_that_left_the_screen(stack):  # final rev
     await asyncio.sleep(1)
     assert seen[-1] == ("ok", None)  # no card id went with it
     assert not [event for event in agents.events_of("a1") if str(event.get("text", "")).startswith(RELAY)]
+
+
+@CHROME
+async def test_the_browser_is_named_from_its_brands(stack):
+    js = await open_with(stack)
+    names = await js("import('/talk.js').then(({ browserName }) => [[{brand: 'Microsoft Edge'}, {brand: 'Chromium'}],"
+                     " [{brand: 'Brave'}], [{brand: 'Google Chrome'}], []]"
+                     ".map((brands) => browserName({ userAgentData: { brands } })))")
+    assert names == ["Microsoft Edge", "Brave", "Google Chrome", "Google Chrome"]

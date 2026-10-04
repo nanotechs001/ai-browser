@@ -604,3 +604,22 @@ async def test_a_browser_that_isnt_installed_is_greyed_out(home):
     assert await settings("document.querySelectorAll('#window-choices label')[2].textContent") == (
         "Brave · not installed")
     assert (await settings("document.getElementById('window-note').textContent")).startswith("Brave isn't installed")
+
+
+@CHROME
+async def test_ai_homes_words_for_the_window(home):
+    js, _ = home
+    assert await js("document.querySelector('.new-task .grow').textContent") == (
+        "Or type ai and a space in Brave's address bar")
+    assert await until(js, "document.querySelector('#agents .empty')?.textContent === "
+                           "'No agents yet. Start a task above.'")
+
+
+@CHROME
+async def test_the_title_counts_the_working_agents(home):
+    js, stack = home
+    stack["script"].write_text(json.dumps([EVENTS[0], {"sleep": 30}]), encoding="utf-8")  # it stays at work
+    agent = await stack["server"].agents.create("keep working")
+    assert await until(js, "document.title === '(1) AI Home'")
+    await stack["server"].agents.stop(agent.id)
+    assert await until(js, "document.title === 'AI Home'")

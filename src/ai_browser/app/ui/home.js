@@ -83,6 +83,13 @@ function renderCounts() {
   const waiting = all.filter((agent) => agent.state === "waiting").length;
   $("counts").textContent = all.length
     ? `${working} working${waiting ? ` · ${waiting} waiting` : ""} · up to ${maxWorking} at once` : "";
+  document.title = working ? `(${working}) AI Home` : "AI Home"; // the window's title: there is no toolbar badge
+  try {
+    if (working) navigator.setAppBadge?.(working)?.catch(() => {});
+    else navigator.clearAppBadge?.()?.catch(() => {});
+  } catch {
+    // not an installed app: the title says it
+  }
 }
 
 const rows = new Map(); // agent id -> its row, built once and then updated in place (a click must not be lost)
@@ -192,7 +199,7 @@ function renderAgents() {
     fillAgentRow(row, agent);
     previous = row;
   }
-  if (!all.length) list.append(el("p", "empty", "No agents yet. Start a task above, or open the chat beside any page."));
+  if (!all.length) list.append(el("p", "empty", "No agents yet. Start a task above."));
   renderCounts();
   if (chatAgent && agents.has(chatAgent)) {
     const agent = agents.get(chatAgent);

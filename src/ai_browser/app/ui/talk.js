@@ -30,8 +30,10 @@ export function megabytes(bytes) { // the page's sizes: 1 MB is 1,000,000 bytes,
 }
 
 export function browserName(nav = navigator) { // the browser this page runs in, for the steps it names
-  const brands = nav.userAgentData?.brands || [];
-  return brands.some((entry) => /brave/i.test(String(entry?.brand || ""))) ? "Brave" : "Google Chrome";
+  const brands = (nav.userAgentData?.brands || []).map((entry) => String(entry?.brand || ""));
+  if (brands.some((brand) => /brave/i.test(brand))) return "Brave";
+  if (brands.some((brand) => /edge/i.test(brand))) return "Microsoft Edge";
+  return "Google Chrome";
 }
 
 function el(tag, className, text) {
@@ -188,7 +190,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     }
     if (error?.name === "NotAllowedError") {
       return `The microphone is blocked for AI Browser. Open ${name}'s Settings → Privacy and security → Site `
-        + "settings → Microphone, and allow AI Browser.";
+        + `settings → Microphone, and allow ${location.host}.`; // the browser lists the site by its address
     }
     if (error?.name === "NotFoundError") return "No microphone found.";
     if (error?.name === "NotReadableError") return "The microphone is busy, or blocked by the system.";
