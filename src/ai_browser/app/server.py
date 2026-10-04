@@ -4,10 +4,10 @@ watcher's.
 It listens on 127.0.0.1 only, and every route checks the Host header. AI Browser's pages are served here to its own
 window, which swaps a one-time code for an HttpOnly cookie and lands on its tab menu (/app); the menu shows our other
 pages in frames, and only it may frame them. A window socket needs that cookie and our exact Origin and Host, and the
-pages in the menu's frames are the window's sockets. Brave's watcher connects with its token from its own extension origin. The agents' engines report their
-tabs to /agent-events with tokens of their own, and reach the browser through /cdp. Everything that happens to an
-agent is broadcast to every socket (the watcher gets a trimmed copy); an agent's conversation is sent on request
-(`events`), so a page opened later can draw it whole."""
+pages in the menu's frames are the window's sockets. Brave's watcher connects with its token from its own extension
+origin. The agents' engines report their tabs to /agent-events with tokens of their own, and reach the browser through
+/cdp. Everything that happens to an agent is broadcast to every socket (the watcher gets a trimmed copy); an agent's
+conversation is sent on request (`events`), so a page opened later can draw it whole."""
 
 from __future__ import annotations
 
