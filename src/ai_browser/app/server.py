@@ -2,8 +2,9 @@
 watcher's.
 
 It listens on 127.0.0.1 only, and every route checks the Host header. AI Browser's pages are served here to its own
-window, which swaps a one-time code for an HttpOnly cookie; a window socket needs that cookie and our exact Origin
-and Host. Brave's watcher connects with its token from its own extension origin. The agents' engines report their
+window, which swaps a one-time code for an HttpOnly cookie and lands on its tab menu (/app); the menu shows our other
+pages in frames, and only it may frame them. A window socket needs that cookie and our exact Origin and Host, and the
+pages in the menu's frames are the window's sockets. Brave's watcher connects with its token from its own extension origin. The agents' engines report their
 tabs to /agent-events with tokens of their own, and reach the browser through /cdp. Everything that happens to an
 agent is broadcast to every socket (the watcher gets a trimmed copy); an agent's conversation is sent on request
 (`events`), so a page opened later can draw it whole."""
@@ -38,7 +39,7 @@ from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
 from ..chrome import own_browser_dir
-from ..config import load_config, project_root
+from ..config import LIVE_PORTS, load_config, project_root
 from ..engine import _alive
 from ..extension_id import extension_path
 from ..grouping import MARKER
@@ -77,7 +78,10 @@ WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "s
 WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabled")
 UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
 SETUP_PAGE = UI / "setup.html"
-PAGES = {"/home": "home.html", "/mission": "mission.html", "/settings": "settings.html"}
+SHELL = "/app"  # the window's own page: the tab menu, which shows the others in frames
+PAGES = {SHELL: "app.html", "/home": "home.html", "/mission": "mission.html", "/settings": "settings.html"}
+FRAMED = frozenset({"/home", "/mission", "/settings", "/setup"})  # the pages the tab menu shows: only it frames them
+LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an engine's live view binds one of these
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
 CODE_TTL = 60  # seconds a one-time start code is good for
@@ -258,22 +262,45 @@ def _web_address(value) -> str | None:
     return value
 
 
-def _strict_headers(host: str, port: int) -> list[tuple[bytes, bytes]]:
+def _strict_headers(host: str, port: int, frames: str = "", ancestors: str = "'none'") -> list[tuple[bytes, bytes]]:
     """On every HTTP answer: scripts and styles from our own files only, sockets only to /ws, fetches only to /setup/
-    (so a page's script can never reach /cdp or /agent-*), no sniffing, no referrer, nothing cached."""
+    (so a page's script can never reach /cdp or /agent-*), no sniffing, no referrer, nothing cached. A page frames
+    nothing and nothing frames it, except the window's tab menu: it frames `frames`, and the pages it shows let only
+    their own origin frame them (`ancestors`, from _page_headers)."""
     origin = f"{host}:{port}"
     csp = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-           f"connect-src ws://{origin}/ws http://{origin}/setup/; base-uri 'none'; form-action 'none'; "
-           "frame-ancestors 'none'")
+           f"connect-src ws://{origin}/ws http://{origin}/setup/; {f'frame-src {frames}; ' if frames else ''}"
+           f"base-uri 'none'; form-action 'none'; frame-ancestors {ancestors}")
     return [(b"content-security-policy", csp.encode()), (b"x-content-type-options", b"nosniff"),
             (b"referrer-policy", b"no-referrer"), (b"cache-control", b"no-store"),
             (b"cross-origin-resource-policy", b"same-origin")]
 
 
+def _page_headers(host: str, port: int) -> dict[str, list[tuple[bytes, bytes]]]:
+    """The answers that differ from the strict headers, by path: the tab menu frames our pages and an engine's live
+    view (its own ports only), and nothing frames the menu; each page it shows may be framed by its own origin only.
+    Every other header stays as strict."""
+    shown = _strict_headers(host, port, ancestors="'self'")
+    return {SHELL: _strict_headers(host, port, frames=f"'self' {LIVE_VIEWS}"), **dict.fromkeys(FRAMED, shown)}
+
+
+def _with_headers(send, headers: list[tuple[bytes, bytes]]):
+    """`send`, with `headers` on the answer in place of any the route set under the same names."""
+    names = {name for name, _ in headers}
+
+    async def sending(message):
+        if message["type"] == "http.response.start":
+            kept = [(name, value) for name, value in message.get("headers", []) if name.lower() not in names]
+            message = {**message, "headers": kept + headers}
+        await send(message)
+
+    return sending
+
+
 class _Guard:
     """The whole app, HTTP and WebSocket alike, behind one check: the Host header must be exactly 127.0.0.1:<port>,
     which blocks DNS rebinding (Starlette's TrustedHostMiddleware ignores the port, so it isn't used). Every HTTP
-    answer, a refusal too, carries the strict headers."""
+    answer, a refusal too, carries the strict headers, or a page's own from _page_headers."""
 
     def __init__(self, app, server: AppServer):
         self.app, self.server = app, server
@@ -282,24 +309,18 @@ class _Guard:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        strict = self.server.strict_headers
-        names = {name for name, _ in strict}
-
-        async def send_strict(message):
-            if message["type"] == "http.response.start":
-                kept = [(name, value) for name, value in message.get("headers", []) if name.lower() not in names]
-                message = {**message, "headers": kept + strict}
-            await send(message)
-
         host = next((value.decode("latin-1") for key, value in scope["headers"] if key == b"host"), "")
         if self.server.port is None or host != self.server.host_header:
             if scope["type"] == "websocket":
                 await receive()  # websocket.connect
                 await send({"type": "websocket.close", "code": 1008})  # before accept: the client reads HTTP 403
             else:
-                await PlainTextResponse("refused", status_code=403)(scope, receive, send_strict)
+                await PlainTextResponse("refused", status_code=403)(
+                    scope, receive, _with_headers(send, self.server.strict_headers))
             return
-        await self.app(scope, receive, send_strict if scope["type"] == "http" else send)
+        if scope["type"] == "http":
+            send = _with_headers(send, self.server.page_headers.get(scope["path"], self.server.strict_headers))
+        await self.app(scope, receive, send)
 
 
 class AppServer:
@@ -334,7 +355,7 @@ class AppServer:
         self._watcher_origins: set[str] = set()
         self._origin_of: dict[WebSocket, str] = {}
         self._roles: dict[WebSocket, str] = {}  # "app" or "watcher", stored when a socket is accepted
-        self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: AI Home, Mission Control, Settings
+        self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (AI Home…)
         self.window_seen = False  # the window's first socket has come in
         self._watcher: tuple[WebSocket, asyncio.Queue] | None = None  # Brave's watcher (the latest one to connect)
         if brain is not None:
@@ -354,6 +375,7 @@ class AppServer:
         self.url: str | None = None
         self.port: int | None = None  # the bound port, once start() has one
         self.strict_headers: list[tuple[bytes, bytes]] = []  # every HTTP answer's headers, once the port is known
+        self.page_headers: dict[str, list[tuple[bytes, bytes]]] = {}  # the tab menu's and its pages' own (by path)
         self.ui_secret = secrets.token_urlsafe(32)  # the window's session cookie: set only by swapping a start code
         self._codes: dict[str, float] = {}  # one-time start codes -> when they expire (_clock)
         self._files = {path.name for path in UI.iterdir() if path.is_file() and path.suffix in FILE_TYPES}
@@ -560,7 +582,7 @@ class AppServer:
         return {"type": "tabs", "tabs": listing, **({"tab_scope": scope} if scope is not None else {})}
 
     async def start(self) -> str:
-        app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open),
+        app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open), Route(SHELL, self._page),
                                        Route("/home", self._page), Route("/mission", self._page),
                                        Route("/settings", self._page),
                                        Route("/health", self._health), Route("/setup", self._setup),
@@ -584,6 +606,7 @@ class AppServer:
                 continue
             self.port = port
             self.strict_headers = _strict_headers(self.host, port)
+            self.page_headers = _page_headers(self.host, port)
             # websockets-sansio: no handshake timeout, so the relay can hold one while the user answers Allow
             self._server = _QuietServer(uvicorn.Config(app, host=self.host, port=port, log_level="warning",
                                                        access_log=False, lifespan="off", ws="websockets-sansio"))
@@ -631,18 +654,18 @@ class AppServer:
         return JSONResponse({"ok": True})
 
     async def _root(self, request: Request) -> Response:
-        return RedirectResponse("/home", status_code=303)
+        return RedirectResponse(SHELL, status_code=303)
 
     async def _open(self, request: Request) -> Response:
-        """The window's start address: a valid code becomes the cookie, and the redirect drops the code from the
-        window's address and history. A used or unknown code is a 403, unless the cookie is already there (a
+        """The window's start address: a valid code becomes the cookie, and the redirect to the tab menu drops the code
+        from the window's address and history. A used or unknown code is a 403, unless the cookie is already there (a
         reload)."""
         if self._take_code(request.query_params.get("code", "")):
-            response = RedirectResponse("/home", status_code=303)
+            response = RedirectResponse(SHELL, status_code=303)
             response.set_cookie(self.cookie_name, self.ui_secret, httponly=True, samesite="strict", path="/")
             return response
         if self._cookie_ok(request):
-            return RedirectResponse("/home", status_code=303)
+            return RedirectResponse(SHELL, status_code=303)
         return _refused_page(USED_CODE)
 
     async def _page(self, request: Request) -> Response:

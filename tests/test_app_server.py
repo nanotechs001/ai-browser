@@ -1607,7 +1607,7 @@ async def test_the_one_time_code_becomes_the_windows_cookie(fake_claude, tmp_pat
     try:
         code = server.new_launch_code()
         answer = await fetch("GET", f"{url}/open", params={"code": code})
-        assert answer.status_code == 303 and answer.headers["location"] == "/home"
+        assert answer.status_code == 303 and answer.headers["location"] == "/app"  # the window's tab menu
         cookie = answer.headers["set-cookie"]
         assert cookie.startswith(f"aib_ui_{server.port}={server.ui_secret};")
         assert {"httponly", "samesite=strict", "path=/"} <= {part.strip().lower() for part in cookie.split(";")[1:]}
@@ -1617,9 +1617,9 @@ async def test_the_one_time_code_becomes_the_windows_cookie(fake_claude, tmp_pat
         assert (await fetch("GET", f"{url}/open", params={"code": "nope"})).status_code == 403
         assert (await fetch("GET", f"{url}/open")).status_code == 403
         reload = await fetch("GET", f"{url}/open", params={"code": code}, headers=ui_cookie(server))
-        assert reload.status_code == 303 and reload.headers["location"] == "/home"  # a reload of the window
+        assert reload.status_code == 303 and reload.headers["location"] == "/app"  # a reload of the window
         root = await fetch("GET", f"{url}/")
-        assert root.status_code == 303 and root.headers["location"] == "/home"
+        assert root.status_code == 303 and root.headers["location"] == "/app"
         assert server.origin == url and server.host_header == url.removeprefix("http://")
         assert server.cookie_name == f"aib_ui_{server.port}" and len(server.ui_secret) >= 43
     finally:
@@ -1647,10 +1647,14 @@ async def test_a_start_code_lasts_a_minute(fake_claude, tmp_path, monkeypatch):
 async def test_pages_need_the_windows_cookie(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
-        for path in ("/home", "/mission", "/settings", "/link.js", "/home.js", "/home.css"):
+        for path in ("/app", "/home", "/mission", "/settings", "/link.js", "/home.js", "/home.css", "/app.js",
+                     "/app.css"):
             answer = await fetch("GET", url + path)
             assert answer.status_code == 403, path
-            assert NOT_HERE in answer.text and "<script" not in answer.text, path
+            assert NOT_HERE in answer.text and "<script" not in answer.text and "<iframe" not in answer.text, path
+        shell = await fetch("GET", url + "/app", headers=ui_cookie(server))  # the tab menu: the window's own page
+        assert shell.status_code == 200 and shell.headers["content-type"] == "text/html; charset=utf-8"
+        assert '<script type="module" src="app.js"></script>' in shell.text
         home = await fetch("GET", url + "/home", headers=ui_cookie(server))
         assert home.status_code == 200 and home.headers["content-type"] == "text/html; charset=utf-8"
         assert '<script type="module" src="home.js"></script>' in home.text
@@ -1663,7 +1667,7 @@ async def test_pages_need_the_windows_cookie(fake_claude, tmp_path):
         assert icon.status_code == 200 and icon.headers["content-type"] == "image/png"
         assert icon.content[:4] == b"\x89PNG"
         for path in ("/%2e%2e%2fserver.py", "/..%2Fserver.py", "/server.py", "/home.html", "/setup.html",
-                     "/panel.js", "/manifest.json", "/worker.js", "/ui/home.js", "/config.json"):
+                     "/app.html", "/panel.js", "/manifest.json", "/worker.js", "/ui/home.js", "/config.json"):
             assert (await fetch("GET", url + path, headers=ui_cookie(server))).status_code == 404, path
     finally:
         await server.stop()
@@ -1697,13 +1701,28 @@ async def test_every_route_checks_the_host(fake_claude, tmp_path):
 
 
 async def test_every_answer_carries_the_strict_headers(fake_claude, tmp_path):
+    from ai_browser.config import LIVE_PORTS
+    from ai_browser.live import LiveView
+
     server, url = await started(fake_claude, tmp_path, EVENTS)
+    port = server.port
+    assert LiveView().ports == LIVE_PORTS  # every engine's live view is on one of these ports
+    strict = CSP.format(port=port)
+    framed = strict.replace("frame-ancestors 'none'", "frame-ancestors 'self'")  # a tab: only the window's page
+    live = " ".join(f"http://127.0.0.1:{one}" for one in LIVE_PORTS)
+    shell = strict.replace("; base-uri", f"; frame-src 'self' {live}; base-uri")  # frames: ours and live views only
     try:
-        for path, headers in (("/home", ui_cookie(server)), ("/home", {}), ("/setup", {}),
-                              ("/home.js", ui_cookie(server)), ("/health", {}), ("/nothing-here.js", {}),
-                              ("/setup", {"Host": f"rebind.example:{server.port}"})):
+        for path, headers, csp in (
+                ("/app", ui_cookie(server), shell), ("/app", {}, shell),
+                ("/home", ui_cookie(server), framed), ("/home", {}, framed), ("/mission", ui_cookie(server), framed),
+                ("/settings", ui_cookie(server), framed), ("/setup", {}, framed),
+                ("/home.js", ui_cookie(server), strict), ("/app.js", ui_cookie(server), strict),
+                ("/health", {}, strict), ("/nothing-here.js", {}, strict), ("/setup/status", {}, strict),
+                ("/open", {}, strict), ("/", {}, strict),
+                ("/setup", {"Host": f"rebind.example:{port}"}, strict),
+                ("/app", {"Host": f"rebind.example:{port}"}, strict)):
             answer = await fetch("GET", url + path, headers=headers)
-            assert answer.headers["content-security-policy"] == CSP.format(port=server.port), path
+            assert answer.headers["content-security-policy"] == csp, path
             assert answer.headers["x-content-type-options"] == "nosniff", path
             assert answer.headers["referrer-policy"] == "no-referrer", path
             assert answer.headers["cache-control"] == "no-store", path

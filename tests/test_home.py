@@ -88,9 +88,11 @@ WINDOW_INFO = {"using": "chrome", "name": "Google Chrome", "note": "",
 @pytest.fixture
 async def stack(fake_claude, tmp_path):
     """A real app server (agents on the fake claude) and its pages in a throwaway headless Chrome, opened the way AI
-    Browser's window opens them: a one-time code swapped for the window's cookie. The throwaway keeps its debugging
-    port because the tests drive the pages through it; the product's window never has one. Agents browse in the
-    user's browser, here a FakeBrave with no tabs (a test that needs tabs attaches its own)."""
+    Browser's window opens them: a one-time code swapped for the window's cookie. The swap lands on the window's tab
+    menu (/app); the page then shows AI Home by itself, as every page of ours still works on its own, so these tests
+    drive AI Home directly (tests/test_tab_menu.py drives the tabs). The throwaway keeps its debugging port because
+    the tests drive the pages through it; the product's window never has one. Agents browse in the user's browser,
+    here a FakeBrave with no tabs (a test that needs tabs attaches its own)."""
     from ai_browser.app.agents import AgentManager
     from ai_browser.app.server import AppServer
     from ai_browser.brain.service import BrainService
@@ -126,7 +128,9 @@ async def stack(fake_claude, tmp_path):
     ws_url = find_ws_url(profile, timeout=20)
     cdp = await CDP.connect(ws_url)
     target, js = await open_page(cdp, f"{url}/open?code={server.new_launch_code()}")  # the cookie, the real way
-    assert await until(js, "location.pathname === '/home'")
+    assert await until(js, "location.pathname === '/app'")  # the window's tab menu (tests/test_tab_menu.py)
+    await cdp.send("Page.navigate", {"url": f"{url}/home"}, session_id=js.session)  # AI Home by itself, top-level
+    assert await until(js, "location.pathname === '/home' && document.readyState === 'complete'")
     state = {"server": server, "cdp": cdp, "url": url, "ws_url": ws_url, "home": home, "log": log, "runner": runner,
              "script": script, "brain": brain, "workflows": workflows, "tools": tools, "hearing": hearing,
              "engine": engine, "user": tmp_path / "user", "brave": brave, "home_js": js, "home_target": target}
