@@ -42,6 +42,71 @@ those findings name. The waves:
 **Line numbers** (`file.py:12`) are from HEAD `946d5f0`, before waves 1 and 2. Those waves move some of them, so the
 plan finds each place again by its name.
 
+## Amendment (2026-10-04): one window, its pages in a tab menu
+
+**What the user asked,** after using the merged wave: "also for the UI i do not want a popup new window switching
+control center, AI home etc. Just implement like a tab menu that I can switch in the tab i toggle , add that in
+pipeline change". They then picked "Yes, build it next (Recommended)" for the design below. Built on branch
+`tab-menu` from `607396d`; its ledger is `.superpowers/sdd/tab-menu/progress.md`.
+
+**What the user sees now:**
+- **A row of tabs under the title bar:** AI Home · Mission Control · Settings. A click shows that page in the same
+  window, and the active tab is marked. The window still has no browser tabs and no address bar.
+- **The title follows the tab** and keeps AI Home's count: "Mission Control · AI Browser", "(2) Mission Control · AI
+  Browser" while two agents work.
+- **Each page stays alive.** It loads the first time its tab is picked, and is then only hidden. Nothing resets: a
+  half-typed message, the scroll, Mission Control's room.
+- **Closable tabs** at the end of the row, each with a ×: the setup steps (the Brain's **Set it up**, and **Show me
+  how** for Brave's switch, which opens the same tab at its other section), and an agent's live view (**Show me** on a
+  bot check in QA's sandbox). A second Show me for the same agent goes to its open tab.
+- **No popups.** A link or button between our pages switches tabs. A website still opens in the user's browser
+  (`open_url`).
+- **⌘W (Ctrl+W elsewhere) closes the tab shown if it has a ×, never the window.** In an app window the browser would
+  close the whole window for it, and so stop AI Browser. The tab menu and each of our pages keep the key from the
+  browser (a page passes it on to the menu); a live view's page keeps it too, but can't ask for its tab to close.
+  Closing the window still stops AI Browser.
+
+**What changed, decision by decision:**
+- **Decision 5:** a valid code (and a reload with the cookie, and `/`) redirects to `/app`, the tab menu, not `/home`.
+  `GET /app` serves `ui/app.html` with the cookie, like every page.
+- **Decision 6:** the headers depend on the path, and nothing else changes.
+  - **`/app`** adds `frame-src 'self' http://127.0.0.1:8770 … http://127.0.0.1:8790` (each of `LIVE_PORTS`, where
+    every engine's live view binds; a CSP can't name a port range) and keeps `frame-ancestors 'none'`.
+  - **`/home`, `/mission`, `/settings` and `/setup`** have `frame-ancestors 'self'`: only the tab menu may frame them.
+  - **Every other answer** keeps the strict headers as they were, a refused Host too.
+- **Decision 7:** popups for our pages become tabs.
+  - `nav.js` keeps `guardLinks`, and `openWindow`, `focusHome` and `WINDOWS` become `openTab(path)` and
+    `openLive(url, agent, label)`. A page asks with `window.parent.postMessage({type: "tab", path} or {type: "live",
+    url, agent, label}, location.origin)`.
+  - The tab menu (`ui/app.js`) takes a message only if `event.origin` is its own and `event.source` is one of its own
+    pages' frames, and only for `/home`, `/mission`, `/settings`, `/setup#…` or a live view's address (the
+    `CHECK_LIVE` pattern, with an agent id).
+  - `check.js` imports nothing still: `checkCard` takes `openLive` from its caller, as `brainui.js` takes `openSetup`.
+  - **The live view opens as a tab.** It is our own `live.py` on 127.0.0.1, it sends no framing header, and neither
+    server logs requests. Its frame is `sandbox="allow-scripts"`, so it can't navigate the window, open a window or
+    reach our pages, and Chrome runs it in a process of its own. Its address never becomes a top-level history entry,
+    as the old popup's did.
+  - The table of windows (`aib-home`, `aib-mission`, `aib-settings`, `aib-setup`, `aib-live`) goes. No script in
+    `ui/` opens a window any more; the only `"_blank"` left is still `brainui.js`'s anchor in Brave.
+  - A page opened by itself (tests, by hand) still works. There, `openTab` moves the page to the asked one, and
+    `openLive` does nothing.
+- **Decision 8:** the window's sockets are its tabs' pages. AI Home's is there from the start, and Mission Control's
+  and Settings' join when first picked. Switching tabs never ends the app, and neither does closing a closable tab:
+  the setup steps have no socket, and a live view's socket goes to the live view, not the app. Closing the window ends
+  it as before. "A Mission Control or Settings window still open keeps the app running" no longer arises.
+- **Hiding a tab:** `visibility: hidden` plus `content-visibility: hidden` on the box around its frame, never
+  `display: none`, which loses the page's scroll. A hidden page draws nothing until it is shown again.
+- **Testing:** `tests/test_tab_menu.py` (the real headless browser) replaces the popup tests: state kept across a
+  switch, the active tab marked, the title, setup and the live view as closable tabs (a second Show me goes to the
+  first), a link to `/settings` inside a page, a website link sending `open_url`, closing a live view's tab ending its
+  socket while the app runs on, and the messages the tab menu refuses. `test_app_run.py` checks that switching and
+  closing tabs never end the app and closing the window does. `test_ui_static.py` forbids `window.open`, popup
+  features and link targets in `ui/`.
+
+**Unchanged:** the plain window (no browser tabs, no address bar, no debugging port or flag), the window's command
+line, closing the window to stop the app, the cookie and the one-time code, Brave's `ai` keyword, and the rest of
+this wave.
+
 ## Goal and success criteria
 
 AI Browser's pages (AI Home, Mission Control, the Brain's views and the new Settings page) become one plain app
@@ -111,6 +176,9 @@ Success means:
 
 ### Inside the window
 
+*Amended 2026-10-04 ([one window, its pages in a tab menu](#amendment-2026-10-04-one-window-its-pages-in-a-tab-menu)):
+Mission Control, Settings, the setup steps and the live view are tabs of this one window, not windows of their own.*
+
 - **AI Home** looks as today, with these changes:
   - its header gains a **Settings** button beside **Mission Control**;
   - the hint under the task box reads "Or type ai and a space in Brave's address bar";
@@ -156,6 +224,9 @@ Success means:
     folder's path is still shown to copy.
 
 ### Closing
+
+*Amended 2026-10-04 ([one window, its pages in a tab menu](#amendment-2026-10-04-one-window-its-pages-in-a-tab-menu)):
+the window's tabs are its pages, so only closing the window ends the app.*
 
 - **Closing the window** ends the app, as today: the agents end, and the terminal returns.
   - If Mission Control's or Settings' window is still open, the app keeps running until the last AI Browser window
@@ -407,6 +478,10 @@ Success means:
 
 ### 7. Links and windows: popups for our pages, the user's browser for websites
 
+*Amended 2026-10-04 ([one window, its pages in a tab menu](#amendment-2026-10-04-one-window-its-pages-in-a-tab-menu)):
+our pages are tabs, never popups; `openTab` and `openLive` replace `openWindow` and `focusHome`, and the table of
+windows goes.*
+
 - **A plain new-tab link brings the browser look back.** `window.open(url, "_blank")` from an app window opens a
   normal tabbed window (finding 11, runs B2 and B3). With `popup,width,height` features it opens an app-style window
   (B4). So the window's code never uses `_blank`.
@@ -483,6 +558,9 @@ Success means:
   profile, by hand. Nothing in the code does it.
 
 ### 8. Closing the window ends the app, detected through its sockets
+
+*Amended 2026-10-04 ([one window, its pages in a tab menu](#amendment-2026-10-04-one-window-its-pages-in-a-tab-menu)):
+the window's sockets are its tabs' pages; switching or closing a tab never ends the app.*
 
 - **Process exit is no signal.** On macOS the browser keeps running after its last window closes (finding 12, run
   A2). The old check counted AI Browser's tabs through `TabWatch` (`run.py:217-221, 247-256`), which needs the

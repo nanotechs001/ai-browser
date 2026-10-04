@@ -142,12 +142,13 @@ profile's logins. If `AIB_BROWSER` names your Brave, the profile isn't used, and
 uv run ai-browser app            # add --model haiku for the fastest replies, or opus for the most capable
 ```
 
-AI Browser opens in a window of its own: a title bar only, with no tabs and no address bar. An installed browser
-draws it in its app mode, on a profile of AI Browser's own (`~/.ai-browser/app/window/<browser>/`), with no
-debugging port. Nothing drives that window, so it never asks "Allow remote debugging?" and shows no automation bar,
-and no agent browses there. Agents browse in your everyday Brave ([Which browser](#which-browser)), where you are
-signed in yourself: chosen before the task, for your logins, and nothing switches browsers on its own after a
-block. When a site answers with a bot check, the agent stops and hands it to you ([Bot checks](#bot-checks)).
+AI Browser opens in a window of its own: a title bar and a row of AI Browser's own tabs under it, with no browser
+tabs and no address bar. An installed browser draws it in its app mode, on a profile of AI Browser's own
+(`~/.ai-browser/app/window/<browser>/`), with no debugging port. Nothing drives that window, so it never asks "Allow
+remote debugging?" and shows no automation bar, and no agent browses there. Agents browse in your everyday Brave
+([Which browser](#which-browser)), where you are signed in yourself: chosen before the task, for your logins, and
+nothing switches browsers on its own after a block. When a site answers with a bot check, the agent stops and hands it
+to you ([Bot checks](#bot-checks)).
 
 **Which browser draws the window:** Settings → App window offers **Auto**, **Google Chrome**, **Brave**, and
 **Microsoft Edge** on Windows. Auto picks Google Chrome on a Mac whose everyday browser is Brave, so a link clicked
@@ -157,9 +158,9 @@ shows that browser's icon while AI Browser is open. A change applies at the next
 
 **First start (once):** there is nothing to load in the window. The terminal shows the watcher's steps for Brave,
 and Finder (File Explorer on Windows) shows the watcher's folder. AI Home's browser card and the Brain's **Set it
-up** open the same steps in a small window.
+up** open the same steps in a tab of their own, with a × to close it.
 
-**AI Home** is the window's first page.
+**AI Home** is the window's first tab.
 - **Start a task:** pick skills and a model if you like. In Brave you can also type `ai`, a space and the task in
   the address bar: the watcher passes it on, and Brave says "Started 4 · Fix the footer".
 - **Agents:**
@@ -167,7 +168,7 @@ up** open the same steps in a small window.
   - Each row shows what the agent is doing now, its last action with timing, a small picture of its tab, and its
     time and cost.
   - Each row has **Watch**, **Chat**, **Stop** and **Close**.
-  - The window's title counts the agents at work: "(2) AI Home".
+  - The window's title counts the agents at work, whichever tab is shown: "(2) AI Home · AI Browser".
 - **Your browser:** a card at the top says where agents browse and whether your Brave is connected. When Brave's
   switch is off, it shows the steps; when Brave asks "Allow remote debugging?", it says so.
 - **Tabs:** the web tabs of the Brave profile the watcher is in (without the watcher, the profile you used last),
@@ -179,13 +180,17 @@ up** open the same steps in a small window.
 - **Skills:**
   - every one of Claude's skills (personal, plugins, claude.ai, ai-browser), and which ones each agent loaded;
   - add one to a new task, or ask a running agent to use it.
-- **Settings** (beside **Mission Control**): which browser draws the window. The model you pick and Voice are
-  remembered by AI Browser itself, in every window and across restarts.
+- **Settings** (a tab, and a button beside **Mission Control**): which browser draws the window. The model you
+  pick and Voice are remembered by AI Browser itself, in every tab and across restarts.
 
-**Windows and links:** Mission Control, Settings, the setup steps and an agent's live view open as small windows of
-their own; a second click brings the open one forward. A link to a website opens in your Brave, never in AI
-Browser's window. Each agent's tabs sit in a coloured tab group in your Brave, named after its task. The Brain's
-watcher makes the groups. Without the watcher, each tab the AI opens gets a window of its own.
+**Tabs and links:** AI Home, Mission Control and Settings are tabs in a row under the title bar, and the window's
+title follows the one shown ("Mission Control · AI Browser"). A tab loads the first time you pick it, and then stays
+as you left it while you look at another: a half-typed message, the scroll and Mission Control's room are all still
+there when you come back. The setup steps and an agent's live view (**Show me** on a bot check in QA's sandbox) open
+as tabs at the end of the row, each with a × to close it; a second **Show me** for the same agent goes to its open
+tab. Nothing opens a window: a link between AI Browser's pages switches tabs, and a link to a website opens in your
+Brave, never in AI Browser's window. Each agent's tabs sit in a coloured tab group in your Brave, named after its
+task. The Brain's watcher makes the groups. Without the watcher, each tab the AI opens gets a window of its own.
 
 How it works:
 - **Claude:** each agent is Claude Code on this computer (`claude -p`), signed in with your Claude account, with no
@@ -199,9 +204,11 @@ How it works:
 - **Downloads** go to your Downloads folder, and only after your OK.
 - **Only the window gets in:** AI Browser's window starts with a one-time code that the app swaps for a cookie
   only that window holds. The same address typed into Brave shows "AI Browser's pages open only in its own window".
-- **Closing:** close the window (⌘Q on a Mac), or press Ctrl-C in the terminal: the agents end with it. A Mission
-  Control or Settings window still open keeps AI Browser running until the last of its windows closes. The Docker
-  shell container keeps running for the next start; stop it with `uv run ai-browser stop chrome`.
+- **Closing:** closing the window stops AI Browser: close it (⌘Q on a Mac), or press Ctrl-C in the terminal, and
+  the agents end with it. ⌘W (Ctrl+W on Windows and Linux) closes only the tab you're on, and only if it has a ×
+  (the setup steps, a live view); on AI Home, Mission Control and Settings it does nothing. Switching tabs, or closing
+  the setup steps' or a live view's tab, never ends AI Browser. The Docker shell container keeps running for the next
+  start; stop it with `uv run ai-browser stop chrome`.
 - **The microphone** is asked for once, in the window, and kept across restarts: AI Browser comes back on the same
   address.
 - **Old folders:** `~/.ai-browser/browser/` (AI Browser's old Chrome profile, which may hold logins you made there)
@@ -331,8 +338,7 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
 
 ## Mission Control (your agents at work, in 3D)
 
-**Mission Control**, in AI Home's header, opens a dark control room in a window of its own (a second click brings
-it forward):
+**Mission Control**, a tab of AI Browser's window (or its button in AI Home's header), is a dark control room:
 - **Stations:** every agent works at its own little desk, where a chibi office worker in a tie of the agent's colour
   sits beside the monitor. The art is drawn in code on this computer: nothing is downloaded.
   - Its monitor shows the tab it works in (the same pictures as AI Home), and the ticker its last action

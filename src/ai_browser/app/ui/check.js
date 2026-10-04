@@ -1,14 +1,11 @@
 // A bot check waiting for the user: which agent stopped, on which site, and what kind of check, all set as text.
-// Show me brings the agent's tab forward (or opens the live view of the browser that shows it), Continue tells the
-// agent the user dealt with it, and Skip this site closes the agent's own tab with the check. The agent never touches
-// the check, and nothing a page says can press these buttons.
+// Show me brings the agent's tab forward (or shows the live view of the browser that shows it, through the caller's
+// openLive: in AI Browser's window, a tab of its own), Continue tells the agent the user dealt with it, and Skip this
+// site closes the agent's own tab with the check. The agent never touches the check, and nothing a page says can press
+// these buttons. This file imports nothing, so Brave's watcher can share it.
 "use strict";
 
 const LIVE = /^http:\/\/127\.0\.0\.1:\d{1,5}\/live\?token=[A-Za-z0-9_-]{1,64}$/; // an engine's live view, nothing else
-
-function openLive(url) { // an engine's live view, in a small window; noopener: it can't reach back into our pages
-  window.open(url, "aib-live", "popup,noopener,width=1280,height=860");
-}
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -17,7 +14,7 @@ function el(tag, className, text) {
   return node;
 }
 
-export function checkCard(agent, send) {
+export function checkCard(agent, send, { openLive = null } = {}) {
   const check = agent.check || {};
   const live = LIVE.test(String(check.live || "")) ? String(check.live) : "";
   const own = !check.adopted && !check.live; // only the agent's own tab can be closed from here
@@ -33,7 +30,7 @@ export function checkCard(agent, send) {
   const done = el("span", "muted");
   const show = el("button", "show-me", "Show me");
   show.addEventListener("click", () => {
-    if (live) openLive(live);
+    if (live) openLive?.(live, agent);
     else if (!check.live && check.target) send({ type: "watch", target: String(check.target) });
   });
   buttons.append(show);

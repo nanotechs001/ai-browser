@@ -100,6 +100,20 @@ def _no_finder_windows(monkeypatch):
     monkeypatch.setattr(server, "reveal_folder", lambda path: True)
 
 
+USERS_APP_PORT = 8792  # APP_PORTS' first: the port the user's own `ai-browser app` remembers and comes back on
+
+
+@pytest.fixture(autouse=True)
+def _never_the_users_app_port(monkeypatch):
+    """No test's app server takes 8792, whether or not the user's own AI Browser runs there now: it may start while
+    the suite runs, and would then have to take another port (and ask for the microphone again). A test's server
+    takes the next free port instead, as it does while that app runs."""
+    import ai_browser.app.server as server
+
+    bind = server._bind
+    monkeypatch.setattr(server, "_bind", lambda host, port: None if port == USERS_APP_PORT else bind(host, port))
+
+
 @pytest.fixture
 def throwaway_chrome(tmp_path):
     """A separate headless Chrome with its own temporary profile, standing in for the user's own browser."""

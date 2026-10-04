@@ -97,6 +97,16 @@ document.addEventListener("paste", (event) => {
     send({ t: "text", text });
   }
 });
+// Shown in a tab of AI Browser's window: the close-tab key (Command-W on a Mac, Ctrl+W elsewhere) would close that
+// whole window and stop AI Browser, so it never reaches the browser from here. This page can't ask the window to close
+// its tab (it is another origin's, sandboxed): the tab's x does that. Opened by itself, the key is the browser's.
+if (window.parent !== window) {
+  const mac = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
+  document.addEventListener("keydown", (event) => {
+    const command = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+    if (command && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "w") event.preventDefault();
+  }, true);
+}
 </script>
 </body>
 </html>

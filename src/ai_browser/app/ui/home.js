@@ -9,9 +9,7 @@ import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
 import { mountWorkflows } from "./workflows.js";
-import { guardLinks, openWindow, WINDOWS } from "./nav.js";
-
-window.name = "aib-home"; // Mission Control's AI Home button finds this window by its name
+import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
 
 const $ = (id) => document.getElementById(id);
 const COLORS = { grey: "#5f6368", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038",
@@ -41,8 +39,9 @@ const SAYS = { connected: "connected", off: "switch off", ready: "ready", asking
 const chat = createChat($("chat-messages"));
 const link = connect({ view: "home", onMessage: handle, onState: setStatus });
 guardLinks(link);
+guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id), cards: "confirm",
-                                             openSetup: () => openWindow("/setup#brave", ...WINDOWS["/setup"]) });
+                                             openSetup: () => openTab("/setup#brave") });
 let watchSites = []; // the Brain's watch list: a message workflow's sites
 let switchedOn = []; // the MCP servers switched on: what a workflow may use
 const tools = mountTools($("tools"), link);
@@ -159,7 +158,7 @@ function fillAgentRow(row, agent) {
   const check = agent.check; // a bot check waiting for the user: its card, on the row
   if (check && parts.check?.dataset.since !== String(check.since)) {
     parts.check?.remove();
-    parts.check = checkCard(agent, (message) => link.send(message));
+    parts.check = checkCard(agent, (message) => link.send(message), { openLive: showLive });
     row.querySelector(".main").append(parts.check);
   } else if (!check && parts.check) {
     parts.check.remove();
@@ -302,8 +301,8 @@ function renderClients() { // what uses the user's browser through AI Browser's 
 
 function browserAction() {
   if (!browser || browser.kind !== "brave") return;
-  if (browser.state === "off") { // the setup page's steps, with their warning, in a small window
-    openWindow("/setup#switch", ...WINDOWS["/setup"]);
+  if (browser.state === "off") { // the setup page's steps, with their warning, in a closable tab
+    openTab("/setup#switch");
     return;
   }
   link.send({ type: "brave_connect" });
@@ -560,8 +559,12 @@ function sendChat() {
   else flash("Not connected: is `ai-browser app` running?");
 }
 
-$("mission").addEventListener("click", () => openWindow("/mission", ...WINDOWS["/mission"]));
-$("settings").addEventListener("click", () => openWindow("/settings", ...WINDOWS["/settings"]));
+function showLive(url, agent) { // a bot check in QA's sandbox: its live view, in the agent's own tab of the window
+  openLive(url, agent.id, agentLabel(agent));
+}
+
+$("mission").addEventListener("click", () => openTab("/mission"));
+$("settings").addEventListener("click", () => openTab("/settings"));
 $("start").addEventListener("click", start);
 $("browser-action").addEventListener("click", browserAction);
 $("handing-clear").addEventListener("click", () => setHanding(null));

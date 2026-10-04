@@ -16,7 +16,8 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from conftest import file_mode
 from fake_window import FakeWindow, SocketWindow
-from test_home import click_as_user, page_js, until, wait_targets
+from test_home import until
+from test_tab_menu import active_is, click_in, close_key, connected, frame, pick, ready_for_keys, tab
 from ui_socket import ui_socket
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
@@ -78,8 +79,7 @@ async def test_it_opens_the_window_and_ends_when_the_window_closes(fake_claude, 
         async with httpx.AsyncClient() as client:
             seen["health"] = (await client.get(url + "/health")).json()
         page = await window.page()
-        seen["home"] = await until(page, "location.pathname === '/home' && "
-                                         "document.getElementById('status').dataset.state === 'connected'")
+        seen["home"] = await until(page, f"location.pathname === '/app' && {connected('/home')}")  # the tab menu
         await window.cdp.send("Target.closeTarget", {"targetId": window.targets[0]})  # the user closes the window
         seen["closed_at"] = time.monotonic()
 
@@ -112,7 +112,7 @@ async def test_a_reload_doesnt_end_it(fake_claude, tmp_path, window, monkeypatch
 
     async def ready(url, opened):
         page = await window.page()
-        assert await until(page, "document.getElementById('status').dataset.state === 'connected'")
+        assert await until(page, connected("/home"))
         jobs.append(asyncio.create_task(check(page)))
 
     running = asyncio.create_task(run.run_app(tmp_path / "home", claude=runner, ready=ready, stop=stop, out=quiet,
@@ -121,7 +121,8 @@ async def test_a_reload_doesnt_end_it(fake_claude, tmp_path, window, monkeypatch
 
 
 @CHROME
-async def test_a_popup_keeps_it_alive(fake_claude, tmp_path, window, monkeypatch, servers):
+async def test_switching_or_closing_tabs_never_ends_it_and_closing_the_window_does(fake_claude, tmp_path, window,
+                                                                                   monkeypatch, servers):
     from ai_browser.app import run
 
     runner, _, _ = fake_claude
@@ -129,24 +130,37 @@ async def test_a_popup_keeps_it_alive(fake_claude, tmp_path, window, monkeypatch
     seen, jobs = {}, []
 
     async def check(page):
-        await click_as_user(page, "#mission")  # Mission Control opens in a window of its own
-        [mission] = await wait_targets(window.cdp, "/mission")
-        assert await until(await page_js(window.cdp, mission),
-                           "document.getElementById('status')?.dataset.state === 'connected'")
-        await window.cdp.send("Target.closeTarget", {"targetId": window.targets[0]})  # the main window closes
-        await asyncio.sleep(2.5)
-        seen["alive"] = not running.done()
-        await window.cdp.send("Target.closeTarget", {"targetId": mission})  # then the last one
-        seen["closed_at"] = time.monotonic()
+        try:
+            for key in ("/mission", "/settings", "/home"):  # every tab's page is the window's
+                await pick(page, key)
+                assert await until(page, connected(key))
+            assert await until(page, f"{frame('/home')}.document.querySelector('#brain .brain-setup') !== null")
+            await click_in(page, "/home", "#brain .brain-setup")  # the setup steps: a closable tab
+            assert await until(page, active_is("/setup"))
+            await page(f"{tab('/setup')}.querySelector('.tab-close').click(); true")  # closed again
+            assert await until(page, f"{tab('/setup')} === null && {active_is('/home')}")
+            await click_in(page, "/home", "#brain .brain-setup")
+            assert await until(page, f"{active_is('/setup')} && {ready_for_keys('/setup')}")
+            await close_key(page)  # Command-W (Ctrl+W): the setup steps' tab closes, never the window
+            seen["key_closed"] = await until(page, f"{tab('/setup')} === null && {active_is('/home')}")
+            await pick(page, "/mission")
+            await close_key(page)  # on a fixed tab: nothing closes
+            await asyncio.sleep(2.5)  # more than twice the grace
+            seen["alive"], seen["windows"] = not running.done(), servers[0].window_count
+            seen["tabs"] = await page("[...document.querySelectorAll('#tabs .tab')].map((one) => one.dataset.key)")
+        finally:
+            await window.cdp.send("Target.closeTarget", {"targetId": window.targets[0]})  # the user closes the window
+            seen["closed_at"] = time.monotonic()
 
     async def ready(url, opened):
         page = await window.page()
-        assert await until(page, "document.getElementById('status').dataset.state === 'connected'")
+        assert await until(page, connected("/home"))
         jobs.append(asyncio.create_task(check(page)))
 
     running = asyncio.create_task(run.run_app(tmp_path / "home", claude=runner, ready=ready, out=quiet,
                                               launcher=lambda setting: window))
-    assert await asyncio.wait_for(running, 60) == 0 and seen["alive"]
+    assert await asyncio.wait_for(running, 60) == 0 and seen.get("key_closed") and seen["alive"]
+    assert seen["windows"] == 3 and seen["tabs"] == ["/home", "/mission", "/settings"]
     assert time.monotonic() - seen["closed_at"] < run.WINDOW_GRACE + 2
 
 
