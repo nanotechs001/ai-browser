@@ -32,6 +32,16 @@
     <p id="browser-clients-note" class="muted"></p>
   </div>
 </section>
+<section id="app-card" class="card app-card" aria-label="AI Browser's own app" hidden>
+  <div class="line"><strong>Get AI Browser's own app</strong>
+    <button id="app-card-close" class="ghost" type="button">Not now</button></div>
+  <p id="app-card-adds" class="muted"></p>
+  <p class="muted">To set it up, run this in a terminal. It shows what it downloads, and asks first.</p>
+  <p><code id="app-card-command" class="app-command"></code>
+    <button id="app-card-copy" class="ghost" type="button">Copy</button>
+    <span id="app-card-copied" class="muted" role="status"></span></p>
+  <p id="app-card-problem" class="muted" hidden></p>
+</section>
 <main>
   <section class="card new-task" aria-label="New task">
     <textarea id="task" rows="2" placeholder="What should an agent do? For example: QA my-site.com, 20 pages"></textarea>

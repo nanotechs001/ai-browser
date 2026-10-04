@@ -30,6 +30,7 @@ export function megabytes(bytes) { // the page's sizes: 1 MB is 1,000,000 bytes,
 }
 
 export function browserName(nav = navigator) { // the browser this page runs in, for the steps it names
+  if (/\bElectron\//.test(String(nav.userAgent || ""))) return "AI Browser"; // AI Browser's own app (Electron)
   const brands = (nav.userAgentData?.brands || []).map((entry) => String(entry?.brand || ""));
   if (brands.some((brand) => /brave/i.test(brand))) return "Brave";
   if (brands.some((brand) => /edge/i.test(brand))) return "Microsoft Edge";
