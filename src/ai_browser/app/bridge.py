@@ -10,7 +10,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import re
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -18,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .. import platforms
+from ..accounts import clean_env
 from ..brain.tools import ToolsConfig, server_of
 from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
 from ..limits import from_event, from_text
@@ -106,7 +106,8 @@ class ClaudeBridge:
     def __init__(self, home: Path, model: str = "sonnet", claude: str | Sequence[str] | None = None,
                  env: dict[str, str] | None = None, agent_id: str | None = None, tools: ToolsConfig | None = None,
                  servers: list[str] | None = None,
-                 on_permission: Callable[[dict], Awaitable[str]] | None = None):
+                 on_permission: Callable[[dict], Awaitable[str]] | None = None,
+                 environment: dict[str, str] | None = None):
         self.home = Path(home)
         self.agent_id = agent_id
         self.tools = tools  # the user's MCP servers (phase 2): with it, tools outside the allowed ones are asked for
@@ -118,6 +119,8 @@ class ClaudeBridge:
         self.model = model  # a change applies from the next message, in the same process (set_model)
         self.claude = claude  # resolved when a process starts (claude_argv): a list too, such as the tests' fake
         self.env = dict(env or {})  # extra settings for the ai-browser MCP server
+        self.environment = dict(environment) if environment is not None else None  # Claude Code's own: its account
+        self.preflight: Callable[[], Awaitable[str]] | None = None  # before Claude Code starts: why not, or ""
         self.session_id: str | None = None
         self.busy = False
         self._process: asyncio.subprocess.Process | None = None
@@ -147,6 +150,10 @@ class ClaudeBridge:
                 await self._end_process()
             self._renew = False
             if self._process is None:
+                problem = await self.preflight() if self.preflight is not None else ""
+                if problem:  # its account isn't signed in: nothing starts, and no other account is tried
+                    yield {"type": "error", "text": problem, "signed_out": True}
+                    return
                 try:
                     await self._start()
                 except ClaudeNotUsable as exc:  # its message is the whole explanation
@@ -376,8 +383,7 @@ class ClaudeBridge:
     async def _start(self) -> None:
         chat = self.folder / "chat"
         chat.mkdir(parents=True, exist_ok=True)
-        env = {key: value for key, value in os.environ.items()  # the user's own login, never API credentials
-               if key not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        env = clean_env(self.environment)  # the agent's account (AI accounts); never API credentials
         self._stderr = []
         self._process = await asyncio.create_subprocess_exec(
             *self._command(), cwd=chat, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,

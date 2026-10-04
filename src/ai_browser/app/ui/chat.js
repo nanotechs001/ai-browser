@@ -97,6 +97,10 @@ export function createChat(container, { onPage = () => {} } = {}) {
         bubble = null;
         add(el("div", "msg error", event.text || "Something went wrong"));
         break;
+      case "limit": // its account hit its usage limit: its row says which, and when it resets
+        bubble = null;
+        add(el("div", "msg error", "Stopped at the account's usage limit."));
+        break;
     }
   }
 

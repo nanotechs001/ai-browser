@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
+from ..accounts import DEFAULT, DEFAULT_NAME, GONE, NOT_SIGNED_IN, clean_env
 from ..checks import KINDS
 from .bridge import ClaudeBridge
 
@@ -30,6 +31,7 @@ CLOSE_WAIT = 10  # seconds a closing agent's turn gets to end after Stop
 CONTINUE_TEXT = "I've dealt with the bot check. Call observe and carry on with the task."
 SKIP_TEXT = ("Skip the site with the bot check: I closed its tab. Carry on without it, and tell me what you couldn't "
              "do.")
+LIMIT_STATUS = "Hit its usage limit"  # an agent's status line when its account hit its usage limit
 _SCHEME = re.compile(r"\bhttps?://(?:www\.)?", re.IGNORECASE)
 _FILLER = {"and", "or", "then", "to", "the", "a", "an", "of", "in", "on", "with", "for", "from"}
 _AGENT_ID = re.compile(r"a([0-9]{1,9})")  # the ids the server and the relay accept: ^a[0-9]{1,9}$
@@ -81,10 +83,16 @@ class Agent:
     permission: dict | None = None  # a tool request waiting for the user: {request, server, tool, input}
     # a bot check waiting for the user: {kind, check, what, site, target, adopted, live, since}
     check: dict | None = None
+    # AI accounts: the account it runs on, and the usage limit that paused it, if any (public: AI Browser's own pages
+    # show them; WATCHER_AGENT_FIELDS keeps them from the watcher)
+    account: dict = field(default_factory=lambda: {"id": DEFAULT, "name": DEFAULT_NAME})  # {"id", "name"}
+    limit: dict | None = None  # {"account": id, "resets_at": seconds since 1970, or None}
+    moved: str = ""  # how its last move went: "Moved to Work with its conversation"
+    task: str = field(default="", repr=False)  # its first words: the hand-over note (wave C's Restart in too)
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
-                                         "permission", "check", "number", "queued")
+                                         "permission", "check", "number", "queued", "account", "limit", "moved")
 
     @property
     def number(self) -> int:
@@ -104,7 +112,7 @@ class Agent:
 class AgentManager:
     def __init__(self, home: Path, claude: str | Sequence[str] | None = None, max_working: int = 3,
                  env: dict[str, str] | None = None, close_tabs: Callable[[list[str]], Awaitable[None]] | None = None,
-                 on_action: Callable[[Agent], None] | None = None):
+                 on_action: Callable[[Agent], None] | None = None, accounts=None):
         self.home = Path(home)
         self.claude = claude
         self.max_working = max(1, max_working)
@@ -116,6 +124,8 @@ class AgentManager:
         self.mint_token: Callable[[str], str] | None = None  # set by the app: each agent's own token
         self.own_tabs: Callable[[str], list[str]] | None = None  # set by the app in brave mode: the relay's table
         self.tools = None  # the user's MCP servers (ToolsConfig), set by the app: agents ask before using them
+        self.accounts = accounts  # AI accounts (Accounts); None: every agent runs on Default, as before
+        self.on_limit: Callable[[str], None] | None = None  # set by the app: an account hit its usage limit
         self._asks: dict[str, asyncio.Future] = {}  # agent id -> its tool request waiting for the user
         self.agents: dict[str, Agent] = {}
         self._line: deque[str] = deque()  # agents waiting for a free slot, first come first served
@@ -156,9 +166,12 @@ class AgentManager:
     # ---- commands -----------------------------------------------------------------------------------------
 
     async def create(self, text: str, skills=(), model: str = "sonnet", adopt: str | None = None,
-                     tab: dict | None = None, servers: list[str] | None = None) -> Agent:
+                     tab: dict | None = None, servers: list[str] | None = None,
+                     account: str | None = None) -> Agent:
         """A new agent for `text`; with `adopt`, it works in that tab of the user's (started from the panel). Its MCP
-        servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list)."""
+        servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list). It runs on
+        `account`, else on the default account for new agents; ValueError for an account that isn't listed."""
+        chosen = self._account_row(account)  # first: a refused account leaves no agent and no number behind
         self._seq += 1
         agent_id = f"a{self._seq}"
         env = {**self.env, "AIB_APP_AGENT": agent_id, **({"AIB_APP_ADOPT": adopt} if adopt else {})}
@@ -166,8 +179,12 @@ class AgentManager:
             env["AIB_APP_AGENT_TOKEN"] = self.mint_token(agent_id)
         bridge = ClaudeBridge(self.home, model=model, claude=self.claude, env=env, agent_id=agent_id,
                               tools=self.tools, servers=servers,
-                              on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request))
-        agent = Agent(agent_id, _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge)
+                              on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request),
+                              environment=self._environment(chosen["id"]))
+        if self.accounts is not None:  # its account must be signed in before its Claude Code starts
+            bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
+        agent = Agent(agent_id, _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge, account=chosen,
+                      task=text)
         if adopt:  # the panel can show this agent for that tab before Claude's first step
             agent.adopted.append(adopt)
             agent.working_tab = adopt
@@ -178,11 +195,36 @@ class AgentManager:
         self._pump()
         return agent
 
+    def _account_row(self, account_id: str | None) -> dict:
+        """{"id", "name"} of the account a new agent runs on: the one asked for, else the default for new agents."""
+        if self.accounts is None:
+            if account_id not in (None, DEFAULT):
+                raise ValueError(GONE)
+            return {"id": DEFAULT, "name": DEFAULT_NAME}
+        chosen = self.accounts.get(account_id if account_id is not None else self.accounts.default_id())
+        if chosen is None:
+            raise ValueError(GONE)
+        return {"id": chosen.id, "name": chosen.name}
+
+    def _environment(self, account_id: str) -> dict[str, str]:
+        """Claude Code's environment on that account: CLAUDE_CONFIG_DIR, and never the API variables."""
+        return self.accounts.env_for(account_id) if self.accounts is not None else clean_env()
+
+    async def _sign_in_problem(self, agent_id: str) -> str:
+        """Before an agent's Claude Code starts: "" when its account is signed in, or Claude Code can't tell (it then
+        says why itself); else the line its row shows. The agent never moves to another account by itself."""
+        agent = self.agents.get(agent_id)
+        if agent is None or self.accounts is None:
+            return ""
+        status = await self.accounts.status(agent.account["id"])
+        return NOT_SIGNED_IN.format(name=agent.account["name"]) if status["signed_in"] is False else ""
+
     async def send(self, agent_id: str, text: str, tab: dict | None = None) -> bool:
         """The user's message: now, or after the agent's current answer. False when the agent has closed."""
         agent = self.agents.get(agent_id)
         if agent is None:
             return False
+        agent.limit = None  # the user's own message: it tries again, on the same account
         agent.pending.append((text, tab or {}, []))
         if agent_id in self._turns or agent_id in self._line:  # it gets its turn after the current one
             self._record(agent, {"type": "queued", "text": text})
@@ -421,7 +463,7 @@ class AgentManager:
 
     async def _run(self, agent: Agent) -> None:
         try:
-            while agent.pending and agent.id in self.agents:
+            while agent.pending and agent.id in self.agents and agent.limit is None:  # a limit pauses the agent
                 text, tab, skills = agent.pending.pop(0)
                 self._changed(agent)  # one fewer waiting: the row's queued count drops
                 self._record(agent, {"type": "user", "text": text})
@@ -438,8 +480,8 @@ class AgentManager:
             self._pump()
 
     def _on_event(self, agent: Agent, event: dict) -> None:
-        self._record(agent, event)
         kind = event.get("type")
+        self._record(agent, {"type": "limit"} if kind == "limit" else event)  # the chat names no account or time
         if kind == "tool":
             agent.tools[event.get("id", "")] = (event.get("name", ""), event.get("summary", ""))
             agent.status = f"{event.get('name', '')} {event.get('summary', '')}".strip()
@@ -452,15 +494,32 @@ class AgentManager:
             if self.on_action is not None:
                 with contextlib.suppress(Exception):
                     self.on_action(agent)
+        elif kind == "limit":
+            self._limited(agent, event.get("resets_at"))
         elif kind == "done":
+            agent.limit = None  # the turn ended well: a limit it heard of didn't stop it
             agent.seconds = round(agent.seconds + (event.get("seconds") or 0), 1)
             agent.cost = round(agent.cost + (event.get("cost") or 0), 4)
             agent.status = ""
             agent.state = "working" if agent.pending else "stopped" if event.get("stopped") else \
                 "needs_you" if agent.check is not None else "your_turn"
         elif kind == "error":
-            agent.status = str(event.get("text", ""))
-            agent.state = "working" if agent.pending else "failed"
+            if agent.limit is None:  # at a limit, its own line stays
+                agent.status = str(event.get("text", ""))
+            agent.state = "working" if agent.pending and agent.limit is None else "failed"
         else:
             return
         self._changed(agent)
+
+    def _limited(self, agent: Agent, resets_at) -> None:
+        """Its account hit its usage limit (the bridge tells it once per turn): the agent pauses, its partial answer
+        stays in its chat, its queued messages wait, and the account's reset time is kept for the pickers."""
+        account = agent.account["id"]
+        resets = float(resets_at) if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool) else None
+        agent.limit = {"account": account, "resets_at": resets}
+        agent.status, agent.state = LIMIT_STATUS, "failed"
+        if self.accounts is not None:
+            self.accounts.set_limit(account, resets)
+        if self.on_limit is not None:
+            with contextlib.suppress(Exception):
+                self.on_limit(account)
