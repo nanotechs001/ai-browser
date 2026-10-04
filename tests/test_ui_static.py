@@ -30,7 +30,7 @@ INLINE_SCRIPT = re.compile(r"<script(?![^>]*\ssrc=)[^>]*>", re.IGNORECASE)
 
 
 def test_the_window_pages_are_all_there():
-    for name in ("home.html", "mission.html", "setup.html", "nav.js"):
+    for name in ("home.html", "mission.html", "settings.html", "setup.html", "nav.js"):
         assert (UI / name).is_file(), name
 
 

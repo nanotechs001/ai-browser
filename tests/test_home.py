@@ -561,3 +561,46 @@ async def test_links_go_to_the_users_browser_or_a_window_of_ours(home, monkeypat
     await asyncio.sleep(0.5)
     assert await page_targets(stack["cdp"], "/mission") == [mission]
     assert await (await page_js(stack["cdp"], mission))("window.name") == "aib-mission"  # a _blank open has no name
+
+
+@CHROME
+async def test_settings_opens_as_a_small_window_and_saves_the_choice(home):
+    from ai_browser.settings import read_settings
+
+    js, stack = home
+    await click_as_user(js, "#settings")
+    [target] = await wait_targets(stack["cdp"], "/settings")
+    settings = await page_js(stack["cdp"], target)
+    assert await until(settings, "document.querySelectorAll('#window-choices input').length === 3")
+    assert await settings("window.name") == "aib-settings"
+    labels = "[...document.querySelectorAll('#window-choices label')].map((label) => label.textContent)"
+    assert await settings(labels) == ["Auto (Google Chrome)", "Google Chrome", "Brave"]
+    assert await settings("document.querySelector('#window-choices input[value=auto]').checked") is True
+    assert await settings("document.getElementById('window-using').textContent") == (
+        "This window: Google Chrome. A change applies the next time AI Browser starts.")
+    await settings("document.querySelector('#window-choices input[value=brave]').click(); true")
+    for _ in range(50):
+        if read_settings(stack["home"]).get("window_browser") == "brave":
+            break
+        await asyncio.sleep(0.1)
+    assert read_settings(stack["home"])["window_browser"] == "brave"
+    assert await until(settings, "document.querySelector('#window-choices input[value=brave]').checked")
+
+
+@CHROME
+async def test_a_browser_that_isnt_installed_is_greyed_out(home):
+    js, stack = home
+    stack["server"].window_info = {
+        "using": "chrome", "name": "Google Chrome",
+        "note": "Brave isn't installed: the window uses Google Chrome. Change it in Settings.",
+        "choices": [{"id": "auto", "name": "Auto (Google Chrome)", "installed": True},
+                    {"id": "chrome", "name": "Google Chrome", "installed": True},
+                    {"id": "brave", "name": "Brave", "installed": False}]}
+    await click_as_user(js, "#settings")
+    [target] = await wait_targets(stack["cdp"], "/settings")
+    settings = await page_js(stack["cdp"], target)
+    assert await until(settings, "document.querySelectorAll('#window-choices input').length === 3")
+    assert await settings("document.querySelector('#window-choices input[value=brave]').disabled") is True
+    assert await settings("document.querySelectorAll('#window-choices label')[2].textContent") == (
+        "Brave · not installed")
+    assert (await settings("document.getElementById('window-note').textContent")).startswith("Brave isn't installed")

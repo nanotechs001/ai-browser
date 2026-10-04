@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings</title>
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="home.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
+    <h1>Settings</h1></div>
+  <button id="home-link" class="ghost" type="button" title="Bring AI Home's window to the front">AI Home</button>
+</header>
+<main class="settings">
+  <section id="window-section" class="card" aria-labelledby="window-title">
+    <h2 id="window-title">App window</h2>
+    <p>Which browser draws AI Browser's window</p>
+    <div id="window-choices" class="choices" role="radiogroup" aria-labelledby="window-title"></div>
+    <p id="window-using" class="muted"></p>
+    <p id="window-note" class="muted" hidden></p>
+    <p class="muted">The microphone is allowed per browser: after a switch, the window asks for it once more.</p>
+    <p id="window-error" class="muted" role="status"></p>
+  </section>
+</main>
+<script type="module" src="settings.js"></script>
+</body>
+</html>

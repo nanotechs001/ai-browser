@@ -561,6 +561,7 @@ function sendChat() {
 }
 
 $("mission").addEventListener("click", () => openWindow("/mission", ...WINDOWS["/mission"]));
+$("settings").addEventListener("click", () => openWindow("/settings", ...WINDOWS["/settings"]));
 $("start").addEventListener("click", start);
 $("browser-action").addEventListener("click", browserAction);
 $("handing-clear").addEventListener("click", () => setHanding(null));
