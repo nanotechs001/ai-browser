@@ -19,6 +19,7 @@ import html
 import json
 import re
 import secrets
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -42,6 +43,13 @@ from ..checks import KINDS
 from ..chrome import own_browser_dir
 from ..claudecli import claude_argv
 from ..config import LIVE_PORTS, load_config, project_root
+from ..desktop import layout
+from ..desktop.notes import note_for
+from ..desktop.release import SETUP_COMMAND, asset_for
+from ..desktop.release import VERSION as ELECTRON_VERSION
+from ..desktop.shortcut import SHORTCUT_ERROR, SHORTCUTS
+from ..desktop.shortcut import label as shortcut_label
+from ..desktop.shortcut import state as shortcut_state
 from ..engine import _alive
 from ..extension_id import extension_path
 from ..grouping import MARKER
@@ -87,7 +95,10 @@ LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an e
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
 CODE_TTL = 60  # seconds a one-time start code is good for
-SETTING_KEYS = ("model", "voice", "window_browser")
+SETTING_KEYS = ("model", "voice", "window_browser", "shortcut")
+NOTES_KEPT = 50  # the app's notifications whose click is still answered
+PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
+APP_SILENT = "AI Browser's app didn't answer: try again"
 URL_LIMIT = 2000  # characters of a website address a page may ask the user's browser to open
 KEYWORD_LIMIT = 2000  # characters of what the user typed after "ai" in Brave's address bar
 NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
@@ -347,6 +358,9 @@ class AppServer:
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
         self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
+        self.desktop = None  # AI Browser's own app while it runs (run_app attaches it): the shortcut, notifications
+        self._notes: dict[str, dict] = {}  # the app's notifications: id -> {"kind", "agent"}, for their clicks
+        self._note_seq = 0
         self.agents = agents
         self.brain = brain
         self.skill_writer = skill_writer  # skills the Brain drafts, written only on the user's Save
@@ -480,13 +494,16 @@ class AppServer:
         return bool(given) and hmac.compare_digest(given.encode(), self.ui_secret.encode())
 
     def _settings_payload(self) -> dict:
-        return {**self.settings.get(), "window": dict(self.window_info)}
+        return {**self.settings.get(), "window": dict(self.window_info), "desktop": self._desktop_payload()}
 
     def _settings_set(self, queue: asyncio.Queue, message: dict) -> None:
         request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
         key = message.get("key")
         if key not in SETTING_KEYS:
             queue.put_nowait({"type": "error", "text": "There is no such setting", "request": request})
+            return
+        if key == "shortcut" and self.desktop is not None:  # the app tries it first: only one it could take is saved
+            self._job(self._shortcut_set(queue, message.get("value"), request))
             return
         try:
             self.settings.set(key, message.get("value"))
@@ -498,6 +515,95 @@ class AppServer:
                               "request": request})
             return
         self._send_all({"type": "settings", **self._settings_payload()})  # the watcher's filter keeps it out
+
+    def attach_desktop(self, desktop) -> None:
+        """AI Browser's own app (desktop/launch.py), for this run: its shortcut, its notifications and their clicks."""
+        self.desktop = desktop
+        desktop.on_message = self._from_desktop
+
+    def detach_desktop(self) -> None:
+        if self.desktop is not None:
+            self.desktop.on_message = None
+        self.desktop = None
+
+    def _desktop_payload(self) -> dict:
+        """Settings' and AI Home's view of AI Browser's own app: whether it is set up and running, what went wrong
+        last, and the shortcut with the app's word on it."""
+        value = self.settings.get()["shortcut"]
+        said = self.desktop.shortcut if self.desktop is not None else {}
+        return {"running": self.desktop is not None, "supported": asset_for() is not None,
+                "set_up": layout.installed(self.home) is not None, "version": ELECTRON_VERSION,
+                "platform": PLATFORM_WORDS.get(sys.platform, "other"), "command": SETUP_COMMAND,
+                "problem": layout.problem(self.home),
+                "shortcut": {"value": value, "label": shortcut_label(value),
+                             "state": shortcut_state(value, said, self.desktop is not None)},
+                "shortcuts": [{"value": one, "label": shortcut_label(one)} for one in SHORTCUTS]}
+
+    async def _shortcut_set(self, queue: asyncio.Queue, value, request) -> None:
+        """A shortcut picked in Settings while the app runs. The app tries it first, and only a shortcut it could take
+        is saved. When another app holds it, the one before stays, and Settings says so."""
+        if value is not None and value not in SHORTCUTS:
+            queue.put_nowait({"type": "error", "text": SHORTCUT_ERROR, "request": request})
+            return
+        answer = await self.desktop.try_shortcut(value)
+        if not answer.get("ok"):
+            text = (f"{shortcut_label(value)} is used by another app. Pick another one." if answer.get("why") == "taken"
+                    else APP_SILENT)
+            queue.put_nowait({"type": "error", "text": text, "request": request})  # its page checks the saved one
+            return
+        try:
+            self.settings.set("shortcut", value)
+        except (ValueError, OSError) as exc:
+            queue.put_nowait({"type": "error", "request": request,
+                              "text": f"Couldn't save that setting: {getattr(exc, 'strerror', None) or exc}"})
+            return
+        self._send_all({"type": "settings", **self._settings_payload()})
+
+    def _from_desktop(self, message: dict) -> None:
+        """What the app says unasked: the shortcut it holds (or can't, or its first press), and a click on one of its
+        notifications."""
+        kind = message.get("type")
+        if kind == "shortcut":
+            if message.get("ok") is False and isinstance(message.get("value"), str):
+                self.out(f"{shortcut_label(message['value'])} is used by another app, so it does nothing in AI "
+                         "Browser: pick another in Settings")
+            self._send_all({"type": "settings", **self._settings_payload()})
+        elif kind == "clicked" and isinstance(message.get("id"), str):
+            self._job(self._clicked(message["id"]))
+
+    def _notify_desktop(self, message: dict) -> bool:
+        """A notification from AI Browser's own app, in place of Brave's, in fixed words (desktop/notes.py). False when
+        the app isn't running: Brave's watcher shows it then."""
+        desktop = self.desktop
+        note = note_for(message) if desktop is not None and not desktop.ended.is_set() else None
+        if note is None:
+            return False
+        self._note_seq += 1
+        note_id = f"n{self._note_seq}"
+        self._notes[note_id] = {"kind": note["kind"], "agent": note["agent"]}
+        while len(self._notes) > NOTES_KEPT:
+            self._notes.pop(next(iter(self._notes)))
+        return desktop.send({"type": "notify", "id": note_id, "title": note["title"], "body": note["body"]})
+
+    async def _clicked(self, note_id: str) -> None:
+        """A click on one of the app's notifications. A bot check brings the agent's tab forward, in Brave. Anything
+        else brings the app's window forward, on AI Home, at that agent's row (or the Brain)."""
+        note = self._notes.pop(note_id, None)
+        if note is None or self.desktop is None:
+            return
+        if note["kind"] == "check" and self._check_target(note["agent"]) is not None:
+            await self._show_check(note["agent"])
+            return
+        self.desktop.send({"type": "show"})
+        self._send_all({"type": "focus", **({"agent": note["agent"]} if note["agent"] else {"brain": True})})
+
+    def _check_target(self, agent_id: str) -> str | None:
+        """The tab in Brave where this agent's bot check waits, if there is one (a live view's has none)."""
+        agent = self.agents.agents.get(agent_id)
+        check = agent.check if agent is not None else None
+        if check is None or check.get("live") or not check.get("target") or self.tabs is None:
+            return None
+        return check["target"]
 
     def _agents_browser(self):
         """The agents' browser, as an installed row (it opens a website the user clicked), or None for the system's
@@ -1140,6 +1246,8 @@ class AppServer:
 
     def _to_watcher(self, message: dict) -> bool:
         """A message for Brave's watcher; False when it isn't connected."""
+        if message.get("type") == "notify" and self._notify_desktop(message):
+            return True  # the Brain's new notes: AI Browser's own app says so, and Brave's watcher doesn't too
         if message.get("type") == "open_thread" and isinstance(message.get("url"), str):
             self._thread_urls[str(message.get("request", ""))] = message["url"]
         if self._watcher is None:
@@ -1159,8 +1267,8 @@ class AppServer:
                     with contextlib.suppress(Exception):
                         await self.brave.relay.forget(agent_id)
             self._send_all(message)
-            if message.get("type") in ("permission_request", "check_request"):
-                self._to_watcher(message)  # a Brave notification too
+            if message.get("type") in ("permission_request", "check_request") and not self._notify_desktop(message):
+                self._to_watcher(message)  # Brave's notification, while AI Browser's own app isn't running
 
     def _job(self, coroutine) -> None:
         task = asyncio.ensure_future(coroutine)

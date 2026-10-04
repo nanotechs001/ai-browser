@@ -1864,7 +1864,8 @@ async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude,
                 await ws.send(json.dumps({"type": "hello", "view": view}))
             snapshot = await recv(one)
             assert snapshot["settings"] == {"model": None, "voice": False, "window_browser": "auto",
-                                            "window": server.window_info}
+                                            "shortcut": "Alt+Space", "window": server.window_info,
+                                            "desktop": server._desktop_payload()}
             await recv(two)
             assert "settings" not in await recv(watcher)  # the watcher's snapshot is trimmed to its agents
             await one.send(json.dumps({"type": "settings_set", "key": "model", "value": "opus", "request": "s1"}))
