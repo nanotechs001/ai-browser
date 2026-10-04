@@ -16,6 +16,7 @@ import re
 import secrets
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
@@ -58,7 +59,7 @@ HEARING_MESSAGES = {"hearing", "hearing_download", "hearing_cancel", "listen_sta
                     "listen_cancel"}  # push-to-talk: only AI Browser's own pages, never the watcher
 TALK_MESSAGES = {"brain_ask", "brain_confirm", "brain_dismiss"}  # the talk with the Brain: the same
 _TALK_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
-CHECK_MESSAGES = {"check_continue", "check_skip"}  # a bot check's buttons; the watcher may Continue, never Skip
+CHECK_MESSAGES = {"check_continue", "check_skip", "check_show"}  # a bot check's buttons (who may: MESSAGE_RULES)
 BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back", "browser_disconnect"}  # only AI Browser's own pages
 CHECK_SITE = re.compile(r"[a-z0-9.-]{1,253}")  # a host name, nothing else
 CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{1,64}")  # an engine's live view
@@ -71,6 +72,101 @@ SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (
 AGENT_ID = re.compile(r"^a[0-9]{1,9}$")  # an agent's id (a<number>)
 SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
 YOU = {"kind": "you"}
+
+
+@dataclass(frozen=True)
+class Rule:
+    """Who may send one message type: AI Browser's own pages ("app"), and Brave's watcher ("watcher"), which may send
+    it never, always, or when the check on the message passes."""
+    app: bool = True
+    watcher: bool | Callable[[dict], bool] = False
+
+
+def _has_item(message: dict) -> bool:
+    """The inbox's "Run <workflow>" on a message: never a bare run, which stays in AI Home."""
+    return isinstance(message.get("item"), str) and message["item"] != ""
+
+
+def _once_or_deny(message: dict) -> bool:
+    """A tool request allowed once, or denied: a lasting Always allow stays in AI Home's Tools."""
+    return message.get("answer") in ("once", "deny")
+
+
+APP_ONLY, BOTH, WATCHER_ONLY = Rule(), Rule(watcher=True), Rule(app=False, watcher=True)
+
+# Every message type a page may send, and who may send it (watcher-safety Decision 1). A type missing here is dropped
+# for everyone, with no answer. tests/test_watcher_rules.py holds a copy: a row added here fails there until the copy
+# says the same. A row may allow the watcher only if it can't give an agent a tab of the user's, save a lasting allow,
+# connect to Brave, talk or listen, skip a check or close a tab.
+MESSAGE_RULES: dict[str, Rule] = {
+    "hello": BOTH,
+    # the watcher's reports: they count only from the socket that said hello as the watcher (_handle)
+    "items": WATCHER_ONLY, "replied": WATCHER_ONLY, "thread": WATCHER_ONLY, "filled": WATCHER_ONLY,
+    "reader_status": WATCHER_ONLY, "watcher_caps": WATCHER_ONLY, "tab_grouped": WATCHER_ONLY,
+    # the Brain's inbox, in AI Home and on the watcher's Brain page
+    "brain": BOTH, "draft": BOTH, "approve": BOTH, "hand": BOTH, "done": BOTH, "tell": BOTH, "watch_set": BOTH,
+    "watch_remove": BOTH, "pause": BOTH, "style": BOTH,
+    "workflow_run": Rule(watcher=_has_item),
+    "workflows": APP_ONLY, "workflow_save": APP_ONLY, "workflow_delete": APP_ONLY,
+    "permission": Rule(watcher=_once_or_deny),
+    "tools": APP_ONLY, "tool_set": APP_ONLY, "tool_allow": APP_ONLY, "tool_forget": APP_ONLY,
+    "skills": APP_ONLY, "skill_draft": APP_ONLY, "skill_save": APP_ONLY,
+    "hearing": APP_ONLY, "hearing_download": APP_ONLY, "hearing_cancel": APP_ONLY, "listen_start": APP_ONLY,
+    "listen_chunk": APP_ONLY, "listen_end": APP_ONLY, "listen_cancel": APP_ONLY,
+    "brain_ask": APP_ONLY, "brain_confirm": APP_ONLY, "brain_dismiss": APP_ONLY,
+    "tell_confirm": APP_ONLY, "tell_dismiss": APP_ONLY,  # brain-delegation: a card runs only from our own pages
+    "check_continue": BOTH, "check_skip": APP_ONLY, "check_show": BOTH,  # Skip closes a tab: never the watcher's
+    "brave_connect": APP_ONLY, "hand_tab": APP_ONLY, "take_back": APP_ONLY,
+    "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in AI Home's list of connected clients
+    "new_task": APP_ONLY,  # with or without adopt
+    "send": APP_ONLY, "stop": APP_ONLY, "close": APP_ONLY, "model": APP_ONLY,
+    "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
+}
+
+
+def may_send(role: str, message: dict) -> bool:
+    """Whether a page of this role ("app" or "watcher") may send this message. An unknown type, a message without
+    one, or a type that isn't a string is never allowed, for anyone."""
+    kind = message.get("type")
+    rule = MESSAGE_RULES.get(kind) if isinstance(kind, str) else None
+    if rule is None:
+        return False
+    if role == "app":
+        return rule.app
+    if role == "watcher":
+        return bool(rule.watcher(message)) if callable(rule.watcher) else rule.watcher is True
+    return False
+
+
+# What a socket from Brave's watcher's origin may get (watcher-safety Decision 5): never a tab list, a session, a
+# picture, an agent's conversation or the Tools, workflow and skill messages, and never a tab's target id.
+WATCHER_RECEIVES = frozenset({
+    "ping", "error", "watcher_hello", "watch_list", "notify", "permission_request", "check_request", "group_tab",
+    "ungroup_tabs", "open_thread", "fill_reply",  # for the worker
+    "snapshot", "agent", "agent_closed", "brain_snapshot", "brain_item", "brain_item_gone", "brain_state",  # Brain page
+})
+WATCHER_AGENT_FIELDS = ("id", "name", "color", "state", "permission")  # what the Brain page reads of an agent
+
+
+def _watcher_row(agent) -> dict:
+    return {key: agent[key] for key in WATCHER_AGENT_FIELDS if key in agent} if isinstance(agent, dict) else {}
+
+
+def for_watcher(message: dict) -> dict | None:
+    """What a watcher-origin socket may get: the message, a trimmed copy, or None. It never changes its input,
+    because _send_all puts one dict in every queue."""
+    kind = message.get("type")
+    if not isinstance(kind, str) or kind not in WATCHER_RECEIVES:
+        return None  # a type added later is dropped too, until it is written down here
+    if kind == "snapshot":
+        agents = message.get("agents")
+        return {"type": "snapshot", "agents": [_watcher_row(agent) for agent in agents]
+                if isinstance(agents, list) else []}
+    if kind == "agent":
+        return {"type": "agent", "agent": _watcher_row(message.get("agent"))}
+    if kind == "check_request":
+        return {key: value for key, value in message.items() if key != "target"}  # Show me asks by agent id
+    return message
 
 
 reveal_folder = platforms.reveal  # a file manager window with the folder selected; False when none could open
@@ -202,9 +298,26 @@ class AppServer:
         return self.tokens.mint(agent_id)
 
     def attach_tabs(self, tabs) -> None:
-        """The TabWatch, once AI Browser is open: the tab list, Watch and thumbnails."""
+        """The tab source (AI Browser's TabWatch, or BraveLink in brave mode): the tab list, Watch and thumbnails."""
         self.tabs = tabs
-        tabs.on_change(lambda listing: self._send_all({"type": "tabs", "tabs": listing}))
+        tabs.on_change(lambda listing: self._tabs_changed(tabs, listing))
+
+    def _tabs_changed(self, source, listing: list[dict]) -> None:
+        if self.tabs is source:  # a source replaced since (brave mode attached after it) is no longer heard
+            self._send_all(self._tabs_message(listing))
+
+    def _tab_scope(self) -> dict | None:
+        """BraveLink's {"profile", "elsewhere"}: which profile the list shows, and how many of the user's tabs it
+        leaves out (a number only). None for AI Browser's own TabWatch, which lists every tab, and while Brave isn't
+        connected: then the list is empty and claims nothing (BraveLink sends that list before the browser card)."""
+        scope = getattr(self.tabs, "scope", None)
+        if not callable(scope) or getattr(self.tabs, "state", "connected") != "connected":
+            return None
+        return scope()
+
+    def _tabs_message(self, listing: list[dict]) -> dict:
+        scope = self._tab_scope()
+        return {"type": "tabs", "tabs": listing, **({"tab_scope": scope} if scope is not None else {})}
 
     async def start(self) -> str:
         app = Starlette(routes=[Route("/health", self._health), Route("/setup", self._setup),
@@ -527,7 +640,7 @@ class AppServer:
         relay.on_change(self._clients_changed)
         brave.on_state(lambda state: self._browser_changed())
         self._browser_changed()
-        self._send_all({"type": "tabs", "tabs": brave.tabs()})  # pages already open see Brave's list at once
+        self._send_all(self._tabs_message(brave.tabs()))  # pages already open see Brave's list at once
 
     def _handed_to(self, identity: str) -> set[str]:
         """The tabs the user handed this agent now (Hand over, or a task started in a tab): read live."""
@@ -672,9 +785,17 @@ class AppServer:
             self._unsubscribe(ws)
 
     async def _write(self, ws: WebSocket, queue: asyncio.Queue) -> None:
+        """Every message to a socket passes here (answers, _send_all, _to_watcher), so a path added later is covered:
+        a watcher-origin socket gets only for_watcher's part of each."""
+        watcher = self._role(ws) == "watcher"  # read once: the socket's origin is set before this task starts
         with contextlib.suppress(Exception):
             while True:
-                await ws.send_json(await queue.get())
+                message = await queue.get()
+                if watcher:
+                    message = for_watcher(message)
+                    if message is None:
+                        continue
+                await ws.send_json(message)
 
     def _unsubscribe(self, ws: WebSocket) -> None:
         self._sockets.pop(ws, None)
@@ -723,10 +844,18 @@ class AppServer:
         self._jobs.add(task)
         task.add_done_callback(self._jobs.discard)
 
+    def _role(self, ws: WebSocket) -> str:
+        """ "watcher" for a socket from Brave's watcher's origin, else "app" (AI Browser's own pages). The origin was
+        checked when the socket opened, so every open socket has a role. (The app window, Wave B, maps its cookie to
+        "app" here; the table and the filter stay.)"""
+        return "watcher" if self._origin_of.get(ws) in self._watcher_origins else "app"
+
     async def _handle(self, ws: WebSocket, queue: asyncio.Queue, message: dict) -> None:
-        kind, agent_id, agents = message.get("type"), str(message.get("id", "")), self.agents
+        if not may_send(self._role(ws), message):  # MESSAGE_RULES, before anything reads the message's fields
+            return  # dropped, with no answer: a page can't map the table by trying types
+        kind, agent_id, agents = message["type"], str(message.get("id", "")), self.agents
         if kind == "hello" and message.get("view") == "watcher" and self.brain is not None \
-                and self._origin_of.get(ws) in self._watcher_origins:
+                and self._role(ws) == "watcher":
             self._watcher = (ws, queue)  # the latest watcher wins (a reloaded extension connects again)
             queue.put_nowait({"type": "watcher_hello", "build": self.watcher_build})
             queue.put_nowait(self.brain.watch_message())
@@ -749,20 +878,19 @@ class AppServer:
                 self._job(self._skill_draft(queue, message))  # a Claude call: the socket goes on meanwhile
             elif self.skill_writer is not None:
                 self._skill_save(queue, message)
-        elif kind in CHECK_MESSAGES:  # only a click in one of our pages (or the watcher's Continue) answers a check
+        elif kind in CHECK_MESSAGES:  # a bot check's buttons; MESSAGE_RULES lets the watcher Continue, never Skip
             if kind == "check_continue":
                 await agents.continue_check(agent_id)
-            elif self._origin_of.get(ws) not in self._watcher_origins:
+            elif kind == "check_skip":
                 await agents.skip_check(agent_id)
-        elif kind in BRAVE_MESSAGES:  # (everyday Brave) only AI Browser's own pages, never the watcher's origin
-            if self._origin_of.get(ws) not in self._watcher_origins:
-                await self._brave_command(queue, kind, message)
-        elif kind in HEARING_MESSAGES:
-            if self._origin_of.get(ws) not in self._watcher_origins:  # only AI Browser's own pages talk or listen
-                self._hearing_command(ws, queue, kind, message)
+            elif kind == "check_show":
+                await self._show_check(agent_id)
+        elif kind in BRAVE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            await self._brave_command(queue, kind, message)
+        elif kind in HEARING_MESSAGES:  # only AI Browser's own pages talk or listen (MESSAGE_RULES)
+            self._hearing_command(ws, queue, kind, message)
         elif kind in TALK_MESSAGES:
-            if self._origin_of.get(ws) not in self._watcher_origins:
-                self._talk_command(queue, kind, message)
+            self._talk_command(queue, kind, message)
         elif kind == "hello":
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
@@ -806,6 +934,16 @@ class AppServer:
             queue.put_nowait({"type": "thumbs", "thumbs": {
                 agent: state["jpeg"] for agent, state in self._thumbs.items()
                 if state.get("jpeg") and agent in self.agents.agents}})
+
+    async def _show_check(self, agent_id: str) -> None:
+        """Show me, from Brave's notification: bring forward the tab where this agent's bot check waits. The app holds
+        that tab, so no page names one. A check shown in the live view (QA's sandbox) has no tab here, and without a
+        tab source nothing happens. It uses the link's one connection and never opens one."""
+        agent = self.agents.agents.get(agent_id)
+        check = agent.check if agent is not None else None
+        if check is None or check.get("live") or not check.get("target") or self.tabs is None:
+            return
+        await self.tabs.watch(check["target"])
 
     async def _from_watcher(self, kind: str, message: dict) -> None:
         if kind == "watcher_caps":
@@ -966,7 +1104,9 @@ class AppServer:
                 self.workflows.delete(message["slug"])
                 self.workflows_changed()
             elif kind == "workflow_run" and isinstance(message.get("slug"), str):
-                if isinstance(message.get("item"), str) and self.brain is not None:
+                if isinstance(message.get("item"), str):  # the inbox's Run on a message: only through the Brain,
+                    if self.brain is None:                # never a bare run in its place
+                        return
                     agent_id = await self.brain.run_workflow(message["item"], message["slug"])
                 else:
                     agent_id = await self.runner.run(message["slug"], text=_text(message.get("text")) or None)
@@ -1036,6 +1176,7 @@ class AppServer:
     def _snapshot(self) -> dict:
         return {"type": "snapshot", "agents": self.agents.snapshot()["agents"],
                 "tabs": self.tabs.tabs() if self.tabs is not None else [],
+                "tab_scope": self._tab_scope(),
                 "skills_summary": self._skills_summary(), "max_working": self.agents.max_working,
                 "default_model": self.default_model, "browser": self._browser_info(),
                 "sessions": self._session_list(), "browser_clients": self._browser_clients()}

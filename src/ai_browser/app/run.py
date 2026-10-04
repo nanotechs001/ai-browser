@@ -214,7 +214,8 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
                            "AIB_APP_EVENTS": f"{url}/agent-events"})  # each agent's own token comes from create()
         if where == "brave":  # agents browse in the user's own Brave; AI Browser is the control room
             own = own_browser_dir()  # not `folder`: that is the extension's, which the setup steps name
-            brave = BraveLink(own, tokens=server.tokens)  # its relay: the one connection every agent shares
+            # its relay: the one connection every agent shares; the watcher's id: whose profile AI Home lists
+            brave = BraveLink(own, watcher_id=extension_id_for(watcher), tokens=server.tokens)
             relay = url.replace("http://", "ws://", 1) + "/cdp"
             agents.env.update({**brave_env(own), "AIB_APP_CDP": relay})
             server.attach_brave(brave)

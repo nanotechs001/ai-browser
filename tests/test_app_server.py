@@ -439,9 +439,12 @@ async def test_check_reports_are_checked_then_reach_pages_and_the_watcher(fake_c
         agent = await server.agents.create("Flights to Manila")
         good = {**CHECK_REPORT, "agent": agent.id}
         headers = agent_headers(server, agent.id)
-        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
+        async with (connect(socket_url(server, url), origin=WATCHER) as watcher,
+                    connect(socket_url(server, url), origin=ORIGIN) as page):
             await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
             await until(watcher, lambda message: message["type"] == "watch_list")
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            await until(page, lambda message: message["type"] == "snapshot")
             async with httpx.AsyncClient() as client:
                 for bad in ({**good, "check": "dragon"}, {**good, "site": "www.google.com <b>"}, {**good, "site": "a b"},
                             {**good, "site": "www.google.com\n"}, {**good, "live": "http://evil.example/live?token=x"},
@@ -451,7 +454,9 @@ async def test_check_reports_are_checked_then_reach_pages_and_the_watcher(fake_c
                 await client.post(url + "/agent-events", json=good, headers=headers)
                 request = (await until(watcher, lambda message: message["type"] == "check_request"))[-1]
                 assert request == {"type": "check_request", "agent": agent.id, "name": "Flights to Manila",
-                                   "site": "www.google.com", "what": KINDS["google"], "target": "T1", "live": None}
+                                   "site": "www.google.com", "what": KINDS["google"], "live": None}  # no tab id
+                shown = (await until(page, lambda message: message["type"] == "check_request"))[-1]
+                assert shown["target"] == "T1"  # AI Home's own check card still has it (its Watch sends it)
                 assert agent.state == "needs_you" and agent.check["check"] == "google"
                 cleared = {"agent": agent.id, "kind": "check_cleared", "target": "T1", "adopted": False,
                            "how": "solved"}
@@ -746,6 +751,99 @@ async def test_the_watcher_may_not_hand_tabs_or_connect(fake_claude, tmp_path):
     finally:
         await watcher.close()
         await server.stop()
+
+
+async def test_the_tab_list_carries_its_scope(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    server.allow_origin(WATCHER, watcher=True)
+    brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"}])
+    brave.set_scope("watcher", 2)
+    server.attach_brave(brave)
+    try:
+        async with (connect(socket_url(server, url), origin=ORIGIN) as page,
+                    connect(socket_url(server, url), origin=WATCHER) as watcher):
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
+            assert (await recv(page))["tab_scope"] == {"profile": "watcher", "elsewhere": 2}
+            trimmed = await recv(watcher)
+            assert trimmed["type"] == "snapshot" and "tab_scope" not in trimmed and "tabs" not in trimmed
+            brave.set_scope("last_used", 3)
+            message = (await until(page, lambda m: m["type"] == "tabs"))[-1]
+            assert message["tab_scope"] == {"profile": "last_used", "elsewhere": 3}
+            assert [tab["target"] for tab in message["tabs"]] == ["U1"]
+            assert not [m for m in await quiet(watcher, 1.0) if m["type"] == "tabs" or "tab_scope" in m]
+            brave.state, brave.pages = "lost", []  # BraveLink's order: the state, the empty list, then the card
+            brave.set_scope("none", 0)
+            lost = (await until(page, lambda m: m["type"] == "tabs"))[-1]
+            assert lost["tabs"] == [] and "tab_scope" not in lost  # while Brave isn't connected: no scope at all
+        async with connect(socket_url(server, url), origin=ORIGIN) as late:
+            await late.send(json.dumps({"type": "hello", "view": "home"}))
+            assert (await recv(late))["tab_scope"] is None
+    finally:
+        await server.stop()
+    plain, plain_url = await started(fake_claude, tmp_path / "plain", EVENTS, tabs=StubTabs())
+    try:
+        async with connect(socket_url(plain, plain_url), origin=ORIGIN) as page:
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            assert (await recv(page))["tab_scope"] is None  # AI Browser's own TabWatch lists every tab
+    finally:
+        await plain.stop()
+
+
+async def test_a_replaced_tab_source_is_no_longer_heard(fake_claude, tmp_path):
+    class Source(StubTabs):  # AI Browser's own TabWatch, as the tests' stack attaches it first
+        def __init__(self):
+            super().__init__()
+            self.callbacks = []
+
+        def on_change(self, callback):
+            self.callbacks.append(callback)
+
+    old = Source()
+    server, url = await started(fake_claude, tmp_path, EVENTS, tabs=old)
+    brave = FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
+    brave.set_scope("none", 4)
+    server.attach_brave(brave)  # brave mode replaces it
+    try:
+        async with connect(socket_url(server, url), origin=ORIGIN) as page:
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            assert [tab["target"] for tab in (await recv(page))["tabs"]] == ["U1"]
+            for callback in old.callbacks:  # the old source still runs and still calls back
+                callback([{"target": "A1", "url": "https://ai-browser.example/", "title": "AI Browser's own tab"}])
+            assert not [m for m in await quiet(page, 1.0) if m["type"] == "tabs"]  # it is no longer heard
+            brave.changed()  # the current source is
+            assert [tab["target"] for tab in (await until(page, lambda m: m["type"] == "tabs"))[-1]["tabs"]] == ["U1"]
+    finally:
+        await server.stop()
+
+
+async def test_while_brave_connects_the_tab_list_claims_no_profile(tmp_path):  # final review R1
+    from fake_brave import BraveApp
+
+    app = await BraveApp(tmp_path / "home", tmp_path / "BraveSoftware" / "Brave-Browser",
+                         pages=[{"target": "U1", "url": "https://mail.example/", "title": "Mail"}]).start(connect=False)
+    app.server.allow_origin(ORIGIN)
+    app.port.hold = {"Target.getBrowserContexts"}  # the tab list's first read waits: the moment right after Allow
+    connecting = asyncio.ensure_future(app.brave.connect())
+    try:
+        await wait_for(lambda: app.brave.state == "connected" and bool(app.port.held))
+        async with connect(socket_url(app.server, app.url), origin=ORIGIN) as page:
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            snapshot = await recv(page)  # a page that loads now, while the tab list is starting
+            assert snapshot["browser"]["state"] == "connected" and snapshot["tabs"] == []
+            assert snapshot["tab_scope"] is None  # no claim about profiles before the first list
+            app.brave.set_owner("U1", {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"})
+            assert not [m for m in await quiet(page, 0.5) if m["type"] == "tabs"]  # and no list before that one
+            app.port.hold = set()
+            await app.port.answer_held()
+            await connecting
+            first = (await until(page, lambda m: m["type"] == "tabs"))[-1]
+            assert first["tab_scope"] == {"profile": "last_used", "elsewhere": 0}  # it brings its own scope
+            assert [tab["target"] for tab in first["tabs"]] == ["U1"]
+        assert app.port.sessions == 1  # one connection: Brave asked "Allow remote debugging?" once
+    finally:
+        connecting.cancel()
+        await app.stop()
 
 
 async def test_an_agents_turn_connects_a_brave_that_is_ready(fake_claude, tmp_path):

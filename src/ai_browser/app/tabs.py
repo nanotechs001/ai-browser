@@ -1,5 +1,8 @@
 """The app's own view of AI Browser: every tab, Watch (bring a tab to the front), closing an agent's tabs when the user
-closes the agent, and small thumbnails of the tabs agents work in. One CDP connection, apart from the agents' own."""
+closes the agent, and small thumbnails of the tabs agents work in. One CDP connection, apart from the agents' own.
+
+It also knows each page's browser context (its profile, or a private window), the service workers, and the context the
+browser used last, for BraveLink's one-profile list; all of it from the target list, never by attaching."""
 
 from __future__ import annotations
 
@@ -16,6 +19,15 @@ PAGE_TEXT_LIMIT = 20_000  # characters of a tab's text read for a skill draft
 REFRESH = 1.5  # seconds between full reads of the tab list: Chrome reports title changes late or not at all
 
 
+def _page(info: dict) -> dict:
+    return {"target": info["targetId"], "url": info.get("url", ""), "title": info.get("title", ""),
+            "context": info.get("browserContextId", "")}
+
+
+def _worker(info: dict) -> dict:
+    return {"url": info.get("url", ""), "context": info.get("browserContextId", "")}
+
+
 class TabWatch:
     def __init__(self, ws_url: str, extension_id: str, open_timeout: float = 10, cdp=None):
         self.ws_url = ws_url
@@ -23,7 +35,9 @@ class TabWatch:
         self.open_timeout = open_timeout
         self._given = cdp  # the relay's in-process client (brave mode): nothing to connect
         self._cdp: CDP | None = None
-        self._pages: dict[str, dict] = {}  # target id -> {"target", "url", "title"}, in the order they appeared
+        self._pages: dict[str, dict] = {}  # target id -> {"target", "url", "title", "context"}, in the order they came
+        self._workers: dict[str, dict] = {}  # service-worker target id -> {"url", "context"}: never pages
+        self.default_context: str | None = None  # defaultBrowserContextId: the profile the browser used last
         self._callbacks: list[Callable[[list[dict]], None]] = []
         self._notify: asyncio.Task | None = None
         self._poll: asyncio.Task | None = None
@@ -35,6 +49,7 @@ class TabWatch:
         self._cdp.on("Target.targetInfoChanged", self._on_target)
         self._cdp.on("Target.targetDestroyed", self._on_destroyed)
         await self._cdp.send("Target.setDiscoverTargets", {"discover": True})  # also announces the open ones
+        await self._read_default()  # the profile used last (BraveLink's fallback); a failed read leaves None
         self._poll = asyncio.create_task(self._refresh())
 
     async def close(self) -> None:
@@ -55,37 +70,75 @@ class TabWatch:
         self._callbacks.append(callback)
 
     def tabs(self) -> list[dict]:
-        """The user's and the agents' tabs; AI Browser's own pages (AI Home, the panel) are left out."""
+        """The user's and the agents' tabs; AI Browser's own pages (AI Home, the panel) are left out. Each row has
+        exactly target, url and title."""
+        return [{key: page[key] for key in ("target", "url", "title")} for page in self.pages()]
+
+    def pages(self) -> list[dict]:
+        """The same pages as tabs(), each with its browser context (for BraveLink, which never sends it on)."""
         own = f"chrome-extension://{self.extension_id}/"
         return [dict(page) for page in self._pages.values()
                 if not page["url"].startswith(own) and not page["url"].startswith("chrome://newtab")]
 
+    def worker_contexts(self, extension_id: str) -> set[str]:
+        """The contexts of that extension's running service workers (a sleeping worker isn't listed)."""
+        if not extension_id:
+            return set()
+        prefix = f"chrome-extension://{extension_id}/"
+        return {worker["context"] for worker in self._workers.values()
+                if worker["url"].startswith(prefix) and worker["context"]}
+
     def has_pages(self) -> bool:
-        """Whether AI Browser still shows anything at all (a tab, AI Home, the side panel)."""
+        """Whether AI Browser still shows anything at all (a tab, AI Home, the side panel). A worker isn't a page."""
         return bool(self._pages)
 
     def _on_target(self, params: dict, session: str | None) -> None:
         info = params.get("targetInfo", {})
         if info.get("type") == "page":
-            self._pages[info["targetId"]] = {"target": info["targetId"], "url": info.get("url", ""),
-                                             "title": info.get("title", "")}
+            self._pages[info["targetId"]] = _page(info)
+            self._changed()
+        elif info.get("type") == "service_worker" and self._workers.get(info["targetId"]) != _worker(info):
+            self._workers[info["targetId"]] = _worker(info)
             self._changed()
 
     def _on_destroyed(self, params: dict, session: str | None) -> None:
-        if self._pages.pop(params.get("targetId"), None) is not None:
+        target = params.get("targetId")
+        page = self._pages.pop(target, None)
+        worker = self._workers.pop(target, None)
+        if page is not None or worker is not None:
             self._changed()
+
+    async def _read_default(self) -> bool:
+        """Read defaultBrowserContextId; True when it changed. A failed read keeps the last value."""
+        try:
+            answer = await self._cdp.send("Target.getBrowserContexts", timeout=5)
+        except CDPError:
+            return False
+        context = answer.get("defaultBrowserContextId") or None
+        if context == self.default_context:
+            return False
+        self.default_context = context
+        return True
 
     async def _refresh(self) -> None:
         while not self._cdp.closed:
             await asyncio.sleep(REFRESH)
+            changed = await self._read_default()
             try:
                 infos = (await self._cdp.send("Target.getTargets", timeout=5))["targetInfos"]
             except CDPError:
+                if changed:
+                    self._changed()
                 continue
-            pages = {info["targetId"]: {"target": info["targetId"], "url": info.get("url", ""),
-                                        "title": info.get("title", "")} for info in infos if info.get("type") == "page"}
+            pages = {info["targetId"]: _page(info) for info in infos if info.get("type") == "page"}
+            workers = {info["targetId"]: _worker(info) for info in infos if info.get("type") == "service_worker"}
             if pages != self._pages:
                 self._pages = {**{key: pages[key] for key in self._pages if key in pages}, **pages}  # keep the order
+                changed = True
+            if workers != self._workers:
+                self._workers = workers
+                changed = True
+            if changed:
                 self._changed()
 
     def _changed(self) -> None:

@@ -18,6 +18,7 @@ const STATES = { working: "working", waiting: "waiting in line", your_turn: "you
 const agents = new Map();
 const thumbs = new Map();
 let tabs = [];
+let tabScope = null; // brave mode: {profile, elsewhere} from the app, never a title
 let skills = [];
 let summary = null;
 let maxWorking = 3;
@@ -197,6 +198,7 @@ const tabList = mountTabList($("tabs"), {
 function renderTabs() {
   tabList.render(tabs, {
     brave: browser?.kind === "brave",
+    scope: browser?.kind === "brave" && browser.state === "connected" ? tabScope : null, // only while connected
     ownerOf: (target) => { // AI Browser mode: the app's list has no owners, so they come from the agents
       const agent = owner(target);
       return agent ? { kind: "agent", name: agent.name, color: agent.color } : { kind: "you" };
@@ -421,6 +423,7 @@ function handle(message) {
       agents.clear();
       for (const agent of message.agents) agents.set(agent.id, agent);
       tabs = message.tabs || [];
+      tabScope = message.tab_scope || null;
       browser = message.browser || null;
       browserClients = message.browser_clients || [];
       renderBrowser();
@@ -459,6 +462,7 @@ function handle(message) {
       break;
     case "tabs":
       tabs = message.tabs || [];
+      tabScope = message.tab_scope || null;
       renderTabs();
       train.tabsChanged();
       break;
@@ -467,6 +471,9 @@ function handle(message) {
       renderClients();
       break;
     case "browser":
+      // A new state forgets the scope: while not connected the app sends none, and the one from before must not show
+      // in the moment after Brave connects again. The new connection's first list brings its own.
+      if (message.state !== browser?.state) tabScope = null;
       browser = { kind: message.kind, name: message.name, state: message.state, groups: message.groups };
       renderBrowser();
       renderTabs();

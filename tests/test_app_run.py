@@ -515,3 +515,32 @@ async def test_agents_end_before_the_relay_closes(fake_claude, tmp_path, monkeyp
     code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
                                               out=lambda line: None, browser="brave"), 60)
     assert code == 0 and order == ["server.stop", "brave.close"]  # no agent sees its browser vanish while it runs
+
+
+@pytest.mark.posix_only
+@CHROME
+async def test_brave_mode_gives_the_link_the_watchers_id(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import run
+    from ai_browser.appbrowser import extension_id_for
+
+    runner, _, _ = fake_claude
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    folder.mkdir(parents=True)  # Brave is installed; its switch is off
+    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
+    home, made = tmp_path / "home", []
+    real = run.BraveLink
+
+    def recording(*args, **kwargs):
+        link = real(*args, **kwargs)
+        made.append(link)
+        return link
+
+    monkeypatch.setattr(run, "BraveLink", recording)
+
+    async def ready(url, app):
+        app.process.kill()
+
+    code = await asyncio.wait_for(run.run_app(home, headless=True, claude=runner, ready=ready, out=lambda line: None,
+                                              browser="brave"), 60)
+    assert code == 0 and len(made) == 1
+    assert made[0].watcher_id == extension_id_for(home / "app" / "watcher") != ""  # the id the app allows

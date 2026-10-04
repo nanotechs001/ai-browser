@@ -180,7 +180,9 @@ The extension stays installed. From then on, AI Browser opens on AI Home.
   - Each row has **Watch**, **Chat**, **Stop** and **Close**.
 - **Your browser:** a card at the top says where agents browse and whether your Brave is connected. When Brave's
   switch is off, it shows the steps; when Brave asks "Allow remote debugging?", it says so.
-- **Tabs:** your Brave's web tabs, each marked with whose it is: an agent's, Claude Code's, the Brain's, or yours.
+- **Tabs:** the web tabs of the Brave profile the watcher is in (without the watcher, the profile you used last),
+  each marked with whose it is: an agent's, Claude Code's, the Brain's, or yours. Other profiles and private windows
+  are only counted, never listed.
   - A click brings a tab to the front.
   - **Hand over** gives one of your tabs to a new or running agent (it reads that tab and acts in it).
   - **Take back** ends that.
@@ -274,8 +276,9 @@ Switch on the servers agents may use. Nothing else reaches them. ai-browser's ow
 
 **Asking first:**
 - The first time an agent wants a tool that isn't allowed always, it waits ("needs you").
-- AI Home's agent row, the chat beside its tab, and the watcher's Brain page all show the tool and its exact input,
-  with **Allow once**, **Always allow** and **Deny**. Brave also shows a notification (Review / Deny).
+- AI Home's agent row, Mission Control and the chat beside its tab show the tool and its exact input, with **Allow
+  once**, **Always allow** and **Deny**. The watcher's Brain page in Brave shows them with **Allow once** and **Deny**
+  only, because Always allow is kept for AI Home's Tools. Brave also shows a notification (Review / Deny).
 - **Always allow** is remembered in `~/.ai-browser/tools.json`. **Forget** removes it.
 - **Stop** or **Close** denies a request that is still waiting.
 - Nothing a page or a message says can answer for you.
@@ -455,9 +458,10 @@ What happens in your Brave:
     "Bot checks");
   - a Claude Code session's tabs go in a group called "Claude Code" while `ai-browser app` runs, and in a window of
     their own otherwise.
-- **Your other tabs:** never read, listed to an agent or touched. AI Home shows them, and **Hand over** gives one to
-  an agent; **Take back** ends that at its next step. A tab the agent's own click opens from a handed tab is the
-  agent's: it sits in its group and closes with it.
+- **Your other tabs:** never read, listed to an agent or touched. AI Home shows the ones in the agents' profile (other
+  profiles and private windows only as a count), and **Hand over** gives one to an agent; **Take back** ends that at its
+  next step. A tab the agent's own click opens from a handed tab is the agent's: it sits in its group and closes with
+  it.
 - **Closing:**
   - closing an agent closes the tabs it opened; a tab you handed it stays open, ungrouped;
   - quitting `ai-browser app` leaves the groups in Brave, so nothing an agent left for you is lost;

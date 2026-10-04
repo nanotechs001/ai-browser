@@ -26,6 +26,24 @@ export function chipText(owner) {
   return owner.name || "an agent";
 }
 
+// The tab list's scope in brave mode (the server's tab_scope): which profile the rows come from, and how many of the
+// user's tabs it leaves out. Only a number reaches this page: never a title, an address or an id of those tabs.
+const SCOPE_SOURCE = {
+  last_used: "Showing the Brave profile you used last. With the watcher loaded, this list stays on the watcher's "
+    + "profile.",
+  none: "Your tabs aren't listed: AI Browser can't tell which Brave profile is yours yet.",
+};
+
+export function scopeTexts(scope) {
+  if (!scope) return { source: "", elsewhere: "" };
+  const count = Number(scope.elsewhere) || 0;
+  return {
+    source: SCOPE_SOURCE[scope.profile] || "",
+    elsewhere: count > 0
+      ? `${count} more ${count === 1 ? "tab" : "tabs"} in other profiles or private windows: not shown here.` : "",
+  };
+}
+
 // send(message): to the app; agents(): the agents a tab can be given to; newAgent(tab): Hand over → New agent…
 export function mountTabList(root, { send, agents, newAgent }) {
   const rows = new Map(); // target -> its row, built once and updated in place (a click must not be lost)
@@ -79,7 +97,18 @@ export function mountTabList(root, { send, agents, newAgent }) {
     return row;
   }
 
-  function render(tabs, { brave, ownerOf }) {
+  function line(className, text) { // a muted line after the rows, updated in place, gone when not needed
+    let node = root.querySelector(`:scope > p.${className}`);
+    if (!text) {
+      node?.remove();
+      return;
+    }
+    if (!node) node = el("p", `${className} muted`);
+    setText(node, text);
+    root.append(node); // after the rows and the empty text, in the order of the calls
+  }
+
+  function render(tabs, { brave, ownerOf, scope = null }) {
     const open = new Set(tabs.map((tab) => tab.target));
     for (const [target, row] of rows) {
       if (!open.has(target)) {
@@ -113,8 +142,12 @@ export function mountTabList(root, { send, agents, newAgent }) {
       previous = row;
     }
     if (!tabs.length) {
-      root.append(el("p", "empty", brave ? "No web pages open in your browser." : "No tabs open besides AI Home."));
+      root.append(el("p", "empty", !brave ? "No tabs open besides AI Home."
+        : scope ? "No web pages open in this profile." : "No web pages open in your browser."));
     }
+    const texts = scopeTexts(brave ? scope : null);
+    line("scope-source", texts.source);
+    line("elsewhere", texts.elsewhere);
   }
 
   return { render };

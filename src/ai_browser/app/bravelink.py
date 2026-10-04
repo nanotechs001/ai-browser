@@ -5,7 +5,11 @@ agent and every Claude Code session share, so Brave asks "Allow remote debugging
 That connection opens only right after something the user did (the app starting, Connect or Try again in AI Home, an
 agent starting a turn, a session's browser call). While it isn't connected the relay looks at the switch every few
 seconds with a TCP check alone, which never opens a debugging session. The app never attaches to, reads or pictures a
-tab of the user's: only the AI's tabs, a tab handed over, or the page the user picked in the Train form."""
+tab of the user's: only the AI's tabs, a tab handed over, or the page the user picked in the Train form.
+
+AI Home lists the user's web tabs of one profile only, the agents' (the one the watcher runs in, else the one Brave
+used last): other profiles and private windows are only counted. The AI's tabs are listed wherever they are. Context
+ids never leave this class."""
 
 from __future__ import annotations
 
@@ -19,13 +23,16 @@ from .tabs import TabWatch
 
 READABLE = {"agent", "session", "handed"}  # tabs whose picture or text the app may take
 YOU = {"kind": "you"}
+USERS = ("you", "brain")  # the user's own tabs (a Brain row is theirs): listed only in the agents' profile
+WEB = ("http://", "https://")
 __all__ = ["ALLOW_WAIT", "SWITCH_EVERY", "BraveLink"]
 
 
 class BraveLink:
-    def __init__(self, folder: Path, allow_wait: float = ALLOW_WAIT, every: float = SWITCH_EVERY,
+    def __init__(self, folder: Path, watcher_id: str = "", allow_wait: float = ALLOW_WAIT, every: float = SWITCH_EVERY,
                  tokens: Tokens | None = None):
         self.folder = Path(folder)
+        self.watcher_id = watcher_id  # the watcher's extension id; "" = no watcher, so the profile used last
         self.relay = Relay(self.folder, tokens if tokens is not None else Tokens(), allow_wait=allow_wait,
                            every=every)
         self.name = self.relay.name
@@ -34,6 +41,9 @@ class BraveLink:
         self._starting: asyncio.Task | None = None
         self._owners: dict[str, dict] = {}  # target id -> its owner (no entry: the user's)
         self._changes: list[Callable[[list[dict]], None]] = []
+        self._watcher_contexts: set[str] = set()  # every context its worker was seen in, on this connection
+        self._seen_on: TabWatch | None = None  # the connection those were seen on: a new one starts again
+        self._last = None  # (connection, rows, scope) last sent to the on_change callbacks
         self.relay.on_state(self._state_changed)  # first: the tab list follows the connection
 
     # ---- the connection (the relay's) ------------------------------------------------------------------------
@@ -110,23 +120,65 @@ class BraveLink:
         self._changes.append(callback)
 
     def _changed(self) -> None:
-        tabs = self.tabs()
+        """Call back only when the rows or the scope changed (a worker waking or sleeping changes neither), or the
+        connection did: connecting and losing it always call back. While Brave is connected and the tab list is still
+        starting, nothing is sent: the list's first round calls back."""
+        if self._watch is None and self.relay.state == "connected":
+            return
+        tabs, scope = self.tabs(), self.scope()
+        sent = (self._watch, tabs, scope)
+        if sent == self._last:
+            return
+        self._last = sent
         for callback in list(self._changes):
             with contextlib.suppress(Exception):
                 callback(tabs)
 
+    def agents_context(self) -> tuple[str | None, str]:
+        """(context, source) of the profile whose tabs AI Home lists: the one the watcher runs in ("watcher"), else
+        the one Brave used last ("last_used"), else none ("none"). A sleeping worker drops out of Brave's target list,
+        so a context it was seen in counts for the rest of this connection."""
+        watch = self._watch
+        if watch is not self._seen_on:  # a new connection (or none): what the last one saw is forgotten
+            self._seen_on, self._watcher_contexts = watch, set()
+        if watch is None:
+            return None, "none"
+        if self.watcher_id:
+            self._watcher_contexts |= watch.worker_contexts(self.watcher_id)
+        if len(self._watcher_contexts) == 1:  # in two profiles the app can't tell which one groups: the fallback
+            return next(iter(self._watcher_contexts)), "watcher"
+        if watch.default_context:
+            return watch.default_context, "last_used"
+        return None, "none"
+
+    def _shown(self, page: dict, context: str | None) -> bool:
+        owner = self._owners.get(page["target"], YOU)
+        web = page["url"].startswith(WEB)
+        if owner["kind"] in READABLE:  # the AI's tabs, wherever they are: the user must see, Watch and Take back them
+            return web or (owner["kind"] in ("agent", "session") and page["url"].startswith("about:blank"))
+        return web and context is not None and page["context"] == context
+
     def tabs(self) -> list[dict]:
-        """The user's web pages (http and https) and the AI's own blank tabs, each with its owner."""
+        """The rows AI Home may show: the user's web pages (http and https) in the agents' profile, and the AI's tabs
+        anywhere (its own blank tabs too), each with its owner. No row carries its context."""
         if self._watch is None:
             return []
-        listed = []
-        for page in self._watch.tabs():
-            owner = self._owners.get(page["target"])
-            web = page["url"].startswith(("http://", "https://"))
-            ours = owner is not None and owner["kind"] in ("agent", "session") and page["url"].startswith("about:blank")
-            if web or ours:
-                listed.append({**page, "owner": dict(owner) if owner else dict(YOU)})
-        return listed
+        context, _ = self.agents_context()
+        return [{"target": page["target"], "url": page["url"], "title": page["title"],
+                 "owner": dict(self._owners.get(page["target"], YOU))}
+                for page in self._watch.pages() if self._shown(page, context)]
+
+    def scope(self) -> dict | None:
+        """Which profile tabs() shows, and how many of the user's web pages it leaves out (other profiles and private
+        windows, which CDP can't tell apart): a number, never a title, an address or an id. None while there is no
+        tab list (not connected, or connected and the list still starting): no claim about profiles then."""
+        if self._watch is None:
+            return None
+        context, source = self.agents_context()
+        pages = self._watch.pages()
+        elsewhere = sum(1 for page in pages if page["url"].startswith(WEB)
+                        and self._owners.get(page["target"], YOU)["kind"] in USERS and not self._shown(page, context))
+        return {"profile": source, "elsewhere": elsewhere}
 
     def set_owner(self, target: str, owner: dict) -> None:
         self._owners[target] = dict(owner)
@@ -172,7 +224,10 @@ class BraveLink:
         return await self._watch.thumbnail(target)
 
     async def page_text(self, target: str, picked: bool = False) -> str:
-        """A tab's text for a skill draft: the AI's tabs, or the page the user picked in the Train form."""
-        if self._watch is None or not (picked or self._readable(target)):
+        """A tab's text for a skill draft: the AI's tabs, or the page the user picked in the Train form, which must be
+        a listed tab (never one in another profile or a private window). Nothing attaches otherwise."""
+        if self._watch is None:
+            return ""
+        if not (self._readable(target) or (picked and any(tab["target"] == target for tab in self.tabs()))):
             return ""
         return await self._watch.page_text(target)
