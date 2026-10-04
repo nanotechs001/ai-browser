@@ -108,6 +108,9 @@ class DesktopWindow:
         except DesktopError:
             await self._end_now()
             raise
+        except OSError as exc:  # the line couldn't be made (a temporary folder too deep for a socket, a full disk)
+            await self._end_now()
+            raise DesktopError(f"AI Browser's app could not start: {exc.strerror or exc}") from None
         pid = hello.get("pid")
         self.pid = pid if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 else None
 
@@ -133,7 +136,12 @@ class DesktopWindow:
             else:
                 joined.set_result((reader, writer))
 
-        server = await asyncio.start_unix_server(accept, path=str(line), limit=LINE_LIMIT)
+        try:
+            server = await asyncio.start_unix_server(accept, path=str(line), limit=LINE_LIMIT)
+        except OSError:
+            with contextlib.suppress(OSError):
+                folder.rmdir()  # nothing is left behind
+            raise
         try:
             os.chmod(line, 0o600)
             try:

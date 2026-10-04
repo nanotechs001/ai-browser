@@ -128,6 +128,23 @@ async def test_a_program_that_isnt_there_is_said_plainly(tmp_path):
     assert app.ended.is_set()
 
 
+@pytest.mark.posix_only
+async def test_a_line_that_cant_be_made_is_said_plainly_and_leaves_nothing(tmp_path, monkeypatch):
+    from ai_browser.desktop import launch, layout
+
+    home = tmp_path / "home"
+    layout.app_path(home, "darwin").mkdir(parents=True)
+    deep = tmp_path / ("a-temporary-folder-too-deep-for-a-socket-" * 3)  # past AF_UNIX's 104 bytes (108 on Linux)
+    deep.mkdir()
+    monkeypatch.setattr(launch.tempfile, "tempdir", str(deep))  # what a long TMPDIR does
+    monkeypatch.setenv("FAKE_OPEN_LOG", str(tmp_path / "open.log"))
+    app = launch.DesktopWindow(home, None, system="darwin", opener=[fake_python(), str(TESTS / "fake_open.py")])
+    with pytest.raises(launch.DesktopError, match="^AI Browser's app could not start: "):
+        await app.launch(URL)
+    assert app.ended.is_set() and not app.running and list(deep.iterdir()) == []  # no line's folder left behind
+    assert not (tmp_path / "open.log").exists()  # nothing was opened
+
+
 async def test_a_stale_app_is_built_again_before_it_starts(tmp_path, monkeypatch):  # Review Focus 5
     from ai_browser.desktop import launch
 
