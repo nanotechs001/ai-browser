@@ -125,3 +125,20 @@ async def test_the_real_app_quits_when_the_engine_goes(fake_claude, tmp_path):  
         if process is not None and process.poll() is None:
             process.kill()
         await server.stop()
+
+
+@REAL
+def test_the_assembled_app_refuses_a_debugging_port(tmp_path):
+    from ai_browser.desktop import assemble, fuses, layout
+
+    binary = Path(ELECTRON)
+    root = binary.parents[3] if sys.platform == "darwin" else binary.parent  # the folder Electron's zip unpacks to
+    home = tmp_path / "home"
+    app = assemble.build(root, home, sys.platform)  # a copy, in a throwaway home; the real codesign and sips on a Mac
+    started = subprocess.run([str(layout.executable(app, sys.platform)), f"--remote-debugging-port={free_port()}"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             timeout=30)
+    assert started.returncode == 1  # it ended by itself, before any window: the packaged app opens no such port
+    holder = layout.framework(app) if sys.platform == "darwin" else layout.executable(app, sys.platform)
+    for wire in fuses.states(holder):
+        assert wire[0] == wire[2] == wire[3] == "0"
