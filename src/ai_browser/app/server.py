@@ -342,7 +342,7 @@ class AppServer:
                  workflows: WorkflowStore | None = None, runner: WorkflowRunner | None = None,
                  skill_writer: SkillWriter | None = None, hearing: HearingService | None = None,
                  settings: Settings | None = None, port_file: Path | None = None,
-                 accounts: Accounts | None = None):
+                 accounts: Accounts | None = None, brain_account=None):
         self.home = Path(home)
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
@@ -364,6 +364,10 @@ class AppServer:
             agents.on_limit = lambda account: self._accounts_changed()  # the pickers' "at its limit until"
         self.open_terminal = open_terminal
         self._signing_in: dict[str, asyncio.Task] = {}  # account id -> the look at its sign-in
+        self.brain_account = brain_account  # the Brain's and its skill writer's calls, on the Brain's account
+        self.brain_limit: dict | None = None  # {"account", "resets_at"}: AI Home's Brain card, until a switch
+        if brain_account is not None:
+            brain_account.on_limit = self._brain_limit_hit
         self.workflows, self.runner = workflows, runner  # the user's workflows (AI Home → Workflows)
         if runner is not None:
             runner.on_change = self.workflows_changed
@@ -1532,7 +1536,8 @@ class AppServer:
                 "skills_summary": self._skills_summary(), "max_working": self.agents.max_working,
                 "default_model": self.default_model, "browser": self._browser_info(),
                 "sessions": self._session_list(), "browser_clients": self._browser_clients(),
-                "settings": self._settings_payload(), "accounts": self._account_rows()}
+                "settings": self._settings_payload(), "accounts": self._account_rows(),
+                "brain_limit": self.brain_limit}
 
     # ---- AI accounts: Settings → Accounts, the pickers and Continue on (AI Browser's own pages only) -------------
 
@@ -1541,6 +1546,21 @@ class AppServer:
 
     def _accounts_changed(self) -> None:
         self._send_all({"type": "accounts", "accounts": self._account_rows()})  # never the watcher's (WATCHER_RECEIVES)
+
+    def _brain_limit_hit(self, limit: dict) -> None:
+        """The Brain's account hit its usage limit: AI Home's Brain card asks to continue on another account."""
+        self.brain_limit = {"account": str(limit.get("account", "")), "resets_at": limit.get("resets_at")}
+        self._send_all({"type": "brain_limit", "limit": self.brain_limit})  # never the watcher's (WATCHER_RECEIVES)
+        self._accounts_changed()
+
+    def _brain_switched(self) -> None:
+        """The Brain's account changed (the card's click, or Settings): the card goes, and calls waiting at a limit
+        run once more on the new account."""
+        if self.brain_limit is not None:
+            self.brain_limit = None
+            self._send_all({"type": "brain_limit", "limit": None})
+        if self.brain_account is not None:
+            self.brain_account.switched()
 
     async def _refresh_accounts(self) -> None:
         """A page of ours opened: each account's status (kept 5 s), then the list to every page."""
@@ -1576,6 +1596,7 @@ class AppServer:
                 self.accounts.set_default(account_id)
             elif kind == "account_brain":
                 self.accounts.set_brain(account_id)
+                self._brain_switched()
         except ValueError as exc:
             queue.put_nowait({"type": "error", "text": str(exc), "request": request})
             return

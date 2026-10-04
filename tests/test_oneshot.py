@@ -107,3 +107,18 @@ async def test_text_with_half_an_emoji_still_reaches_claude(fake_claude, tmp_pat
     answer = await ask_claude("cut here: \ud83d.", claude=runner, cwd=tmp_path)
     assert answer.text == "ok" and not answer.error
     assert oneshots(log)[0]["oneshot"].startswith("cut here: ")
+
+
+async def test_ask_claude_runs_on_an_accounts_environment(fake_claude, tmp_path):
+    import os
+
+    from ai_browser.brain.oneshot import ask_claude
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([{"result": "ok"}]), encoding="utf-8")
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path / "work"), "ANTHROPIC_API_KEY": "sk-test"}
+    assert (await ask_claude("hi", claude=runner, cwd=tmp_path, env=env)).text == "ok"
+    [call] = oneshots(log)
+    assert call["config"] == str(tmp_path / "work")
+    given = json.loads(log.with_name(log.name + ".env").read_text(encoding="utf-8"))
+    assert given["ANTHROPIC_API_KEY"] is None and given["MAX_THINKING_TOKENS"] == "0"
