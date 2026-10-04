@@ -147,3 +147,13 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .signin-ways { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .signin-ways .command { display: block; font: 12px/1.45 ui-monospace, Menlo, monospace; background: var(--soft);
                         border-radius: 8px; padding: 6px 8px; word-break: break-all; user-select: all; }
+.chip.account { background: transparent; border: 1px solid var(--line); }
+.agent .moved { color: var(--ok); }
+.account-ask { border-color: var(--wait); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.account-ask p { margin: 0; }
+.account-ask-head { font-weight: 600; font-size: 14px; }
+.account-ask-buttons, .account-move { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.account-move { margin-top: 6px; }
+.account-ask button, .account-ask select, .account-move button, .account-move select { font-size: 13px;
+                                                                                        padding: 2px 10px; }
+#brain-limit { margin-bottom: 8px; }

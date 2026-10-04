@@ -118,3 +118,122 @@ async def test_the_default_and_the_brains_account_are_picked_here(home):
         assert await until(settings, f"{select}.options.length === 2")
         await settings(f"{select}.value = {json.dumps(work.id)}; {select}.dispatchEvent(new Event('change')); true")
         assert await eventually(lambda chosen=chosen: chosen() == work.id)
+
+
+RESETS = int(time.time()) + 3 * 3600
+SESSION_INIT = {**EVENTS[0], "session_id": "$session"}
+LIMIT_SCRIPT = {  # the task hits its account's limit; once moved, "Continue the task." goes on
+    "Continue the task": [SESSION_INIT, *EVENTS[1:-1], {**EVENTS[-1], "session_id": "$session"}],
+    "default": [SESSION_INIT, EVENTS[1], {"usage_limit": f"Claude AI usage limit reached|{RESETS}"}]}
+
+
+def reset_words(seconds):
+    """accountui.js's resetTime() in Python, in this computer's time zone: "3:00 pm", or "Tue 3:00 pm"."""
+    when, now = time.localtime(seconds), time.localtime()
+    clock = f"{when.tm_hour % 12 or 12}:{when.tm_min:02d} {'am' if when.tm_hour < 12 else 'pm'}"
+    if (when.tm_year, when.tm_yday) == (now.tm_year, now.tm_yday):
+        return clock
+    return f"{('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')[when.tm_wday]} {clock}"
+
+
+AGENT_ROW = "document.querySelector('#agents .agent[data-id=\"a1\"]')"
+SHOWN = f"[...{AGENT_ROW}.querySelectorAll('.account-ask button')].filter((b) => !b.hidden).map((b) => b.textContent)"
+
+
+@CHROME
+async def test_ai_home_picks_the_account_for_a_new_task(home):
+    js, stack = home
+    server, accounts = stack["server"], stack["accounts"]
+    pick = "document.getElementById('task-account')"
+    assert await until(js, f"{pick}.hidden === true")  # one account: nothing to pick
+    work, other = accounts.add("Work"), accounts.add(HOSTILE_NAME)
+    sign_in(work.folder)
+    accounts.set_limit(work.id, RESETS)
+    await server._refresh_accounts()
+    assert await until(js, f"{pick}.hidden === false && {pick}.options.length === 3")
+    options = await js(f"[...{pick}.options].map((option) => [option.value, option.textContent, option.disabled])")
+    assert options == [["default", "Default", False],
+                       [work.id, f"Work · at its limit until {reset_words(RESETS)}", False],
+                       [other.id, f"{HOSTILE_NAME} · Sign in first", True]]  # a name stays text
+    assert await js(f"{pick}.value") == "default"
+    await js(f"{pick}.value = {json.dumps(work.id)}; document.getElementById('task').value = 'check the shop';"
+             "document.getElementById('start').click(); true")
+    assert await eventually(lambda: "a1" in server.agents.agents)
+    assert server.agents.agents["a1"].account == {"id": work.id, "name": "Work"}
+    assert await until(js, f"{pick}.value === 'default'")  # back to the default for the next task
+
+
+@CHROME
+async def test_the_row_names_its_account_and_asks_at_a_limit(home):
+    js, stack = home
+    server, accounts = stack["server"], stack["accounts"]
+    stack["script"].write_text(json.dumps(LIMIT_SCRIPT), encoding="utf-8")
+    work = accounts.add("Work")
+    sign_in(work.folder)
+    await server._refresh_accounts()
+    agent = await server.agents.create("check the shop")  # on Default: it hits Default's limit
+    assert await until(js, f"!!{AGENT_ROW}?.querySelector('.account-ask')", 15)
+    assert await js(f"{AGENT_ROW}.querySelector('.chip.account').textContent") == "Default"
+    assert await js(f"{AGENT_ROW}.querySelector('.head .chip').textContent") == "paused"
+    assert await js(f"{AGENT_ROW}.querySelector('.account-ask-head').textContent") == (
+        f"Default hit its usage limit (resets {reset_words(RESETS)}).")
+    assert await js(SHOWN) == ["Continue on Work", "Wait for the reset"]
+    await js(f"{AGENT_ROW}.querySelector('.account-ask .wait').click(); true")
+    assert await js(SHOWN) == ["Continue on Work"]  # it stays paused, and Continue stays
+    await js(f"{AGENT_ROW}.querySelector('.account-ask .continue').click(); true")
+    assert await until(js, f"{AGENT_ROW}.querySelector('.moved').textContent === "
+                           "'Moved to Work with its conversation'", 15)
+    assert await js(f"{AGENT_ROW}.querySelector('.chip.account').textContent") == "Work"
+    assert agent.account["id"] == work.id
+    assert await until(js, f"{AGENT_ROW}.querySelector('.account-move .continue')?.textContent === "
+                           "'Continue on Default'")  # idle: it can be moved back
+
+
+@CHROME
+async def test_with_no_other_signed_in_account_only_wait_shows(home):
+    js, stack = home
+    server, accounts = stack["server"], stack["accounts"]
+    stack["script"].write_text(json.dumps(LIMIT_SCRIPT), encoding="utf-8")
+    accounts.add("Personal")  # not signed in
+    await server._refresh_accounts()
+    await server.agents.create("check the shop")
+    assert await until(js, f"!!{AGENT_ROW}?.querySelector('.account-ask')", 15)
+    assert await js(SHOWN) == ["Wait for the reset"]
+    assert await js(f"{AGENT_ROW}.querySelector('.account-ask .add-account').textContent") == (
+        "Add an account in Settings")
+
+
+@CHROME
+async def test_the_brains_card_continues_on_another_account(home):
+    js, stack = home
+    server, accounts = stack["server"], stack["accounts"]
+    work = accounts.add("Work")
+    sign_in(work.folder)
+    await server._refresh_accounts()
+    server._brain_limit_hit({"account": "default", "resets_at": None})
+    card = "document.getElementById('brain-limit')"
+    assert await until(js, f"{card}.hidden === false")
+    assert await js(f"{card}.querySelector('.account-ask-head').textContent") == (
+        "The Brain hit its limit on Default. Continue on Work?")
+    await js(f"{card}.querySelector('.continue').click(); true")
+    assert await eventually(lambda: accounts.brain_id() == work.id)
+    assert await until(js, f"{card}.hidden === true")
+
+
+@CHROME
+async def test_the_tools_section_shows_one_accounts_tools_at_a_time(home):
+    js, stack = home
+    server, accounts = stack["server"], stack["accounts"]
+    work = accounts.add("Work")
+    (Path(work.folder) / ".claude.json").write_text(json.dumps({"mcpServers": {
+        "jira": {"type": "http", "url": "https://mcp.example/jira"}}}), encoding="utf-8")
+    await server._refresh_accounts()
+    await js("document.getElementById('tools-section').open = true;"
+             "document.getElementById('tools-section').dispatchEvent(new Event('toggle')); true")
+    pick = "document.querySelector('#tools .tools-account')"
+    assert await until(js, f"{pick}?.hidden === false && {pick}.options.length === 2")
+    await js(f"{pick}.value = {json.dumps(work.id)}; {pick}.dispatchEvent(new Event('change')); true")
+    assert await until(js, "document.querySelector('#tools .tool-server')?.dataset.name === 'jira'")
+    await js("document.querySelector('#tools .tool-server .on').click(); true")
+    assert await eventually(lambda: server.agents.tools_for(work.id).enabled() == {"jira"})
+    assert stack["tools"].enabled() == set()  # Default's switches are its own

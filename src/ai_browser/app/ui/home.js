@@ -1,5 +1,6 @@
 // AI Home: every agent and what it is doing, every tab, and all of Claude's skills. Everything from Claude, pages or
 // skills is set as text; thumbnails are JPEG data the app made from Chrome screenshots.
+import { askBox, askKey, brainCard, fillPicker, pickDefault } from "./accountui.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { connect } from "./link.js";
@@ -30,6 +31,8 @@ let defaultModel = "sonnet"; // ai-browser app --model, until the user picks one
 let browser = null; // where agents browse: {kind, name, state, groups}
 let browserClients = []; // what uses the user's browser through AI Browser's one connection (the relay)
 let handing = null; // one of the user's tabs the next new task starts in (Hand over → New agent…)
+let accountRows = []; // Settings → Accounts as the app lists them: names and "signed in", never an email
+let brainLimit = null; // the Brain's account hit its usage limit: {account, resets_at}, until the Brain is moved
 const WINDOWS_TAKE_FOCUS = false; // Task 1's by-hand check: true if each new AI window comes to the front
 const STEPS = (name) => [`In ${name}, open ${name === "Brave" ? "brave" : "chrome"}://inspect/#remote-debugging.`,
   "Tick \"Allow remote debugging for this browser instance\".",
@@ -105,9 +108,10 @@ function makeAgentRow(id) {
   const main = el("div", "main");
   const head = el("div", "head");
   const parts = { dot: el("span", "dot"), name: el("span", "name"), state: el("span", "chip"),
-                  status: el("div", "status"), last: el("div", "last"), totals: el("div", "status totals"),
-                  thumb: el("img", "thumb") };
-  head.append(parts.dot, parts.name, parts.state);
+                  account: el("span", "chip account"), status: el("div", "status"), moved: el("div", "status moved"),
+                  last: el("div", "last"), totals: el("div", "status totals"), thumb: el("img", "thumb"),
+                  ask: null, askKey: "" };
+  head.append(parts.dot, parts.name, parts.state, parts.account);
   const buttons = el("div", "buttons");
   parts.watch = button("watch", "Watch", () => {
     const agent = agents.get(id);
@@ -118,7 +122,7 @@ function makeAgentRow(id) {
   parts.close = button("close", "Close", () => link.send({ type: "close", id }));
   parts.close.title = "End this agent and close the tabs it opened (your own tabs stay open)";
   buttons.append(parts.watch, parts.chat, parts.stop, parts.close);
-  main.append(head, parts.status, parts.last, parts.totals, buttons);
+  main.append(head, parts.status, parts.moved, parts.last, parts.totals, buttons);
   parts.thumb.alt = "";
   parts.thumb.hidden = true;
   row.append(main, parts.thumb);
@@ -136,8 +140,20 @@ function fillAgentRow(row, agent) {
   row.style.borderLeftColor = color;
   parts.dot.style.background = color;
   setText(parts.name, agentLabel(agent));
-  setText(parts.state, STATES[agent.state] || agent.state);
-  parts.state.className = `chip ${agent.state}`;
+  const paused = Boolean(agent.limit) && agent.state === "failed"; // at a usage limit: paused, not failed
+  setText(parts.state, paused ? "paused" : STATES[agent.state] || agent.state);
+  parts.state.className = `chip ${paused ? "waiting" : agent.state}`;
+  setText(parts.account, agent.account?.name || "");
+  parts.account.hidden = accountRows.length < 2; // one account: nothing to tell apart
+  setText(parts.moved, agent.moved || "");
+  parts.moved.hidden = !agent.moved;
+  const key = askKey(agent, accountRows); // its ask at a limit, or Continue on while it is idle
+  if (key !== parts.askKey) {
+    parts.ask?.remove();
+    parts.ask = askBox(agent, accountRows, (message) => link.send(message));
+    if (parts.ask) row.querySelector(".main").append(parts.ask);
+    parts.askKey = key;
+  }
   setText(parts.status, agent.status || "");
   parts.status.hidden = !agent.status;
   setText(parts.last, agent.last_action || "");
@@ -222,6 +238,21 @@ function renderTabs() {
       return agent ? { kind: "agent", id: agent.id, name: agent.name, color: agent.color } : { kind: "you" };
     },
   });
+}
+
+function defaultAccount() { // the account new agents use: a workflow's servers are its servers
+  return accountRows.find((row) => row.default)?.id || "default";
+}
+
+function renderBrainLimit() {
+  brainCard($("brain-limit"), brainLimit, accountRows, (message) => link.send(message));
+}
+
+function renderAccounts() { // the Account picker, every row's ask, the Brain's card, and the Tools page's picker
+  fillPicker($("task-account"), accountRows);
+  tools.setAccounts(accountRows);
+  renderBrainLimit();
+  renderAgents();
 }
 
 function setHanding(tab) {
@@ -417,15 +448,17 @@ function handle(message) {
   if (message.type === "brain_snapshot" || message.type === "brain_state") {
     watchSites = message.watch_list || [];
     workflows.options();
-  } else if (message.type === "tools_snapshot") {
+  } else if (message.type === "tools_snapshot" && (message.account || "default") === defaultAccount()) {
     switchedOn = (message.servers || []).filter((server) => server.enabled);
     workflows.options();
   }
   switch (message.type) {
     case "snapshot":
+      accountRows = message.accounts || [];
+      brainLimit = message.brain_limit || null;
       brain.refresh(); // a new connection: the Brain's list, the workflows and the tools again too
       workflows.refresh();
-      link.send({ type: "tools" });
+      link.send({ type: "tools", account: defaultAccount() }); // the servers a workflow may use
       agents.clear();
       for (const agent of message.agents) agents.set(agent.id, agent);
       tabs = message.tabs || [];
@@ -441,11 +474,24 @@ function handle(message) {
       renderAgents();
       renderTabs();
       renderSkills();
+      renderAccounts();
+      link.send({ type: "accounts" }); // each account's status, now
       link.send({ type: "skills" });
       if (chatAgent) link.send({ type: "events", id: chatAgent });
       break;
     case "settings":
       applySettings(message);
+      break;
+    case "accounts": {
+      const before = defaultAccount();
+      accountRows = message.accounts || [];
+      if (defaultAccount() !== before) link.send({ type: "tools", account: defaultAccount() }); // its servers
+      renderAccounts();
+      break;
+    }
+    case "brain_limit":
+      brainLimit = message.limit || null;
+      renderBrainLimit();
       break;
     case "agent":
       agents.set(message.agent.id, message.agent);
@@ -507,6 +553,7 @@ function handle(message) {
         for (const input of $("skills-pick").querySelectorAll("input:checked")) input.checked = false;
         updatePicked();
         setHanding(null);
+        pickDefault($("task-account"), accountRows);
       }
       break;
     case "error":
@@ -525,8 +572,9 @@ function start() {
   if (pending) return; // one Start, one agent
   pending = `r${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   $("start").disabled = true;
+  const account = $("task-account").hidden ? {} : { account: $("task-account").value }; // the picked account
   const sent = link.send({ type: "new_task", text, skills: pickedSkills(), model: $("task-model").value,
-    request: pending, ...(handing ? { adopt: handing.target } : {}) });
+    request: pending, ...account, ...(handing ? { adopt: handing.target } : {}) });
   if (!sent) {
     finishRequest();
     flash("Not connected: is `ai-browser app` running?");
