@@ -655,6 +655,50 @@ async def test_aib_chrome_dir_naming_another_browser_goes_direct(monkeypatch, tm
         await app.stop()
 
 
+async def test_a_direct_question_stays_open_and_the_next_call_joins_it(monkeypatch, tmp_path):
+    """Without the app a session connects by itself, and Brave's question outlives a handshake given up on (see
+    app/cdprelay.py). So a call waits CHROME_ALLOW_WAIT for the answer, then says Brave is still asking, and the next
+    call joins the same handshake: one question, however long the user takes."""
+    monkeypatch.setattr(engine_module, "CHROME_ALLOW_WAIT", 0.5)
+    port = FakePort(tmp_path / "BraveSoftware" / "Brave-Browser", answer="silent")
+    await port.start()
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(port.folder))
+    engine = Engine(home=tmp_path / "home", catalog=Catalog([], set()))  # no link.json: the app isn't running
+    try:
+        for _ in range(2):
+            text = (await engine.tabs("list")).text
+            assert 'Brave is asking "Allow remote debugging?"' in text and port.sessions == 1, text
+        port.answer = "accept"
+        port.release.set()  # the user clicks Allow, however late
+        assert await until(lambda: port.socket is not None)
+        ok(await engine.tabs("list"))  # the connection that question opened
+        assert port.sessions == 1
+    finally:
+        await engine.close()
+        await port.stop()
+
+
+async def test_a_session_that_ends_while_brave_asks_leaves_no_connection_behind(monkeypatch, tmp_path):
+    import asyncio
+
+    monkeypatch.setattr(engine_module, "CHROME_ALLOW_WAIT", 0.3)
+    port = FakePort(tmp_path / "BraveSoftware" / "Brave-Browser", answer="silent")
+    await port.start()
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(port.folder))
+    engine = Engine(home=tmp_path / "home", catalog=Catalog([], set()))
+    try:
+        assert "is asking" in (await engine.tabs("list")).text
+        await engine.close()  # the session ends while Brave still asks
+        port.answer = "accept"
+        port.release.set()  # a late Allow
+        await asyncio.sleep(0.5)
+        assert port.socket is None or port.socket.state.name == "CLOSED"  # no open connection that nobody holds
+    finally:
+        await port.stop()
+
+
 async def test_take_back_reaches_the_engine_through_the_relay_at_once(monkeypatch, tmp_path):
     import ai_browser.agentlink as agentlink
 

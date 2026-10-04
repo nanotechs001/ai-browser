@@ -380,3 +380,5 @@ async def test_the_browser_card_says_one_question(home):
     assert await until(js, f"{note} === {ready}")
     brave.set_state("asking")
     assert await until(js, f"{note}.includes('Everything waiting for Brave shares this one question.')")
+    brave.set_state("refused")  # only a no: the question never runs out of time (app/cdprelay.py)
+    assert await until(js, f"{note} === 'Brave said no.'")
