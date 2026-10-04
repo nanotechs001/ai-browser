@@ -434,3 +434,30 @@ async def test_a_private_window_is_never_listed_in_a_throwaway_chrome(tmp_path):
         process.terminate()
         process.wait(timeout=15)
         stop_pages()
+
+
+async def test_brave_link_leaves_out_the_apps_own_pages(tmp_path, monkeypatch):
+    from ai_browser.app import bravelink
+    from ai_browser.app.tabs import TabWatch
+    from fake_brave import FakePort
+
+    made = []
+
+    class Recording(TabWatch):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(bravelink, "TabWatch", Recording)
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder)
+    await port.start()
+    link = bravelink.BraveLink(folder, allow_wait=2, every=0.1, app_origin="http://127.0.0.1:8792")
+    await link.start()
+    try:
+        await link.connect()
+        assert link.app_origin == "http://127.0.0.1:8792"
+        assert made and made[-1].hidden_origin == "http://127.0.0.1:8792"  # a 403 page the user opened in Brave
+    finally:
+        await link.close()
+        await port.stop()

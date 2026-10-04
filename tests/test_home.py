@@ -78,7 +78,7 @@ async def stack(fake_claude, tmp_path):
     folder = prepare_extension(home, url, server.token)
     app = launch_app_browser(tmp_path / "profile", folder, headless=True)
     server.allow_origin(f"chrome-extension://{app.extension_id}")
-    watch = TabWatch(app.ws_url, app.extension_id)
+    watch = TabWatch(app.ws_url, f"chrome-extension://{app.extension_id}")
     await watch.start()
     server.attach_tabs(watch)
     agents.close_tabs = watch.close_targets

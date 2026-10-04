@@ -225,7 +225,7 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
             agents.close_tabs = brave.close_targets
             link_file = write_link(home, url, server.session_token, relay, own)
             await brave.start()  # looks at the switch; it never connects by itself
-        watch = TabWatch(app.ws_url, app.extension_id)  # AI Browser's own tabs: its last window closing ends the app
+        watch = TabWatch(app.ws_url, f"chrome-extension://{app.extension_id}")  # AI Browser's own tabs: its last window closing ends the app
         await watch.start()
         if brave is None:
             server.attach_tabs(watch)

@@ -23,7 +23,7 @@ def test_platform_markers_skip_with_their_reason():
     def item(*markers, fixtures=()):
         return SimpleNamespace(keywords={name: True for name in markers}, fixturenames=list(fixtures))
 
-    assert PIPE_FIXTURES == {"stack", "watcher", "app_browser", "app_engine"}
+    assert PIPE_FIXTURES == {"stack", "watcher", "app_engine"}
     assert platform_skip(item("posix_only"), windows=True) == POSIX_ONLY
     assert platform_skip(item("posix_only"), windows=False) is None
     for fixture in sorted(PIPE_FIXTURES):  # they launch AI Browser over the DevTools pipe

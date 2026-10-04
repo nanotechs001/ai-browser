@@ -24,7 +24,7 @@ def _docker_unavailable() -> str | None:
 
 POSIX_ONLY = "needs macOS or Linux (file descriptors 3 and 4, or the DevTools pipe)"
 WINDOWS_ONLY = "Windows behaviour (junctions, msvcrt, Win32 APIs)"
-PIPE_FIXTURES = {"stack", "watcher", "app_browser", "app_engine"}  # they launch AI Browser over the DevTools pipe
+PIPE_FIXTURES = {"stack", "watcher", "app_engine"}  # they launch AI Browser over the DevTools pipe
 
 
 def platform_skip(item, windows: bool) -> str | None:
