@@ -790,6 +790,33 @@ async def test_the_tab_list_carries_its_scope(fake_claude, tmp_path):
         await plain.stop()
 
 
+async def test_a_replaced_tab_source_is_no_longer_heard(fake_claude, tmp_path):
+    class Source(StubTabs):  # AI Browser's own TabWatch, as the tests' stack attaches it first
+        def __init__(self):
+            super().__init__()
+            self.callbacks = []
+
+        def on_change(self, callback):
+            self.callbacks.append(callback)
+
+    old = Source()
+    server, url = await started(fake_claude, tmp_path, EVENTS, tabs=old)
+    brave = FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
+    brave.set_scope("none", 4)
+    server.attach_brave(brave)  # brave mode replaces it
+    try:
+        async with connect(socket_url(server, url), origin=ORIGIN) as page:
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            assert [tab["target"] for tab in (await recv(page))["tabs"]] == ["U1"]
+            for callback in old.callbacks:  # the old source still runs and still calls back
+                callback([{"target": "A1", "url": "https://ai-browser.example/", "title": "AI Browser's own tab"}])
+            assert not [m for m in await quiet(page, 1.0) if m["type"] == "tabs"]  # it is no longer heard
+            brave.changed()  # the current source is
+            assert [tab["target"] for tab in (await until(page, lambda m: m["type"] == "tabs"))[-1]["tabs"]] == ["U1"]
+    finally:
+        await server.stop()
+
+
 async def test_an_agents_turn_connects_a_brave_that_is_ready(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     brave = FakeBrave([], state="off")

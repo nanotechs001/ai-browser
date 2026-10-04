@@ -300,7 +300,11 @@ class AppServer:
     def attach_tabs(self, tabs) -> None:
         """The tab source (AI Browser's TabWatch, or BraveLink in brave mode): the tab list, Watch and thumbnails."""
         self.tabs = tabs
-        tabs.on_change(lambda listing: self._send_all(self._tabs_message(listing)))
+        tabs.on_change(lambda listing: self._tabs_changed(tabs, listing))
+
+    def _tabs_changed(self, source, listing: list[dict]) -> None:
+        if self.tabs is source:  # a source replaced since (brave mode attached after it) is no longer heard
+            self._send_all(self._tabs_message(listing))
 
     def _tab_scope(self) -> dict | None:
         """BraveLink's {"profile", "elsewhere"}: which profile the list shows, and how many of the user's tabs it
