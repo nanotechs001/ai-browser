@@ -86,6 +86,9 @@ Connect, gave an agent a task, asked Claude Code to browse, or opened {name} aga
 {name} asks at any other time, it isn't AI Browser: click Deny, unless you just started another browser tool
 yourself.
 Once the switch is on, AI Home's browser card has a Connect button."""
+LEFT_ASKING = ('{name} is still showing "Allow remote debugging?" from this AI Browser: click Cancel there. AI Browser '
+               "has closed, so Allow would connect nothing and keep {name}'s \"controlled by automated test software\" "
+               "bar up until {name} restarts.")
 reveal = reveal_folder  # a file manager window with the extension folder selected (tests replace it)
 
 
@@ -263,6 +266,7 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
                 break
         return 0
     finally:
+        asking = brave is not None and brave.state == "asking"  # Brave's question outlives this run (app/cdprelay.py)
         if ticker is not None:
             ticker.cancel()
         if link_file is not None:
@@ -271,6 +275,8 @@ async def _run(home: Path, model: str, headless: bool, claude: str | Sequence[st
         await server.stop()  # every agent's Claude Code process ends, then their connections (1001)
         if brave is not None:
             await brave.close()  # then the one connection: the agents' tabs and groups stay in Brave
+        if asking:
+            out(LEFT_ASKING.format(name=brave.name))
         if watch is not None:
             await watch.close()
         if app is not None:

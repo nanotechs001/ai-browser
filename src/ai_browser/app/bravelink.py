@@ -51,7 +51,7 @@ class BraveLink:
         await self.relay.start()
 
     async def connect(self, why: str = "connect", identity: str = "") -> None:
-        """Ask Brave for the one connection: Brave asks the user, who has up to ALLOW_WAIT seconds to click Allow.
+        """Ask Brave for the one connection: Brave asks the user once, and the question stays until they answer.
         `why` is "start", "connect" (AI Home's Connect or Try again) or "turn" (an agent's turn, its id in
         `identity`)."""
         if await self.relay.open(why, identity):

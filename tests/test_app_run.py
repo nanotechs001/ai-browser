@@ -371,6 +371,35 @@ async def test_in_brave_mode_the_app_shows_the_switch_and_writes_link_json(fake_
     assert not (home / "app" / "link.json").exists()  # removed at exit
 
 
+@pytest.mark.posix_only
+@CHROME
+async def test_quitting_while_brave_asks_says_to_click_cancel(fake_claude, tmp_path, monkeypatch):
+    """Brave's question outlives the app that asked (app/cdprelay.py): an Allow after AI Browser has quit opens a
+    connection nobody holds, and Brave's bar then stays until Brave restarts. So quitting while it asks says so."""
+    from ai_browser.app import run
+    from fake_brave import FakePort, until
+
+    runner, _, _ = fake_claude
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder, answer="silent")  # the switch is on, and nobody answers Brave's question
+    await port.start()
+    monkeypatch.setenv("AIB_CHROME_DIR", str(folder))
+    lines = []
+
+    async def ready(url, app):
+        assert await until(lambda: port.sessions == 1)  # the app asked as it started
+        app.process.kill()  # the user closes AI Browser while Brave still asks
+
+    try:
+        code = await asyncio.wait_for(run.run_app(tmp_path / "home", headless=True, claude=runner, ready=ready,
+                                                  out=lines.append, browser="brave"), 60)
+    finally:
+        await port.stop()
+    assert code == 0 and port.sessions == 1
+    assert any('Brave is still showing "Allow remote debugging?"' in line and "click Cancel" in line
+               for line in lines), lines
+
+
 async def test_a_bad_browser_choice_is_refused(tmp_path):
     from ai_browser.app.run import run_app
 

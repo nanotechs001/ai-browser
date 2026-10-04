@@ -97,6 +97,17 @@ def _alive(pid: int) -> bool:
     return platforms.pid_alive(pid)
 
 
+_CLOSING: set[asyncio.Task] = set()  # closes of direct connections nobody uses any more, kept until they finish
+
+
+def _close_if_allowed(asking: asyncio.Future) -> None:
+    """A done-callback for a direct handshake nobody waits for: if the user allowed it, close the connection at once."""
+    if not asking.cancelled() and asking.exception() is None:
+        task = asyncio.ensure_future(asking.result().close())
+        _CLOSING.add(task)
+        task.add_done_callback(_CLOSING.discard)
+
+
 def _clean(text: str) -> str:
     """Replace lone UTF-16 surrogates (half an emoji) so tool text is always valid UTF-8."""
     return re.sub("[\ud800-\udfff]", "�", text)
@@ -231,6 +242,7 @@ class Engine:
             cdp = await self._through_relay(route)
             self._relayed = self._via_relay = True
             self._direct_ok = False
+            self._drop_direct()
         else:
             name = self._browser_name() if mode == "chrome" else "Chrome"
             cdp = await self._direct(ws_url, name)
@@ -321,6 +333,15 @@ class Engine:
                               "\"Allow remote debugging?\", click Allow, then try again") from None
         self._asking.pop(ws_url, None)
         return cdp
+
+    def _drop_direct(self) -> None:
+        """The app's relay serves this session now. A connection the session's own question opened is closed, not held
+        unused (the browser would count two, and its bar would come back whenever one opened or closed). A question
+        still open is left to the user's answer, since ending its handshake would leave it on screen with nothing
+        behind it; if they allow it, that connection closes at once."""
+        for asking in self._asking.values():
+            asking.add_done_callback(_close_if_allowed)
+        self._asking.clear()
 
     async def _through_relay(self, route: Route) -> CDP:
         """The app's relay: an agent with its own token; a session says hello first, for its token. An error here is

@@ -780,6 +780,8 @@ interfaces, **Texts**.
     `chrome.inspect_address`):
     - `off`: "{name}'s remote-debugging switch is off: the user turns it on at {inspect}";
     - `refused`: "{name} said no to AI Browser's connection: ask the user to click Try again in AI Home";
+    - `asking`, once the client has waited `ALLOW_WAIT` (amendment): '{name} is asking "Allow remote debugging?"
+      for AI Browser: ask the user to click Allow there, then try again (it is the one question, for everyone)';
     - `ready` or `lost` with no right to open: "AI Browser isn't connected to {name}: ask the user to click Connect in
       AI Home";
     - quitting: "AI Browser is quitting".

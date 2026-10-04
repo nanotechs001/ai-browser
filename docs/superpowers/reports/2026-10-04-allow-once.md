@@ -72,11 +72,45 @@ Each test was seen failing first, for the stated reason, and then passing:
 - Ruling: the fake port gains the answer "vanish" (the handshake ends with no answer) for the cut-short test — cost if
   wrong: none (a test helper).
 
+## Final review and the fix pass
+
+A fresh reviewer (opus) said "Ready to merge" and listed five Minor findings. It checked the fix against Chromium's
+sources and a real headless Chrome (one question held 70 s), and all five mutations it was asked to try were caught.
+Re-graded by what the user gets, these were fixed, each test seen failing first:
+- **Fixed: quitting while Brave asks leaves the question on screen.** An Allow there afterwards pins the bar (the
+  user's exact symptom). The app now prints at quit: 'Brave is still showing "Allow remote debugging?" from this AI
+  Browser: click Cancel there…'. Test: `test_quitting_while_brave_asks_says_to_click_cancel`.
+- **Fixed: a session that asked by itself before the app started.** After Allow, it kept its own connection unused, so
+  Brave counted two and its bar came back whenever either one opened or closed. Once the app serves the session, that
+  connection is closed (a question still open is left to the user, and closed the moment it is allowed). Test:
+  `test_a_session_that_asked_before_the_app_started_holds_no_second_connection`.
+- **Fixed: two behaviours no test pinned.** A dropped direct connection is asked for again, never reused, and a
+  connection allowed after the last call closes with the session. Tests:
+  `test_a_direct_connection_that_dropped_asks_again_instead_of_reusing_it` and
+  `test_a_connection_allowed_after_the_last_call_closes_with_the_session`. Each failed under its mutation.
+- **Fixed:** the fake port no longer drops a waiting handshake after 10 s (Brave doesn't); `bravelink`'s docstring and
+  the spec's list of 409 texts; and the session-end test's name (it checks the session's own socket).
+
+**Affected files after the fix pass:** test_cdprelay, test_bravelink, test_engine, test_home, test_app_server,
+test_cdprelay_chrome, test_app_run and test_approval_mode: 266 passed, 1 skipped (Windows only).
+
+**Rulings on what the reviewer set aside:**
+- Ruling: if the window holding Brave's question closes without an answer and Chromium doesn't count that as a Deny
+  (not in the sources read), the relay waits until Brave quits — stands: AI Home shows "waiting for Allow" the whole
+  time, and quitting Brave ends it — cost if wrong: "asking" until Brave restarts.
+- Ruling: turning the switch off and on while Brave asks leaves a dead question on screen — stands: that is
+  Chromium's, and answering it does nothing — cost if wrong: none.
+- Ruling: the bar on screen is the user's check — a headless browser can't show it, and nothing here may click
+  Allow — cost if wrong: the on-screen check finds it.
+
 ## Deferred minors
 
-- minor (deferred): when the app quits while Brave is still asking, the question stays, and an Allow there afterwards
-  opens a connection nobody holds (the bar stays until Brave restarts). A line in the terminal at quit could tell the
-  user to click Cancel there.
+- minor (deferred): if a client's 60 s wait ends at the same moment as Allow, its 409 says "click Connect" while the
+  state is already "connected"; the next call works.
+- minor (deferred): the setup text's "Only click Allow right after you started AI Browser…" reads a little oddly now
+  that the app's question can wait; AI Home's "waiting for Allow" says which question is the app's.
+- minor (deferred): a session that asked by itself before the app started still makes two questions (both were asked
+  before either was answered); its connection no longer lingers.
 
 ## The user's check
 

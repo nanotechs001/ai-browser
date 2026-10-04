@@ -38,7 +38,8 @@ class FakePort:
         self._targets = self._sessions = 0
 
     async def start(self):
-        self.server = await serve(self._handler, "127.0.0.1", 0, process_request=self._process, max_size=None)
+        self.server = await serve(self._handler, "127.0.0.1", 0, process_request=self._process, max_size=None,
+                                  open_timeout=None)  # like Brave: a handshake waits for its answer
         port = self.server.sockets[0].getsockname()[1]
         self.folder.mkdir(parents=True, exist_ok=True)
         (self.folder / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/fake\n", encoding="utf-8")

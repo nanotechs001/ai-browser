@@ -679,7 +679,9 @@ async def test_a_direct_question_stays_open_and_the_next_call_joins_it(monkeypat
         await port.stop()
 
 
-async def test_a_session_that_ends_while_brave_asks_leaves_no_connection_behind(monkeypatch, tmp_path):
+async def test_a_session_that_ends_while_brave_asks_keeps_no_connection_open(monkeypatch, tmp_path):
+    """The session's own socket closes when it ends. (Brave's question may stay on screen, and an Allow there
+    afterwards is Brave's to clear: see app/cdprelay.py.)"""
     import asyncio
 
     monkeypatch.setattr(engine_module, "CHROME_ALLOW_WAIT", 0.3)
@@ -697,6 +699,66 @@ async def test_a_session_that_ends_while_brave_asks_leaves_no_connection_behind(
         assert port.socket is None or port.socket.state.name == "CLOSED"  # no open connection that nobody holds
     finally:
         await port.stop()
+
+
+async def test_a_connection_allowed_after_the_last_call_closes_with_the_session(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine_module, "CHROME_ALLOW_WAIT", 0.3)
+    port = FakePort(tmp_path / "BraveSoftware" / "Brave-Browser", answer="silent")
+    await port.start()
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(port.folder))
+    engine = Engine(home=tmp_path / "home", catalog=Catalog([], set()))
+    try:
+        assert "is asking" in (await engine.tabs("list")).text
+        port.answer = "accept"
+        port.release.set()  # Allow, after the call stopped waiting: nothing has used the connection yet
+        assert await until(lambda: port.socket is not None and port.socket.state.name == "OPEN")
+        await engine.close()
+        assert await until(lambda: port.socket.state.name == "CLOSED")
+    finally:
+        await port.stop()
+
+
+async def test_a_direct_connection_that_dropped_asks_again_instead_of_reusing_it(monkeypatch, tmp_path):
+    port = FakePort(tmp_path / "BraveSoftware" / "Brave-Browser")
+    await port.start()
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(port.folder))
+    engine = Engine(home=tmp_path / "home", catalog=Catalog([], set()))
+    try:
+        ok(await engine.tabs("list"))
+        assert port.sessions == 1
+        await port.drop()  # the connection goes while the port file stays the same (the switch, off and on)
+        assert await until(lambda: engine.cdp is not None and engine.cdp.closed)
+        assert ok(await engine.tabs("list")).startswith("(reconnected to your Brave") and port.sessions == 2
+    finally:
+        await engine.close()
+        await port.stop()
+
+
+async def test_a_session_that_asked_before_the_app_started_holds_no_second_connection(monkeypatch, tmp_path):
+    """A session asked Brave by itself, then the app started and asked too, and the user allowed both. The session's
+    next call goes through the app, and the connection its own question opened is closed rather than held unused:
+    Brave would count two, and its bar would come back whenever one of them opened or closed."""
+    monkeypatch.setattr(engine_module, "CHROME_ALLOW_WAIT", 0.3)
+    app = await BraveApp(tmp_path / "home", brave_folder(tmp_path), answer="silent").start(connect=False)
+    monkeypatch.setenv("AIB_BROWSER", "chrome")
+    monkeypatch.setenv("AIB_CHROME_DIR", str(app.folder))
+    engine = Engine(home=app.home, catalog=Catalog([], set()))  # no link.json yet: it connects by itself
+    try:
+        assert "is asking" in (await engine.tabs("list")).text
+        app.server.connect_brave("start")  # the app starts, and asks too
+        assert await until(lambda: app.brave.state == "asking")
+        app.write_link()
+        app.port.answer = "accept"
+        app.port.release.set()  # the user clicks Allow on both
+        assert await until(lambda: app.brave.state == "connected")
+        assert await until(lambda: sum(c.state.name == "OPEN" for c in app.port.server.connections) == 2)
+        ok(await engine.tabs("list"))  # through the app now
+        assert await until(lambda: sum(c.state.name == "OPEN" for c in app.port.server.connections) == 1)
+    finally:
+        await engine.close()
+        await app.stop()
 
 
 async def test_take_back_reaches_the_engine_through_the_relay_at_once(monkeypatch, tmp_path):
