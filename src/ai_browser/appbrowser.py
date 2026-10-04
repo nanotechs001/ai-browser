@@ -31,7 +31,8 @@ from .extension_id import extension_id_for, extension_path
 from .chrome import ChromeError, chrome_binary, find_ws_url
 from .syncdir import sync_folder, write_atomic
 
-EXTENSION_SOURCE = Path(__file__).with_name("app") / "extension"
+UI_SOURCE = Path(__file__).with_name("app") / "ui"  # AI Home, Mission Control and the scripts they share
+EXTENSION_SOURCE = Path(__file__).with_name("app") / "extension"  # the manifest, the worker and the side panel
 START_TIMEOUT = 20  # seconds for Chrome to start and open its debugging port
 ALREADY_OPEN = "AI Browser is already open (profile {}), maybe from an earlier run: quit it ({}), then start again"
 PIPE_ON_WINDOWS = ("installing the extension over the DevTools pipe needs macOS or Linux; on Windows, load it once "
@@ -51,14 +52,17 @@ def app_profile(home: Path) -> Path:
     return Path(home) / "browser"
 
 
+def _files(source: Path) -> dict[str, bytes]:
+    return {path.relative_to(source).as_posix(): path.read_bytes() for path in sorted(source.rglob("*"))
+            if path.is_file() and not path.name.startswith(".") and "__pycache__" not in path.parts}
+
+
 def prepare_extension(home: Path, server_url: str, token: str) -> Path:
     """The side panel at home/app/extension (a fixed path keeps its ID), with the server's address and token. The
     folder is updated in place: on Windows a removal fails while anything holds a file open (a Defender scan, an
     AI Browser left from an earlier run)."""
     folder = Path(home) / "app" / "extension"
-    files = {path.relative_to(EXTENSION_SOURCE).as_posix(): path.read_bytes()
-             for path in sorted(EXTENSION_SOURCE.rglob("*"))
-             if path.is_file() and not path.name.startswith(".") and "__pycache__" not in path.parts}
+    files = {**_files(UI_SOURCE), **_files(EXTENSION_SOURCE)}
     sync_folder(folder, files, keep={"config.json"})
     write_atomic(folder / "config.json", json.dumps({"server": server_url, "token": token}).encode("utf-8"),
                  0o600)  # holds the token

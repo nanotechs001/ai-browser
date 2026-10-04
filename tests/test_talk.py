@@ -19,7 +19,7 @@ from test_oneshot import oneshots
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 ROOT = Path(__file__).parents[1]
-EXTENSION = ROOT / "src" / "ai_browser" / "app" / "extension"
+EXTENSION = ROOT / "src" / "ai_browser" / "app" / "ui"
 TALKING = "talking with the user"  # in the Brain's talk prompt: the fake claude's script key for it
 
 

@@ -183,7 +183,7 @@ def _docstrings(tree: ast.AST) -> set[int]:
 
 def test_no_mac_words_where_windows_shows_them():
     found = []
-    pages = [*(SRC / "app" / "extension").rglob("*"), *(SRC / "app" / "watcher").rglob("*"), SRC / "app" / "setup.html"]
+    pages = [*(SRC / "app" / "ui").rglob("*"), *(SRC / "app" / "watcher").rglob("*"), SRC / "app" / "setup.html"]
     for path in sorted(pages):
         if path.is_file() and path.suffix in PAGE_SUFFIXES:
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

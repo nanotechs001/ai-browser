@@ -16,8 +16,9 @@ from ..syncdir import sync_folder, write_atomic
 
 APP = Path(__file__).resolve().parent.parent / "app"
 WATCHER_SOURCE = APP / "watcher"
-SHARED_SOURCE = APP / "extension"
-WATCHER_SHARED = ("link.js", "brainui.js", "brainui.css", "permission.js")  # shared with AI Browser's extension
+SHARED_SOURCE = APP / "ui"
+# shared with AI Browser's window pages (app/ui)
+WATCHER_SHARED = ("link.js", "brainui.js", "brainui.css", "permission.js")
 
 
 def _sources() -> dict[str, bytes]:
