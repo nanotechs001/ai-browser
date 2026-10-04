@@ -130,7 +130,8 @@ def _first_free(ports: range) -> int | None:
 
 def _doctor_setup() -> int:
     """What `ai-browser app` needs, checked without Docker and without opening a DevTools connection, so no browser
-    asks Allow. Python, Claude Code, Chrome and a config.json that is there must pass; the rest is information."""
+    asks Allow. Python, Claude Code, a browser that can draw AI Browser's window and a config.json that is there must
+    pass; the rest is information."""
     import platform
 
     from .app.server import APP_PORTS
@@ -160,13 +161,24 @@ def _doctor_setup() -> int:
         else:
             report("✗", "Claude Code", f"not found ({claude}): install Claude Code, then sign in once with `claude`",
                    True)
+    from .app.window import pick
+    from .settings import Settings
+
+    setting = Settings(home()).get()["window_browser"]
+    found = pick(setting)  # reads installed apps' files only: no browser starts, nothing connects
+    if found is None:
+        report("✗", "window", "AI Browser needs Google Chrome, Brave or Microsoft Edge to draw its window: install "
+                              "one, or set AIB_CHROME_BINARY to the full path of chrome", True)
+    else:
+        report("✓", "window", f"{found.browser.name} ({'Auto' if setting == 'auto' else 'Settings'}) "
+                              f"{found.browser.binary}", True)
+        if found.note:
+            report("-", "window", found.note)
     chrome = chrome_binary()
     if chrome and Path(chrome).is_file():
-        report("✓", "Chrome", chrome, True)
+        report("✓", "Chrome", chrome)
     else:
-        found = f"{chrome} doesn't exist" if chrome else "not found"
-        report("✗", "Chrome", f"{found}: install Google Chrome, or set AIB_CHROME_BINARY to the full path of chrome",
-               True)
+        report("-", "Chrome", "not installed (optional: agents can browse in it)")
     brave = brave_binary()
     report("✓" if brave else "-", "Brave", brave or "not installed (optional: the Brain's watcher and your everyday "
                                                     "browser use it)")
