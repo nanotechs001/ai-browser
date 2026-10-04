@@ -181,7 +181,8 @@ async def test_a_real_click_lands_on_the_tab_shown_never_on_a_hidden_one(shell):
     assert await until(js, active_is("/home"))
     task = (f"(() => {{ const frame = {view('/home')}.querySelector('iframe'); const outer = "
             "frame.getBoundingClientRect(); const box = frame.contentDocument.getElementById('task')"
-            ".getBoundingClientRect(); return [outer.x + box.x + box.width / 2, outer.y + box.y + box.height / 2]; })()")
+            ".getBoundingClientRect();"
+            "return [outer.x + box.x + box.width / 2, outer.y + box.y + box.height / 2]; })()")
     await mouse_click(js, await js(task))
     assert await until(js, f"{frame('/home')}.document.activeElement?.id === 'task'")  # AI Home's own box
 
@@ -219,7 +220,8 @@ async def test_a_link_to_one_of_our_pages_switches_tabs(shell):
     js, stack = shell
     pages = await all_pages(stack)
     await in_frame(js, "/home", "const ours = document.createElement('a'); ours.id = 'ours'; ours.href = '/settings';"
-                                "ours.target = '_blank'; ours.textContent = 'Settings'; document.body.append(ours); true")
+                                "ours.target = '_blank'; ours.textContent = 'Settings';"
+                                "document.body.append(ours); true")
     await click_in(js, "/home", "#ours")
     assert await until(js, f"{active_is('/settings')} && {connected('/settings')}")
     await asyncio.sleep(0.5)
