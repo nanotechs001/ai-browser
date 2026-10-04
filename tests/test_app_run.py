@@ -17,7 +17,7 @@ from ai_browser.chrome import chrome_binary
 from conftest import file_mode
 from fake_window import FakeWindow, SocketWindow
 from test_home import until
-from test_tab_menu import connected, pick
+from test_tab_menu import active_is, click_in, connected, frame, pick, tab
 from ui_socket import ui_socket
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
@@ -121,8 +121,8 @@ async def test_a_reload_doesnt_end_it(fake_claude, tmp_path, window, monkeypatch
 
 
 @CHROME
-async def test_switching_tabs_never_ends_it_and_closing_the_window_does(fake_claude, tmp_path, window, monkeypatch,
-                                                                       servers):
+async def test_switching_or_closing_tabs_never_ends_it_and_closing_the_window_does(fake_claude, tmp_path, window,
+                                                                                   monkeypatch, servers):
     from ai_browser.app import run
 
     runner, _, _ = fake_claude
@@ -130,9 +130,15 @@ async def test_switching_tabs_never_ends_it_and_closing_the_window_does(fake_cla
     seen, jobs = {}, []
 
     async def check(page):
-        for key in ("/mission", "/settings", "/home", "/mission"):  # every tab's page is the window's
+        for key in ("/mission", "/settings", "/home"):  # every tab's page is the window's
             await pick(page, key)
             assert await until(page, connected(key))
+        assert await until(page, f"{frame('/home')}.document.querySelector('#brain .brain-setup') !== null")
+        await click_in(page, "/home", "#brain .brain-setup")  # the setup steps: a closable tab
+        assert await until(page, active_is("/setup"))
+        await page(f"{tab('/setup')}.querySelector('.tab-close').click(); true")  # closed again
+        assert await until(page, f"{tab('/setup')} === null && {active_is('/home')}")
+        await pick(page, "/mission")
         await asyncio.sleep(2.5)  # more than twice the grace
         seen["alive"], seen["windows"] = not running.done(), servers[0].window_count
         await window.cdp.send("Target.closeTarget", {"targetId": window.targets[0]})  # the user closes the window

@@ -10,8 +10,7 @@ import pytest
 
 from ai_browser.chrome import chrome_binary
 from test_bridge import EVENTS
-from test_home import (HOSTILE, click_as_user, evaluate, home, open_page, page_js, page_targets, stack,  # noqa: F401
-                       until, wait_targets)
+from test_home import HOSTILE, evaluate, home, open_page, stack, until  # noqa: F401  (fixtures)
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 WORKING = [EVENTS[0], {"sleep": 30}]  # an agent that stays at work
@@ -592,21 +591,3 @@ async def test_voice_comes_back_on_from_the_apps_settings(stack):
     assert read_settings(stack["home"])["voice"] is True
     later = await open_with(stack, LOCAL_VOICE)  # Mission Control opened again: Voice is on at load
     assert await until(later, "document.getElementById('voice').checked === true")
-
-
-@CHROME
-async def test_mission_control_opens_once_in_a_window_of_its_own(home):
-    js, stack = home
-    cdp = stack["cdp"]
-    assert await js("window.name") == "aib-home"
-    await click_as_user(js, "#mission")
-    [mission] = await wait_targets(cdp, "/mission")
-    await click_as_user(js, "#mission")  # open already: brought to the front, never a second one
-    await asyncio.sleep(1)
-    assert await page_targets(cdp, "/mission") == [mission]
-    there = await page_js(cdp, mission)
-    assert await until(there, "document.getElementById('status')?.dataset.state === 'connected'")
-    assert await there("window.name") == "aib-mission"
-    await click_as_user(there, "#home-link")  # AI Home's button: the main window comes forward, never a new one
-    await asyncio.sleep(1)
-    assert len(await page_targets(cdp, "/home")) == 1

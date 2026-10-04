@@ -70,15 +70,6 @@ async def page_targets(cdp, ending) -> list[str]:
     return [info["targetId"] for info in infos if info["type"] == "page" and info["url"].endswith(ending)]
 
 
-async def wait_targets(cdp, ending, count=1, seconds=10) -> list[str]:
-    for _ in range(int(seconds * 10)):
-        found = await page_targets(cdp, ending)
-        if len(found) >= count:
-            return found
-        await asyncio.sleep(0.1)
-    return await page_targets(cdp, ending)
-
-
 WINDOW_INFO = {"using": "chrome", "name": "Google Chrome", "note": "",
                "choices": [{"id": "auto", "name": "Auto (Google Chrome)", "installed": True},
                            {"id": "chrome", "name": "Google Chrome", "installed": True},
@@ -529,54 +520,43 @@ async def test_the_browser_card_says_one_question(home):
 
 
 @CHROME
-async def test_the_setup_steps_open_in_a_small_window(home):
-    js, stack = home
-    cdp = stack["cdp"]
-    assert await until(js, "document.querySelector('#brain .brain-setup') !== null")  # the watcher isn't connected
-    await click_as_user(js, "#brain .brain-setup")
-    [setup] = await wait_targets(cdp, "/setup#brave")
-    assert await (await page_js(cdp, setup))("window.name") == "aib-setup"
-    stack["brave"].set_state("off")
-    assert await until(js, "document.getElementById('browser-action').textContent === 'Show me how'")
-    await click_as_user(js, "#browser-action")
-    assert await wait_targets(cdp, "/setup#switch") == [setup]  # the same small window, now on the switch's steps
-
-
-@CHROME
-async def test_links_go_to_the_users_browser_or_a_window_of_ours(home, monkeypatch):
+async def test_a_page_by_itself_sends_links_to_the_users_browser_or_moves_to_our_page(home, monkeypatch):
+    """AI Home opened by itself, outside the window's tab menu (tests/test_tab_menu.py has the tabs): a website opens
+    in the user's browser, and a link to one of our pages moves this page there. Neither opens a window."""
     from ai_browser import platforms
 
     js, stack = home
     opened = []
     monkeypatch.setattr(platforms, "open_url", lambda url, browser=None, system=None: opened.append(url) or True)
-    before = await js("location.href")
+    before, pages = await js("location.href"), sorted(await page_targets(stack["cdp"], ""))
     await js("const site = document.createElement('a'); site.id = 'site'; site.href = 'https://example.com/pricing';"
-             "site.textContent = 'pricing'; document.body.append(site);"
-             "const ours = document.createElement('a'); ours.id = 'ours'; ours.href = '/mission';"
-             "ours.target = '_blank'; ours.textContent = 'Mission Control'; document.body.append(ours); true")
-    await js("document.getElementById('site').click(); true")
+             "site.target = '_blank'; site.textContent = 'pricing'; document.body.append(site);"
+             "const ours = document.createElement('a'); ours.id = 'ours'; ours.href = '/settings';"
+             "ours.target = '_blank'; ours.textContent = 'Settings'; document.body.append(ours); true")
+    await click_as_user(js, "#site")
     for _ in range(50):
         if opened:
             break
         await asyncio.sleep(0.1)
     assert opened == ["https://example.com/pricing"] and await js("location.href") == before  # never in the window
     await click_as_user(js, "#ours")
-    [mission] = await wait_targets(stack["cdp"], "/mission")
-    await asyncio.sleep(0.5)
-    assert await page_targets(stack["cdp"], "/mission") == [mission]
-    assert await (await page_js(stack["cdp"], mission))("window.name") == "aib-mission"  # a _blank open has no name
+    assert await until(js, "location.pathname === '/settings'")
+    assert sorted(await page_targets(stack["cdp"], "")) == pages  # the same page moved: no window opened
+
+
+async def open_settings(stack):
+    """Settings by itself, with the window's cookie (in the window it is a tab: tests/test_tab_menu.py)."""
+    _, settings = await open_page(stack["cdp"], stack["url"] + "/settings")
+    assert await until(settings, "document.querySelectorAll('#window-choices input').length === 3")
+    return settings
 
 
 @CHROME
-async def test_settings_opens_as_a_small_window_and_saves_the_choice(home):
+async def test_settings_saves_the_choice(home):
     from ai_browser.settings import read_settings
 
-    js, stack = home
-    await click_as_user(js, "#settings")
-    [target] = await wait_targets(stack["cdp"], "/settings")
-    settings = await page_js(stack["cdp"], target)
-    assert await until(settings, "document.querySelectorAll('#window-choices input').length === 3")
-    assert await settings("window.name") == "aib-settings"
+    _, stack = home
+    settings = await open_settings(stack)
     labels = "[...document.querySelectorAll('#window-choices label')].map((label) => label.textContent)"
     assert await settings(labels) == ["Auto (Google Chrome)", "Google Chrome", "Brave"]
     assert await settings("document.querySelector('#window-choices input[value=auto]').checked") is True
@@ -593,17 +573,14 @@ async def test_settings_opens_as_a_small_window_and_saves_the_choice(home):
 
 @CHROME
 async def test_a_browser_that_isnt_installed_is_greyed_out(home):
-    js, stack = home
+    _, stack = home
     stack["server"].window_info = {
         "using": "chrome", "name": "Google Chrome",
         "note": "Brave isn't installed: the window uses Google Chrome. Change it in Settings.",
         "choices": [{"id": "auto", "name": "Auto (Google Chrome)", "installed": True},
                     {"id": "chrome", "name": "Google Chrome", "installed": True},
                     {"id": "brave", "name": "Brave", "installed": False}]}
-    await click_as_user(js, "#settings")
-    [target] = await wait_targets(stack["cdp"], "/settings")
-    settings = await page_js(stack["cdp"], target)
-    assert await until(settings, "document.querySelectorAll('#window-choices input').length === 3")
+    settings = await open_settings(stack)
     assert await settings("document.querySelector('#window-choices input[value=brave]').disabled") is True
     assert await settings("document.querySelectorAll('#window-choices label')[2].textContent") == (
         "Brave · not installed")

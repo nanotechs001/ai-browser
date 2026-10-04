@@ -50,11 +50,29 @@ def test_no_script_writes_html_and_no_page_runs_inline_code():
 
 def test_only_the_watchers_shared_files_reach_the_extension_apis():
     for path in sorted(UI.glob("*.js")):
-        text = path.read_text(encoding="utf-8")
-        if path.name != "brainui.js":  # the watcher's own "Set it up" anchor: a new tab in Brave is right
-            assert '"_blank"' not in text and "'_blank'" not in text, path.name
         if path.name not in ("link.js", "brainui.js"):
-            assert "chrome." not in text, path.name
+            assert "chrome." not in path.read_text(encoding="utf-8"), path.name
+
+
+OPENS_A_WINDOW = re.compile(r"""\bwindow\s*\.\s*open\b|\bopen\s*\(\s*["'`]|["'`]popup|\bnoopener\b""")
+
+
+def test_no_page_of_ours_opens_a_window():
+    """Our pages are tabs of AI Browser's window (app.js shows them, nav.js asks it for one): no script opens a window
+    or a popup, for our pages or anyone's, and "_blank" is left only in brainui.js, the watcher's own "Set it up"
+    anchor in Brave, where a new tab is right. No page has a link target of its own."""
+    for path in sorted(UI.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        assert not OPENS_A_WINDOW.search(text), path.name
+        if path.name != "brainui.js":
+            assert '"_blank"' not in text and "'_blank'" not in text, path.name
+    for path in sorted(UI.glob("*.html")):
+        assert not re.search(r"\starget\s*=", path.read_text(encoding="utf-8"), re.IGNORECASE), path.name
+    nav = (UI / "nav.js").read_text(encoding="utf-8")
+    assert "export function openTab(" in nav and "WINDOWS" not in nav and "focusHome" not in nav
+    for name in ("home.js", "mission.js", "settings.js"):
+        text = (UI / name).read_text(encoding="utf-8")
+        assert "openWindow" not in text and "focusHome" not in text and "openTab" in text, name
 
 
 def test_nav_js_stays_out_of_the_watcher():

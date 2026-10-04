@@ -268,7 +268,7 @@ export function mountBrain(root, link, { compact = false, openAgent = null, card
     watcher.replaceChildren();
     if (!watcherOn) {
       watcher.append("The watcher isn't connected in Brave");
-      if (openSetup) { // AI Browser's window: the setup steps in a small window of their own
+      if (openSetup) { // AI Browser's window: the setup steps in a tab of their own
         const setup = el("button", "brain-setup link", "Set it up");
         setup.type = "button";
         setup.addEventListener("click", () => openSetup());

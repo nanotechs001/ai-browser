@@ -93,9 +93,16 @@ async def test_skip_is_offered_only_for_the_agents_own_tab(home):
     for agent in (users, sandboxed):
         assert "To skip it, tell the agent: skip it" in await js(f"{row_card(agent)}.textContent")
         assert await js(f"{row_card(agent)}.querySelector('.skip-site') === null")
-    await js("window.opened = []; window.open = (url) => { window.opened.push(url); return null; }; true")
+    # Show me asks the window's tab menu (this page's parent; window.parent is replaceable, so it is played here)
+    # for the live view's tab: the address, the agent and its label, to our own origin only (tests/test_tab_menu.py
+    # opens the real tab)
+    await js("window.asked = []; window.parent = {postMessage: (message, origin) => window.asked.push([message, "
+             "origin])}; true")
     await js(f"{row_card(sandboxed)}.querySelector('.show-me').click(); true")
-    assert await js("window.opened") == [LIVE] and ("watch", "Q1") not in seen
+    assert await js("window.asked") == [[{"type": "live", "url": LIVE, "agent": sandboxed.id,
+                                          "label": f"{sandboxed.number} · QA sandbox"}, stack["url"]]]
+    await asyncio.sleep(0.5)
+    assert ("watch", "Q1") not in seen
     await js(f"{row_card(own)}.querySelector('.skip-site').click(); true")
     assert await heard(seen, ("check_skip", own.id))
 

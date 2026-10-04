@@ -1,8 +1,8 @@
-// Settings, in a small window of its own: which browser draws AI Browser's window (wave C adds where agents browse).
+// Settings, in its tab of AI Browser's window: which browser draws that window (wave C adds where agents browse).
 // The choices come from the app; a change is saved there, and applies the next time AI Browser starts. Every name is
 // set as text.
 import { connect } from "./link.js";
-import { focusHome, guardLinks } from "./nav.js";
+import { guardLinks, openTab } from "./nav.js";
 
 const $ = (id) => document.getElementById(id);
 let current = null; // the app's settings: {model, voice, window_browser, window: {using, name, note, choices}}
@@ -59,4 +59,4 @@ function handle(message) {
 
 const link = connect({ view: "settings", onMessage: handle, onState: setStatus });
 guardLinks(link);
-$("home-link").addEventListener("click", () => focusHome());
+$("home-link").addEventListener("click", () => openTab("/home"));

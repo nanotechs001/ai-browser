@@ -5,7 +5,7 @@ import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { agentLabel, createChat } from "./chat.js";
 import { connect } from "./link.js";
-import { focusHome, guardLinks, openWindow, WINDOWS } from "./nav.js";
+import { guardLinks, openLive, openTab } from "./nav.js";
 import { permissionCard } from "./permission.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
 import { mountTalk } from "./talk.js";
@@ -220,7 +220,7 @@ function openBrain() {
   const root = el("div", "drawer-brain");
   $("drawer-body").replaceChildren(root);
   drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id), cards: "confirm",
-                                          openSetup: () => openWindow("/setup#brave", ...WINDOWS["/setup"]) });
+                                          openSetup: () => openTab("/setup#brave") });
   $("drawer").hidden = false;
 }
 
@@ -296,7 +296,9 @@ function fillDrawer(agent) { // the drawer's agent changed: its parts are update
   const check = agent.check; // a bot check waiting for the user: the same card as AI Home's
   if (check && parts.checkCard?.dataset.since !== String(check.since)) {
     parts.checkCard?.remove();
-    parts.checkCard = checkCard(agent, (message) => link.send(message));
+    parts.checkCard = checkCard(agent, (message) => link.send(message), {
+      openLive: (url, checked) => openLive(url, checked.id, agentLabel(checked)), // a tab of the window's own
+    });
     parts.permission.prepend(parts.checkCard);
   } else if (!check && parts.checkCard) {
     parts.checkCard.remove();
@@ -531,7 +533,7 @@ view.addEventListener("dblclick", (event) => {
 });
 
 $("drawer-close").addEventListener("click", closeDrawer);
-$("home-link").addEventListener("click", () => focusHome());
+$("home-link").addEventListener("click", () => openTab("/home"));
 brainButton.addEventListener("click", openBrain);
 bubble.addEventListener("click", openBrain);
 

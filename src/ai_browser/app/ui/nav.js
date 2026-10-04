@@ -1,42 +1,36 @@
-// Windows of our own. AI Browser's pages open as small app-style windows, never as tabs: a _blank open from an app
-// window brings back a normal tabbed window, so this file never uses one. A link to a website goes to the user's own
-// browser through the app (open_url), so the window never leaves its own pages. Only AI Home, Mission Control and
-// Settings import this file; the files Brave's watcher shares never do.
+// Tabs, never windows. AI Browser's pages are tabs of its one window (app.js, the tab menu at /app): a page asks the
+// window for a tab with a message to our own origin, and never opens a window of its own. A link to a website goes to
+// the user's own browser through the app (open_url), so the window never leaves its own pages. Only AI Home, Mission
+// Control and Settings import this file; the files Brave's watcher shares never do.
 "use strict";
 
-export const WINDOWS = {
-  "/home": ["aib-home", 1440, 960],
-  "/mission": ["aib-mission", 1280, 860],
-  "/settings": ["aib-settings", 720, 760],
-  "/setup": ["aib-setup", 760, 900],
-};
+const PAGES = ["/home", "/mission", "/settings", "/setup"]; // the pages the window shows as tabs
 
-// A window of ours by name: opened on the first click, brought forward on the next (the size counts only when it is
-// new). It loads `path` when it is new, or when it shows another page of ours than the one asked for.
-export function openWindow(path, name, width, height) {
-  const opened = window.open("", name, `popup,width=${width},height=${height}`);
-  if (!opened) return null; // the popup blocker: only a click opens a window
-  try {
-    const showing = opened.location.href === "about:blank" ? null : opened.location.pathname + opened.location.hash;
-    if (showing !== path) opened.location.replace(path);
-  } catch {
-    // not a page of ours: leave it as it is
-  }
-  opened.focus();
-  return opened;
+function windowPage() { // the tab menu this page is shown in; null for a page opened by itself (tests, by hand)
+  return window.parent !== window ? window.parent : null;
 }
 
-export function focusHome() {
-  return openWindow("/home", ...WINDOWS["/home"]);
+// The tab of one of our pages ("/mission", "/settings", "/home", "/setup#brave"): shown at once, loaded the first
+// time it is asked for; the setup steps open as a closable tab. A page opened by itself goes there itself instead.
+export function openTab(path) {
+  const menu = windowPage();
+  if (menu) menu.postMessage({ type: "tab", path }, location.origin);
+  else location.assign(path);
 }
 
-function ourPage(url) { // "/home", "/mission", "/settings" or "/setup", or null
-  if (url.origin !== location.origin) return null;
-  return Object.keys(WINDOWS).find((path) => url.pathname === path) || null;
+// An engine's live view (a bot check in QA's sandbox) as a closable tab: one per agent, so a second Show me brings the
+// first forward. A page opened by itself has no window to show it in.
+export function openLive(url, agent, label) {
+  windowPage()?.postMessage({ type: "live", url, agent, label }, location.origin);
 }
 
-// Every link click on the page (any button, any modifier): a page of ours opens in its own window, a website in the
-// user's browser, and anything else is dropped. The click itself never navigates.
+function ourPage(url) { // the page and its #section, if the window shows it as a tab; else null
+  if (url.origin !== location.origin || !PAGES.includes(url.pathname)) return null;
+  return url.pathname + url.search + url.hash;
+}
+
+// Every link click on the page (any button, any modifier): a page of ours becomes its tab, a website goes to the
+// user's browser, and anything else is dropped. The click itself never navigates and never opens a window.
 export function guardLinks(link) {
   const follow = (event) => {
     const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
@@ -49,7 +43,7 @@ export function guardLinks(link) {
       return;
     }
     const page = ourPage(url);
-    if (page) openWindow(url.pathname + url.search + url.hash, ...WINDOWS[page]);
+    if (page) openTab(page);
     else if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== location.origin) {
       link.send({ type: "open_url", url: url.href });
     }

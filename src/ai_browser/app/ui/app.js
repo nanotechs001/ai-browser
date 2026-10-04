@@ -1,15 +1,23 @@
 // AI Browser's window: one page with a row of tabs under the title bar (AI Home, Mission Control, Settings) over one
 // frame per tab. A tab's page loads the first time the tab is picked, and is then only hidden, never reloaded, so
-// nothing in it resets: a half-typed message, the scroll, Mission Control's room. Each page in a frame keeps its own
-// line to the app, and those lines are the window's: the app ends when the window closes (app/run.py), never on a
-// switch. The window's title follows the active tab and keeps AI Home's count of agents at work. Labels are text.
+// nothing in it resets: a half-typed message, the scroll, Mission Control's room. The setup steps and an agent's live
+// view (Show me) open as closable tabs at the end, one live view per agent. Our pages ask for a tab with a message
+// (nav.js); only a message from one of our own pages' frames counts, and only for one of our pages or an engine's
+// live view. Each page in a frame keeps its own line to the app, and those lines are the window's: the app ends when
+// the window closes (app/run.py), never on a switch or a closed tab. The window's title follows the active tab and
+// keeps AI Home's count of agents at work. Every label is set as text.
 "use strict";
 
 const FIXED = [["/home", "AI Home"], ["/mission", "Mission Control"], ["/settings", "Settings"]];
+const SETUP = "/setup"; // the setup steps (#brave, #switch): one closable tab
+const LIVE = /^http:\/\/127\.0\.0\.1:\d{1,5}\/live\?token=[A-Za-z0-9_-]{1,64}$/; // an engine's live view, nothing else
+const AGENT = /^a\d{1,9}$/;
 const COUNT = /^\((\d+)\) /; // AI Home's own title while agents work: "(2) AI Home"
+const LABEL_LIMIT = 80;
 const $ = (id) => document.getElementById(id);
-const tabs = new Map(); // key -> {key, label, src, node, button, view, frame}
+const tabs = new Map(); // key -> {key, label, src, closable, live, node, button, view, frame}
 let active = null;
+let picked = []; // the keys shown, latest last: closing the active tab goes back to the one before
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -18,7 +26,7 @@ function el(tag, className, text) {
   return node;
 }
 
-function addTab(key, label, src) {
+function addTab(key, label, src, { closable = false, live = false } = {}) {
   const node = el("div", "tab");
   node.dataset.key = key;
   const button = el("button", "tab-label", label);
@@ -26,8 +34,16 @@ function addTab(key, label, src) {
   button.title = label;
   button.addEventListener("click", () => show(key));
   node.append(button);
+  if (closable) {
+    const close = el("button", "tab-close", "×");
+    close.type = "button";
+    close.title = `Close ${label}`;
+    close.setAttribute("aria-label", `Close ${label}`);
+    close.addEventListener("click", () => closeTab(key));
+    node.append(close);
+  }
   $("tabs").append(node);
-  const tab = { key, label, src, node, button, view: null, frame: null };
+  const tab = { key, label, src, closable, live, node, button, view: null, frame: null };
   tabs.set(key, tab);
   return tab;
 }
@@ -37,6 +53,7 @@ function load(tab) { // the tab's frame, made the first time it is shown
   view.dataset.key = tab.key;
   const frame = el("iframe");
   frame.title = tab.label;
+  if (tab.live) frame.setAttribute("sandbox", "allow-scripts"); // another origin's page: no way out of its frame
   if (tab.key === "/mission") frame.allow = "microphone"; // talking to the Brain
   if (tab.key === "/home") frame.addEventListener("load", () => watchCount(frame));
   frame.src = tab.src;
@@ -51,6 +68,7 @@ function show(key) {
   if (!tab) return;
   if (!tab.frame) load(tab);
   active = key;
+  picked = [...picked.filter((one) => one !== key), key];
   for (const one of tabs.values()) {
     const on = one === tab;
     one.node.classList.toggle("active", on);
@@ -61,6 +79,55 @@ function show(key) {
   renderTitle();
   tab.frame.contentWindow?.focus(); // keys go to the page shown (Mission Control's Space to talk, Escape, arrows)
 }
+
+function closeTab(key) {
+  const tab = tabs.get(key);
+  if (!tab?.closable) return;
+  tab.node.remove();
+  tab.view?.remove(); // its page ends, and any line it had with it
+  tabs.delete(key);
+  picked = picked.filter((one) => one !== key);
+  if (active === key) show(picked.at(-1) || "/home");
+}
+
+function openClosable(key, label, src, options) { // a closable tab: opened once, then shown again (at `src`)
+  const tab = tabs.get(key) || addTab(key, label, src, { closable: true, ...options });
+  if (tab.frame && tab.src !== src) {
+    tab.src = src;
+    tab.frame.src = src; // the setup steps' other section, or a new live view of the same agent
+  }
+  show(key);
+}
+
+function openPage(path) { // one of our pages, by its path and #section: its fixed tab, or the setup steps' own
+  if (typeof path !== "string") return;
+  let url;
+  try {
+    url = new URL(path, location.href);
+  } catch {
+    return;
+  }
+  if (url.origin !== location.origin) return;
+  if (FIXED.some(([key]) => key === url.pathname)) show(url.pathname);
+  else if (url.pathname === SETUP) openClosable(SETUP, "Setup", SETUP + url.hash);
+}
+
+function openLive({ url, agent, label }) { // an agent's live view: its own closable tab, one per agent
+  if (typeof url !== "string" || !LIVE.test(url) || typeof agent !== "string" || !AGENT.test(agent)) return;
+  const name = (typeof label === "string" ? label.replace(/\s+/g, " ").trim() : "").slice(0, LABEL_LIMIT) || agent;
+  openClosable(`live:${agent}`, `Live view · ${name}`, url, { live: true });
+}
+
+// A page of ours asks for a tab. Only our own pages' frames count: never the window's page itself, a live view
+// (another origin), or anything else that can post a message here.
+addEventListener("message", (event) => {
+  if (event.origin !== location.origin) return;
+  const from = [...tabs.values()].find((tab) => tab.frame && tab.frame.contentWindow === event.source);
+  if (!from || from.live) return;
+  const message = event.data;
+  if (message?.type === "tab") openPage(message.path);
+  else if (message?.type === "live") openLive(message);
+});
 
 function working() { // AI Home's count of agents at work, from its own title ("" when none)
   try {
