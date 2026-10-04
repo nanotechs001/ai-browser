@@ -356,6 +356,44 @@ async def test_the_tab_list_counts_what_it_doesnt_show(home):
 
 
 @CHROME
+async def test_while_brave_connects_ai_home_claims_no_profile(home, tmp_path):  # final review R1
+    from ai_browser.app.bravelink import BraveLink
+    from fake_brave import FakePort
+
+    js, _, stack = home
+    server, app = stack["server"], stack["app"]
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder, pages=[{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
+    port.hold = {"Target.getBrowserContexts"}  # the tab list's first read waits: the moment right after Allow
+    await port.start()
+    brave = BraveLink(folder, every=0.1, tokens=server.tokens)
+    server.attach_brave(brave)
+    await brave.start()
+    connecting = asyncio.ensure_future(brave.connect())
+    source = "document.querySelector('#tabs p.scope-source')?.textContent ?? null"
+    empty = "document.querySelector('#tabs .empty')?.textContent ?? null"
+    try:
+        for _ in range(100):
+            if brave.state == "connected" and port.held:
+                break
+            await asyncio.sleep(0.05)
+        _, late = await open_page(stack["cdp"], f"chrome-extension://{app.extension_id}/home.html")  # loads now
+        assert await until(late, "document.getElementById('browser-card').dataset.state === 'connected'")
+        assert await until(late, f"({empty}) !== null")  # its snapshot is drawn
+        assert await late(source) is None and await late(empty) == "No web pages open in your browser."
+        port.hold = set()
+        await port.answer_held()
+        await connecting
+        assert await until(late, "document.querySelector(\"#tabs .tab[data-target='U1']\") !== null")
+        assert await late(source) == LAST_USED  # the first list brings its scope (no watcher here)
+        assert port.sessions == 1  # one connection: Brave asked "Allow remote debugging?" once
+    finally:
+        connecting.cancel()
+        await brave.close()
+        await port.stop()
+
+
+@CHROME
 async def test_the_browser_card_follows_brave(home):
     from fake_brave import FakeBrave
 

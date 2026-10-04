@@ -121,7 +121,10 @@ class BraveLink:
 
     def _changed(self) -> None:
         """Call back only when the rows or the scope changed (a worker waking or sleeping changes neither), or the
-        connection did: connecting and losing it always call back."""
+        connection did: connecting and losing it always call back. While Brave is connected and the tab list is still
+        starting, nothing is sent: the list's first round calls back."""
+        if self._watch is None and self.relay.state == "connected":
+            return
         tabs, scope = self.tabs(), self.scope()
         sent = (self._watch, tabs, scope)
         if sent == self._last:
@@ -165,11 +168,14 @@ class BraveLink:
                  "owner": dict(self._owners.get(page["target"], YOU))}
                 for page in self._watch.pages() if self._shown(page, context)]
 
-    def scope(self) -> dict:
+    def scope(self) -> dict | None:
         """Which profile tabs() shows, and how many of the user's web pages it leaves out (other profiles and private
-        windows, which CDP can't tell apart): a number, never a title, an address or an id."""
+        windows, which CDP can't tell apart): a number, never a title, an address or an id. None while there is no
+        tab list (not connected, or connected and the list still starting): no claim about profiles then."""
+        if self._watch is None:
+            return None
         context, source = self.agents_context()
-        pages = self._watch.pages() if self._watch is not None else []
+        pages = self._watch.pages()
         elsewhere = sum(1 for page in pages if page["url"].startswith(WEB)
                         and self._owners.get(page["target"], YOU)["kind"] in USERS and not self._shown(page, context))
         return {"profile": source, "elsewhere": elsewhere}

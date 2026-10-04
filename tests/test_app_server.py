@@ -817,6 +817,35 @@ async def test_a_replaced_tab_source_is_no_longer_heard(fake_claude, tmp_path):
         await server.stop()
 
 
+async def test_while_brave_connects_the_tab_list_claims_no_profile(tmp_path):  # final review R1
+    from fake_brave import BraveApp
+
+    app = await BraveApp(tmp_path / "home", tmp_path / "BraveSoftware" / "Brave-Browser",
+                         pages=[{"target": "U1", "url": "https://mail.example/", "title": "Mail"}]).start(connect=False)
+    app.server.allow_origin(ORIGIN)
+    app.port.hold = {"Target.getBrowserContexts"}  # the tab list's first read waits: the moment right after Allow
+    connecting = asyncio.ensure_future(app.brave.connect())
+    try:
+        await wait_for(lambda: app.brave.state == "connected" and bool(app.port.held))
+        async with connect(socket_url(app.server, app.url), origin=ORIGIN) as page:
+            await page.send(json.dumps({"type": "hello", "view": "home"}))
+            snapshot = await recv(page)  # a page that loads now, while the tab list is starting
+            assert snapshot["browser"]["state"] == "connected" and snapshot["tabs"] == []
+            assert snapshot["tab_scope"] is None  # no claim about profiles before the first list
+            app.brave.set_owner("U1", {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"})
+            assert not [m for m in await quiet(page, 0.5) if m["type"] == "tabs"]  # and no list before that one
+            app.port.hold = set()
+            await app.port.answer_held()
+            await connecting
+            first = (await until(page, lambda m: m["type"] == "tabs"))[-1]
+            assert first["tab_scope"] == {"profile": "last_used", "elsewhere": 0}  # it brings its own scope
+            assert [tab["target"] for tab in first["tabs"]] == ["U1"]
+        assert app.port.sessions == 1  # one connection: Brave asked "Allow remote debugging?" once
+    finally:
+        connecting.cancel()
+        await app.stop()
+
+
 async def test_an_agents_turn_connects_a_brave_that_is_ready(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     brave = FakeBrave([], state="off")
