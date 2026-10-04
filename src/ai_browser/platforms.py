@@ -258,6 +258,9 @@ def open_url(url: str, browser=None, system: str | None = None) -> bool:
     return True
 
 
+API_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")  # never reach Claude Code: it always uses a login
+
+
 def _ps_quote(text: str) -> str:
     """One PowerShell word: in single quotes, where only a quote needs doubling."""
     return "'" + text.replace("'", "''") + "'"
@@ -266,25 +269,32 @@ def _ps_quote(text: str) -> str:
 def signin_command(claude: Sequence[str], folder: str | None, system: str | None = None) -> str:
     """What the user pastes in their own terminal to sign an account in (Settings → Accounts → Copy the command):
     Claude Code with CLAUDE_CONFIG_DIR set to the account's folder (None: Default's own login, as the terminal has
-    it). PowerShell's words on Windows, a POSIX shell's elsewhere. Every part is quoted."""
+    it), and without ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN, whatever the user's shell exports. PowerShell's words
+    on Windows (they clear the two in that window), a POSIX shell's elsewhere (`env -u`: only Claude Code goes
+    without them). Every part is quoted."""
     if _system(system) == "win32":
+        cleared = "".join(f"$env:{name} = $null; " for name in API_VARIABLES)
         program = "& " + " ".join(_ps_quote(str(part)) for part in claude)
-        return f"$env:CLAUDE_CONFIG_DIR = {_ps_quote(folder)}; {program}" if folder else program
+        return cleared + (f"$env:CLAUDE_CONFIG_DIR = {_ps_quote(folder)}; {program}" if folder else program)
+    cleared = "env " + " ".join(f"-u {name}" for name in API_VARIABLES)
     program = " ".join(shlex.quote(str(part)) for part in claude)
-    return f"CLAUDE_CONFIG_DIR={shlex.quote(folder)} {program}" if folder else program
+    return f"{cleared} CLAUDE_CONFIG_DIR={shlex.quote(folder)} {program}" if folder else f"{cleared} {program}"
 
 
 _PROGRAM = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")  # a program's plain name, safe on cmd.exe's command line
 
 
 def terminal_command(claude: Sequence[str], folder: str | None, system: str | None = None,
-                     env: Mapping | None = None) -> tuple[list[str], dict[str, str]] | None:
-    """How Open Terminal starts a terminal window running Claude Code on one account: (argv, the environment it
-    starts with), or None where it can't.
-    - macOS: Terminal, told by osascript to run signin_command(). The command is quoted for the shell, then for
-      AppleScript.
-    - Windows: `cmd /c start "" cmd /k <program>`. The folder and the program's own folder go in the environment, so
-      nothing but the program's plain name is on the command line. A program that isn't one plain .exe gets None.
+                     env: Mapping | None = None) -> tuple[list[str] | str, dict[str, str]] | None:
+    """How Open Terminal starts a terminal window running Claude Code on one account: (the command, the environment
+    it starts with), or None where it can't.
+    - macOS: Terminal, told by osascript to run signin_command(), which clears the two API variables itself: Terminal
+      runs it in the user's own login shell, whose profile may export them. The command is quoted for the shell, then
+      for AppleScript. An argv.
+    - Windows: `cmd /c start "" cmd /k set "ANTHROPIC_API_KEY=" ^& set "ANTHROPIC_AUTH_TOKEN=" ^& <program>`, one
+      command line, which Windows reads as it is (`^&` reaches the new window's cmd as `&`). The folder and the
+      program's own folder go in the environment, so nothing of ours but the program's plain name is on the command
+      line. A program that isn't one plain .exe gets None.
     - Elsewhere: None. Copy the command still works there."""
     system, environment = _system(system), dict(_env(env))
     if system == "darwin":
@@ -300,7 +310,8 @@ def terminal_command(claude: Sequence[str], folder: str | None, system: str | No
         if str(program.parent) != ".":
             environment["PATH"] = ";".join(part for part in (str(program.parent), environment.get("PATH", ""))
                                            if part)
-        return (["cmd", "/c", "start", "", "cmd", "/k", program.stem], environment)
+        cleared = "".join(f'set "{name}=" ^& ' for name in API_VARIABLES)
+        return (f'cmd /c start "" cmd /k {cleared}{program.stem}', environment)
     return None
 
 
@@ -311,9 +322,9 @@ def open_terminal(claude: Sequence[str], folder: str | None, env: Mapping | None
     found = terminal_command(claude, folder, system, env)
     if found is None:
         return False
-    argv, environment = found
+    command, environment = found
     try:
-        subprocess.Popen(argv, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL)
     except OSError:
         return False

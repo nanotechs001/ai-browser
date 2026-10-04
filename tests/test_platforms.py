@@ -491,37 +491,62 @@ def test_open_url_says_whether_a_program_started(monkeypatch):
     assert platforms.open_url("https://example.com", system="linux") is False  # nothing could open it
 
 
+CLEARED_SH = "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN"  # whatever the user's shell exports: never an API key
+CLEARED_PS = "$env:ANTHROPIC_API_KEY = $null; $env:ANTHROPIC_AUTH_TOKEN = $null; "
+
+
 def test_the_sign_in_command_quotes_every_part():
     mac_claude, mac_folder = ["/Users/jo/.local/bin/claude"], "/Users/jo/.ai-browser/accounts/acct-1a2b3c"
     assert platforms.signin_command(mac_claude, mac_folder, "darwin") == (
-        "CLAUDE_CONFIG_DIR=/Users/jo/.ai-browser/accounts/acct-1a2b3c /Users/jo/.local/bin/claude")
-    assert platforms.signin_command(mac_claude, None, "darwin") == "/Users/jo/.local/bin/claude"  # Default's own
+        f"{CLEARED_SH} CLAUDE_CONFIG_DIR=/Users/jo/.ai-browser/accounts/acct-1a2b3c /Users/jo/.local/bin/claude")
+    assert platforms.signin_command(mac_claude, None, "darwin") == (
+        f"{CLEARED_SH} /Users/jo/.local/bin/claude")  # Default's own
     odd = "/Users/Jo O'Neil/My \"Claude\" $HOME"
     assert platforms.signin_command(["/opt/claude code/claude"], odd, "linux") == (
-        "CLAUDE_CONFIG_DIR='/Users/Jo O'\"'\"'Neil/My \"Claude\" $HOME' '/opt/claude code/claude'")
+        f"{CLEARED_SH} CLAUDE_CONFIG_DIR='/Users/Jo O'\"'\"'Neil/My \"Claude\" $HOME' '/opt/claude code/claude'")
     windows = ["C:\\Users\\Jo O'Neil\\.local\\bin\\claude.exe"]
     assert platforms.signin_command(windows, "C:\\Users\\Jo O'Neil\\.ai-browser\\accounts\\acct-1a2b3c",
                                     "win32") == (
-        "$env:CLAUDE_CONFIG_DIR = 'C:\\Users\\Jo O''Neil\\.ai-browser\\accounts\\acct-1a2b3c'; "
+        f"{CLEARED_PS}$env:CLAUDE_CONFIG_DIR = 'C:\\Users\\Jo O''Neil\\.ai-browser\\accounts\\acct-1a2b3c'; "
         "& 'C:\\Users\\Jo O''Neil\\.local\\bin\\claude.exe'")
-    assert platforms.signin_command(windows, None, "win32") == "& 'C:\\Users\\Jo O''Neil\\.local\\bin\\claude.exe'"
+    assert platforms.signin_command(windows, None, "win32") == (
+        f"{CLEARED_PS}& 'C:\\Users\\Jo O''Neil\\.local\\bin\\claude.exe'")
+
+
+@pytest.mark.posix_only
+def test_the_sign_in_command_never_hands_claude_an_api_key(fake_claude, tmp_path):
+    """Run as a shell runs it, with both API variables exported (as a .zshrc may): the fake claude gets neither, and
+    gets the account's folder."""
+    import json
+    import subprocess
+
+    runner, log, _ = fake_claude
+    folder = tmp_path / "accounts" / "acct-1a2b3c"
+    command = platforms.signin_command(runner, str(folder))
+    exported = {**os.environ, "ANTHROPIC_API_KEY": "sk-test", "ANTHROPIC_AUTH_TOKEN": "token-test"}
+    subprocess.run(["/bin/sh", "-c", command], env=exported, stdin=subprocess.DEVNULL, capture_output=True,
+                   timeout=30)
+    given = json.loads(log.with_name(log.name + ".env").read_text(encoding="utf-8"))
+    assert (given["ANTHROPIC_API_KEY"], given["ANTHROPIC_AUTH_TOKEN"]) == (None, None)
+    assert given["CLAUDE_CONFIG_DIR"] == str(folder)
 
 
 def test_open_terminal_on_a_mac_runs_the_quoted_command_in_terminal():
     argv, env = platforms.terminal_command(["/Users/jo/.local/bin/claude"], '/Users/jo/My "Work" Claude', "darwin",
                                            env={"PATH": "/usr/bin"})
     assert argv == ["osascript", "-e",
-                    'tell application "Terminal" to do script "CLAUDE_CONFIG_DIR=\'/Users/jo/My \\"Work\\" Claude\' '
-                    '/Users/jo/.local/bin/claude"',
+                    f'tell application "Terminal" to do script "{CLEARED_SH} '
+                    'CLAUDE_CONFIG_DIR=\'/Users/jo/My \\"Work\\" Claude\' /Users/jo/.local/bin/claude"',
                     "-e", 'tell application "Terminal" to activate']
-    assert env == {"PATH": "/usr/bin"}  # Terminal starts its own shell: the folder is in the command
+    assert env == {"PATH": "/usr/bin"}  # Terminal starts the user's own login shell: the command clears the keys
 
 
 def test_open_terminal_on_windows_keeps_the_folder_off_the_command_line():
     claude = ["C:\\Users\\Jo Smith\\.local\\bin\\claude.exe"]
     folder = 'C:\\Users\\Jo Smith\\.ai-browser\\accounts\\acct-1a2b3c" & calc & "'
-    argv, env = platforms.terminal_command(claude, folder, "win32", env={"PATH": "C:\\Windows", "X": "1"})
-    assert argv == ["cmd", "/c", "start", "", "cmd", "/k", "claude"]  # nothing but the program's plain name
+    command, env = platforms.terminal_command(claude, folder, "win32", env={"PATH": "C:\\Windows", "X": "1"})
+    assert command == ('cmd /c start "" cmd /k set "ANTHROPIC_API_KEY=" ^& set "ANTHROPIC_AUTH_TOKEN=" ^& '
+                       "claude")  # the two keys cleared, then nothing but the program's plain name
     assert env == {"PATH": "C:\\Users\\Jo Smith\\.local\\bin;C:\\Windows", "X": "1", "CLAUDE_CONFIG_DIR": folder}
     assert platforms.terminal_command(claude, None, "win32", env={})[1] == {"PATH": "C:\\Users\\Jo Smith\\.local\\bin"}
     for odd in (["C:\\tools\\claude code.exe"], ["C:\\tools\\claude.cmd"], ["python", "fake_claude.py"]):
