@@ -258,6 +258,9 @@ async def test_the_setup_steps_open_as_one_closable_tab(shell):
     assert await js(f"{tab('/setup')}.querySelector('.tab-close').getAttribute('aria-label')") == "Close Setup"
     assert await until(js, "document.title === 'Setup · AI Browser'")
     assert await until(js, f"{frame('/setup')}.document.getElementById('watcher-folder').textContent !== ''")
+    await click_in(js, "/setup", "#reveal-watcher")  # needs the window's cookie and our exact Origin: a tab has both
+    assert await until(js, f"{frame('/setup')}.document.getElementById('reveal-watcher').textContent"
+                           ".startsWith('Shown in ')")
     await pick(js, "/home")
     stack["brave"].set_state("off")
     assert await until(js, f"{home}.document.getElementById('browser-action').textContent === 'Show me how'")
