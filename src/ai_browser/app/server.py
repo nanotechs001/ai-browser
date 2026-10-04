@@ -67,8 +67,8 @@ CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{
 WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "schedule", "run", "tools", "skills",
                    "model")
 WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabled")
-SETUP_PAGE = Path(__file__).with_name("setup.html")
 UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
+SETUP_PAGE = UI / "setup.html"
 PAGES = {"/home": "home.html", "/mission": "mission.html", "/settings": "settings.html"}
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
@@ -182,12 +182,12 @@ GOTO_MAC = "press ⌘⇧G, paste the path and press Enter"
 GOTO_OTHER = "click the address bar at the top of the folder window, paste the path and press Enter"
 
 
-def setup_page(extension: str, watcher: str, key: str, system: str | None = None) -> str:
-    """The one-time setup page, worded for the computer it runs on; every value is escaped."""
+def setup_page(watcher: str, system: str | None = None) -> str:
+    """The one-time setup page (Brave's two steps), worded for the computer it runs on; every value is escaped. It
+    holds no secret: it is the one page of ours that opens anywhere."""
     values = {"{{FILE_MANAGER}}": platforms.file_manager(system),
               "{{GOTO}}": platforms.shortcut(GOTO_MAC, GOTO_OTHER, system),
-              "{{THIS_COMPUTER}}": platforms.this_computer(system),
-              "{{FOLDER}}": extension, "{{WATCHER}}": watcher, "{{KEY}}": key}
+              "{{THIS_COMPUTER}}": platforms.this_computer(system), "{{WATCHER}}": watcher}
     page = SETUP_PAGE.read_text(encoding="utf-8")
     for placeholder, value in values.items():
         page = page.replace(placeholder, html.escape(value))
@@ -276,7 +276,6 @@ class AppServer:
         self.extension_seen = False  # the extension has connected: the one-time setup is done
         self.origin_mismatch: str | None = None  # an extension with our token, from an origin we didn't compute
         self.out: Callable[[str], None] = print  # where the app's one-line notes go (run_app passes its own)
-        self.setup_key = secrets.token_urlsafe(16)  # only the setup page has it: other sites can't open Finder
         self.reveal = reveal_folder
         self.tabs = None
         self._catalog = catalog
@@ -474,25 +473,22 @@ class AppServer:
             return _refused_page(NOT_HERE)
         return Response((UI / name).read_bytes(), media_type=FILE_TYPES[Path(name).suffix])
 
-    def _extension_folder(self) -> str:
-        return extension_path(self.home / "app" / "extension")
-
     def _watcher_folder(self) -> str:
         return extension_path(self.watcher_folder or self.home / "app" / "watcher")
 
     async def _setup(self, request: Request) -> HTMLResponse:
-        return HTMLResponse(setup_page(self._extension_folder(), self._watcher_folder(), self.setup_key))
+        return HTMLResponse(setup_page(self._watcher_folder()))
 
     async def _setup_reveal(self, request: Request) -> Response:
-        if not hmac.compare_digest(request.headers.get("x-aib-setup", "").encode(), self.setup_key.encode()):
+        """Show the watcher's folder: only from AI Browser's own window (its cookie and our exact Origin), so no
+        other page, in Brave or anywhere, can open a folder window."""
+        if not (self._cookie_ok(request) and request.headers.get("origin") == self.origin):
             return Response(status_code=403)
-        watcher = request.query_params.get("which") == "watcher"
-        shown = self.reveal(self._watcher_folder() if watcher else self._extension_folder())
+        shown = self.reveal(self._watcher_folder())
         return Response(status_code=204 if shown else 501)  # 501: nothing could show it (no file manager)
 
     async def _setup_status(self, request: Request) -> JSONResponse:
-        seen = self.brain is not None and self.brain.store.watcher_seen
-        answer = {"installed": self.extension_seen, "watcher": seen}
+        answer = {"watcher": self.brain is not None and self.brain.store.watcher_seen}
         if self.origin_mismatch:
             answer["mismatch"] = self.origin_mismatch
         return JSONResponse(answer)

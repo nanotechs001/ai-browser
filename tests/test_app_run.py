@@ -144,7 +144,7 @@ async def test_first_start_opens_the_setup_steps(fake_claude, tmp_path, monkeypa
     printed = "\n".join(lines)
     assert code == 0 and "Developer mode" in printed and str((tmp_path / "home" / "app" / "extension").resolve()) in printed
     assert "chrome://extensions/" in seen["pages"] and any(url.endswith("/setup") for url in seen["pages"])
-    assert seen["status"] == {"installed": False, "watcher": False}  # one Finder window at a time: AI Browser first
+    assert seen["status"] == {"watcher": False}
 
 
 @CHROME
@@ -201,11 +201,7 @@ async def test_first_start_also_sets_up_the_watcher(fake_claude, tmp_path, monke
 
     async def ready(url, app):
         async with httpx.AsyncClient() as client:
-            for _ in range(50):  # AI Browser's own extension (installed over the pipe) connects first
-                seen["status"] = (await client.get(url + "/setup/status")).json()
-                if seen["status"]["installed"]:
-                    break
-                await asyncio.sleep(0.2)
+            seen["status"] = (await client.get(url + "/setup/status")).json()
         seen["brave_page"] = await opened(app, "/setup#brave")
         stop.set()
 
@@ -216,7 +212,7 @@ async def test_first_start_also_sets_up_the_watcher(fake_claude, tmp_path, monke
     printed = "\n".join(lines)
     assert code == 0 and "brave://extensions" in printed and watcher in printed
     assert shown == [watcher] and seen["brave_page"]
-    assert seen["status"] == {"installed": True, "watcher": False}
+    assert seen["status"] == {"watcher": False}
     again = asyncio.Event()
 
     async def ready_again(url, app):

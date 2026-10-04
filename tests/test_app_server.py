@@ -93,19 +93,119 @@ async def test_a_task_runs_and_every_socket_sees_it(fake_claude, tmp_path):
         await server.stop()
 
 
-async def test_setup_page_and_status(fake_claude, tmp_path):
+async def test_the_setup_page_holds_no_secret_and_says_the_watchers_state(fake_claude, tmp_path):
+    from fake_brave import add_agent
+
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
-        async with httpx.AsyncClient() as client:
-            page = (await client.get(url + "/setup")).text
-            assert str(tmp_path / "home" / "app" / "extension") in page and server.token not in page
-            assert (await client.get(url + "/setup/status")).json() == {"installed": False, "watcher": False}
-            async with connect(socket_url(server, url), origin=ORIGIN) as ws:
-                await ws.send(json.dumps({"type": "hello", "view": "home"}))
-                await recv(ws)
-            assert (await client.get(url + "/setup/status")).json() == {"installed": True, "watcher": False}
+        add_agent(server.agents)
+        page = (await fetch("GET", url + "/setup")).text  # opens anywhere: no cookie needed
+        assert "data-key" not in page and "X-AIB-Setup" not in page
+        for secret in (server.token, server.session_token, server.ui_secret, server.token_for("a1")):
+            assert secret not in page
+        assert "brave://extensions" in page and str(tmp_path / "home" / "app" / "watcher") in page
+        assert "chrome://extensions" not in page and 'id="reveal"' not in page  # AI Browser's extension is gone
+        assert '<link rel="stylesheet" href="setup.css">' in page and '<script src="setup.js"></script>' in page
+        assert (await fetch("GET", url + "/setup/status")).json() == {"watcher": False}
+        assert (await fetch("GET", url + "/setup.js")).status_code == 200  # its own files open anywhere too
+        assert (await fetch("GET", url + "/setup.css")).status_code == 200
     finally:
         await server.stop()
+
+
+async def test_showing_the_folder_needs_the_window(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    shown = []
+    server.reveal = lambda path: shown.append(path) or True
+    try:
+        assert (await fetch("POST", url + "/setup/reveal")).status_code == 403  # a page in Brave: no cookie
+        other = {**ui_cookie(server), "Origin": f"http://127.0.0.1:{server.port + 1}"}
+        assert (await fetch("POST", url + "/setup/reveal", headers=other)).status_code == 403
+        bare = {"Origin": server.origin}
+        assert (await fetch("POST", url + "/setup/reveal", headers=bare)).status_code == 403
+        assert shown == []
+        right = {**ui_cookie(server), "Origin": server.origin}
+        assert (await fetch("POST", url + "/setup/reveal", headers=right)).status_code == 204
+        assert shown == [os.path.realpath(tmp_path / "home" / "app" / "watcher")]
+        server.reveal = lambda path: False  # no file manager could start
+        assert (await fetch("POST", url + "/setup/reveal", headers=right)).status_code == 501
+    finally:
+        await server.stop()
+
+
+async def test_the_setup_page_shows_the_path_the_id_is_hashed_from(fake_claude, tmp_path):
+    import html
+
+    from conftest import symlink_or_skip
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.extension_id import extension_id_for, extension_path
+
+    real = tmp_path / "real"
+    real.mkdir()
+    symlink_or_skip(real, tmp_path / "link")
+    home = tmp_path / "link" / "home"  # a home reached through a link
+    server = AppServer(home, AgentManager(home))
+    revealed = []
+    server.reveal = lambda path: revealed.append(path) or True
+    url = await server.start()
+    try:
+        page = (await fetch("GET", url + "/setup")).text
+        await fetch("POST", url + "/setup/reveal", headers={**ui_cookie(server), "Origin": server.origin})
+        shown = extension_path(home / "app" / "watcher")
+        assert html.escape(shown) in page and revealed == [shown]
+        assert extension_id_for(home / "app" / "watcher") == extension_id_for(shown)
+        if os.name != "nt":  # on POSIX, the real path (Brave resolves the link too)
+            assert shown == os.path.realpath(home / "app" / "watcher")
+    finally:
+        await server.stop()
+
+
+@pytest.mark.windows_only
+async def test_a_home_through_a_junction_keeps_the_path_brave_sees(tmp_path):
+    import _winapi
+    import html
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.extension_id import extension_path
+
+    real = tmp_path / "real-home"
+    real.mkdir()
+    link = tmp_path / "home-link"
+    _winapi.CreateJunction(str(real), str(link))
+    folder = link / "app" / "watcher"
+    folder.mkdir(parents=True)
+    assert extension_path(folder) == str(folder)  # not the resolved path
+    server = AppServer(link, AgentManager(link))
+    assert server._watcher_folder() == str(folder)
+    url = await server.start()
+    try:
+        assert html.escape(str(folder)) in (await fetch("GET", url + "/setup")).text
+    finally:
+        await server.stop()
+
+
+def test_the_setup_page_sets_its_lines_as_text():
+    from ai_browser.app.server import SETUP_PAGE, UI
+
+    script = (UI / "setup.js").read_text(encoding="utf-8")
+    assert SETUP_PAGE == UI / "setup.html" and 'id="mismatch"' in SETUP_PAGE.read_text(encoding="utf-8")
+    assert "mismatch.textContent" in script and "innerHTML" not in script
+    assert "This button works in AI Browser's own window" in script
+
+
+def test_the_setup_page_is_worded_for_each_computer():
+    from ai_browser.app.server import setup_page
+
+    windows = setup_page("C:\\Users\\José & Ana\\.ai-browser\\app\\watcher", system="win32")
+    assert "File Explorer" in windows and 'data-manager="File Explorer"' in windows
+    assert "click the address bar at the top of the folder window, paste the path and press Enter" in windows
+    assert "⌘" not in windows and "Finder" not in windows and "{{" not in windows
+    assert "C:\\Users\\José &amp; Ana\\.ai-browser\\app\\watcher" in windows  # whole, accents kept, escaped
+    mac = setup_page("/Users/me/.ai-browser/app/watcher", system="darwin")
+    assert "Finder" in mac and "press ⌘⇧G, paste the path and press Enter" in mac and "<kbd>" not in mac
 
 
 async def test_skills_for_the_dashboard(fake_claude, tmp_path):
@@ -210,33 +310,6 @@ async def test_new_tasks_use_the_apps_default_model(fake_claude, tmp_path):
         await server.stop()
 
 
-async def test_the_setup_page_can_show_the_folder_in_finder(fake_claude, tmp_path):
-    server, url = await started(fake_claude, tmp_path, EVENTS)
-    shown = []
-    server.reveal = lambda path: shown.append(path) or True
-    try:
-        async with httpx.AsyncClient() as client:
-            page = (await client.get(url + "/setup")).text
-            key = page.split('data-key="', 1)[1].split('"', 1)[0]
-            assert key and key not in (server.token, server.session_token)
-            assert (await client.post(url + "/setup/reveal")).status_code == 403  # another site can't open Finder
-            assert (await client.post(url + "/setup/reveal", headers={"X-AIB-Setup": key})).status_code == 204
-        assert shown == [str((tmp_path / "home" / "app" / "extension").resolve())]
-    finally:
-        await server.stop()
-
-
-async def test_the_setup_page_covers_chromes_questions(fake_claude, tmp_path):
-    server, url = await started(fake_claude, tmp_path, EVENTS)
-    try:
-        async with httpx.AsyncClient() as client:
-            page = (await client.get(url + "/setup")).text
-        assert "Keep it" in page  # Chrome asks once about the new tab page: "Change it back" turns AI Browser off
-        assert "switch it on" in page  # already listed in chrome://extensions, but off
-    finally:
-        await server.stop()
-
-
 async def with_brain(fake_claude, tmp_path, answers):
     from ai_browser.app.agents import AgentManager
     from ai_browser.app.server import AppServer
@@ -266,7 +339,7 @@ async def test_the_watcher_feeds_the_brain_and_pages_see_it(fake_claude, tmp_pat
             greeting = await until(watcher, lambda m: m["type"] == "watch_list")
             assert greeting[0]["type"] == "watcher_hello" and greeting[-1]["sites"][0]["site"] == "gmail"
             async with httpx.AsyncClient() as client:  # Brave's watcher is not AI Browser's extension
-                assert (await client.get(url + "/setup/status")).json() == {"installed": False, "watcher": True}
+                assert (await client.get(url + "/setup/status")).json() == {"watcher": True}
             async with connect(socket_url(server, url), origin=ORIGIN) as page:
                 await page.send(json.dumps({"type": "hello", "view": "home"}))
                 await page.send(json.dumps({"type": "brain"}))
@@ -344,22 +417,6 @@ def test_prepare_watcher_updates_its_folder_in_place(tmp_path):
     assert same == build and (folder / "manifest.json").stat().st_mtime_ns == before  # unchanged files stay as they are
     assert json.loads((folder / "config.json").read_text(encoding="utf-8"))["token"] == "other"
     assert not (folder / "stale.js").exists()
-
-
-async def test_the_setup_page_has_the_brave_steps(fake_claude, tmp_path):
-    server, url, brain = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
-    shown = []
-    server.reveal = lambda path: shown.append(path) or True
-    try:
-        async with httpx.AsyncClient() as client:
-            page = (await client.get(url + "/setup")).text
-            assert "brave://extensions" in page and str(tmp_path / "home" / "app" / "watcher") in page
-            key = page.split('data-key="', 1)[1].split('"', 1)[0]
-            reveal = await client.post(url + "/setup/reveal?which=watcher", headers={"X-AIB-Setup": key})
-            assert reveal.status_code == 204
-        assert shown == [os.path.realpath(tmp_path / "home" / "app" / "watcher")]
-    finally:
-        await server.stop()
 
 
 async def test_late_pages_get_the_latest_thumbnails(fake_claude, tmp_path):
@@ -952,7 +1009,7 @@ async def test_the_setup_page_has_the_switch_and_its_warning(fake_claude, tmp_pa
         from ai_browser.app.server import setup_page
 
         def words(system):
-            return " ".join(setup_page("/x", "/w", "k", system=system).split())
+            return " ".join(setup_page("/w", system=system).split())
 
         sentence = "While this switch is on, any program on {} can reach your Brave, not only AI Browser."
         assert sentence.format("this Mac") in words("darwin")
@@ -1195,64 +1252,6 @@ async def test_stopping_the_app_cancels_a_download(fake_claude, tmp_path):
     assert not store.part.exists() and not store.folder.exists()
 
 
-async def test_the_setup_page_shows_the_path_the_id_is_hashed_from(fake_claude, tmp_path):
-    import html
-
-    from conftest import symlink_or_skip
-
-    from ai_browser.app.agents import AgentManager
-    from ai_browser.app.server import AppServer
-    from ai_browser.extension_id import extension_id_for, extension_path
-
-    real = tmp_path / "real"
-    real.mkdir()
-    symlink_or_skip(real, tmp_path / "link")
-    home = tmp_path / "link" / "home"  # a home reached through a link
-    server = AppServer(home, AgentManager(home))
-    revealed = []
-    server.reveal = lambda path: revealed.append(path) or True  # True: a folder window opened (Task 16 reads it)
-    url = await server.start()
-    try:
-        async with httpx.AsyncClient() as client:
-            page = (await client.get(url + "/setup")).text
-            key = page.split('data-key="', 1)[1].split('"', 1)[0]
-            await client.post(url + "/setup/reveal", headers={"X-AIB-Setup": key})
-        shown = extension_path(home / "app" / "extension")
-        assert html.escape(shown) in page and revealed == [shown]
-        assert extension_id_for(home / "app" / "extension") == extension_id_for(shown)
-        if os.name != "nt":  # on POSIX, the real path (Chrome resolves the link too)
-            assert shown == os.path.realpath(home / "app" / "extension")
-    finally:
-        await server.stop()
-
-
-@pytest.mark.windows_only
-async def test_a_home_through_a_junction_keeps_the_path_chrome_sees(tmp_path):
-    import _winapi
-    import html
-
-    from ai_browser.app.agents import AgentManager
-    from ai_browser.app.server import AppServer
-    from ai_browser.extension_id import extension_path
-
-    real = tmp_path / "real-home"
-    real.mkdir()
-    link = tmp_path / "home-link"
-    _winapi.CreateJunction(str(real), str(link))
-    folder = link / "app" / "extension"
-    folder.mkdir(parents=True)
-    assert extension_path(folder) == str(folder)  # not the resolved path
-    server = AppServer(link, AgentManager(link))
-    assert server._extension_folder() == str(folder)
-    url = await server.start()
-    try:
-        async with httpx.AsyncClient() as client:
-            page = (await client.get(url + "/setup")).text
-        assert html.escape(str(folder)) in page  # the page shows the junction's path too
-    finally:
-        await server.stop()
-
-
 async def test_a_wrong_extension_id_is_reported_not_allowed(fake_claude, tmp_path):
     from ai_browser.app.agents import AgentManager
     from ai_browser.app.server import AppServer
@@ -1288,37 +1287,6 @@ async def test_a_wrong_extension_id_is_reported_not_allowed(fake_claude, tmp_pat
                              "watcher): please report this"]
             status = (await client.get(url + "/setup/status")).json()
             assert status["mismatch"] == "chrome-extension://unexpected"
-    finally:
-        await server.stop()
-
-
-def test_the_setup_page_shows_the_mismatch_as_text():
-    from ai_browser.app.server import SETUP_PAGE
-
-    page = SETUP_PAGE.read_text(encoding="utf-8")
-    assert 'id="mismatch"' in page and "mismatch.textContent" in page and "innerHTML" not in page
-
-
-def test_the_setup_page_is_worded_for_each_computer():
-    from ai_browser.app.server import setup_page
-
-    windows = setup_page("C:\\Users\\José & Ana\\.ai-browser\\app\\extension", "C:\\w", "k", system="win32")
-    assert "File Explorer" in windows and 'data-manager="File Explorer"' in windows
-    assert "click the address bar at the top of the folder window, paste the path and press Enter" in windows
-    assert "⌘" not in windows and "Finder" not in windows and "{{" not in windows
-    assert "C:\\Users\\José &amp; Ana\\.ai-browser\\app\\extension" in windows  # whole, accents kept, escaped
-    mac = setup_page("/Users/me/.ai-browser/app/extension", "/w", "k", system="darwin")
-    assert "Finder" in mac and "press ⌘⇧G, paste the path and press Enter" in mac and "<kbd>" not in mac
-
-
-async def test_the_reveal_says_when_no_folder_window_opened(fake_claude, tmp_path):
-    server, url = await started(fake_claude, tmp_path, EVENTS)
-    server.reveal = lambda path: False  # no file manager could start
-    try:
-        async with httpx.AsyncClient() as client:
-            page = (await client.get(url + "/setup")).text
-            key = page.split('data-key="', 1)[1].split('"', 1)[0]
-            assert (await client.post(url + "/setup/reveal", headers={"X-AIB-Setup": key})).status_code == 501
     finally:
         await server.stop()
 
