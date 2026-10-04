@@ -1,4 +1,4 @@
-# Handoff: where "the app as an app" stands (2026-10-03)
+# Handoff: where "the app as an app" stands (2026-10-04)
 
 The user asked to continue this work in a cloud session. This note carries what the cloud session needs that isn't in
 the code: the decisions taken, the order of work, the rules, and what only the user can check on their Mac. The
@@ -25,23 +25,38 @@ work ledgers (`.superpowers/`) are git-ignored and stayed on the Mac.
 - **The shared connection (cdp-relay), built and merged** (2026-10-03, on the Mac): Brave asks "Allow remote
   debugging?" once per app run, and a closed automation bar stays closed. Report:
   `docs/superpowers/reports/2026-10-03-cdp-relay.md` (its rulings, deferred minors, and the user's hand check).
+- **Brave asks once, even when the answer comes late (allow-once), built and merged** (2026-10-04).
+  - Chromium's question has no time limit and outlives a closed handshake, so the relay never gives up on it.
+  - Sessions without the app wait the same way.
+  - The app says to click Cancel on a question it leaves at quit.
+  - Report: `docs/superpowers/reports/2026-10-04-allow-once.md`. The relay spec has an "Amendment (2026-10-04)".
+- **Wave A, built, reviewed fresh, fixed and merged** (2026-10-04): `brain-delegation`, `watcher-safety` and
+  `browser-detection`.
+  - Reports: `docs/superpowers/reports/2026-10-04-{brain-delegation,watcher-safety,browser-detection}.md`.
+  - At the merge, `TELL_CARD_MESSAGES` went (watcher safety's `MESSAGE_RULES` covers it, and the Brain's
+    `from_watcher` comes from `_role`), and Mission Control's Your tabs shows the tab scope.
+  - **`main` with all of it:** 1519 passed, 9 skipped (Windows only).
 
 ## Next, in this order
 
-1. **The shared connection: done** (see above). It landed *before* brain-delegation (1A) and watcher-safety (1B), so
-   it uses today's structures: `BRAVE_MESSAGES` (with `browser_disconnect` added) and the watcher-origin check in
-   `app/server.py`, and an agent's number as `int(id[1:])`. 1A and 1B fold them into their tables when they land:
-   `browser_disconnect` is an app-only row, and `browser_clients` stays out of the watcher's messages. Their plans
-   predate the relay: re-read every file at HEAD (tokens are now per agent: `server.token_for(id)`, not
-   `server.agent_token`).
-2. **The three unreviewed plans: reviewed** (see `docs/superpowers/plans/reviews/`). Wave A's three plans were also
-   checked against the relay; their builders got the findings as pre-flight rulings.
-3. **Wave A, in parallel branches:** `brain-delegation`, `watcher-safety`, `browser-detection`. Merge rule from the
-   plans: once both 1A and 1B are on `main`, the `tell_confirm` and `tell_dismiss` rows must exist in `MESSAGE_RULES`,
-   or AI Home's Start, Send and Cancel on inbox cards are silently dropped.
-4. **Wave B:** `app-window`. **Wave C:** `browser-profile-choice`. **Wave D:** `side-chat`. Each builds on the
-   merged result before it; plans anchor edits by text.
-5. **After each sub-project:** a fresh whole-branch review, then ONE fix pass (each fix test-first, RED then GREEN),
+1. **Wave B: `app-window`.** Its builder:
+   - applies `docs/superpowers/plans/reviews/2026-10-03-app-window-review.md` as pre-flight rulings, after re-reading
+     every file at HEAD (wave A and allow-once moved anchors);
+   - makes `_role` fail closed once the window's cookie maps to "app" (watcher safety's deferred minor);
+   - keeps `run.py`'s quit line (`LEFT_ASKING`), and adapts `test_quitting_while_brave_asks_says_to_click_cancel` to
+     the window: it kills AI Browser's own Chrome, which wave B retires;
+   - keeps `tests/test_approval_mode.py` green.
+2. **Wave C:** `browser-profile-choice`. **Wave D:** `side-chat`. Each builds on the merged result before it; plans
+   anchor edits by text.
+3. **AI accounts (in design with the user).**
+   - **What it does:**
+     - several Claude Code logins, each its own config folder;
+     - a default account, and a pick for each agent;
+     - the Brain's own account, set in Settings;
+     - at a usage limit, "Ask me, then carry on": move the conversation, else a hand-over note.
+   - **Where it stands:** Section 1 of the design waits for the user's review. Codex and Gemini come after, as a
+     design of their own.
+4. **After each sub-project:** a fresh whole-branch review, then ONE fix pass (each fix test-first, RED then GREEN),
    then the whole suite, then merge to `main` and push.
 
 ## How the work has been done (keep doing it this way)
@@ -70,9 +85,15 @@ work ledgers (`.superpowers/`) are git-ignored and stayed on the Mac.
 ## What the cloud can't do (left for the user, on the Mac)
 
 - **Anything with the user's own browsers or the running app.** Never point a test at a real profile.
-- **The hand check after the relay lands:**
+- **The hand check of "ask once, bar once":**
   - start the app, click Allow once, then start two agents: no new question;
-  - close the bar, then start another agent: the bar stays closed.
+  - close the bar, then start another agent: the bar stays closed;
+  - wait more than a minute before clicking Allow: the first Allow still connects.
+
+  On 2026-10-04, from 07:58 to 08:12, the app ran with the allow-once fix. A read-only log of Brave's debugging
+  connections showed only the app's one connection the whole time. What the user saw on screen isn't recorded yet.
+- **Docker:** two leftover test sandboxes, AI Browser's idle shell container and `client-work-hub`'s containers were
+  suggested for stopping. The command is the user's to run, since the permission check refused it for Claude.
 - **Earlier checks still pending:**
   - the voice model's Download and a spoken question;
   - the Brain's live checks in Gmail and Slack;
