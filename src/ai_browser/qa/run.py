@@ -182,7 +182,7 @@ async def _run_qa(browser: Browser, work: WorkDir, url: str, max_pages: int, pro
                   on_tabs: Callable[[], None] | None, crawl_budget: float, link_budget: float, delay: float,
                   ignore_robots: bool, on_check: CheckHook | None, on_host_stopped: HostStoppedHook | None,
                   skipped: SkippedSite | None) -> str:
-    problem = url_problem(url, browser.mode)
+    problem = url_problem(url, browser.mode, getattr(browser, "app_origin", ""))
     if problem:
         raise BrowserError(f"{url}: {problem}")
     start = normalize(url)

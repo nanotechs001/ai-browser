@@ -248,8 +248,7 @@ async def test_two_engines_share_container(tmp_path):
 
 
 @pytest.mark.parametrize("value, kind", [("", "chrome"), ("own", "chrome"), ("chrome", "chrome"), ("brave", "chrome"),
-                                         (" Brave ", "chrome"), ("OWN", "chrome"), ("sandbox", "sandbox"),
-                                         ("app", "app")])
+                                         (" Brave ", "chrome"), ("OWN", "chrome"), ("sandbox", "sandbox")])
 def test_aib_browser_picks_the_browser(monkeypatch, tmp_path, value, kind):
     monkeypatch.setenv("AIB_BROWSER", value)
     assert Engine(home=tmp_path, catalog=Catalog([], set()))._default_kind() == kind
@@ -293,7 +292,7 @@ async def test_an_unknown_aib_browser_is_refused_never_guessed(monkeypatch, tmp_
     monkeypatch.setattr(Engine, "_start_chrome", nothing)
     engine = Engine(home=tmp_path, catalog=Catalog([], set()))
     result = await engine.open("https://example.com")
-    assert result.text.startswith("error: AIB_BROWSER must be own, chrome, brave, sandbox or app")
+    assert result.text.startswith("error: AIB_BROWSER must be own, chrome, brave or sandbox")
 
 
 async def test_sandbox_start_chooses_up_front(monkeypatch, tmp_path):
@@ -782,3 +781,40 @@ async def test_take_back_reaches_the_engine_through_the_relay_at_once(monkeypatc
     finally:
         await engine.close()
         await app.stop()
+
+
+def test_the_apps_own_pages_never_open_in_an_agents_browser():
+    from ai_browser.browser import url_problem
+
+    app = "http://127.0.0.1:8792"
+    for mode in ("chrome", "sandbox"):
+        for url in ("http://127.0.0.1:8792/home", "http://127.0.0.1:8792/setup#switch", "HTTP://127.0.0.1:8792/x"):
+            assert url_problem(url, mode, app_origin=app) == "AI Browser's own pages open only in its window", url
+    assert url_problem("http://127.0.0.1:8793/home", "chrome", app_origin=app) is None  # another port
+    assert url_problem("http://127.0.0.1:8792/home", "chrome") is None  # no app running
+    assert url_problem("chrome-extension://abc/options.html", "chrome")  # extension pages: never, as before
+
+
+async def test_the_retired_ai_browser_mode_is_said_plainly(monkeypatch, tmp_path):
+    from ai_browser.engine import RETIRED_BROWSER
+
+    monkeypatch.setenv("AIB_BROWSER", "app")
+
+    async def nothing(*args, **kwargs):
+        raise AssertionError("started a browser")
+
+    monkeypatch.setattr(Engine, "_start", nothing)
+    monkeypatch.setattr(Engine, "_start_chrome", nothing)
+    result = await Engine(home=tmp_path, catalog=Catalog([], set())).open("https://example.com")
+    assert result.text.startswith(f"error: {RETIRED_BROWSER}")  # the engine adds its timing line
+    assert RETIRED_BROWSER == ("AIB_BROWSER=app is retired: AI Browser's own Chrome is gone. Use own (your browser) "
+                               "or sandbox.")
+
+
+def test_the_engine_needs_no_development_packages():  # moved from test_appmode.py
+    import subprocess
+    import sys
+
+    code = "import sys; sys.modules['httpx'] = None; import ai_browser.engine, ai_browser.server"  # httpx is dev-only
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, encoding="utf-8")
+    assert result.returncode == 0, result.stderr[-500:]

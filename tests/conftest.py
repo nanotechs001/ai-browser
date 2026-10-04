@@ -24,7 +24,7 @@ def _docker_unavailable() -> str | None:
 
 POSIX_ONLY = "needs macOS or Linux (file descriptors 3 and 4, or the DevTools pipe)"
 WINDOWS_ONLY = "Windows behaviour (junctions, msvcrt, Win32 APIs)"
-PIPE_FIXTURES = {"watcher", "app_engine"}  # they launch AI Browser over the DevTools pipe
+PIPE_FIXTURES = {"watcher"}  # they launch AI Browser over the DevTools pipe
 
 
 def platform_skip(item, windows: bool) -> str | None:
@@ -60,6 +60,7 @@ def _never_the_users_browsers(monkeypatch, tmp_path_factory):
     Detection (`browsers.installed()`, `os_default()`) sees no app folder, no registry and no LaunchServices file of
     this computer."""
     monkeypatch.setenv("AIB_BROWSER", "sandbox")
+    monkeypatch.delenv("AIB_APP_BROWSER", raising=False)  # retired: a shell that still sets it can't change a test
     monkeypatch.setenv("AIB_CHROME_DIR", str(tmp_path_factory.getbasetemp() / "no-chrome-here"))
     from ai_browser import browsers, platforms
 
