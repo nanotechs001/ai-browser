@@ -84,6 +84,7 @@ async def stack(fake_claude, tmp_path):
     drive AI Home directly (tests/test_tab_menu.py drives the tabs). The throwaway keeps its debugging port because
     the tests drive the pages through it; the product's window never has one. Agents browse in the user's browser,
     here a FakeBrave with no tabs (a test that needs tabs attaches its own)."""
+    from ai_browser.accounts import Accounts
     from ai_browser.app.agents import AgentManager
     from ai_browser.app.server import AppServer
     from ai_browser.brain.service import BrainService
@@ -107,8 +108,9 @@ async def stack(fake_claude, tmp_path):
     workflows = WorkflowStore(home)
     tools = ToolsConfig(home, claude_home=tmp_path / "user")  # the tests that use it write a configuration there
     skills = SkillWriter(tmp_path / "user" / ".claude" / "skills", claude=runner, cwd=tmp_path / "calls")
+    accounts = Accounts(home, claude=runner)  # AI accounts: Default only, until a test adds one
     server = AppServer(home, agents, brain=brain, workflows=workflows, runner=WorkflowRunner(workflows, agents),
-                       tools=tools, skill_writer=skills, hearing=hearing)
+                       tools=tools, skill_writer=skills, hearing=hearing, accounts=accounts)
     url = await server.start()
     server.window_info = WINDOW_INFO  # Chrome draws it; Chrome and Brave installed, whatever this computer has
     brave = FakeBrave([])
@@ -124,7 +126,8 @@ async def stack(fake_claude, tmp_path):
     assert await until(js, "location.pathname === '/home' && document.readyState === 'complete'")
     state = {"server": server, "cdp": cdp, "url": url, "ws_url": ws_url, "home": home, "log": log, "runner": runner,
              "script": script, "brain": brain, "workflows": workflows, "tools": tools, "hearing": hearing,
-             "engine": engine, "user": tmp_path / "user", "brave": brave, "home_js": js, "home_target": target}
+             "engine": engine, "user": tmp_path / "user", "brave": brave, "home_js": js, "home_target": target,
+             "accounts": accounts}
     yield state
     await cdp.close()
     await state["server"].stop()

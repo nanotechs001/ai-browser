@@ -101,3 +101,12 @@ def test_every_page_in_the_window_keeps_the_close_tab_key():
         assert "guardCloseKey();" in (UI / name).read_text(encoding="utf-8"), name
     assert "closeTabKey" in (UI / "app.js").read_text(encoding="utf-8")
     assert '"close-tab"' in (UI / "setup.js").read_text(encoding="utf-8")  # setup.js imports nothing: it opens in Brave
+
+
+def test_the_account_pages_stay_out_of_the_watcher():
+    from ai_browser.brain.watcher import WATCHER_SHARED
+
+    for name in ("accountui.js", "accountsettings.js"):
+        assert (UI / name).is_file() and name not in WATCHER_SHARED, name
+        for shared in WATCHER_SHARED:  # the watcher gets no account data, and no account page either
+            assert name not in (UI / shared).read_text(encoding="utf-8"), (shared, name)
