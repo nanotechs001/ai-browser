@@ -33,7 +33,6 @@ async def started(fake_claude, tmp_path, events, **options):
     script.write_text(json.dumps(events), encoding="utf-8")
     server = AppServer(tmp_path / "home", AgentManager(tmp_path / "home", claude=runner), **options)
     url = await server.start()
-    server.allow_origin(ORIGIN)
     return server, url
 
 
@@ -73,14 +72,14 @@ async def test_strangers_are_refused(fake_claude, tmp_path):
 async def test_a_task_runs_and_every_socket_sees_it(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             assert (await recv(ws))["type"] == "snapshot"
             await ws.send(json.dumps({"type": "new_task", "text": "check the shop", "skills": [], "model": "haiku",
                                       "request": "r1"}))
             seen = await until(ws, finished)
             assert {"type": "created", "id": "a1", "request": "r1"} in seen
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:  # a page opened later
+        async with ui_socket(server, url) as ws:  # a page opened later
             await ws.send(json.dumps({"type": "hello", "view": "panel"}))
             snapshot = await recv(ws)
             assert snapshot["agents"][0]["name"] == "check the shop" and "events" not in snapshot["agents"][0]
@@ -219,7 +218,7 @@ async def test_skills_for_the_dashboard(fake_claude, tmp_path):
     catalog = Catalog([SkillSource("personal", root, "/skills/personal", "*/SKILL.md")], set())
     server, url = await started(fake_claude, tmp_path, EVENTS, catalog=catalog)
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             assert (await recv(ws))["skills_summary"] == {"total": 2, "by_source": {"personal": 2}}
             await ws.send(json.dumps({"type": "skills"}))
@@ -237,7 +236,7 @@ async def test_long_histories_are_capped(fake_claude, tmp_path):
         await asyncio.sleep(1)
         for n in range(6000):
             server.agents._record(agent, {"type": "delta", "text": str(n)})
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             snapshot = await recv(ws)
             assert "events" not in snapshot["agents"][0] and len(json.dumps(snapshot)) < 5000
@@ -278,7 +277,7 @@ async def test_thumbnails_follow_actions_at_most_every_two_seconds(fake_claude, 
     script = [EVENTS[0], {"sleep": 0.5}, *tool(1), {"sleep": 0.3}, *tool(2), EVENTS[-1]]
     server, url = await started(fake_claude, tmp_path, script, tabs=tabs)
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(ws)
             await ws.send(json.dumps({"type": "new_task", "text": "act twice", "skills": [], "request": "r"}))
@@ -300,7 +299,7 @@ async def test_thumbnails_follow_actions_at_most_every_two_seconds(fake_claude, 
 async def test_new_tasks_use_the_apps_default_model(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS, default_model="haiku")  # ai-browser app --model haiku
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             assert (await recv(ws))["default_model"] == "haiku"
             await ws.send(json.dumps({"type": "new_task", "text": "quick look", "request": "r"}))
@@ -323,8 +322,7 @@ async def with_brain(fake_claude, tmp_path, answers):
     brain = BrainService(BrainStore(home), agents, claude=runner, batch_wait=0.1)
     server = AppServer(home, agents, brain=brain)
     url = await server.start()
-    server.allow_origin(ORIGIN)
-    server.allow_origin(WATCHER, watcher=True)
+    server.allow_watcher(WATCHER)
     brain.set_watch({"site": "gmail", "enabled": True, "url_match": "https://mail.google.com/*"})
     return server, url, brain
 
@@ -340,7 +338,7 @@ async def test_the_watcher_feeds_the_brain_and_pages_see_it(fake_claude, tmp_pat
             assert greeting[0]["type"] == "watcher_hello" and greeting[-1]["sites"][0]["site"] == "gmail"
             async with httpx.AsyncClient() as client:  # Brave's watcher is not AI Browser's extension
                 assert (await client.get(url + "/setup/status")).json() == {"watcher": True}
-            async with connect(socket_url(server, url), origin=ORIGIN) as page:
+            async with ui_socket(server, url) as page:
                 await page.send(json.dumps({"type": "hello", "view": "home"}))
                 await page.send(json.dumps({"type": "brain"}))
                 assert (await until(page, lambda m: m["type"] == "brain_snapshot"))[-1]["watcher"] is True
@@ -368,7 +366,7 @@ async def test_only_the_watcher_may_report_items(fake_claude, tmp_path):
     server, url, brain = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
     log = fake_claude[1]
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:
+        async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "watcher"}))
             assert (await recv(page))["type"] == "snapshot"  # AI Browser's own page, not the watcher
             await page.send(json.dumps({"type": "items", "site": "gmail", "items": [
@@ -388,7 +386,7 @@ async def test_a_draft_without_the_watcher_says_so(fake_claude, tmp_path):
     brain.store.put(Item(id="gmail:t1", site="gmail", raw_id="t1", url="https://mail.google.com/mail/u/0/#inbox/t1",
                          kind="needs_reply"))
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:
+        async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await page.send(json.dumps({"type": "draft", "id": "gmail:t1"}))
             seen = await until(page, lambda m: m["type"] == "brain_item" and "isn't connected" in m["item"]["note"])
@@ -425,7 +423,7 @@ async def test_late_pages_get_the_latest_thumbnails(fake_claude, tmp_path):
         agent = await server.agents.create("look around")
         agent.working_tab = "T"
         server._on_action(agent)
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "mission"}))
             await recv(ws)
             for _ in range(50):  # the picture is taken in the background
@@ -454,7 +452,7 @@ async def test_no_picture_is_sent_for_an_agent_closed_meanwhile(fake_claude, tmp
 
     server, url = await started(fake_claude, tmp_path, [EVENTS[0], {"sleep": 30}], tabs=SlowTabs())
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "mission"}))
             await recv(ws)
             agent = await server.agents.create("look around")
@@ -499,7 +497,7 @@ async def test_check_reports_are_checked_then_reach_pages_and_the_watcher(fake_c
         good = {**CHECK_REPORT, "agent": agent.id}
         headers = agent_headers(server, agent.id)
         async with (connect(socket_url(server, url), origin=WATCHER) as watcher,
-                    connect(socket_url(server, url), origin=ORIGIN) as page):
+                    ui_socket(server, url) as page):
             await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
             await until(watcher, lambda message: message["type"] == "watch_list")
             await page.send(json.dumps({"type": "hello", "view": "home"}))
@@ -530,7 +528,7 @@ async def test_check_buttons_come_from_our_pages_and_the_watcher_only_continues(
 
     _, log, _ = fake_claude
     server, url = await started(fake_claude, tmp_path, EVENTS)
-    server.allow_origin(WATCHER, watcher=True)
+    server.allow_watcher(WATCHER)
     closed = []
 
     async def close_tabs(targets):
@@ -548,7 +546,7 @@ async def test_check_buttons_come_from_our_pages_and_the_watcher_only_continues(
             await watcher.send(json.dumps({"type": "check_continue", "id": second.id}))
             await wait_for(lambda: second.check is None)
         assert first.check is not None and closed == []
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:
+        async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "check_skip", "id": first.id}))
             await wait_for(lambda: first.check is None)
         assert closed == [[f"T{first.id}"]]
@@ -667,7 +665,7 @@ async def test_a_sessions_check_report_changes_nothing(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
         agent = add_agent(server.agents)
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(ws)
             async with httpx.AsyncClient() as client:
@@ -744,7 +742,7 @@ async def test_hand_tab_and_take_back(fake_claude, tmp_path):  # Review Focus 4
             if server.agents.agents["a1"].state == "your_turn":
                 break
             await asyncio.sleep(0.05)
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             snapshot = await recv(ws)
             assert snapshot["browser"] == {"kind": "brave", "name": "Brave", "state": "connected",
@@ -773,7 +771,7 @@ async def test_new_task_may_start_only_in_a_tab_brave_lists(fake_claude, tmp_pat
     brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"}])
     server.attach_brave(brave)
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(ws)
             await ws.send(json.dumps({"type": "new_task", "text": "look", "adopt": "AI-BROWSER-TAB", "request": "r1"}))
@@ -798,7 +796,7 @@ async def test_the_watcher_may_not_hand_tabs_or_connect(fake_claude, tmp_path):
             await watcher.send(json.dumps(message))
         await asyncio.sleep(0.5)
         assert brave.connects == 0 and agent.adopted == ["U2"]
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:  # AI Home may
+        async with ui_socket(server, url) as page:  # AI Home may
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(page)
             await page.send(json.dumps({"type": "brave_connect"}))
@@ -814,12 +812,12 @@ async def test_the_watcher_may_not_hand_tabs_or_connect(fake_claude, tmp_path):
 
 async def test_the_tab_list_carries_its_scope(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
-    server.allow_origin(WATCHER, watcher=True)
+    server.allow_watcher(WATCHER)
     brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"}])
     brave.set_scope("watcher", 2)
     server.attach_brave(brave)
     try:
-        async with (connect(socket_url(server, url), origin=ORIGIN) as page,
+        async with (ui_socket(server, url) as page,
                     connect(socket_url(server, url), origin=WATCHER) as watcher):
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
@@ -835,14 +833,14 @@ async def test_the_tab_list_carries_its_scope(fake_claude, tmp_path):
             brave.set_scope("none", 0)
             lost = (await until(page, lambda m: m["type"] == "tabs"))[-1]
             assert lost["tabs"] == [] and "tab_scope" not in lost  # while Brave isn't connected: no scope at all
-        async with connect(socket_url(server, url), origin=ORIGIN) as late:
+        async with ui_socket(server, url) as late:
             await late.send(json.dumps({"type": "hello", "view": "home"}))
             assert (await recv(late))["tab_scope"] is None
     finally:
         await server.stop()
     plain, plain_url = await started(fake_claude, tmp_path / "plain", EVENTS, tabs=StubTabs())
     try:
-        async with connect(socket_url(plain, plain_url), origin=ORIGIN) as page:
+        async with ui_socket(plain, plain_url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             assert (await recv(page))["tab_scope"] is None  # AI Browser's own TabWatch lists every tab
     finally:
@@ -864,7 +862,7 @@ async def test_a_replaced_tab_source_is_no_longer_heard(fake_claude, tmp_path):
     brave.set_scope("none", 4)
     server.attach_brave(brave)  # brave mode replaces it
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:
+        async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             assert [tab["target"] for tab in (await recv(page))["tabs"]] == ["U1"]
             for callback in old.callbacks:  # the old source still runs and still calls back
@@ -881,12 +879,11 @@ async def test_while_brave_connects_the_tab_list_claims_no_profile(tmp_path):  #
 
     app = await BraveApp(tmp_path / "home", tmp_path / "BraveSoftware" / "Brave-Browser",
                          pages=[{"target": "U1", "url": "https://mail.example/", "title": "Mail"}]).start(connect=False)
-    app.server.allow_origin(ORIGIN)
     app.port.hold = {"Target.getBrowserContexts"}  # the tab list's first read waits: the moment right after Allow
     connecting = asyncio.ensure_future(app.brave.connect())
     try:
         await wait_for(lambda: app.brave.state == "connected" and bool(app.port.held))
-        async with connect(socket_url(app.server, app.url), origin=ORIGIN) as page:
+        async with ui_socket(app.server, app.url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             snapshot = await recv(page)  # a page that loads now, while the tab list is starting
             assert snapshot["browser"]["state"] == "connected" and snapshot["tabs"] == []
@@ -952,7 +949,7 @@ async def test_take_back_leaves_an_agents_own_tab_its_own(fake_claude, tmp_path)
     add_agent(server.agents)
     brave.set_owner("T1", {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"})
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(ws)
             await ws.send(json.dumps({"type": "take_back", "target": "T1"}))  # not handed: nothing to take back
@@ -982,7 +979,7 @@ async def test_in_brave_only_hand_over_hands_a_tab_so_a_late_report_cant_undo_ta
         assert answer.status_code == 204
 
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws, httpx.AsyncClient() as client:
+        async with ui_socket(server, url) as ws, httpx.AsyncClient() as client:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(ws)
             await report(client, "working_tab", "U1")  # while handed, the agent's reports about it count
@@ -1044,8 +1041,7 @@ async def with_hearing(fake_claude, tmp_path, script, present=True, brain=True, 
                        brain=BrainService(BrainStore(home), agents, claude=runner) if brain else None,
                        hearing=HearingService(tiny_store(home / "models", present=present), fake) if hearing else None)
     url = await server.start()
-    server.allow_origin(ORIGIN)
-    server.allow_origin(WATCHER, watcher=True)
+    server.allow_watcher(WATCHER)
     return server, url, fake
 
 
@@ -1069,8 +1065,8 @@ async def test_a_page_hears_the_status_and_only_its_own_words(fake_claude, tmp_p
 
     server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, answers=["what is fix the footer doing"])
     try:
-        async with (connect(socket_url(server, url), origin=ORIGIN) as one,
-                    connect(socket_url(server, url), origin=ORIGIN) as two):
+        async with (ui_socket(server, url) as one,
+                    ui_socket(server, url) as two):
             await hello(one)
             await hello(two)
             await one.send(json.dumps({"type": "hearing"}))
@@ -1096,8 +1092,8 @@ async def test_download_progress_reaches_every_page(fake_claude, tmp_path):
     server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, present=False)
     server.hearing.models.fetch.delay = 0.3
     try:
-        async with (connect(socket_url(server, url), origin=ORIGIN) as one,
-                    connect(socket_url(server, url), origin=ORIGIN) as two):
+        async with (ui_socket(server, url) as one,
+                    ui_socket(server, url) as two):
             await hello(one)
             await hello(two)
             await one.send(json.dumps({"type": "hearing_download"}))
@@ -1116,8 +1112,8 @@ async def test_the_brain_answers_the_asker_and_confirm_starts_the_agent(fake_cla
                                                                   "action": "start_agent"})}]}
     server, url, engine = await with_hearing(fake_claude, tmp_path, script)
     try:
-        async with (connect(socket_url(server, url), origin=ORIGIN) as one,
-                    connect(socket_url(server, url), origin=ORIGIN) as two):
+        async with (ui_socket(server, url) as one,
+                    ui_socket(server, url) as two):
             await hello(one)
             await hello(two)
             await one.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "t1", "text": "check the shop"}))
@@ -1145,7 +1141,7 @@ async def test_a_brain_that_breaks_still_answers_the_page(fake_claude, tmp_path)
 
     server.brain.respond = server.brain.confirm = broken
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await hello(ws)
             await ws.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "t1", "text": "check the shop"}))
             await ws.send(json.dumps({"type": "brain_confirm", "talk": "k1", "request": "t2", "proposal": "p1"}))
@@ -1162,7 +1158,7 @@ async def test_a_closed_page_drops_its_turn(fake_claude, tmp_path):
 
     server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS)
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await hello(ws)
             await ws.send(json.dumps({"type": "listen_start", "turn": "u1"}))
             await ws.send(json.dumps({"type": "listen_chunk", "turn": "u1", "seq": 0, "pcm": chunks(tone(0.25))[0]}))
@@ -1184,7 +1180,7 @@ async def test_a_closed_page_drops_its_turn(fake_claude, tmp_path):
 async def test_without_hearing_or_a_brain_the_page_is_told(fake_claude, tmp_path):
     server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, brain=False, hearing=False)
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await hello(ws)
             await ws.send(json.dumps({"type": "hearing"}))
             status = (await until(ws, lambda m: m["type"] == "hearing_status"))[-1]
@@ -1225,7 +1221,7 @@ async def test_a_page_can_cancel_the_download(fake_claude, tmp_path):
     store = server.hearing.models
     store.fetch.delay = 0.3
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+        async with ui_socket(server, url) as ws:
             await hello(ws)
             await ws.send(json.dumps({"type": "hearing_download"}))
             await until(ws, lambda m: m["type"] == "hearing_status" and m["state"] == "downloading")
@@ -1240,7 +1236,7 @@ async def test_stopping_the_app_cancels_a_download(fake_claude, tmp_path):
     server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, present=False)
     store = server.hearing.models
     store.fetch.delay = 0.3
-    async with connect(socket_url(server, url), origin=ORIGIN) as ws:
+    async with ui_socket(server, url) as ws:
         await hello(ws)
         await ws.send(json.dumps({"type": "hearing_download"}))
         for _ in range(100):
@@ -1252,7 +1248,7 @@ async def test_stopping_the_app_cancels_a_download(fake_claude, tmp_path):
     assert not store.part.exists() and not store.folder.exists()
 
 
-async def test_a_wrong_extension_id_is_reported_not_allowed(fake_claude, tmp_path):
+async def test_a_wrong_watcher_id_is_reported_not_allowed(fake_claude, tmp_path):
     from ai_browser.app.agents import AgentManager
     from ai_browser.app.server import AppServer
 
@@ -1262,31 +1258,49 @@ async def test_a_wrong_extension_id_is_reported_not_allowed(fake_claude, tmp_pat
     lines = []
     server.out = lines.append
     try:
-        # AI Browser is still starting: the app hasn't allowed its computed IDs yet, and the extension (which already
+        # The app is still starting: it hasn't allowed the watcher's computed ID yet, and the watcher (which already
         # has this run's token) may connect first. Refused as always, but that is no mismatch.
-        async with connect(socket_url(server, url), origin="chrome-extension://early") as ws:
-            with pytest.raises(ConnectionClosed):
-                await ws.recv()
-        assert server.origin_mismatch is None and lines == []
-        server.allow_origin(ORIGIN)
-        server.allow_origin(WATCHER, watcher=True)
-        async with httpx.AsyncClient() as client:
-            assert "mismatch" not in (await client.get(url + "/setup/status")).json()
-            async with connect(socket_url(server, url, "wrong"), origin="chrome-extension://other") as ws:
-                with pytest.raises(ConnectionClosed):
-                    await ws.recv()
-            assert server.origin_mismatch is None and lines == []  # a wrong token sets nothing
-            for _ in range(2):  # the right token from an origin the app didn't compute: said once
-                async with connect(socket_url(server, url), origin="chrome-extension://unexpected") as ws:
-                    with pytest.raises(ConnectionClosed) as closed:
-                        await ws.recv()
-                    assert closed.value.rcvd.code == 4403  # still refused, never allowed on its own
-            assert server.origin_mismatch == "chrome-extension://unexpected"
-            assert lines == ["An AI Browser extension connected as chrome-extension://unexpected, but the app "
-                             "expected chrome-extension://good (AI Browser) or chrome-extension://watcher (the "
-                             "watcher): please report this"]
-            status = (await client.get(url + "/setup/status")).json()
-            assert status["mismatch"] == "chrome-extension://unexpected"
+        early = connect(socket_url(server, url), origin="chrome-extension://early", proxy=None)
+        assert await refused_socket(early) == 4403 and server.origin_mismatch is None and lines == []
+        server.allow_watcher(WATCHER)
+        assert "mismatch" not in (await fetch("GET", url + "/setup/status")).json()
+        wrong = connect(socket_url(server, url, "wrong"), origin="chrome-extension://other", proxy=None)
+        assert await refused_socket(wrong) == 4403
+        assert server.origin_mismatch is None and lines == []  # a wrong token sets nothing
+        for _ in range(2):  # the right token from an origin the app didn't compute: said once
+            unexpected = connect(socket_url(server, url), origin="chrome-extension://unexpected", proxy=None)
+            assert await refused_socket(unexpected) == 4403  # still refused, never allowed on its own
+        assert server.origin_mismatch == "chrome-extension://unexpected"
+        assert lines == ["A watcher connected as chrome-extension://unexpected, but the app expected "
+                         "chrome-extension://watcher: please report this"]
+        assert (await fetch("GET", url + "/setup/status")).json()["mismatch"] == "chrome-extension://unexpected"
+    finally:
+        await server.stop()
+
+
+async def test_ai_browsers_extension_path_is_gone(fake_claude, tmp_path):
+    from ai_browser.app.server import AppServer
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        assert not hasattr(AppServer, "allow_origin") and not hasattr(server, "extension_seen")
+        for origin in ("chrome-extension://good", url, "https://evil.example"):  # the token alone opens nothing
+            assert await refused_socket(connect(socket_url(server, url), origin=origin, proxy=None)) == 4403
+    finally:
+        await server.stop()
+
+
+async def test_without_brave_nothing_is_handed_and_the_card_says_off(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            snapshot = await recv(ws)
+            assert snapshot["browser"] == {"kind": "brave", "name": "Brave", "state": "off", "groups": "no_watcher"}
+            await ws.send(json.dumps({"type": "new_task", "text": "reply to it", "adopt": "T1", "request": "r1"}))
+            error = (await until(ws, lambda message: message["type"] == "error"))[-1]
+            assert error["request"] == "r1" and error["text"].startswith("That tab can't be handed over")
+        assert server.agents.agents == {}  # no agent, and T1 adopted by nobody
     finally:
         await server.stop()
 
@@ -1326,7 +1340,7 @@ async def test_hello_returns_a_cdp_token_only_with_a_relay(fake_claude, tmp_path
             second = await client.post(url + "/agent-hello", headers=session_headers(server), json=hello)
             assert first.status_code == 200
             assert first.json() == second.json() == {"cdp_token": server.tokens.mint("cc-20261003-1")}
-            async with connect(socket_url(server, url), origin=ORIGIN) as page:
+            async with ui_socket(server, url) as page:
                 await page.send(json.dumps({"type": "hello", "view": "home"}))
                 await recv(page)
                 await page.send(json.dumps({"type": "browser_disconnect", "id": "cc-20261003-1"}))
@@ -1353,7 +1367,7 @@ async def test_no_token_reaches_a_page(fake_claude, tmp_path):
         {"id": session_id, "kind": "session", "number": None, "tabs": 0, "connected": True, "cut_off": False}]
     seen = []
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as page, httpx.AsyncClient() as client:
+        async with ui_socket(server, url) as page, httpx.AsyncClient() as client:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             seen.append(await recv(page))
             hello = await client.post(url + "/agent-hello", headers=session_headers(server),
@@ -1408,7 +1422,7 @@ async def test_take_back_cuts_in_the_relay(fake_claude, tmp_path):
     server.attach_brave(brave)
     add_agent(server.agents, adopted=["U1"])
     try:
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:
+        async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(page)
             await page.send(json.dumps({"type": "take_back", "target": "U1"}))
@@ -1428,7 +1442,7 @@ async def test_browser_disconnect_only_from_our_pages(fake_claude, tmp_path):
         await watcher.send(json.dumps({"type": "browser_disconnect", "id": "a1"}))
         await asyncio.sleep(0.3)
         assert brave.relay.disconnected == []
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:
+        async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             assert (await recv(page))["browser_clients"] == []
             await page.send(json.dumps({"type": "browser_disconnect", "id": "a1"}))
@@ -1567,7 +1581,7 @@ async def test_the_watcher_may_not_confirm_an_inbox_card(fake_claude, tmp_path):
         await wait_for(lambda: brain.store.get("gmail:t1").note == WATCHER_CARD)
         await asyncio.sleep(0.5)
         assert brain.tells.peek("gmail:t1") is card and server.agents.agents == {}  # the card is still open
-        async with connect(socket_url(server, url), origin=ORIGIN) as page:  # AI Home may
+        async with ui_socket(server, url) as page:  # AI Home may
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(page)
             for _ in range(2):  # a double click

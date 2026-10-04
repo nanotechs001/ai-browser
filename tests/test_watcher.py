@@ -71,7 +71,7 @@ async def watcher(fake_claude, tmp_path):
     brain = BrainService(BrainStore(home), agents, claude=runner, batch_wait=0.2, reader_timeout=2)
     server, folder = await start_server(home, agents, brain)
     app = launch_app_browser(tmp_path / "profile", folder, headless=True)
-    server.allow_origin(f"chrome-extension://{app.extension_id}", watcher=True)
+    server.allow_watcher(f"chrome-extension://{app.extension_id}")
     from ai_browser.app.bravelink import BraveLink
 
     brave = BraveLink(tmp_path / "profile", watcher_id=app.extension_id, every=0.1,  # as run.py: the watcher's id
@@ -225,7 +225,7 @@ async def test_items_wait_while_the_app_is_off(watcher):
     brain = BrainService(BrainStore(watcher.home), watcher.server.agents, claude=watcher.runner, batch_wait=0.2,
                          reader_timeout=2)
     server, _ = await start_server(watcher.home, watcher.server.agents, brain)
-    server.allow_origin(f"chrome-extension://{watcher.app.extension_id}", watcher=True)
+    server.allow_watcher(f"chrome-extension://{watcher.app.extension_id}")
     watcher.server, watcher.brain = server, brain
     assert await watcher.until(lambda: watcher.raw_ids() == {"t1", "t2", "t3"}, 15)
     await asyncio.sleep(1)

@@ -1,8 +1,12 @@
-"""The AI Browser app server: AI Home's, the chat panel's and the extension worker's only way to the agents.
+"""The AI Browser app server: AI Home's, Mission Control's and Settings' only way to the agents, and Brave's
+watcher's.
 
-It listens on 127.0.0.1 only. UI sockets need the extension token and our extension's origin; the agents' engines
-report their tabs to /agent-events with a token of their own. Everything that happens to an agent is broadcast to
-every socket; an agent's conversation is sent on request (`events`), so a page opened later can draw it whole."""
+It listens on 127.0.0.1 only, and every route checks the Host header. AI Browser's pages are served here to its own
+window, which swaps a one-time code for an HttpOnly cookie; a window socket needs that cookie and our exact Origin
+and Host. Brave's watcher connects with its token from its own extension origin. The agents' engines report their
+tabs to /agent-events with tokens of their own, and reach the browser through /cdp. Everything that happens to an
+agent is broadcast to every socket (the watcher gets a trimmed copy); an agent's conversation is sent on request
+(`events`), so a page opened later can draw it whole."""
 
 from __future__ import annotations
 
@@ -339,7 +343,7 @@ class AppServer:
         self.default_model = default_model if default_model in MODELS else "sonnet"  # ai-browser app --model
         self.host = host
         self.ports = ports
-        self.token = secrets.token_urlsafe(24)  # AI Home, the panel and the worker (in the extension's config.json)
+        self.token = secrets.token_urlsafe(24)  # Brave's watcher (in its config.json)
         self.tokens = Tokens()  # each agent's own token (and each session's for /cdp), new every run
         self.session_token = secrets.token_urlsafe(24)  # Claude Code sessions (in <home>/app/link.json, mode 0600)
         self.groups = GroupKeeper(self._to_watcher, on_change=self._browser_changed)  # tab groups, through the watcher
@@ -353,13 +357,11 @@ class AppServer:
         self.ui_secret = secrets.token_urlsafe(32)  # the window's session cookie: set only by swapping a start code
         self._codes: dict[str, float] = {}  # one-time start codes -> when they expire (_clock)
         self._files = {path.name for path in UI.iterdir() if path.is_file() and path.suffix in FILE_TYPES}
-        self.extension_seen = False  # the extension has connected: the one-time setup is done
         self.origin_mismatch: str | None = None  # an extension with our token, from an origin we didn't compute
         self.out: Callable[[str], None] = print  # where the app's one-line notes go (run_app passes its own)
         self.reveal = reveal_folder
         self.tabs = None
         self._catalog = catalog
-        self._origins: set[str] = set()
         self._sockets: dict[WebSocket, asyncio.Queue] = {}  # sockets that said hello: they get every broadcast
         self._writers: dict[WebSocket, asyncio.Task] = {}
         self._feed = agents.subscribe()
@@ -375,26 +377,17 @@ class AppServer:
         if tabs is not None:
             self.attach_tabs(tabs)
 
-    def allow_origin(self, origin: str, watcher: bool = False) -> None:
-        """An extension's origin (chrome-extension://<id>); nothing else may open a socket. Only the watcher's
-        origin may connect as the watcher and report what it reads."""
-        self._origins.add(origin)
-        if watcher:
-            self._watcher_origins.add(origin)
-
     def allow_watcher(self, origin: str) -> None:
-        """Brave's watcher's origin (chrome-extension://<id>): it connects with the token from there, as role
-        "watcher"."""
-        self.allow_origin(origin, watcher=True)
+        """Brave's watcher's origin (chrome-extension://<id>): the only origin that may connect with the token."""
+        self._watcher_origins.add(origin)
 
     @property
     def window_count(self) -> int:
         return len(self._windows)  # a set: never below 0, never a socket twice
 
     def _socket_kind(self, ws: WebSocket) -> str | None:
-        """Who opens this socket: AI Browser's window (its cookie, our exact Origin and Host), Brave's watcher (the
-        token and a watcher origin), or, until AI Browser's own extension retires, that extension (the token and its
-        origin). None: refused."""
+        """Who opens this socket: AI Browser's window (its cookie, our exact Origin and Host), or Brave's watcher (the
+        token and a watcher origin). None: refused."""
         origin = ws.headers.get("origin")
         if origin == self.origin and ws.headers.get("host") == self.host_header and self._cookie_ok(ws):
             return "window"
@@ -402,12 +395,8 @@ class AppServer:
             return None
         if origin in self._watcher_origins:
             return "watcher"
-        if origin in self._origins:
-            return "extension"
-        # Only once the app has allowed its computed IDs: during start-up the extension can connect before allow_*
-        # runs, and that is no mismatch.
-        if self._origins and isinstance(origin, str) and origin.startswith("chrome-extension://"):
-            self._mismatch(origin)
+        if self._watcher_origins and isinstance(origin, str) and origin.startswith("chrome-extension://"):
+            self._mismatch(origin)  # only once the app has allowed its computed ID: before that, no mismatch
         return None
 
     @property
@@ -536,15 +525,13 @@ class AppServer:
                      "again.")
 
     def _mismatch(self, origin: str) -> None:
-        """Only an extension holding our config.json has the token: from an origin we didn't compute, it means an
+        """Only a watcher holding our config.json has the token: from an origin we didn't compute, it means an
         extension ID is computed wrong on this computer. The socket is still refused; this says so, once."""
         if origin == self.origin_mismatch:
             return
         self.origin_mismatch = origin
-        app = ", ".join(sorted(self._origins - self._watcher_origins)) or "?"
-        watcher = ", ".join(sorted(self._watcher_origins)) or "?"
-        self.out(f"An AI Browser extension connected as {origin}, but the app expected {app} (AI Browser) or "
-                 f"{watcher} (the watcher): please report this")
+        expected = ", ".join(sorted(self._watcher_origins)) or "?"
+        self.out(f"A watcher connected as {origin}, but the app expected {expected}: please report this")
 
     def token_for(self, agent_id: str) -> str:
         """An agent's own token (minted when it is created): its engine's key to the reports and to /cdp."""
@@ -971,8 +958,8 @@ class AppServer:
         self._send_all({"type": "browser_clients", "clients": self._browser_clients()})
 
     def _browser_info(self) -> dict:
-        if self.brave is None:
-            return {"kind": "app", "name": "AI Browser", "state": "connected", "groups": "on"}
+        if self.brave is None:  # no BraveLink attached (a server built alone, in tests): agents can't browse yet
+            return {"kind": "brave", "name": "Brave", "state": "off", "groups": self.groups.available()}
         return {"kind": "brave", "name": self.brave.name, "state": self.brave.state,
                 "groups": self.groups.available()}
 
@@ -1050,8 +1037,6 @@ class AppServer:
         if kind == "window":
             self._windows.add(ws)
             self.window_seen = True
-        elif kind == "extension":
-            self.extension_seen = True  # AI Browser's own extension, until it retires
         queue: asyncio.Queue = asyncio.Queue()
         self._writers[ws] = asyncio.create_task(self._write(ws, queue))
         try:
@@ -1200,8 +1185,8 @@ class AppServer:
                 return
             skills = [skill for skill in message.get("skills") or [] if isinstance(skill, str)][:20]
             adopt = message.get("adopt") if isinstance(message.get("adopt"), str) and message.get("adopt") else None
-            handed = self._handable(adopt) if adopt and self.brave is not None else None
-            if adopt and self.brave is not None and handed is None:  # in brave mode: only a tab Brave lists
+            handed = self._handable(adopt) if adopt else None
+            if adopt and handed is None:  # only a tab the user's browser lists: never an unchecked target
                 queue.put_nowait({"type": "error", "request": request,
                                   "text": "That tab can't be handed over: it is closed, or an agent works in it"})
                 return

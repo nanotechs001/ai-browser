@@ -62,3 +62,8 @@ def test_nav_js_stays_out_of_the_watcher():
     assert "nav.js" not in WATCHER_SHARED
     for name in WATCHER_SHARED:
         assert "nav.js" not in (UI / name).read_text(encoding="utf-8"), name
+
+
+def test_ai_browser_mode_is_gone_from_the_pages():
+    assert "Agents browse in AI Browser" not in (UI / "home.js").read_text(encoding="utf-8")
+    assert "No tabs open besides AI Home" not in (UI / "tablist.js").read_text(encoding="utf-8")

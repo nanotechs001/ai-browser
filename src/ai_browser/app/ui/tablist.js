@@ -142,8 +142,7 @@ export function mountTabList(root, { send, agents, newAgent }) {
       previous = row;
     }
     if (!tabs.length) {
-      root.append(el("p", "empty", !brave ? "No tabs open besides AI Home."
-        : scope ? "No web pages open in this profile." : "No web pages open in your browser."));
+      root.append(el("p", "empty", scope ? "No web pages open in this profile." : "No web pages open in your browser."));
     }
     const texts = scopeTexts(brave ? scope : null);
     line("scope-source", texts.source);

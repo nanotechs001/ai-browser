@@ -241,15 +241,8 @@ function renderBrowser() {
   const card = $("browser-card");
   if (!browser) return;
   card.hidden = false;
-  card.dataset.state = browser.kind === "brave" ? browser.state : "app";
+  card.dataset.state = browser.state;
   const action = $("browser-action");
-  if (browser.kind !== "brave") {
-    $("browser-title").textContent = "Agents browse in AI Browser";
-    for (const id of ["browser-steps", "browser-note", "browser-groups", "browser-warning"]) $(id).hidden = true;
-    action.hidden = true;
-    renderClients();
-    return;
-  }
   const name = browser.name || "Brave";
   const on = browser.state === "connected" && browser.groups === "on";
   $("browser-title").textContent = `Your ${name} · ${SAYS[browser.state] || browser.state}${on ? " · tab groups on" : ""}`;
