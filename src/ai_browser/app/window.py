@@ -13,12 +13,16 @@ clicked in another app never lands in this window's app."""
 
 from __future__ import annotations
 
+import contextlib
+import ntpath
 import os
+import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import browsers
+from .. import browsers, platforms
 
 WINDOW_CHOICES = ("auto", "chrome", "brave", "edge")
 NAMES = {"chrome": "Google Chrome", "brave": "Brave", "edge": "Microsoft Edge"}
@@ -128,3 +132,81 @@ def window_args(binary, profile, url: str) -> list[str]:
     return [str(binary), f"--user-data-dir={profile}", f"--app={url}", "--no-first-run", "--no-default-browser-check",
             "--disable-search-engine-choice-screen", "--window-size=1440,960",
             "--autoplay-policy=no-user-gesture-required"]
+
+
+QUIT_WAIT = 10  # seconds the window's browser gets to quit before it is killed
+NO_BROWSER = ("AI Browser needs Google Chrome, Brave or Microsoft Edge to draw its window: install one, then start "
+              "again.")
+HANDED_OFF = "AI Browser's window was opened by a browser already running on its profile: quit it yourself ({how})"
+
+
+class WindowError(RuntimeError):
+    """AI Browser's window can't start; the message says why, in plain words."""
+
+
+def _inside(path, folder, system: str) -> bool:
+    """Whether `path` is `folder` or inside it: resolved, and on Windows without regard to case."""
+    left, right = os.path.realpath(path), os.path.realpath(folder)
+    if system == "win32":
+        left, right = ntpath.normcase(left), ntpath.normcase(right)
+    return left == right or left.startswith(right.rstrip("/\\") + os.sep)
+
+
+class AppWindow:
+    """This run's window: started on <home>/app/window/<browser>, ended at the app's end. It ends only the process it
+    started, and nothing after a hand-off (a browser already running on its profile took the launch)."""
+
+    def __init__(self, home, browser: WindowBrowser, note: str = "", extra_args=(), system: str | None = None):
+        self.browser = browser
+        self.id, self.name, self.note = browser.id, browser.name, note
+        self.profile = window_profile(home, browser.id)
+        self.extra_args = tuple(extra_args)  # one test only: ("--headless=new", url); the product never passes any
+        self.system = _system(system)
+        self.process = None
+        self.handed_off = False
+
+    def launch(self, url: str) -> None:
+        if any(_inside(self.profile, folder, self.system) for folder in browsers.all_data_dirs(system=self.system)):
+            raise WindowError(f"AI Browser's window could not start: {self.profile} is in a browser's own data folder")
+        self.profile.mkdir(parents=True, exist_ok=True)
+        # Left from a crashed run: the new process hands its command line to that browser and exits, and that browser
+        # opens the window. It reads the profile's own lock only, and never connects.
+        self.handed_off = browsers.running(self.profile, system=self.system) is True
+        try:
+            self.process = subprocess.Popen([*window_args(self.browser.binary, self.profile, url), *self.extra_args],
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            raise WindowError(f"AI Browser's window could not start: {exc.strerror or exc}") from None
+
+    def close(self) -> str:
+        """Quit the browser this run started: asked first (SIGTERM; on Windows taskkill without /F, as a click on its
+        × does, so Edge offers no "Restore pages?" next time), killed after QUIT_WAIT. After a hand-off it ends nothing
+        and returns what the user should do."""
+        if self.handed_off:
+            return HANDED_OFF.format(how=platforms.shortcut("⌘Q", "close its windows", self.system))
+        process = self.process
+        if process is None or process.poll() is not None:
+            return ""
+        if self.system == "win32":
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                subprocess.run(["taskkill", "/PID", str(process.pid)], stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=QUIT_WAIT)
+        else:
+            process.terminate()
+        try:
+            process.wait(timeout=QUIT_WAIT)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=QUIT_WAIT)
+        return ""
+
+
+def default_launcher(home) -> Callable[[str], AppWindow]:
+    """run_app's launcher: the window_browser setting in, this run's AppWindow out (or WindowError)."""
+    def launcher(setting: str) -> AppWindow:
+        found = pick(setting)
+        if found is None:
+            raise WindowError(NO_BROWSER)
+        return AppWindow(home, found.browser, found.note)
+    return launcher

@@ -96,3 +96,145 @@ def test_aib_chrome_binary_is_chromes_program(tmp_path, monkeypatch):
     monkeypatch.setenv("AIB_CHROME_BINARY", str(tmp_path / "missing"))
     if sys.platform in ("darwin", "win32"):  # on Linux the PATH finders still look
         assert window.pick("auto") is None
+
+
+CHROME_ROW = window.WindowBrowser("chrome", "Google Chrome", "/x/Google Chrome")
+START = "http://127.0.0.1:8792/open?code=abc"
+
+
+class FakeProcess:
+    """A browser process that ignores terminate (as a hung one would), or one that has already exited."""
+
+    def __init__(self, exited=False):
+        self.pid = 4242
+        self.calls = []
+        self.returncode = 0 if exited else None
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.calls.append("terminate")
+
+    def kill(self):
+        self.calls.append("kill")
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        self.calls.append("wait")
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired("browser", timeout)
+        return self.returncode
+
+
+@pytest.fixture
+def recorded(monkeypatch):
+    """Popen and subprocess.run recorded, nothing started; no browser runs on any profile."""
+    seen = {"popen": [], "run": [], "process": FakeProcess()}
+
+    def popen(args, **options):
+        seen["popen"].append((list(args), options))
+        return seen["process"]
+
+    def run(args, **options):
+        seen["run"].append(list(args))
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(window.subprocess, "Popen", popen)
+    monkeypatch.setattr(window.subprocess, "run", run)
+    monkeypatch.setattr(window, "QUIT_WAIT", 0.01)
+    monkeypatch.setattr(window.browsers, "running", lambda profile, system=None: False)
+    return seen
+
+
+def test_launch_starts_exactly_the_window_command(tmp_path, recorded):
+    app = window.AppWindow(tmp_path / "home", CHROME_ROW)
+    app.launch(START)
+    [(args, options)] = recorded["popen"]
+    profile = tmp_path / "home" / "app" / "window" / "chrome"
+    assert args == window.window_args("/x/Google Chrome", profile, START)
+    assert options["stdout"] == options["stderr"] == subprocess.DEVNULL and profile.is_dir()
+    assert (app.id, app.name, app.note, app.handed_off) == ("chrome", "Google Chrome", "", False)
+
+
+def test_a_browser_that_cannot_start_is_said_plainly(tmp_path, monkeypatch, recorded):
+    def broken(args, **options):
+        raise OSError("No such file or directory")
+
+    monkeypatch.setattr(window.subprocess, "Popen", broken)
+    with pytest.raises(window.WindowError, match="^AI Browser's window could not start: No such file or directory"):
+        window.AppWindow(tmp_path / "home", CHROME_ROW).launch(START)
+
+
+def test_close_asks_then_kills_what_it_started(tmp_path, recorded):
+    app = window.AppWindow(tmp_path / "home", CHROME_ROW, system="darwin")
+    app.launch(START)
+    assert app.close() == ""
+    assert recorded["process"].calls == ["terminate", "wait", "kill", "wait"] and recorded["run"] == []
+
+
+def test_on_windows_close_is_a_click_on_its_x_first(tmp_path, recorded):
+    edge = window.WindowBrowser("edge", "Microsoft Edge", "C:\\Edge\\msedge.exe")
+    app = window.AppWindow(tmp_path / "home", edge, system="win32")
+    app.launch(START)
+    assert app.close() == ""
+    assert recorded["run"] == [["taskkill", "/PID", "4242"]]  # no /F: Edge closes as if its × was clicked
+    assert recorded["process"].calls == ["wait", "kill", "wait"]  # never terminate(): Windows counts that a crash
+
+
+def test_a_failing_taskkill_still_ends_the_window(tmp_path, monkeypatch, recorded):  # Review Focus 5
+    def missing(args, **options):
+        raise FileNotFoundError(2, "The system cannot find the file specified", "taskkill")
+
+    monkeypatch.setattr(window.subprocess, "run", missing)
+    app = window.AppWindow(tmp_path / "home", CHROME_ROW, system="win32")
+    app.launch(START)
+    assert app.close() == "" and recorded["process"].calls == ["wait", "kill", "wait"]
+
+
+def test_a_hand_off_ends_nothing(tmp_path, monkeypatch, recorded):
+    monkeypatch.setattr(window.browsers, "running", lambda profile, system=None: True)  # left from a crashed run
+    app = window.AppWindow(tmp_path / "home", CHROME_ROW, system="darwin")
+    app.launch(START)
+    assert len(recorded["popen"]) == 1  # still started: it hands its command line to the running browser
+    assert app.handed_off and app.close() == ("AI Browser's window was opened by a browser already running on its "
+                                              "profile: quit it yourself (⌘Q)")
+    assert recorded["process"].calls == []
+    other = window.AppWindow(tmp_path / "home", CHROME_ROW, system="win32")
+    other.launch(START)
+    assert other.close().endswith("quit it yourself (close its windows)") and recorded["run"] == []
+
+
+def test_a_window_that_already_ended_is_left_alone(tmp_path, recorded):
+    recorded["process"] = FakeProcess(exited=True)  # Ctrl-C reached the browser too
+    app = window.AppWindow(tmp_path / "home", CHROME_ROW, system="darwin")
+    app.launch(START)
+    assert app.close() == "" and recorded["process"].calls == []
+
+
+def test_the_profile_is_never_a_real_browsers_folder(tmp_path, monkeypatch, recorded):
+    data = tmp_path / "Google" / "Chrome"
+    data.mkdir(parents=True)
+    monkeypatch.setattr(window.browsers, "all_data_dirs", lambda system=None, env=None: [data])
+    with pytest.raises(window.WindowError, match="a browser's own data folder"):
+        window.AppWindow(data / "inside", CHROME_ROW, system="darwin").launch(START)  # <data>/inside/app/window/…
+    inside = window.AppWindow(tmp_path / "home", CHROME_ROW, system="darwin")
+    monkeypatch.setattr(window.browsers, "all_data_dirs", lambda system=None, env=None: [inside.profile])
+    with pytest.raises(window.WindowError, match="a browser's own data folder"):
+        inside.launch(START)  # the profile is itself a real one
+    assert recorded["popen"] == []
+
+
+def test_the_default_launcher_picks_or_says_why(tmp_path, monkeypatch):
+    monkeypatch.delenv("AIB_CHROME_BINARY", raising=False)
+    if sys.platform in ("darwin", "win32"):  # on Linux the PATH finders may still find a browser
+        with pytest.raises(window.WindowError, match="^AI Browser needs Google Chrome, Brave or Microsoft Edge"):
+            window.default_launcher(tmp_path)("auto")  # nothing installed: the conftest fixture
+    program = tmp_path / "chrome-bin"
+    program.write_bytes(b"")
+    monkeypatch.setenv("AIB_CHROME_BINARY", str(program))
+    app = window.default_launcher(tmp_path)("brave")
+    assert (app.id, app.browser.binary, app.profile) == ("chrome", str(program),
+                                                         tmp_path / "app" / "window" / "chrome")
+    if sys.platform in ("darwin", "win32"):
+        assert app.note == "Brave isn't installed: the window uses Google Chrome. Change it in Settings."
