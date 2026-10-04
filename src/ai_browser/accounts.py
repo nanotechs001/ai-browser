@@ -10,15 +10,20 @@ and their browser."""
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import os
 import re
 import secrets
+import time
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import platforms
+from .claudecli import claude_argv, spawn_options, track
 from .syncdir import write_atomic
 
 DEFAULT = "default"
@@ -30,6 +35,10 @@ API_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")  # never passed on
 BROWSER_FILES = ("Local State", "Preferences", "Cookies")  # at a folder's top: Chromium's or Electron's data
 GONE = "That account isn't in Settings → Accounts any more"
 NOT_SIGNED_IN = "{name} isn't signed in: sign in from Settings → Accounts"
+STATUS_TTL = 5.0  # seconds a `claude auth status` answer is kept
+STATUS_TIMEOUT = 15.0  # seconds `claude auth status` gets
+UNKNOWN = {"signed_in": None, "plan": None}  # Claude Code couldn't tell (not installed, or too old for auth status)
+_PLAN = re.compile(r"^[A-Za-z0-9_-]{1,30}$")
 _ID = re.compile(r"^acct-[0-9a-f]{6}$")
 _HIDDEN = ("Cc", "Cf", "Cs")  # control, format (bidi controls among them) and surrogate characters
 
@@ -65,6 +74,23 @@ def clean_name(text) -> str:
     return name if any(not unicodedata.category(char).startswith(("C", "Z")) for char in name) else ""
 
 
+def _logged_in(out: bytes) -> dict:
+    """`claude auth status`'s JSON, of which only loggedIn and subscriptionType are read: the email, the organisation
+    and their ids are never looked at, kept or logged."""
+    text = out.decode("utf-8", errors="replace").strip()
+    for candidate in (text, *reversed(text.splitlines())):
+        try:
+            data = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("loggedIn"), bool):
+            plan = data.get("subscriptionType")
+            shown = plan.replace("_", " ").title() if data["loggedIn"] and isinstance(plan, str) \
+                and _PLAN.match(plan) else None
+            return {"signed_in": data["loggedIn"], "plan": shown}
+    return dict(UNKNOWN)
+
+
 class Accounts:
     """The account list. Every read goes to the file, so it is always the truth; a write keeps the keys it doesn't
     know (a newer build's)."""
@@ -73,6 +99,9 @@ class Accounts:
         self.home = Path(home)
         self.path = self.home / FILE
         self.claude = claude  # how `claude auth status` and the sign-in command find Claude Code (claudecli)
+        self._status: dict[str, tuple[float, dict]] = {}  # account id -> (monotonic time, {"signed_in", "plan"})
+        self._locks: dict[str, asyncio.Lock] = {}  # one `claude auth status` per account at a time
+        self._limits: dict[str, float] = {}  # account id -> when its usage limit resets (this app run only)
 
     # ---- reading -----------------------------------------------------------------------------------------------
 
@@ -244,3 +273,84 @@ class Accounts:
         if account.id == DEFAULT:
             return os.environ.get("CLAUDE_CONFIG_DIR") or None
         return account.folder
+
+    # ---- signed in, and the limits -------------------------------------------------------------------------------
+
+    async def status(self, account_id, fresh: bool = False) -> dict:
+        """{"signed_in": True | False | None, "plan": "Pro" | None}, from `claude auth status` on the account's
+        folder (no model turn), kept STATUS_TTL seconds. None: Claude Code couldn't tell. It never raises."""
+        if self.get(account_id) is None:
+            return dict(UNKNOWN)
+        async with self._locks.setdefault(account_id, asyncio.Lock()):
+            kept = self._status.get(account_id)
+            if kept is not None and not fresh and time.monotonic() - kept[0] < STATUS_TTL:
+                return dict(kept[1])
+            found = await self._auth_status(account_id)
+            self._status[account_id] = (time.monotonic(), found)
+            return dict(found)
+
+    async def _auth_status(self, account_id: str) -> dict:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *claude_argv(self.claude), "auth", "status", env=self.env_for(account_id),
+                stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                **spawn_options())
+        except (OSError, KeyError):  # ClaudeNotUsable is an OSError
+            return dict(UNKNOWN)
+        track(process)
+        try:
+            out, _ = await asyncio.wait_for(process.communicate(), STATUS_TIMEOUT)
+        except (TimeoutError, asyncio.CancelledError) as stopped:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
+            if isinstance(stopped, asyncio.CancelledError):
+                raise
+            return dict(UNKNOWN)
+        return _logged_in(out)
+
+    async def refresh(self) -> None:
+        """Every account's status, each kept STATUS_TTL seconds: when a page of ours opens."""
+        await asyncio.gather(*(self.status(account.id) for account in self.list()))
+
+    def limit(self, account_id) -> float | None:
+        """When this account's usage limit resets (seconds since 1970), if it hit one this app run, Claude Code gave
+        the time, and that time hasn't come yet."""
+        resets = self._limits.get(account_id)
+        if resets is not None and resets <= time.time():
+            del self._limits[account_id]
+            return None
+        return resets
+
+    def set_limit(self, account_id, resets_at) -> None:
+        """An agent or the Brain hit this account's usage limit: its reset time is kept for this app run, for the
+        pickers. Without a time nothing is kept, and a known time stays."""
+        if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool) and resets_at > time.time():
+            self._limits[account_id] = float(resets_at)
+
+    # ---- what AI Browser's own pages show ------------------------------------------------------------------------
+
+    def command(self, account_id) -> str:
+        """Copy the command: what signs this account in from the user's own terminal ("" when Claude Code can't be
+        found the way AI Browser finds it)."""
+        if self.get(account_id) is None:
+            return ""
+        try:
+            claude = claude_argv(self.claude)
+        except OSError:
+            return ""
+        return platforms.signin_command(claude, self.signin_folder(account_id))
+
+    def rows(self) -> list[dict]:
+        """The accounts as Settings, the pickers and the asks show them (the snapshot's `accounts`): each one's last
+        status, never an email or an organisation. It never runs Claude Code. Brave's watcher never gets these."""
+        default, brain = self.default_id(), self.brain_id()
+        rows = []
+        for account in self.list():
+            kept = self._status.get(account.id)
+            status = kept[1] if kept is not None else UNKNOWN
+            rows.append({"id": account.id, "name": account.name, "signed_in": status["signed_in"],
+                         "plan": status["plan"], "checked": kept is not None, "limit_until": self.limit(account.id),
+                         "default": account.id == default, "brain": account.id == brain,
+                         "command": self.command(account.id)})
+        return rows

@@ -169,3 +169,122 @@ def test_only_ids_made_here_name_folders(tmp_path):
     assert all(re.fullmatch(r"acct-[0-9a-f]{6}", account.id) for account in made)
     assert len({account.id for account in made}) == 3
     assert sorted(path.name for path in (tmp_path / "accounts").iterdir()) == sorted(account.id for account in made)
+
+
+def accounts_with(fake_claude, tmp_path):
+    """Accounts on the fake claude: Default (this test's throwaway folder, signed in by conftest), Work (signed in,
+    Pro) and Personal (not signed in)."""
+    from ai_browser.accounts import Accounts
+    from fake_accounts import sign_in
+
+    runner, log, _ = fake_claude
+    accounts = Accounts(tmp_path / "home", claude=runner)
+    work, personal = accounts.add("Work"), accounts.add("Personal")
+    sign_in(work.folder, plan="pro")
+    return accounts, work, personal, log
+
+
+def auth_calls(log):
+    path = Path(f"{log}.auth")
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+
+
+async def test_status_keeps_only_signed_in_and_the_plan(fake_claude, tmp_path, caplog, monkeypatch):
+    import logging
+
+    from fake_accounts import EMAIL, ORG_ID, ORG_NAME
+
+    caplog.set_level(logging.DEBUG)
+    for key, value in API.items():
+        monkeypatch.setenv(key, value)
+    accounts, work, personal, log = accounts_with(fake_claude, tmp_path)
+    assert await accounts.status(work.id) == {"signed_in": True, "plan": "Pro"}
+    assert await accounts.status(personal.id) == {"signed_in": False, "plan": None}
+    assert await accounts.status("default") == {"signed_in": True, "plan": "Pro"}
+    await accounts.refresh()
+    kept = json.dumps([accounts.rows(), list(accounts._status.values())])
+    kept += (tmp_path / "home" / "accounts.json").read_text(encoding="utf-8") + caplog.text
+    for secret in (EMAIL, ORG_ID, ORG_NAME):
+        assert secret not in kept
+    assert all(call["api"] == [] for call in auth_calls(log))  # never an API key
+    assert {call["config"] for call in auth_calls(log)} == {work.folder, personal.folder,
+                                                            os.environ["CLAUDE_CONFIG_DIR"]}
+
+
+async def test_status_is_kept_five_seconds(fake_claude, tmp_path, monkeypatch):
+    import asyncio
+
+    from ai_browser import accounts as module
+
+    accounts, work, _, log = accounts_with(fake_claude, tmp_path)
+    await asyncio.gather(*(accounts.status(work.id) for _ in range(3)))  # at the same moment: one call
+    await accounts.status(work.id)
+    assert len(auth_calls(log)) == 1 and module.STATUS_TTL == 5.0
+    await accounts.status(work.id, fresh=True)
+    assert len(auth_calls(log)) == 2
+    monkeypatch.setattr(module, "STATUS_TTL", 0.2)
+    await asyncio.sleep(0.3)
+    await accounts.status(work.id)
+    assert len(auth_calls(log)) == 3
+
+
+async def test_status_never_raises(fake_claude, tmp_path, monkeypatch):
+    import asyncio
+
+    from ai_browser import accounts as module
+    from ai_browser.accounts import Accounts
+    from fake_accounts import sign_in
+
+    accounts, work, personal, _ = accounts_with(fake_claude, tmp_path)
+    unknown = {"signed_in": None, "plan": None}
+    assert await accounts.status("acct-000000") == unknown
+    sign_in(personal.folder, say="Error: unknown command auth")  # an older Claude Code
+    assert await accounts.status(personal.id) == unknown
+    sign_in(personal.folder, plan="something weird!")  # not a plan's name: signed in, and no plan shown
+    assert await accounts.status(personal.id, fresh=True) == {"signed_in": True, "plan": None}
+    sign_in(work.folder, sleep=5)
+    monkeypatch.setattr(module, "STATUS_TIMEOUT", 0.5)
+    started = asyncio.get_running_loop().time()
+    assert await accounts.status(work.id, fresh=True) == unknown
+    assert asyncio.get_running_loop().time() - started < 3
+    missing = Accounts(tmp_path / "home", claude=str(tmp_path / "no-claude"))
+    assert await missing.status("default") == unknown
+
+
+async def test_rows_say_what_the_pages_show(fake_claude, tmp_path, monkeypatch):
+    from ai_browser import platforms
+
+    runner = fake_claude[0]
+    accounts, work, personal, _ = accounts_with(fake_claude, tmp_path)
+    accounts.set_default(work.id)
+    rows = {row["id"]: row for row in accounts.rows()}
+    assert rows[work.id] == {"id": work.id, "name": "Work", "signed_in": None, "plan": None, "checked": False,
+                             "limit_until": None, "default": True, "brain": False,
+                             "command": platforms.signin_command(runner, work.folder)}
+    await accounts.refresh()
+    rows = {row["id"]: row for row in accounts.rows()}
+    assert (rows[work.id]["signed_in"], rows[work.id]["plan"], rows[work.id]["checked"]) == (True, "Pro", True)
+    assert rows[personal.id]["signed_in"] is False and rows["default"]["brain"] is True
+    assert rows["default"]["command"] == platforms.signin_command(runner, os.environ["CLAUDE_CONFIG_DIR"])
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR")
+    assert accounts.command("default") == platforms.signin_command(runner, None)  # the terminal's own login
+
+
+def test_a_limit_is_kept_until_it_resets(tmp_path):
+    import time
+
+    from ai_browser.accounts import Accounts
+
+    accounts = Accounts(tmp_path)
+    work = accounts.add("Work")
+    later = time.time() + 3600
+    for nothing in (None, time.time() - 10, True, "soon", float("nan")):
+        accounts.set_limit(work.id, nothing)
+        assert accounts.limit(work.id) is None
+    accounts.set_limit(work.id, later)
+    assert accounts.limit(work.id) == later and accounts.rows()[1]["limit_until"] == later
+    accounts.set_limit(work.id, None)  # a later limit with no time keeps the known one
+    assert accounts.limit(work.id) == later
+    accounts._limits[work.id] = time.time() - 1  # its time came
+    assert accounts.limit(work.id) is None
+    assert Accounts(tmp_path).limit(work.id) is None  # this app run only: never written down
