@@ -1,0 +1,246 @@
+"""The user's Claude logins for AI Browser (AI accounts): Default, their own, and any they add.
+
+An account is an id, a name and a folder: a Claude Code config folder (CLAUDE_CONFIG_DIR), which holds its own login,
+settings, MCP servers and conversations. Default is the user's own login: $CLAUDE_CONFIG_DIR when the environment
+sets it, else ~/.claude. An added account's folder is <home>/accounts/<id>/ (mode 0700), or one the user already has.
+<home>/accounts.json (mode 0600) keeps {"accounts": [{"id", "name", "folder"}], "default": "<id>", "brain": "<id>"};
+a missing or bad file means Default only, and reading never raises. Only the id, made here, reaches a command line or
+a path; the name is the user's label. AI Browser never sees a password or a token: the user signs in in a terminal
+and their browser."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import secrets
+import unicodedata
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+from .syncdir import write_atomic
+
+DEFAULT = "default"
+DEFAULT_NAME = "Default"
+FILE = "accounts.json"
+NAME_LIMIT = 40
+FOLDER_LIMIT = 1000
+API_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")  # never passed on: Claude Code uses a login
+BROWSER_FILES = ("Local State", "Preferences", "Cookies")  # at a folder's top: Chromium's or Electron's data
+GONE = "That account isn't in Settings → Accounts any more"
+NOT_SIGNED_IN = "{name} isn't signed in: sign in from Settings → Accounts"
+_ID = re.compile(r"^acct-[0-9a-f]{6}$")
+_HIDDEN = ("Cc", "Cf", "Cs")  # control, format (bidi controls among them) and surrogate characters
+
+
+@dataclass(frozen=True)
+class Account:
+    id: str
+    name: str
+    folder: str
+    kind: str = "claude"  # the next design adds other AIs' command-line tools to the same list
+
+
+def clean_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The environment Claude Code starts with: a copy of `base` (os.environ) without ANTHROPIC_API_KEY and
+    ANTHROPIC_AUTH_TOKEN, so it always uses a login, never an API key."""
+    return {key: value for key, value in (os.environ if base is None else base).items() if key not in API_VARIABLES}
+
+
+def default_folder(env: Mapping[str, str] | None = None) -> Path:
+    """Default's folder: $CLAUDE_CONFIG_DIR when the environment sets it, else ~/.claude."""
+    value = (os.environ if env is None else env).get("CLAUDE_CONFIG_DIR")
+    return Path(value) if value else Path.home() / ".claude"
+
+
+def clean_name(text) -> str:
+    """The user's label, as kept and shown: whitespace becomes spaces, control, format and surrogate characters go,
+    spaces are squeezed, at most NAME_LIMIT characters. "" when nothing visible is left."""
+    if not isinstance(text, str):
+        return ""
+    kept = "".join(" " if char.isspace() else char for char in text
+                   if char.isspace() or unicodedata.category(char) not in _HIDDEN)
+    name = " ".join(kept.split())[:NAME_LIMIT].strip()
+    return name if any(not unicodedata.category(char).startswith(("C", "Z")) for char in name) else ""
+
+
+class Accounts:
+    """The account list. Every read goes to the file, so it is always the truth; a write keeps the keys it doesn't
+    know (a newer build's)."""
+
+    def __init__(self, home, claude: str | Sequence[str] | None = None):
+        self.home = Path(home)
+        self.path = self.home / FILE
+        self.claude = claude  # how `claude auth status` and the sign-in command find Claude Code (claudecli)
+
+    # ---- reading -----------------------------------------------------------------------------------------------
+
+    def _read(self) -> dict:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _added(data: dict) -> list[Account]:
+        """The accounts the user added, as far as the file makes sense: a row with a bad id, no visible name or a
+        folder that isn't a full path is left out."""
+        found, seen = [], set()
+        rows = data.get("accounts")
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            account_id, name, folder = row.get("id"), clean_name(row.get("name")), row.get("folder")
+            if not (isinstance(account_id, str) and _ID.match(account_id)) or account_id in seen or not name \
+                    or not isinstance(folder, str) or not folder or not Path(folder).is_absolute():
+                continue
+            seen.add(account_id)
+            found.append(Account(account_id, name, folder))
+        return found
+
+    def list(self) -> list[Account]:
+        """Default first, then the accounts the user added, in the order they were added."""
+        return [Account(DEFAULT, DEFAULT_NAME, str(default_folder())), *self._added(self._read())]
+
+    def get(self, account_id) -> Account | None:
+        return next((account for account in self.list() if account.id == account_id), None)
+
+    def _chosen(self, key: str) -> str:
+        data = self._read()
+        chosen = data.get(key)
+        return chosen if any(account.id == chosen for account in self._added(data)) else DEFAULT
+
+    def default_id(self) -> str:
+        """The account new agents use (Settings → Accounts → Default account for new agents)."""
+        return self._chosen("default")
+
+    def brain_id(self) -> str:
+        """The account the Brain and its skill writer use (Settings → Accounts → The Brain's account)."""
+        return self._chosen("brain")
+
+    # ---- changing ------------------------------------------------------------------------------------------------
+
+    def _write(self, data: dict) -> None:
+        write_atomic(self.path, (json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8"), 0o600)
+
+    @staticmethod
+    def _rows(accounts: list[Account]) -> list[dict]:
+        return [{"id": account.id, "name": account.name, "folder": account.folder} for account in accounts]
+
+    def _name(self, name) -> str:
+        cleaned = clean_name(name)
+        if not cleaned:
+            raise ValueError("Give the account a name")
+        if any(account.name.casefold() == cleaned.casefold() for account in self.list()):
+            raise ValueError(f"There is already an account named {cleaned}")
+        return cleaned
+
+    def _new_id(self) -> str:
+        taken = {account.id for account in self.list()}
+        while True:
+            account_id = f"acct-{secrets.token_hex(3)}"
+            if account_id not in taken and not (self.home / "accounts" / account_id).exists():
+                return account_id
+
+    def _keep(self, account: Account) -> Account:
+        data = self._read()
+        data["accounts"] = self._rows([*self._added(data), account])
+        self._write(data)
+        return account
+
+    def add(self, name) -> Account:
+        """A new account with a folder of AI Browser's own, <home>/accounts/<id>/ (mode 0700). The user signs it in."""
+        cleaned = self._name(name)
+        account_id = self._new_id()
+        folder = self.home / "accounts" / account_id
+        folder.mkdir(parents=True, mode=0o700)
+        for made in (folder.parent, folder):
+            os.chmod(made, 0o700)  # mkdir's mode is cut by the umask
+        return self._keep(Account(account_id, cleaned, str(folder)))
+
+    def add_existing(self, name, folder) -> Account:
+        """An account on a Claude Code folder the user already has, used where it is."""
+        cleaned = self._name(name)
+        return self._keep(Account(self._new_id(), cleaned, str(self._existing(folder))))
+
+    def _existing(self, folder) -> Path:
+        """The folder a page typed, checked: a full path to a folder that exists, isn't a browser's data folder
+        (Chromium's or Electron's, such as the Claude desktop app's --user-data-dir), and no account uses yet."""
+        if not isinstance(folder, str) or not folder.strip() or len(folder) > FOLDER_LIMIT \
+                or any(unicodedata.category(char) in _HIDDEN for char in folder):
+            raise ValueError("Give the folder's full path")
+        path = Path(folder.strip()).expanduser()
+        if not path.is_absolute():
+            raise ValueError("Give the folder's full path")
+        if not path.is_dir():
+            raise ValueError("That folder doesn't exist")
+        if any((path / name).exists() for name in BROWSER_FILES):
+            raise ValueError("That folder holds a browser's data (Local State, Preferences or Cookies), not Claude "
+                             "Code's: pick the folder Claude Code uses")
+        if any(Path(account.folder).expanduser().resolve() == path.resolve() for account in self.list()):
+            raise ValueError("Another account already uses that folder")
+        return path
+
+    def remove(self, account_id) -> None:
+        """Forget an account: its folder, conversations and sign-in stay where they are. Default can't be removed.
+        An account that was the default or the Brain's gives that back to Default."""
+        if account_id == DEFAULT:
+            raise ValueError("Default can't be removed")
+        data = self._read()
+        added = self._added(data)
+        if not any(account.id == account_id for account in added):
+            raise ValueError(GONE)
+        data["accounts"] = self._rows([account for account in added if account.id != account_id])
+        for key in ("default", "brain"):
+            if data.get(key) == account_id:
+                data[key] = DEFAULT
+        self._write(data)
+
+    def _choose(self, key: str, account_id) -> None:
+        if self.get(account_id) is None:
+            raise ValueError(GONE)
+        data = self._read()
+        data[key] = account_id
+        self._write(data)
+
+    def set_default(self, account_id) -> None:
+        self._choose("default", account_id)
+
+    def set_brain(self, account_id) -> None:
+        self._choose("brain", account_id)
+
+    # ---- running Claude Code on an account -----------------------------------------------------------------------
+
+    def env_for(self, account_id) -> dict[str, str]:
+        """The environment Claude Code runs with on this account, without the two API variables. Default leaves the
+        environment as it is (its CLAUDE_CONFIG_DIR, if any); any other account sets CLAUDE_CONFIG_DIR to its folder.
+        KeyError for an account that isn't listed: nothing ever falls back to another account by itself."""
+        account = self.get(account_id)
+        if account is None:
+            raise KeyError(account_id)
+        env = clean_env()
+        if account.id != DEFAULT:
+            env["CLAUDE_CONFIG_DIR"] = account.folder
+        return env
+
+    def claude_home(self, account_id) -> Path:
+        """Where this account's .claude.json is (its MCP servers): the home folder for Default without
+        CLAUDE_CONFIG_DIR, else the account's folder."""
+        account = self.get(account_id)
+        if account is None:
+            raise KeyError(account_id)
+        if account.id == DEFAULT and not os.environ.get("CLAUDE_CONFIG_DIR"):
+            return Path.home()
+        return Path(account.folder)
+
+    def signin_folder(self, account_id) -> str | None:
+        """The folder a sign-in command names: the account's own, or for Default the environment's CLAUDE_CONFIG_DIR
+        (None: the terminal's own login, ~/.claude)."""
+        account = self.get(account_id)
+        if account is None:
+            return None
+        if account.id == DEFAULT:
+            return os.environ.get("CLAUDE_CONFIG_DIR") or None
+        return account.folder
