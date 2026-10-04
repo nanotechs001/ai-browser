@@ -489,3 +489,56 @@ def test_open_url_says_whether_a_program_started(monkeypatch):
     assert platforms.open_url("https://example.com", system="darwin") is False
     monkeypatch.setattr(platforms.shutil, "which", lambda name: None)
     assert platforms.open_url("https://example.com", system="linux") is False  # nothing could open it
+
+
+def test_the_sign_in_command_quotes_every_part():
+    mac_claude, mac_folder = ["/Users/jo/.local/bin/claude"], "/Users/jo/.ai-browser/accounts/acct-1a2b3c"
+    assert platforms.signin_command(mac_claude, mac_folder, "darwin") == (
+        "CLAUDE_CONFIG_DIR=/Users/jo/.ai-browser/accounts/acct-1a2b3c /Users/jo/.local/bin/claude")
+    assert platforms.signin_command(mac_claude, None, "darwin") == "/Users/jo/.local/bin/claude"  # Default's own
+    odd = "/Users/Jo O'Neil/My \"Claude\" $HOME"
+    assert platforms.signin_command(["/opt/claude code/claude"], odd, "linux") == (
+        "CLAUDE_CONFIG_DIR='/Users/Jo O'\"'\"'Neil/My \"Claude\" $HOME' '/opt/claude code/claude'")
+    windows = ["C:\\Users\\Jo O'Neil\\.local\\bin\\claude.exe"]
+    assert platforms.signin_command(windows, "C:\\Users\\Jo O'Neil\\.ai-browser\\accounts\\acct-1a2b3c",
+                                    "win32") == (
+        "$env:CLAUDE_CONFIG_DIR = 'C:\\Users\\Jo O''Neil\\.ai-browser\\accounts\\acct-1a2b3c'; "
+        "& 'C:\\Users\\Jo O''Neil\\.local\\bin\\claude.exe'")
+    assert platforms.signin_command(windows, None, "win32") == "& 'C:\\Users\\Jo O''Neil\\.local\\bin\\claude.exe'"
+
+
+def test_open_terminal_on_a_mac_runs_the_quoted_command_in_terminal():
+    argv, env = platforms.terminal_command(["/Users/jo/.local/bin/claude"], '/Users/jo/My "Work" Claude', "darwin",
+                                           env={"PATH": "/usr/bin"})
+    assert argv == ["osascript", "-e",
+                    'tell application "Terminal" to do script "CLAUDE_CONFIG_DIR=\'/Users/jo/My \\"Work\\" Claude\' '
+                    '/Users/jo/.local/bin/claude"',
+                    "-e", 'tell application "Terminal" to activate']
+    assert env == {"PATH": "/usr/bin"}  # Terminal starts its own shell: the folder is in the command
+
+
+def test_open_terminal_on_windows_keeps_the_folder_off_the_command_line():
+    claude = ["C:\\Users\\Jo Smith\\.local\\bin\\claude.exe"]
+    folder = 'C:\\Users\\Jo Smith\\.ai-browser\\accounts\\acct-1a2b3c" & calc & "'
+    argv, env = platforms.terminal_command(claude, folder, "win32", env={"PATH": "C:\\Windows", "X": "1"})
+    assert argv == ["cmd", "/c", "start", "", "cmd", "/k", "claude"]  # nothing but the program's plain name
+    assert env == {"PATH": "C:\\Users\\Jo Smith\\.local\\bin;C:\\Windows", "X": "1", "CLAUDE_CONFIG_DIR": folder}
+    assert platforms.terminal_command(claude, None, "win32", env={})[1] == {"PATH": "C:\\Users\\Jo Smith\\.local\\bin"}
+    for odd in (["C:\\tools\\claude code.exe"], ["C:\\tools\\claude.cmd"], ["python", "fake_claude.py"]):
+        assert platforms.terminal_command(odd, folder, "win32", env={}) is None  # Copy the command still works
+    assert platforms.terminal_command(["claude"], folder, "linux", env={}) is None
+
+
+def test_open_terminal_starts_the_command_and_never_waits(monkeypatch):
+    started = []
+    monkeypatch.setattr(platforms.subprocess, "Popen",
+                        lambda argv, **options: started.append((argv, options["env"])) or object())
+    assert platforms.open_terminal(["/opt/claude"], "/x/acct-1a2b3c", env={"PATH": "/bin"}, system="darwin") is True
+    assert started[0][0][0] == "osascript" and started[0][1] == {"PATH": "/bin"}
+
+    def cannot(argv, **options):
+        raise OSError("no osascript")
+
+    monkeypatch.setattr(platforms.subprocess, "Popen", cannot)
+    assert platforms.open_terminal(["/opt/claude"], "/x/acct-1a2b3c", env={}, system="darwin") is False
+    assert platforms.open_terminal(["/opt/claude"], "/x/acct-1a2b3c", env={}, system="linux") is False
