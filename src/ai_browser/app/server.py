@@ -22,7 +22,7 @@ from pathlib import Path
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -68,6 +68,13 @@ WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "s
                    "model")
 WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabled")
 SETUP_PAGE = Path(__file__).with_name("setup.html")
+UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
+PAGES = {"/home": "home.html", "/mission": "mission.html", "/settings": "settings.html"}
+FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
+OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
+CODE_TTL = 60  # seconds a one-time start code is good for
+NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
+USED_CODE = "This start link was used already or has expired. Start AI Browser again."
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
 SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (cc-<task id>)
 AGENT_ID = re.compile(r"^a[0-9]{1,9}$")  # an agent's id (a<number>)
@@ -209,6 +216,16 @@ def _valid_check(report: dict) -> bool:
             and (live is None or (isinstance(live, str) and CHECK_LIVE.fullmatch(live) is not None)))
 
 
+def _clock() -> float:
+    return time.monotonic()  # its own function, so a test moves the start codes' clock and nothing else
+
+
+def _refused_page(text: str) -> HTMLResponse:
+    """A plain 403 page: one line of text, no script."""
+    return HTMLResponse('<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>AI Browser</title>'
+                        f"</head><body><p>{html.escape(text, quote=False)}</p></body></html>\n", status_code=403)
+
+
 class AppServer:
     def __init__(self, home: Path, agents: AgentManager, tabs=None, catalog: Catalog | None = None,
                  host: str = "127.0.0.1", ports: range = APP_PORTS, default_model: str = "sonnet",
@@ -252,7 +269,10 @@ class AppServer:
         self._thread_urls: dict[str, str] = {}  # open_thread request -> its address (the Brain's group in AI Home)
         self._sweeper: asyncio.Task | None = None
         self.url: str | None = None
-        self.port = 0
+        self.port: int | None = None  # the bound port, once start() has one
+        self.ui_secret = secrets.token_urlsafe(32)  # the window's session cookie: set only by swapping a start code
+        self._codes: dict[str, float] = {}  # one-time start codes -> when they expire (_clock)
+        self._files = {path.name for path in UI.iterdir() if path.is_file() and path.suffix in FILE_TYPES}
         self.extension_seen = False  # the extension has connected: the one-time setup is done
         self.origin_mismatch: str | None = None  # an extension with our token, from an origin we didn't compute
         self.out: Callable[[str], None] = print  # where the app's one-line notes go (run_app passes its own)
@@ -282,6 +302,40 @@ class AppServer:
         self._origins.add(origin)
         if watcher:
             self._watcher_origins.add(origin)
+
+    @property
+    def origin(self) -> str:
+        """AI Browser's pages' own origin: the only Origin a window socket may carry."""
+        return f"http://{self.host}:{self.port}"
+
+    @property
+    def host_header(self) -> str:
+        return f"{self.host}:{self.port}"
+
+    @property
+    def cookie_name(self) -> str:
+        return f"aib_ui_{self.port}"  # cookies on 127.0.0.1 reach every port: the name keeps two apps apart
+
+    def new_launch_code(self) -> str:
+        """A start code for the window's address: single use, CODE_TTL seconds. Expired ones are dropped here."""
+        now = _clock()
+        self._codes = {code: until for code, until in self._codes.items() if until > now}
+        code = secrets.token_urlsafe(32)
+        self._codes[code] = now + CODE_TTL
+        return code
+
+    def _take_code(self, given: str) -> bool:
+        now = _clock()
+        for code, until in list(self._codes.items()):
+            if hmac.compare_digest(code.encode(), given.encode()):
+                del self._codes[code]  # used: never again, valid or not
+                return until > now
+        return False
+
+    def _cookie_ok(self, connection) -> bool:
+        """The window's cookie on a request or a socket (Starlette gives both .cookies)."""
+        given = connection.cookies.get(self.cookie_name, "")
+        return bool(given) and hmac.compare_digest(given.encode(), self.ui_secret.encode())
 
     def _mismatch(self, origin: str) -> None:
         """Only an extension holding our config.json has the token: from an origin we didn't compute, it means an
@@ -321,7 +375,10 @@ class AppServer:
         return {"type": "tabs", "tabs": listing, **({"tab_scope": scope} if scope is not None else {})}
 
     async def start(self) -> str:
-        app = Starlette(routes=[Route("/health", self._health), Route("/setup", self._setup),
+        app = Starlette(routes=[Route("/", self._root), Route("/open", self._open),
+                                Route("/home", self._page), Route("/mission", self._page),
+                                Route("/settings", self._page),
+                                Route("/health", self._health), Route("/setup", self._setup),
                                 Route("/setup/status", self._setup_status),
                                 Route("/setup/reveal", self._setup_reveal, methods=["POST"]),
                                 Route("/agent-events", self._agent_events, methods=["POST"]),
@@ -329,6 +386,7 @@ class AppServer:
                                 Route("/agent-status", self._agent_status),
                                 Route("/agent-hello", self._agent_hello, methods=["POST"]),
                                 Route("/agent-bye", self._agent_bye, methods=["POST"]),
+                                Route("/{name}", self._file),
                                 WebSocketRoute("/ws", self._socket), WebSocketRoute("/cdp", self._cdp)])
         self._fanout = asyncio.create_task(self._forward())
         self._sweeper = asyncio.create_task(self._sweep_sessions())
@@ -338,6 +396,7 @@ class AppServer:
             sock = _bind(self.host, port)
             if sock is None:
                 continue
+            self.port = port
             # websockets-sansio: no handshake timeout, so the relay can hold one while the user answers Allow
             self._server = _QuietServer(uvicorn.Config(app, host=self.host, port=port, log_level="warning",
                                                        access_log=False, lifespan="off", ws="websockets-sansio"))
@@ -348,11 +407,11 @@ class AppServer:
                 await asyncio.sleep(0.01)
             if self._server.started:
                 self.url = f"http://{self.host}:{port}"
-                self.port = port
                 if self.brave is not None:
                     self.brave.relay.port = port
                 return self.url
             sock.close()
+        self.port = None
         raise RuntimeError(f"no free port for the AI Browser app server ({self.ports.start}-{self.ports.stop - 1})")
 
     async def stop(self) -> None:
@@ -382,6 +441,38 @@ class AppServer:
 
     async def _health(self, request: Request) -> JSONResponse:
         return JSONResponse({"ok": True})
+
+    async def _root(self, request: Request) -> Response:
+        return RedirectResponse("/home", status_code=303)
+
+    async def _open(self, request: Request) -> Response:
+        """The window's start address: a valid code becomes the cookie, and the redirect drops the code from the
+        window's address and history. A used or unknown code is a 403, unless the cookie is already there (a
+        reload)."""
+        if self._take_code(request.query_params.get("code", "")):
+            response = RedirectResponse("/home", status_code=303)
+            response.set_cookie(self.cookie_name, self.ui_secret, httponly=True, samesite="strict", path="/")
+            return response
+        if self._cookie_ok(request):
+            return RedirectResponse("/home", status_code=303)
+        return _refused_page(USED_CODE)
+
+    async def _page(self, request: Request) -> Response:
+        if not self._cookie_ok(request):
+            return _refused_page(NOT_HERE)
+        path = UI / PAGES[request.url.path]
+        if not path.is_file():
+            return Response(status_code=404)
+        return HTMLResponse(path.read_text(encoding="utf-8"))
+
+    async def _file(self, request: Request) -> Response:
+        """A script, style or picture of app/ui: only names read at start, so no other path is ever served."""
+        name = request.path_params["name"]
+        if name not in self._files:
+            return Response(status_code=404)
+        if name not in OPEN_ANYWHERE and not self._cookie_ok(request):
+            return _refused_page(NOT_HERE)
+        return Response((UI / name).read_bytes(), media_type=FILE_TYPES[Path(name).suffix])
 
     def _extension_folder(self) -> str:
         return extension_path(self.home / "app" / "extension")
@@ -633,7 +724,7 @@ class AppServer:
         self.brave = brave
         self.attach_tabs(brave)
         relay = brave.relay
-        relay.port = self.port
+        relay.port = self.port or 0  # 0 until the server listens (the relay's own default)
         relay.handed = self._handed_to
         relay.may_open = lambda identity: bool(SESSION_ID.match(identity)) or self.agents.working(identity)
         self.agents.own_tabs = relay.own_targets

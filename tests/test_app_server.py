@@ -19,6 +19,7 @@ from fake_brave import FakeBrave, add_agent
 from test_agents import sent_to_claude
 from test_bridge import EVENTS
 from test_oneshot import oneshots
+from ui_socket import ui_cookie
 
 ORIGIN = "chrome-extension://good"
 WATCHER = "chrome-extension://watcher"
@@ -1608,4 +1609,80 @@ async def test_the_watcher_may_not_confirm_an_inbox_card(fake_claude, tmp_path):
         assert list(server.agents.agents) == ["a1"] and brain.tells.peek("gmail:t1") is None
     finally:
         await watcher.close()
+        await server.stop()
+
+
+async def fetch(method, url, **options):
+    """One request from a fresh client: no cookie jar carries the window's cookie from one request to the next."""
+    async with httpx.AsyncClient() as client:
+        return await client.request(method, url, **options)
+
+
+NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
+
+
+async def test_the_one_time_code_becomes_the_windows_cookie(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        code = server.new_launch_code()
+        answer = await fetch("GET", f"{url}/open", params={"code": code})
+        assert answer.status_code == 303 and answer.headers["location"] == "/home"
+        cookie = answer.headers["set-cookie"]
+        assert cookie.startswith(f"aib_ui_{server.port}={server.ui_secret};")
+        assert {"httponly", "samesite=strict", "path=/"} <= {part.strip().lower() for part in cookie.split(";")[1:]}
+        assert "max-age" not in cookie.lower() and "expires" not in cookie.lower() and "secure" not in cookie.lower()
+        again = await fetch("GET", f"{url}/open", params={"code": code})  # single use
+        assert again.status_code == 403 and "This start link was used already or has expired." in again.text
+        assert (await fetch("GET", f"{url}/open", params={"code": "nope"})).status_code == 403
+        assert (await fetch("GET", f"{url}/open")).status_code == 403
+        reload = await fetch("GET", f"{url}/open", params={"code": code}, headers=ui_cookie(server))
+        assert reload.status_code == 303 and reload.headers["location"] == "/home"  # a reload of the window
+        root = await fetch("GET", f"{url}/")
+        assert root.status_code == 303 and root.headers["location"] == "/home"
+        assert server.origin == url and server.host_header == url.removeprefix("http://")
+        assert server.cookie_name == f"aib_ui_{server.port}" and len(server.ui_secret) >= 43
+    finally:
+        await server.stop()
+
+
+async def test_a_start_code_lasts_a_minute(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import server as module
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        clock = [1000.0]
+        monkeypatch.setattr(module, "_clock", lambda: clock[0])
+        code = server.new_launch_code()
+        clock[0] += module.CODE_TTL + 1
+        assert (await fetch("GET", f"{url}/open", params={"code": code})).status_code == 403
+        old = server.new_launch_code()
+        clock[0] += module.CODE_TTL + 1
+        fresh = server.new_launch_code()  # expired codes are dropped whenever a new one is made
+        assert old not in server._codes and fresh in server._codes
+    finally:
+        await server.stop()
+
+
+async def test_pages_need_the_windows_cookie(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        for path in ("/home", "/mission", "/settings", "/link.js", "/home.js", "/home.css"):
+            answer = await fetch("GET", url + path)
+            assert answer.status_code == 403, path
+            assert NOT_HERE in answer.text and "<script" not in answer.text, path
+        home = await fetch("GET", url + "/home", headers=ui_cookie(server))
+        assert home.status_code == 200 and home.headers["content-type"] == "text/html; charset=utf-8"
+        assert '<script type="module" src="home.js"></script>' in home.text
+        assert (await fetch("GET", url + "/mission", headers=ui_cookie(server))).status_code == 200
+        script = await fetch("GET", url + "/link.js", headers=ui_cookie(server))
+        assert script.status_code == 200 and script.headers["content-type"] == "text/javascript; charset=utf-8"
+        style = await fetch("GET", url + "/home.css", headers=ui_cookie(server))
+        assert style.headers["content-type"] == "text/css; charset=utf-8"
+        icon = await fetch("GET", url + "/icon.png")  # no cookie: the setup page opens anywhere and shows it
+        assert icon.status_code == 200 and icon.headers["content-type"] == "image/png"
+        assert icon.content[:4] == b"\x89PNG"
+        for path in ("/%2e%2e%2fserver.py", "/..%2Fserver.py", "/server.py", "/home.html", "/setup.html",
+                     "/panel.js", "/manifest.json", "/worker.js", "/ui/home.js", "/config.json"):
+            assert (await fetch("GET", url + path, headers=ui_cookie(server))).status_code == 404, path
+    finally:
         await server.stop()
