@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 import sys
@@ -19,6 +20,7 @@ from urllib.parse import urlsplit
 from .. import platforms
 from ..brain.tools import ToolsConfig, server_of
 from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
+from ..limits import from_event, from_text
 from ..syncdir import write_atomic
 
 DENIED = "The user said no"
@@ -50,6 +52,19 @@ _SKILL_NAME = re.compile(r"^[A-Za-z0-9_.:-]+$")  # a skill reference, nothing th
 _TIMING = re.compile(r"⏱ (\d+) ms\s*$")  # the engine ends every tool result with its time
 RESTARTED = ("(Claude Code had stopped and was started again: tabs you opened before may be gone and element numbers "
              "have changed, so call tabs or observe before acting.)")
+KNOWN_EVENTS = frozenset({"system", "stream_event", "assistant", "user", "result", "control_request",
+                          "control_response"})  # every other type is only logged: its type and its key names
+_WORD = re.compile(r"[A-Za-z0-9_.-]{1,40}")
+log = logging.getLogger(__name__)
+
+
+def _word(value) -> str:
+    """An event's type or one of its keys, as it may be logged: a plain word, else "?"."""
+    return value if isinstance(value, str) and _WORD.fullmatch(value) else "?"
+
+
+def _keys(data: dict) -> str:
+    return ", ".join(sorted(_word(key) for key in list(data)[:20]))
 
 
 def _short(name: str) -> str:
@@ -116,13 +131,15 @@ class ClaudeBridge:
         self._turn = 0
         self._requests = 0
         self._stop_task: asyncio.Future | None = None
+        self._limit_seen = False  # this turn's usage limit was told already: never twice (AI accounts)
+        self._logged: set[str] = set()  # event types already logged by their key names
 
     # ---- one turn -----------------------------------------------------------------------------------------
 
     async def send(self, text: str, tab_url: str = "", tab_title: str = "", skills=(),
                    tab_label: str = "panel") -> AsyncIterator[dict]:
         """Send a user message and yield panel events until Claude's answer is complete."""
-        self.busy, self._stopping = True, False
+        self.busy, self._stopping, self._limit_seen = True, False, False
         self._turn += 1
         try:
             if self._process is not None and (self._process.returncode is not None or self._renew):
@@ -173,7 +190,7 @@ class ClaudeBridge:
 
     async def _events(self) -> AsyncIterator[dict]:
         while True:
-            line = await self._process.stdout.readline()
+            line = await self._process.stdout.readline()  # a whole line, however many reads it took
             if not line:
                 yield await self._ended()
                 return
@@ -181,15 +198,39 @@ class ClaudeBridge:
                 event = json.loads(line)
             except ValueError:
                 continue
-            if event.get("type") == "control_request" and (event.get("request") or {}).get("subtype") == "can_use_tool":
+            if not isinstance(event, dict):
+                continue  # a line that isn't an event is never read further
+            kind = event.get("type")
+            if kind == "control_request" and (event.get("request") or {}).get("subtype") == "can_use_tool":
                 await self._permission(event)  # Claude Code waits for the answer
                 continue
-            if event.get("type") == "system" and event.get("subtype") == "init" and self.tools is not None:
+            if kind == "rate_limit_event":  # undocumented: only status, resetsAt and rateLimitType are read
+                self._note_shape(event)
+                hit = from_event(event)
+                if hit is not None and not self._limit_seen:
+                    self._limit_seen = True
+                    yield {"type": "limit", "resets_at": hit.resets_at}
+                continue
+            if kind not in KNOWN_EVENTS:
+                self._note_shape(event)
+                continue
+            if kind == "system" and event.get("subtype") == "init" and self.tools is not None:
                 self.tools.note_tools(event.get("tools") or [])
             for panel_event in self._translate(event):
                 yield panel_event
-            if event.get("type") == "result":
+            if kind == "result":
                 return
+
+    def _note_shape(self, event: dict) -> None:
+        """An event AI Browser doesn't read, or the undocumented rate_limit_event: its type and its key names go to
+        the log once per type, never a value (it may hold page text). So the first real limit shows its shape."""
+        kind = _word(event.get("type"))
+        if kind in self._logged:
+            return
+        self._logged.add(kind)
+        info = event.get("rate_limit_info")
+        inner = f"; rate_limit_info keys: {_keys(info)}" if isinstance(info, dict) else ""
+        log.info("bridge: Claude Code sent %s (keys: %s%s)", kind, _keys(event), inner)
 
     async def _permission(self, event: dict) -> None:
         """A tool that isn't allowed yet: the user answers (Allow once, Always allow, Deny). A server the user didn't
@@ -226,13 +267,19 @@ class ClaudeBridge:
         return enabled if self.servers is None else enabled & set(self.servers)
 
     async def _ended(self) -> dict:
-        """The process went away mid-answer: stopped by the user, or it failed."""
+        """The process went away mid-answer: stopped by the user, at a usage limit, or it failed."""
         process, self._process = self._process, None
         code = await process.wait() if process is not None else None
+        if self._stderr_task is not None:  # its last words, read to the end
+            await asyncio.wait({self._stderr_task}, timeout=1)
         self._restarted = True  # its ai-browser server went with it, and maybe Claude's tabs
         if self._stopping:
             return {"type": "done", "seconds": 0, "cost": None, "stopped": True}
         tail = "".join(self._stderr)[-400:].strip()
+        hit = from_text(tail)
+        if hit is not None and not self._limit_seen:  # an older Claude Code said it on stderr and ended
+            self._limit_seen = True
+            return {"type": "limit", "resets_at": hit.resets_at}
         return {"type": "error", "text": f"Claude Code stopped unexpectedly (exit {code})" + (f": {tail}" if tail else "")}
 
     def _translate(self, event: dict) -> list[dict]:
@@ -273,10 +320,17 @@ class ClaudeBridge:
             return out
         if kind == "result":
             self.session_id = event.get("session_id") or self.session_id
-            if self._stopping and (event.get("is_error") or event.get("subtype", "success") != "success"):
+            failed = event.get("is_error") or event.get("subtype", "success") != "success"
+            if self._stopping and failed:
                 return [{"type": "done", "seconds": round((event.get("duration_ms") or 0) / 1000, 1),
                          "cost": event.get("total_cost_usd"), "stopped": True}]  # how an interrupted turn ends
-            if event.get("is_error") or event.get("subtype", "success") != "success":
+            if failed:
+                if self._limit_seen:
+                    return []  # the rate_limit_event told it already: one limit per turn
+                hit = from_text(event.get("result"))
+                if hit is not None:
+                    self._limit_seen = True
+                    return [{"type": "limit", "resets_at": hit.resets_at}]
                 return [{"type": "error", "text": str(event.get("result") or event.get("subtype") or "Claude Code failed")}]
             return [{"type": "done", "seconds": round((event.get("duration_ms") or 0) / 1000, 1),
                      "cost": event.get("total_cost_usd")}]
