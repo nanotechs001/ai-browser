@@ -17,7 +17,7 @@ from ai_browser.chrome import chrome_binary
 from conftest import file_mode
 from fake_window import FakeWindow, SocketWindow
 from test_home import until
-from test_tab_menu import active_is, click_in, connected, frame, pick, tab
+from test_tab_menu import active_is, click_in, close_key, connected, frame, pick, ready_for_keys, tab
 from ui_socket import ui_socket
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
@@ -130,19 +130,27 @@ async def test_switching_or_closing_tabs_never_ends_it_and_closing_the_window_do
     seen, jobs = {}, []
 
     async def check(page):
-        for key in ("/mission", "/settings", "/home"):  # every tab's page is the window's
-            await pick(page, key)
-            assert await until(page, connected(key))
-        assert await until(page, f"{frame('/home')}.document.querySelector('#brain .brain-setup') !== null")
-        await click_in(page, "/home", "#brain .brain-setup")  # the setup steps: a closable tab
-        assert await until(page, active_is("/setup"))
-        await page(f"{tab('/setup')}.querySelector('.tab-close').click(); true")  # closed again
-        assert await until(page, f"{tab('/setup')} === null && {active_is('/home')}")
-        await pick(page, "/mission")
-        await asyncio.sleep(2.5)  # more than twice the grace
-        seen["alive"], seen["windows"] = not running.done(), servers[0].window_count
-        await window.cdp.send("Target.closeTarget", {"targetId": window.targets[0]})  # the user closes the window
-        seen["closed_at"] = time.monotonic()
+        try:
+            for key in ("/mission", "/settings", "/home"):  # every tab's page is the window's
+                await pick(page, key)
+                assert await until(page, connected(key))
+            assert await until(page, f"{frame('/home')}.document.querySelector('#brain .brain-setup') !== null")
+            await click_in(page, "/home", "#brain .brain-setup")  # the setup steps: a closable tab
+            assert await until(page, active_is("/setup"))
+            await page(f"{tab('/setup')}.querySelector('.tab-close').click(); true")  # closed again
+            assert await until(page, f"{tab('/setup')} === null && {active_is('/home')}")
+            await click_in(page, "/home", "#brain .brain-setup")
+            assert await until(page, f"{active_is('/setup')} && {ready_for_keys('/setup')}")
+            await close_key(page)  # Command-W (Ctrl+W): the setup steps' tab closes, never the window
+            seen["key_closed"] = await until(page, f"{tab('/setup')} === null && {active_is('/home')}")
+            await pick(page, "/mission")
+            await close_key(page)  # on a fixed tab: nothing closes
+            await asyncio.sleep(2.5)  # more than twice the grace
+            seen["alive"], seen["windows"] = not running.done(), servers[0].window_count
+            seen["tabs"] = await page("[...document.querySelectorAll('#tabs .tab')].map((one) => one.dataset.key)")
+        finally:
+            await window.cdp.send("Target.closeTarget", {"targetId": window.targets[0]})  # the user closes the window
+            seen["closed_at"] = time.monotonic()
 
     async def ready(url, opened):
         page = await window.page()
@@ -151,7 +159,8 @@ async def test_switching_or_closing_tabs_never_ends_it_and_closing_the_window_do
 
     running = asyncio.create_task(run.run_app(tmp_path / "home", claude=runner, ready=ready, out=quiet,
                                               launcher=lambda setting: window))
-    assert await asyncio.wait_for(running, 60) == 0 and seen["alive"] and seen["windows"] == 3
+    assert await asyncio.wait_for(running, 60) == 0 and seen.get("key_closed") and seen["alive"]
+    assert seen["windows"] == 3 and seen["tabs"] == ["/home", "/mission", "/settings"]
     assert time.monotonic() - seen["closed_at"] < run.WINDOW_GRACE + 2
 
 

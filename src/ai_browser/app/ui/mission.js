@@ -5,7 +5,7 @@ import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { agentLabel, createChat } from "./chat.js";
 import { connect } from "./link.js";
-import { guardLinks, openLive, openTab } from "./nav.js";
+import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
 import { permissionCard } from "./permission.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
 import { mountTalk } from "./talk.js";
@@ -63,6 +63,7 @@ const voice = createVoice({
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
 guardLinks(link);
+guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 talk = mountTalk({
   panel: $("talk"),
   micButton: $("mic"),

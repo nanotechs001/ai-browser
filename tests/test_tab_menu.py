@@ -1,10 +1,12 @@
 """AI Browser's window as one page with a tab menu (/app): AI Home, Mission Control and Settings in tabs that keep
 their state while hidden, and a title that follows the tab; the setup steps and an agent's live view as closable tabs;
-links and buttons between our pages that switch tabs, never open a window. Drawn in a throwaway headless Chrome against
-a real app server (agents on the fake claude), with the window's cookie taken the real way (the `stack` fixture)."""
+links and buttons between our pages that switch tabs, never open a window; and the close-tab key, which closes a tab
+with a ×, never the window. Drawn in a throwaway headless Chrome against a real app server (agents on the fake claude),
+with the window's cookie taken the real way (the `stack` fixture)."""
 
 import asyncio
 import json
+import sys
 
 import pytest
 
@@ -342,5 +344,91 @@ async def test_only_our_pages_open_tabs_and_only_for_our_pages(shell):
         assert await in_frame(js, "live:a1", "parent.postMessage({type: 'tab', path: '/settings'}, '*'); true")
         await asyncio.sleep(1)
         assert await js(active_is("live:a1")) and await js(f"{view('/settings')} === null")
+    finally:
+        await live.stop()
+
+
+# ---- the close-tab key -----------------------------------------------------------------------------------------------
+
+MAC = sys.platform == "darwin"
+CLOSE_KEY = {"key": "w", "code": "KeyW", "windowsVirtualKeyCode": 87, "modifiers": 4 if MAC else 2}  # Command / Ctrl
+KEPT = ("window.addEventListener('keydown', (event) => { if (event.key === 'w') "  # after every other listener: did one
+        "document.documentElement.dataset.kept = String(event.defaultPrevented); }); true")  # keep it from the browser?
+
+
+def ready_for_keys(key: str) -> str:
+    """A tab's own page has loaded (not the new frame's first blank document) and has the keyboard."""
+    return (f"{frame(key)}?.location.pathname === {json.dumps(key)} && {frame(key)}.document.readyState === "
+            f"'complete' && {frame(key)}.document.hasFocus()")
+
+
+async def close_key(js) -> None:
+    """The close-tab key (Command-W on a Mac, Ctrl+W elsewhere), pressed as a person presses it (CDP Input, as
+    test_talk sends keys): it goes to the frame that has the focus. In an app window the browser would close the whole
+    window for it unless the page keeps it; headless Chrome never closes one, so these tests look at what our pages do
+    with it, and the real window's own close is a hand check."""
+    for kind in ("rawKeyDown", "keyUp"):
+        await js.cdp.send("Input.dispatchKeyEvent", {"type": kind, **CLOSE_KEY}, session_id=js.session)
+
+
+@CHROME
+async def test_the_close_tab_key_closes_the_tab_shown_if_it_has_a_close_button(shell):
+    js, stack = shell
+    assert await until(js, f"{frame('/home')}.document.querySelector('#brain .brain-setup') !== null")
+    await click_in(js, "/home", "#brain .brain-setup")
+    assert await until(js, f"{active_is('/setup')} && {ready_for_keys('/setup')}")
+    windows = stack["server"].window_count
+    await close_key(js)  # the focus is in the setup steps' page, the tab shown
+    assert await until(js, f"{tab('/setup')} === null && {view('/setup')} === null && {active_is('/home')}")
+    await click_in(js, "/home", "#brain .brain-setup")
+    assert await until(js, active_is("/setup"))
+    await js(f"{tab('/setup')}.querySelector('.tab-label').focus(); true")  # the focus on the window's row of tabs
+    await close_key(js)
+    assert await until(js, f"{tab('/setup')} === null && {active_is('/home')}")
+    await asyncio.sleep(0.5)
+    assert stack["server"].window_count == windows and await js(connected("/home"))  # the window and its lines stay
+
+
+@CHROME
+async def test_the_close_tab_key_closes_nothing_on_a_fixed_tab_and_never_reaches_the_browser(shell):
+    js, stack = shell
+    for key in ("/mission", "/settings", "/home"):
+        await pick(js, key)
+        assert await until(js, connected(key))
+        await in_frame(js, key, KEPT)
+        await close_key(js)  # the focus is in that tab's page
+        assert await until(js, f"{frame(key)}.document.documentElement.dataset.kept === 'true'")  # it kept the key
+        assert await js(keys()) == ["/home", "/mission", "/settings"] and await js(active_is(key))
+    await js(KEPT)
+    await js(f"{tab('/home')}.querySelector('.tab-label').focus(); true")  # the window's own page, its row of tabs
+    await close_key(js)
+    assert await until(js, "document.documentElement.dataset.kept === 'true'")
+    await asyncio.sleep(0.5)
+    assert await js(keys()) == ["/home", "/mission", "/settings"] and await js(active_is("/home"))
+    assert stack["server"].window_count == 3  # every page's line to the app stays
+
+
+@CHROME
+async def test_the_close_tab_key_in_a_live_view_never_reaches_the_browser(shell):
+    from ai_browser.live import LiveView
+
+    js, stack = shell
+    live = LiveView()
+    address = await live.start()
+    try:
+        await in_frame(js, "/home", "parent.postMessage({type: 'live', url: " + json.dumps(address)
+                       + ", agent: 'a1', label: '1 · QA'}, location.origin); true")
+        assert await until(js, active_is("live:a1"))
+        assert await settled(lambda: len(live.viewers) == 1)
+        windows = stack["server"].window_count
+        corner = (f"(() => {{ const box = {view('live:a1')}.querySelector('iframe').getBoundingClientRect();"
+                  " return [box.x + 40, box.y + 12]; })()")
+        await mouse_click(js, await js(corner))  # into the live view's page, beside its picture: its own focus
+        await in_frame(js, "live:a1", KEPT)
+        await close_key(js)
+        await asyncio.sleep(0.5)
+        assert await in_frame(js, "live:a1", "document.documentElement.dataset.kept") == "true"  # kept from the browser
+        assert await js(active_is("live:a1"))  # another origin's page can't ask the window for anything: × closes it
+        assert stack["server"].window_count == windows and len(live.viewers) == 1
     finally:
         await live.stop()

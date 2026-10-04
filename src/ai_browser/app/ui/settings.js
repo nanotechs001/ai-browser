@@ -2,7 +2,7 @@
 // The choices come from the app; a change is saved there, and applies the next time AI Browser starts. Every name is
 // set as text.
 import { connect } from "./link.js";
-import { guardLinks, openTab } from "./nav.js";
+import { guardCloseKey, guardLinks, openTab } from "./nav.js";
 
 const $ = (id) => document.getElementById(id);
 let current = null; // the app's settings: {model, voice, window_browser, window: {using, name, note, choices}}
@@ -59,4 +59,5 @@ function handle(message) {
 
 const link = connect({ view: "settings", onMessage: handle, onState: setStatus });
 guardLinks(link);
+guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 $("home-link").addEventListener("click", () => openTab("/home"));

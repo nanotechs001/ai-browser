@@ -4,9 +4,11 @@
 // view (Show me) open as closable tabs at the end, one live view per agent. Our pages ask for a tab with a message
 // (nav.js); only a message from one of our own pages' frames counts, and only for one of our pages or an engine's
 // live view. Each page in a frame keeps its own line to the app, and those lines are the window's: the app ends when
-// the window closes (app/run.py), never on a switch or a closed tab. The window's title follows the active tab and
-// keeps AI Home's count of agents at work. Every label is set as text.
-"use strict";
+// the window closes (app/run.py), never on a switch or a closed tab. The close-tab key (Command-W on a Mac, Ctrl+W
+// elsewhere) closes the tab shown if it has a ×, and never the window: this page and our pages keep it from the
+// browser. The window's title follows the active tab and keeps AI Home's count of agents at work. Every label is set
+// as text.
+import { closeTabKey } from "./nav.js";
 
 const FIXED = [["/home", "AI Home"], ["/mission", "Mission Control"], ["/settings", "Settings"]];
 const SETUP = "/setup"; // the setup steps (#brave, #switch): one closable tab
@@ -90,6 +92,17 @@ function closeTab(key) {
   if (active === key) show(picked.at(-1) || "/home");
 }
 
+// The close-tab key: the tab shown, if it has a ×; on AI Home, Mission Control or Settings, nothing.
+function closeShown() {
+  if (tabs.get(active)?.closable) closeTab(active);
+}
+
+document.addEventListener("keydown", (event) => { // the focus is on this page itself (its row of tabs)
+  if (!closeTabKey(event)) return;
+  event.preventDefault(); // never the browser's: in this window it would close the window, and stop AI Browser
+  if (!event.repeat) closeShown();
+}, true);
+
 function openClosable(key, label, src, options) { // a closable tab: opened once, then shown again (at `src`)
   const tab = tabs.get(key) || addTab(key, label, src, { closable: true, ...options });
   if (tab.frame && tab.src !== src) {
@@ -118,8 +131,9 @@ function openLive({ url, agent, label }) { // an agent's live view: its own clos
   openClosable(`live:${agent}`, `Live view · ${name}`, url, { live: true });
 }
 
-// A page of ours asks for a tab. Only our own pages' frames count: never the window's page itself, a live view
-// (another origin), or anything else that can post a message here.
+// A page of ours asks for a tab, or passes on the close-tab key. Only our own pages' frames count: never the window's
+// page itself, a live view (another origin), or anything else that can post a message here; and only the page shown
+// passes on the key.
 addEventListener("message", (event) => {
   if (event.origin !== location.origin) return;
   const from = [...tabs.values()].find((tab) => tab.frame && tab.frame.contentWindow === event.source);
@@ -127,6 +141,7 @@ addEventListener("message", (event) => {
   const message = event.data;
   if (message?.type === "tab") openPage(message.path);
   else if (message?.type === "live") openLive(message);
+  else if (message?.type === "close-tab" && from.key === active) closeShown();
 });
 
 function working() { // AI Home's count of agents at work, from its own title ("" when none)

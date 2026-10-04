@@ -204,9 +204,11 @@ How it works:
 - **Downloads** go to your Downloads folder, and only after your OK.
 - **Only the window gets in:** AI Browser's window starts with a one-time code that the app swaps for a cookie
   only that window holds. The same address typed into Brave shows "AI Browser's pages open only in its own window".
-- **Closing:** close the window (⌘Q on a Mac), or press Ctrl-C in the terminal: the agents end with it. Switching
-  tabs, or closing the setup steps' or a live view's tab, never ends it. The Docker shell container keeps running for
-  the next start; stop it with `uv run ai-browser stop chrome`.
+- **Closing:** closing the window stops AI Browser: close it (⌘Q on a Mac), or press Ctrl-C in the terminal, and
+  the agents end with it. ⌘W (Ctrl+W on Windows and Linux) closes only the tab you're on, and only if it has a ×
+  (the setup steps, a live view); on AI Home, Mission Control and Settings it does nothing. Switching tabs, or closing
+  the setup steps' or a live view's tab, never ends AI Browser. The Docker shell container keeps running for the next
+  start; stop it with `uv run ai-browser stop chrome`.
 - **The microphone** is asked for once, in the window, and kept across restarts: AI Browser comes back on the same
   address.
 - **Old folders:** `~/.ai-browser/browser/` (AI Browser's old Chrome profile, which may hold logins you made there)

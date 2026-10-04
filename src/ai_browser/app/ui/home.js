@@ -9,7 +9,7 @@ import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
 import { mountWorkflows } from "./workflows.js";
-import { guardLinks, openLive, openTab } from "./nav.js";
+import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
 
 const $ = (id) => document.getElementById(id);
 const COLORS = { grey: "#5f6368", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038",
@@ -39,6 +39,7 @@ const SAYS = { connected: "connected", off: "switch off", ready: "ready", asking
 const chat = createChat($("chat-messages"));
 const link = connect({ view: "home", onMessage: handle, onState: setStatus });
 guardLinks(link);
+guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id), cards: "confirm",
                                              openSetup: () => openTab("/setup#brave") });
 let watchSites = []; // the Brain's watch list: a message workflow's sites

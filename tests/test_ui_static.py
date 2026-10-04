@@ -90,3 +90,14 @@ def test_ai_browser_mode_is_gone_from_the_pages():
 
 def test_link_js_lists_no_debugger_targets():
     assert "chrome.debugger" not in (UI / "link.js").read_text(encoding="utf-8")  # the watcher has no debugger
+
+
+def test_every_page_in_the_window_keeps_the_close_tab_key():
+    """Command-W (Ctrl+W elsewhere) would close AI Browser's whole window, and stop it: every page the tab menu shows
+    keeps that key and asks the menu to close its tab instead (the browser tests show what each does with it)."""
+    nav = (UI / "nav.js").read_text(encoding="utf-8")
+    assert "export function closeTabKey(" in nav and "export function guardCloseKey(" in nav
+    for name in ("home.js", "mission.js", "settings.js"):
+        assert "guardCloseKey();" in (UI / name).read_text(encoding="utf-8"), name
+    assert "closeTabKey" in (UI / "app.js").read_text(encoding="utf-8")
+    assert '"close-tab"' in (UI / "setup.js").read_text(encoding="utf-8")  # setup.js imports nothing: it opens in Brave

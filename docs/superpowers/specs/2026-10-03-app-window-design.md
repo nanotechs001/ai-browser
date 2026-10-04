@@ -61,6 +61,10 @@ pipeline change". They then picked "Yes, build it next (Recommended)" for the de
   bot check in QA's sandbox). A second Show me for the same agent goes to its open tab.
 - **No popups.** A link or button between our pages switches tabs. A website still opens in the user's browser
   (`open_url`).
+- **⌘W (Ctrl+W elsewhere) closes the tab shown if it has a ×, never the window.** In an app window the browser would
+  close the whole window for it, and so stop AI Browser. The tab menu and each of our pages keep the key from the
+  browser (a page passes it on to the menu); a live view's page keeps it too, but can't ask for its tab to close.
+  Closing the window still stops AI Browser.
 
 **What changed, decision by decision:**
 - **Decision 5:** a valid code (and a reload with the cookie, and `/`) redirects to `/app`, the tab menu, not `/home`.
