@@ -298,3 +298,33 @@ async def test_when_conversations_cant_be_carried_every_move_starts_fresh(fake_c
         assert "--resume" not in argvs(log)[-1] and told(log)[-1].startswith("You are taking over a task")
     finally:
         await manager.close_all()
+
+
+async def test_moving_back_and_forth_carries_the_conversation_both_ways(fake_claude, tmp_path):
+    manager, _, work, log = rig(fake_claude, tmp_path, SESSION_EVENTS)
+    default = Path(os.environ["CLAUDE_CONFIG_DIR"])
+    try:
+        agent = await manager.create("check the shop")  # on Default
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn")
+        session = agent.bridge.session_id
+        [first] = transcripts(default)
+        before = first.read_bytes()
+        assert await manager.move(agent.id, work.id) == ""  # Default's limit: on to Work
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn"
+                            and agent.moved == "Moved to Work with its conversation")
+        assert await manager.move(agent.id, "default") == ""  # Work's limit: back to Default
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn"
+                            and agent.moved == "Moved to Default with its conversation")
+        assert argvs(log)[-1][argvs(log)[-1].index("--resume") + 1] == session  # resumed both ways
+        assert given(log)["CLAUDE_CONFIG_DIR"] == str(default)
+        [aside] = [path for path in first.parent.iterdir() if path.name.startswith(f"{session}.jsonl.before-")]
+        assert aside.read_bytes() == before  # Default's older copy stays, beside the newer one
+        assert first.read_bytes().startswith(before) and len(first.read_bytes()) > len(before)
+        carried = transcripts(work.folder)[0]
+        carried.write_bytes(b'{"another": "conversation"}\n')  # not an older copy of this one any more
+        assert await manager.move(agent.id, work.id) == ""
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn"
+                            and agent.moved == "Started fresh on Work with a hand-over note")
+        assert carried.read_bytes() == b'{"another": "conversation"}\n'  # never overwritten
+    finally:
+        await manager.close_all()

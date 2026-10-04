@@ -43,9 +43,29 @@ def test_nothing_is_overwritten(tmp_path):  # Review Focus 3
     assert move_conversation(tmp_path / "personal", tmp_path / "work", "S1") is True
     assert (project / "S1" / "subagents" / "one.jsonl").read_bytes() == b"theirs\n"  # kept as it was
     assert move_conversation(tmp_path / "personal", tmp_path / "work", "S1") is True  # the same bytes: there already
-    (project / "S1.jsonl").write_bytes(b"an older copy\n")  # a move back, after the conversation went on
+    (project / "S1.jsonl").write_bytes(b"another conversation\n")  # not an older copy of this one
     assert move_conversation(tmp_path / "personal", tmp_path / "work", "S1") is False
-    assert (project / "S1.jsonl").read_bytes() == b"an older copy\n"
+    assert (project / "S1.jsonl").read_bytes() == b"another conversation\n"
+    assert sorted(path.name for path in project.iterdir()) == ["S1", "S1.jsonl"]  # nothing set aside either
+
+
+def test_a_move_back_sets_the_older_copy_aside(tmp_path):  # the user's back and forth at limits
+    import re
+
+    from ai_browser.app.move import move_conversation
+
+    older = b'{"turn": 1}\n'
+    newer = older + b'{"turn": 2}\n'  # the conversation went on, on Work, after it was carried there
+    conversation(tmp_path / "work", text=newer)
+    project = tmp_path / "personal" / "projects" / FOLDER
+    project.mkdir(parents=True)
+    (project / "S1.jsonl").write_bytes(older)  # Personal still holds the copy from before the move
+    assert move_conversation(tmp_path / "work", tmp_path / "personal", "S1") is True
+    assert (project / "S1.jsonl").read_bytes() == newer and file_mode(project / "S1.jsonl") in (0o600, None)
+    [aside] = [path for path in project.iterdir() if path.name.startswith("S1.jsonl.")]
+    assert re.fullmatch(r"S1\.jsonl\.before-\d{8}T\d{6}Z(-\d+)?", aside.name)
+    assert aside.read_bytes() == older  # kept, never deleted
+    assert (tmp_path / "work" / "projects" / FOLDER / "S1.jsonl").read_bytes() == newer  # the original stays
 
 
 def test_a_missing_or_doubtful_conversation_is_not_copied(tmp_path):

@@ -4,8 +4,10 @@ move_conversation copies one Claude Code conversation, <from>/projects/<folder>/
 same name beside it, to <to>/projects/<the same folder>/, so `claude --resume <session>` finds it there: the agent's
 working folder is the same on every account. A copy is linked into place, so it is never half-written; nothing that
 exists there is overwritten; a copy is mode 0600; and the original stays, because AI Browser never deletes a
-conversation. handover_note is the fallback: the task, the user's messages since, the agent's last steps from AI
-Browser's own log, and its open tabs. Everything from pages in it is marked as page data."""
+conversation. A move back finds the copy from before the first move there: an older copy of the same conversation
+(its bytes start the newer one's) is set aside under <session>.jsonl.before-<UTC time>, kept, and the newer copy takes
+its name. handover_note is the fallback: the task, the user's messages since, the agent's last steps from AI Browser's
+own log, and its open tabs. Everything from pages in it is marked as page data."""
 
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ import os
 import re
 import secrets
 import shutil
+import time
 from pathlib import Path
 
 from .. import platforms
@@ -45,8 +48,8 @@ Its open tabs, each as its page reports it:
 
 def move_conversation(from_folder, to_folder, session_id) -> bool:
     """Copy one conversation from an account's folder to another's. True when the other folder now holds it: copied
-    now, or there already byte for byte. False, with nothing changed: no such conversation, two of them, or a
-    different file of that name already there."""
+    now, there already byte for byte, or copied in place of an older copy of it, which is set aside (a move back).
+    False, with nothing changed: no such conversation, two of them, or another file of that name already there."""
     if not isinstance(session_id, str) or not SESSION.match(session_id):
         return False
     found = [path for path in (Path(from_folder) / "projects").glob(f"*/{session_id}.jsonl")
@@ -58,8 +61,14 @@ def move_conversation(from_folder, to_folder, session_id) -> bool:
     try:
         _folder(folder)
         target = folder / source.name
-        if not _copy_new(source, target) and target.read_bytes() != source.read_bytes():
-            return False  # another conversation of that name: never overwritten
+        if not _copy_new(source, target):
+            ours, theirs = source.read_bytes(), target.read_bytes()
+            if theirs != ours:
+                if target.is_symlink() or not ours.startswith(theirs):
+                    return False  # another conversation of that name: never overwritten
+                _set_aside(target)  # an older copy of this one: kept beside, under another name
+                if not _copy_new(source, target):
+                    return False
     except OSError:
         return False
     beside = source.with_suffix("")
@@ -72,6 +81,21 @@ def _folder(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
         os.chmod(path, 0o700)
+
+
+def _set_aside(path: Path) -> None:
+    """An older copy of a conversation keeps its bytes under <name>.before-<UTC time> (linked: no file there is ever
+    replaced), and its own name is free for the newer copy. Nothing is deleted. OSError when it can't be set aside."""
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    for attempt in range(100):
+        aside = path.with_name(f"{path.name}.before-{stamp}" + (f"-{attempt}" if attempt else ""))
+        try:
+            os.link(path, aside)
+        except FileExistsError:
+            continue
+        os.unlink(path)  # its bytes stay, under the name beside it
+        return
+    raise FileExistsError(path)
 
 
 def _copy_new(source: Path, target: Path) -> bool:
