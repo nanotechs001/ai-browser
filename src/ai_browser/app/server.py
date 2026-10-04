@@ -38,7 +38,9 @@ from ..extension_id import extension_path
 from ..grouping import MARKER
 from ..hearing.service import HearingService, unavailable_status
 from ..live import _bind, _QuietServer, _serve
+from ..settings import Settings
 from ..skills import Catalog
+from ..syncdir import write_atomic
 from .agents import Agent, AgentManager
 from .cdprelay import Tokens
 from .groups import GroupKeeper
@@ -73,6 +75,7 @@ PAGES = {"/home": "home.html", "/mission": "mission.html", "/settings": "setting
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
 CODE_TTL = 60  # seconds a one-time start code is good for
+SETTING_KEYS = ("model", "voice", "window_browser")
 NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
 USED_CODE = "This start link was used already or has expired. Start AI Browser again."
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
@@ -129,6 +132,7 @@ MESSAGE_RULES: dict[str, Rule] = {
     "new_task": APP_ONLY,  # with or without adopt
     "send": APP_ONLY, "stop": APP_ONLY, "close": APP_ONLY, "model": APP_ONLY,
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
+    "settings_set": Rule(app=True, watcher=False),  # the window's Settings, AI Home's and Mission Control's picks
 }
 
 
@@ -275,8 +279,12 @@ class AppServer:
                  host: str = "127.0.0.1", ports: range = APP_PORTS, default_model: str = "sonnet",
                  brain: BrainService | None = None, tools: ToolsConfig | None = None,
                  workflows: WorkflowStore | None = None, runner: WorkflowRunner | None = None,
-                 skill_writer: SkillWriter | None = None, hearing: HearingService | None = None):
+                 skill_writer: SkillWriter | None = None, hearing: HearingService | None = None,
+                 settings: Settings | None = None, port_file: Path | None = None):
         self.home = Path(home)
+        self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
+        self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
+        self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
         self.agents = agents
         self.brain = brain
         self.skill_writer = skill_writer  # skills the Brain drafts, written only on the user's Save
@@ -412,6 +420,46 @@ class AppServer:
         given = connection.cookies.get(self.cookie_name, "")
         return bool(given) and hmac.compare_digest(given.encode(), self.ui_secret.encode())
 
+    def _settings_payload(self) -> dict:
+        return {**self.settings.get(), "window": dict(self.window_info)}
+
+    def _settings_set(self, queue: asyncio.Queue, message: dict) -> None:
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        key = message.get("key")
+        if key not in SETTING_KEYS:
+            queue.put_nowait({"type": "error", "text": "There is no such setting", "request": request})
+            return
+        try:
+            self.settings.set(key, message.get("value"))
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        except OSError as exc:  # a read-only home, a full disk: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't save that setting: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._send_all({"type": "settings", **self._settings_payload()})  # the watcher's filter keeps it out
+
+    def _saved_port(self) -> int | None:
+        """The port this home used before (the microphone grant belongs to that address), if it is one of ours."""
+        if self.port_file is None:
+            return None
+        try:
+            port = int(self.port_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        return port if port in self.ports else None
+
+    def _remember_port(self, saved: int | None, port: int) -> None:
+        if self.port_file is None:
+            return
+        if saved is None:  # missing, unreadable, or not one of ours: this port from now on
+            with contextlib.suppress(OSError):
+                write_atomic(self.port_file, f"{port}\n".encode("utf-8"))
+        elif saved != port:  # busy this once: the file stays, so the next start goes back to the granted address
+            self.out(f"Port {saved} is busy: AI Browser uses {port} this time, and may ask for the microphone "
+                     "again.")
+
     def _mismatch(self, origin: str) -> None:
         """Only an extension holding our config.json has the token: from an origin we didn't compute, it means an
         extension ID is computed wrong on this computer. The socket is still refused; this says so, once."""
@@ -467,7 +515,8 @@ class AppServer:
         self._sweeper = asyncio.create_task(self._sweep_sessions())
         if self.brain is not None:
             await self.brain.start()
-        for port in self.ports:
+        saved = self._saved_port()
+        for port in ([saved] if saved is not None else []) + [port for port in self.ports if port != saved]:
             sock = _bind(self.host, port)
             if sock is None:
                 continue
@@ -483,6 +532,7 @@ class AppServer:
                 await asyncio.sleep(0.01)
             if self._server.started:
                 self.url = f"http://{self.host}:{port}"
+                self._remember_port(saved, port)
                 if self.brave is not None:
                     self.brave.relay.port = port
                 return self.url
@@ -1061,6 +1111,8 @@ class AppServer:
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
                 self._sockets[ws] = queue
+        elif kind == "settings_set":
+            self._settings_set(queue, message)
         elif kind == "new_task":
             request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
             text = _text(message.get("text"))
@@ -1352,7 +1404,8 @@ class AppServer:
                 "tab_scope": self._tab_scope(),
                 "skills_summary": self._skills_summary(), "max_working": self.agents.max_working,
                 "default_model": self.default_model, "browser": self._browser_info(),
-                "sessions": self._session_list(), "browser_clients": self._browser_clients()}
+                "sessions": self._session_list(), "browser_clients": self._browser_clients(),
+                "settings": self._settings_payload()}
 
     # ---- skills -----------------------------------------------------------------------------------------------
 

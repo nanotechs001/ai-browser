@@ -42,6 +42,7 @@ SENDS = {
     "new_task": (True, False),  # with or without adopt
     **{kind: (True, False) for kind in ("send", "stop", "close", "model")},
     **{kind: (True, False) for kind in ("watch", "events", "thumbs")},
+    "settings_set": (True, False),  # app-window: the model, Voice and the window's browser
 }
 
 
@@ -49,8 +50,8 @@ def test_the_message_table_has_exactly_the_written_down_types():
     from ai_browser.app.server import MESSAGE_RULES
 
     assert set(MESSAGE_RULES) == set(SENDS)
-    assert len(SENDS) == 57
-    assert sum(1 for app, _ in SENDS.values() if app) == 50
+    assert len(SENDS) == 58
+    assert sum(1 for app, _ in SENDS.values() if app) == 51
     assert sum(1 for _, watcher in SENDS.values() if watcher) == 22  # the two conditional rows count as allowed
 
 
@@ -369,6 +370,7 @@ NEVER = {"tabs", "thumb", "thumbs", "sessions", "browser", "agent_event", "agent
          "brain_answer", "hearing_status", "heard", "tools_snapshot", "workflows_snapshot", "workflow_saved", "skills",
          "skill_drafted", "skill_diff", "skill_saved",
          "browser_clients",  # cdp-relay's list of connected clients
+         "settings",  # app-window: the window's settings go to AI Browser's own pages only
          "a_type_added_later"}
 AGENT_ROW = {"id": "a1", "name": "Fix the footer", "color": "blue", "model": "sonnet", "state": "needs_you",
              "status": "", "last_action": "", "tabs": ["T1"], "adopted": ["U2"], "working_tab": "T1",

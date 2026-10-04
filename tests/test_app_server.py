@@ -1816,3 +1816,113 @@ async def test_a_socket_with_no_role_gets_no_rights_and_only_the_watchers_part(f
         assert ws.sent == [{"type": "ping"}]  # the tab list is never a stranger's
     finally:
         await server.stop()
+
+
+async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude, tmp_path):
+    from ai_browser.settings import read_settings
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    server.window_info = {"using": "chrome", "name": "Google Chrome", "note": "",
+                          "choices": [{"id": "auto", "name": "Auto (Google Chrome)", "installed": True}]}
+    server.allow_watcher(WATCHER)
+    try:
+        async with ui_socket(server, url) as one, ui_socket(server, url) as two, \
+                connect(socket_url(server, url), origin=WATCHER, proxy=None) as watcher:
+            for ws, view in ((one, "home"), (two, "mission"), (watcher, "brain")):
+                await ws.send(json.dumps({"type": "hello", "view": view}))
+            snapshot = await recv(one)
+            assert snapshot["settings"] == {"model": None, "voice": False, "window_browser": "auto",
+                                            "window": server.window_info}
+            await recv(two)
+            assert "settings" not in await recv(watcher)  # the watcher's snapshot is trimmed to its agents
+            await one.send(json.dumps({"type": "settings_set", "key": "model", "value": "opus", "request": "s1"}))
+            for ws in (one, two):
+                seen = (await until(ws, lambda message: message["type"] == "settings"))[-1]
+                assert seen["model"] == "opus" and seen["window"]["name"] == "Google Chrome"
+            assert read_settings(tmp_path / "home")["model"] == "opus"
+            await watcher.send(json.dumps({"type": "settings_set", "key": "model", "value": "haiku"}))
+            await one.send(json.dumps({"type": "settings_set", "key": "voice", "value": "loud", "request": "s2"}))
+            error = (await until(one, lambda message: message["type"] == "error"))[-1]
+            assert error == {"type": "error", "text": "Voice is on or off", "request": "s2"}
+            await one.send(json.dumps({"type": "settings_set", "key": "colour", "value": "red", "request": "s3"}))
+            assert (await until(one, lambda message: message["type"] == "error"))[-1]["request"] == "s3"
+            await asyncio.sleep(0.3)
+            assert read_settings(tmp_path / "home") == {"model": "opus"}  # the watcher's and the bad ones changed nothing
+            with pytest.raises(TimeoutError):
+                while True:  # the watcher never gets a settings message
+                    if json.loads(await asyncio.wait_for(watcher.recv(), 0.5))["type"] == "settings":
+                        raise AssertionError("the watcher got settings")
+    finally:
+        await server.stop()
+
+
+async def test_a_setting_that_cant_be_saved_is_said_and_changes_nothing(fake_claude, tmp_path):  # Review Focus 3
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    (tmp_path / "home" / "settings.json").mkdir(parents=True)  # a folder where the file should be
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            await recv(ws)
+            await ws.send(json.dumps({"type": "settings_set", "key": "model", "value": "opus", "request": "s1"}))
+            error = (await until(ws, lambda message: message["type"] == "error"))[-1]
+            assert error["text"].startswith("Couldn't save that setting: ") and error["request"] == "s1"
+            await ws.send(json.dumps({"type": "events", "id": "a9"}))  # the socket is still open and answering
+            assert (await until(ws, lambda message: message["type"] == "agent_events"))[-1]["events"] == []
+        assert server.settings.get()["model"] is None
+    finally:
+        await server.stop()
+
+
+def free_run(count=3):
+    """`count` consecutive free ports, well away from the running app's 8792-8811."""
+    from ai_browser.live import _bind
+
+    for start in range(18700, 18900, count):
+        sockets = [_bind("127.0.0.1", port) for port in range(start, start + count)]
+        for sock in sockets:
+            if sock is not None:
+                sock.close()
+        if all(sockets):
+            return range(start, start + count)
+    pytest.skip("no free ports")
+
+
+async def test_the_port_is_remembered_so_the_microphone_grant_survives(fake_claude, tmp_path):
+    import socket as sockets
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+
+    runner, _, _ = fake_claude
+    home, ports = tmp_path / "home", free_run()
+    port_file = home / "app" / "port"
+    port_file.parent.mkdir(parents=True)
+    port_file.write_text(f"{ports[1]}\n", encoding="utf-8")  # a free port in range: it is used
+    server = AppServer(home, AgentManager(home, claude=runner), ports=ports, port_file=port_file)
+    assert await server.start() == f"http://127.0.0.1:{ports[1]}"
+    await server.stop()
+    holder = sockets.socket()
+    holder.bind(("127.0.0.1", ports[1]))
+    holder.listen()  # another program has it now
+    lines = []
+    server = AppServer(home, AgentManager(home, claude=runner), ports=ports, port_file=port_file)
+    server.out = lines.append
+    try:
+        url = await server.start()
+        assert url != f"http://127.0.0.1:{ports[1]}" and port_file.read_text(encoding="utf-8") == f"{ports[1]}\n"
+        assert lines == [f"Port {ports[1]} is busy: AI Browser uses {server.port} this time, and may ask for the "
+                         "microphone again."]
+    finally:
+        await server.stop()
+        holder.close()
+    for wrong in ("80\n", "not a port\n"):  # outside the range, or unreadable: rewritten with the port used
+        port_file.write_text(wrong, encoding="utf-8")
+        server = AppServer(home, AgentManager(home, claude=runner), ports=ports, port_file=port_file)
+        await server.start()
+        assert port_file.read_text(encoding="utf-8") == f"{server.port}\n"
+        await server.stop()
+    port_file.unlink()
+    server = AppServer(home, AgentManager(home, claude=runner), ports=ports, port_file=port_file)
+    await server.start()  # missing: written
+    assert port_file.read_text(encoding="utf-8") == f"{server.port}\n"
+    await server.stop()
