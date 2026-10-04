@@ -51,3 +51,5 @@
 .bot-check-how, .bot-check-skip { margin: 0; font-size: 13px; }
 .bot-check-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .bot-check button { font-size: 13px; padding: 2px 10px; }
+.brain-setup.link { border: none; background: none; padding: 0; color: inherit; text-decoration: underline;
+                    font: inherit; cursor: pointer; }

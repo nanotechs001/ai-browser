@@ -9,6 +9,9 @@ import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
 import { mountWorkflows } from "./workflows.js";
+import { guardLinks, openWindow, WINDOWS } from "./nav.js";
+
+window.name = "aib-home"; // Mission Control's AI Home button finds this window by its name
 
 const $ = (id) => document.getElementById(id);
 const COLORS = { grey: "#5f6368", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038",
@@ -37,7 +40,9 @@ const SAYS = { connected: "connected", off: "switch off", ready: "ready", asking
                refused: "not allowed", lost: "closed" };
 const chat = createChat($("chat-messages"));
 const link = connect({ view: "home", onMessage: handle, onState: setStatus });
-const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id), cards: "confirm" });
+guardLinks(link);
+const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id), cards: "confirm",
+                                             openSetup: () => openWindow("/setup#brave", ...WINDOWS["/setup"]) });
 let watchSites = []; // the Brain's watch list: a message workflow's sites
 let switchedOn = []; // the MCP servers switched on: what a workflow may use
 const tools = mountTools($("tools"), link);
@@ -295,15 +300,10 @@ function renderClients() { // what uses the user's browser through AI Browser's 
     + "AI Browser quits. Disconnect cuts one off; unticking the switch cuts off everything.";
 }
 
-async function browserAction() {
+function browserAction() {
   if (!browser || browser.kind !== "brave") return;
-  if (browser.state === "off") { // the setup page's steps, with their warning
-    try {
-      const config = await (await fetch(chrome.runtime.getURL("config.json"), { cache: "no-store" })).json();
-      await chrome.tabs.create({ url: `${config.server}/setup#switch` });
-    } catch {
-      flash("Not connected: is `ai-browser app` running?");
-    }
+  if (browser.state === "off") { // the setup page's steps, with their warning, in a small window
+    openWindow("/setup#switch", ...WINDOWS["/setup"]);
     return;
   }
   link.send({ type: "brave_connect" });
@@ -560,22 +560,7 @@ function sendChat() {
   else flash("Not connected: is `ai-browser app` running?");
 }
 
-let openingMission = null; // one click, one Mission Control: an open one is brought to the front
-
-async function openMission() {
-  const url = chrome.runtime.getURL("mission.html");
-  const open = (await chrome.tabs.query({})).find((tab) => tab.url === url || tab.pendingUrl === url);
-  if (open) {
-    await chrome.tabs.update(open.id, { active: true });
-    await chrome.windows.update(open.windowId, { focused: true }).catch(() => {});
-  } else {
-    await chrome.tabs.create({ url });
-  }
-}
-
-$("mission").addEventListener("click", () => {
-  openingMission ??= openMission().catch(() => {}).finally(() => { openingMission = null; });
-});
+$("mission").addEventListener("click", () => openWindow("/mission", ...WINDOWS["/mission"]));
 $("start").addEventListener("click", start);
 $("browser-action").addEventListener("click", browserAction);
 $("handing-clear").addEventListener("click", () => setHanding(null));

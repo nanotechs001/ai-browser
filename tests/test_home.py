@@ -56,6 +56,29 @@ async def page_js(cdp, target):
     return js
 
 
+async def click_as_user(js, selector):
+    """A click the browser counts as the user's own (Runtime.evaluate with userGesture): window.open needs one."""
+    result = await js.cdp.send("Runtime.evaluate", {
+        "expression": f"document.querySelector({json.dumps(selector)}).click(); true", "userGesture": True,
+        "returnByValue": True}, session_id=js.session)
+    return result.get("result", {}).get("value")
+
+
+async def page_targets(cdp, ending) -> list[str]:
+    """The page targets whose address ends with `ending` ("/mission", "/setup#brave")."""
+    infos = (await cdp.send("Target.getTargets"))["targetInfos"]
+    return [info["targetId"] for info in infos if info["type"] == "page" and info["url"].endswith(ending)]
+
+
+async def wait_targets(cdp, ending, count=1, seconds=10) -> list[str]:
+    for _ in range(int(seconds * 10)):
+        found = await page_targets(cdp, ending)
+        if len(found) >= count:
+            return found
+        await asyncio.sleep(0.1)
+    return await page_targets(cdp, ending)
+
+
 WINDOW_INFO = {"using": "chrome", "name": "Google Chrome", "note": "",
                "choices": [{"id": "auto", "name": "Auto (Google Chrome)", "installed": True},
                            {"id": "chrome", "name": "Google Chrome", "installed": True},
@@ -499,3 +522,42 @@ async def test_the_browser_card_says_one_question(home):
     assert await until(js, f"{note}.includes('Everything waiting for Brave shares this one question.')")
     brave.set_state("refused")  # only a no: the question never runs out of time (app/cdprelay.py)
     assert await until(js, f"{note} === 'Brave said no.'")
+
+
+@CHROME
+async def test_the_setup_steps_open_in_a_small_window(home):
+    js, stack = home
+    cdp = stack["cdp"]
+    assert await until(js, "document.querySelector('#brain .brain-setup') !== null")  # the watcher isn't connected
+    await click_as_user(js, "#brain .brain-setup")
+    [setup] = await wait_targets(cdp, "/setup#brave")
+    assert await (await page_js(cdp, setup))("window.name") == "aib-setup"
+    stack["brave"].set_state("off")
+    assert await until(js, "document.getElementById('browser-action').textContent === 'Show me how'")
+    await click_as_user(js, "#browser-action")
+    assert await wait_targets(cdp, "/setup#switch") == [setup]  # the same small window, now on the switch's steps
+
+
+@CHROME
+async def test_links_go_to_the_users_browser_or_a_window_of_ours(home, monkeypatch):
+    from ai_browser import platforms
+
+    js, stack = home
+    opened = []
+    monkeypatch.setattr(platforms, "open_url", lambda url, browser=None, system=None: opened.append(url) or True)
+    before = await js("location.href")
+    await js("const site = document.createElement('a'); site.id = 'site'; site.href = 'https://example.com/pricing';"
+             "site.textContent = 'pricing'; document.body.append(site);"
+             "const ours = document.createElement('a'); ours.id = 'ours'; ours.href = '/mission';"
+             "ours.target = '_blank'; ours.textContent = 'Mission Control'; document.body.append(ours); true")
+    await js("document.getElementById('site').click(); true")
+    for _ in range(50):
+        if opened:
+            break
+        await asyncio.sleep(0.1)
+    assert opened == ["https://example.com/pricing"] and await js("location.href") == before  # never in the window
+    await click_as_user(js, "#ours")
+    [mission] = await wait_targets(stack["cdp"], "/mission")
+    await asyncio.sleep(0.5)
+    assert await page_targets(stack["cdp"], "/mission") == [mission]
+    assert await (await page_js(stack["cdp"], mission))("window.name") == "aib-mission"  # a _blank open has no name

@@ -5,6 +5,7 @@ import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { agentLabel, createChat } from "./chat.js";
 import { connect } from "./link.js";
+import { focusHome, guardLinks, openWindow, WINDOWS } from "./nav.js";
 import { permissionCard } from "./permission.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
 import { mountTalk } from "./talk.js";
@@ -61,6 +62,7 @@ const voice = createVoice({
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
+guardLinks(link);
 talk = mountTalk({
   panel: $("talk"),
   micButton: $("mic"),
@@ -217,7 +219,8 @@ function openBrain() {
   $("drawer-dot").style.background = "var(--accent)";
   const root = el("div", "drawer-brain");
   $("drawer-body").replaceChildren(root);
-  drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id), cards: "confirm" });
+  drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id), cards: "confirm",
+                                          openSetup: () => openWindow("/setup#brave", ...WINDOWS["/setup"]) });
   $("drawer").hidden = false;
 }
 
@@ -528,6 +531,7 @@ view.addEventListener("dblclick", (event) => {
 });
 
 $("drawer-close").addEventListener("click", closeDrawer);
+$("home-link").addEventListener("click", () => focusHome());
 brainButton.addEventListener("click", openBrain);
 bubble.addEventListener("click", openBrain);
 
