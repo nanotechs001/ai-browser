@@ -127,3 +127,12 @@ def test_the_readme_explains_the_app():
                    "Never a message's text or a page's", "the Start menu", "keeps Electron's icon in File Explorer",
                    "AIB_TEST_ELECTRON", "It has no debugging port and no DevTools"):
         assert needed in text, needed
+
+
+def test_a_windows_api_this_electron_may_lack_never_stops_the_start():
+    # begin() adds the Start menu entry first on Windows: a call that throws there would end every start. The toast
+    # activator's setter can't be confirmed for Electron 44, so it runs only where it exists (the entry carries the
+    # same CLSID either way).
+    entry = re.search(r"function startMenuEntry\(\) \{\n(.*?)\n\}\n", text("main.js"), re.S).group(1)
+    assert 'if (typeof app.setToastActivatorCLSID === "function") app.setToastActivatorCLSID(TOAST_CLSID);' in entry
+    assert entry.count("app.setToastActivatorCLSID(") == 1 and "toastActivatorClsid: TOAST_CLSID" in entry

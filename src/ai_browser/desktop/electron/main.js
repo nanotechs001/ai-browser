@@ -191,7 +191,7 @@ function makeTray() { // the menu-bar icon (by the clock on Windows)
 function startMenuEntry() {
   if (UNPACKAGED) return;
   app.setAppUserModelId(APP_ID);
-  app.setToastActivatorCLSID(TOAST_CLSID);
+  if (typeof app.setToastActivatorCLSID === "function") app.setToastActivatorCLSID(TOAST_CLSID); // where it exists
   const link = path.join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs", "AI Browser.lnk");
   const want = { target: process.execPath, appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID,
                  description: "AI Browser" };
