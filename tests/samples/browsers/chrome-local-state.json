@@ -1,0 +1,18 @@
+{
+  "browser": {"enabled_labs_experiments": []},
+  "profile": {
+    "info_cache": {
+      "Default": {
+        "avatar_icon": "chrome://theme/IDR_PROFILE_AVATAR_26",
+        "is_ephemeral": false,
+        "is_using_default_name": true,
+        "name": "Your Chrome",
+        "user_name": ""
+      }
+    },
+    "last_active_profiles": ["Default"],
+    "last_used": "Default",
+    "metrics": {"next_bucket_index": 1},
+    "profiles_order": ["Default"]
+  }
+}
