@@ -115,3 +115,15 @@ def test_the_product_never_passes_a_debugging_switch():
         source = path.read_text(encoding="utf-8")
         for word in ("remote-debugging", "--inspect", "ELECTRON_RUN_AS_NODE", "openDevTools"):
             assert word not in source, (path.name, word)
+
+
+def test_the_readme_explains_the_app():
+    text = " ".join((SRC.parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for needed in ("### AI Browser's own app (a menu-bar icon, a shortcut and notifications)",
+                   "uv run ai-browser doctor --setup", "Electron 44.5.1", "Nothing is downloaded until you type `y`",
+                   "`SHASUMS256.txt`", "nothing is kept", "~/.ai-browser/desktop/", "signed on your Mac, ad hoc",
+                   "Running it needs no Node.js", "**Closing the window hides it.**", "**Quit**",
+                   "Settings → AI Browser app", "Press it once", "\"An agent is waiting for you\"",
+                   "Never a message's text or a page's", "the Start menu", "keeps Electron's icon in File Explorer",
+                   "AIB_TEST_ELECTRON", "It has no debugging port and no DevTools"):
+        assert needed in text, needed
