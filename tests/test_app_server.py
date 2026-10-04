@@ -1926,3 +1926,40 @@ async def test_the_port_is_remembered_so_the_microphone_grant_survives(fake_clau
     await server.start()  # missing: written
     assert port_file.read_text(encoding="utf-8") == f"{server.port}\n"
     await server.stop()
+
+
+async def test_websites_open_in_the_users_browser(fake_claude, tmp_path, monkeypatch):
+    from ai_browser import platforms
+
+    opened, answer = [], [True]
+    monkeypatch.setattr(platforms, "open_url", lambda url, browser=None, system=None: opened.append(url) or answer[0])
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    server.allow_watcher(WATCHER)
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            await recv(ws)
+            await ws.send(json.dumps({"type": "open_url", "url": "https://example.com/pricing?a=1"}))
+            for _ in range(50):
+                if opened:
+                    break
+                await asyncio.sleep(0.05)
+            assert opened == ["https://example.com/pricing?a=1"]
+            for bad in ("javascript:alert(1)", "file:///etc/hosts", "https://u:p@example.com", "http:///x",
+                        "https://example.com/a b", "https://example.com/\nx", "https://" + "a" * 3000 + ".com",
+                        "HTTPS://example.com", "--app=https://example.com", 42, None):
+                await ws.send(json.dumps({"type": "open_url", "url": bad}))
+                error = (await until(ws, lambda message: message["type"] == "error"))[-1]
+                assert error["text"] == "Only web addresses open from here", bad
+            answer[0] = False  # nothing on this computer could open it
+            await ws.send(json.dumps({"type": "open_url", "url": "https://example.com"}))
+            error = (await until(ws, lambda message: message["type"] == "error"))[-1]
+            assert error["text"] == "Couldn't open that address in your browser"
+        async with connect(socket_url(server, url), origin=WATCHER, proxy=None) as watcher:
+            await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
+            await recv(watcher)
+            await watcher.send(json.dumps({"type": "open_url", "url": "https://example.com/from-the-watcher"}))
+            await asyncio.sleep(0.5)
+        assert opened == ["https://example.com/pricing?a=1", "https://example.com"]  # never from the watcher
+    finally:
+        await server.stop()

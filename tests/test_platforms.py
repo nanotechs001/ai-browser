@@ -459,3 +459,33 @@ def test_the_registry_readers_with_a_fake_winreg(monkeypatch):
     fake.keys[("HKCU", (HTTPS + r"\UserChoiceLatest\ProgId").lower())] = {"ProgId": "BraveHTML"}
     assert progid_of() == "BraveHTML"  # Windows 11 25H2 no longer updates UserChoice
     assert fake.access and set(fake.access) == {FakeWinreg.KEY_READ}  # every key opened for reading only
+
+
+def test_open_url_commands_for_each_system(monkeypatch):
+    from types import SimpleNamespace
+
+    url = "https://example.com/a?b=1"
+    brave = SimpleNamespace(bundle=Path("/x/Brave Browser.app"), binary=Path("C:/Brave/brave.exe"))
+    assert platforms.open_url_command(url, brave, "darwin") == ["open", "-a", str(Path("/x/Brave Browser.app")), url]
+    assert platforms.open_url_command(url, None, "darwin") == ["open", url]
+    assert platforms.open_url_command(url, brave, "win32") == [str(Path("C:/Brave/brave.exe")), url]
+    assert platforms.open_url_command(url, None, "win32") is None  # os.startfile: the default browser
+    monkeypatch.setattr(platforms.shutil, "which", lambda name: "/usr/bin/xdg-open" if name == "xdg-open" else None)
+    assert platforms.open_url_command(url, brave, "linux") == ["xdg-open", url]
+    monkeypatch.setattr(platforms.shutil, "which", lambda name: None)
+    assert platforms.open_url_command(url, None, "linux") is None
+
+
+def test_open_url_says_whether_a_program_started(monkeypatch):
+    started = []
+    monkeypatch.setattr(platforms.subprocess, "Popen", lambda command, **options: started.append(command) or object())
+    assert platforms.open_url("https://example.com", system="darwin") is True
+    assert started == [["open", "https://example.com"]]
+
+    def cannot(command, **options):
+        raise OSError("no such program")
+
+    monkeypatch.setattr(platforms.subprocess, "Popen", cannot)
+    assert platforms.open_url("https://example.com", system="darwin") is False
+    monkeypatch.setattr(platforms.shutil, "which", lambda name: None)
+    assert platforms.open_url("https://example.com", system="linux") is False  # nothing could open it

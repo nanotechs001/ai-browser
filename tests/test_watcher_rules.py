@@ -43,6 +43,7 @@ SENDS = {
     **{kind: (True, False) for kind in ("send", "stop", "close", "model")},
     **{kind: (True, False) for kind in ("watch", "events", "thumbs")},
     "settings_set": (True, False),  # app-window: the model, Voice and the window's browser
+    "open_url": (True, False),  # app-window: a website link in our pages
 }
 
 
@@ -50,8 +51,8 @@ def test_the_message_table_has_exactly_the_written_down_types():
     from ai_browser.app.server import MESSAGE_RULES
 
     assert set(MESSAGE_RULES) == set(SENDS)
-    assert len(SENDS) == 58
-    assert sum(1 for app, _ in SENDS.values() if app) == 51
+    assert len(SENDS) == 59
+    assert sum(1 for app, _ in SENDS.values() if app) == 52
     assert sum(1 for _, watcher in SENDS.values() if watcher) == 22  # the two conditional rows count as allowed
 
 

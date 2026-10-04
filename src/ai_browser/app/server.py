@@ -18,6 +18,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import uvicorn
 from starlette.applications import Starlette
@@ -26,12 +27,13 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from .. import platforms
+from .. import browsers, platforms
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
+from ..chrome import own_browser_dir
 from ..config import load_config, project_root
 from ..engine import _alive
 from ..extension_id import extension_path
@@ -76,6 +78,7 @@ FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charse
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
 CODE_TTL = 60  # seconds a one-time start code is good for
 SETTING_KEYS = ("model", "voice", "window_browser")
+URL_LIMIT = 2000  # characters of a website address a page may ask the user's browser to open
 NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
 USED_CODE = "This start link was used already or has expired. Start AI Browser again."
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
@@ -133,6 +136,7 @@ MESSAGE_RULES: dict[str, Rule] = {
     "send": APP_ONLY, "stop": APP_ONLY, "close": APP_ONLY, "model": APP_ONLY,
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
     "settings_set": Rule(app=True, watcher=False),  # the window's Settings, AI Home's and Mission Control's picks
+    "open_url": Rule(app=True, watcher=False),  # a website link in one of our pages
 }
 
 
@@ -228,6 +232,23 @@ def _refused_page(text: str) -> HTMLResponse:
     """A plain 403 page: one line of text, no script."""
     return HTMLResponse('<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>AI Browser</title>'
                         f"</head><body><p>{html.escape(text, quote=False)}</p></body></html>\n", status_code=403)
+
+
+def _web_address(value) -> str | None:
+    """A link's address, if the user's browser may open it: http or https with a host, no user name or password, no
+    whitespace or control character, at most URL_LIMIT characters."""
+    if not isinstance(value, str) or not value.startswith(("http://", "https://")) or len(value) > URL_LIMIT:
+        return None
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
+        return None
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018  (a bad port raises here)
+    except ValueError:
+        return None
+    if not parts.hostname or parts.username is not None or parts.password is not None:
+        return None
+    return value
 
 
 def _strict_headers(host: str, port: int) -> list[tuple[bytes, bytes]]:
@@ -439,6 +460,23 @@ class AppServer:
                               "request": request})
             return
         self._send_all({"type": "settings", **self._settings_payload()})  # the watcher's filter keeps it out
+
+    def _agents_browser(self):
+        """The agents' browser, as an installed row (it opens a website the user clicked), or None for the system's
+        default. Wave C uses the saved place instead."""
+        facts = browsers.for_data_dir(own_browser_dir())
+        if facts is None:
+            return None
+        return next((row for row in browsers.installed() if row.id == facts.id), None)
+
+    async def _open_url(self, queue: asyncio.Queue, message: dict) -> None:
+        url = _web_address(message.get("url"))
+        if url is None:
+            queue.put_nowait({"type": "error", "text": "Only web addresses open from here"})
+            return
+        browser = await asyncio.to_thread(self._agents_browser)
+        if not await asyncio.to_thread(platforms.open_url, url, browser):
+            queue.put_nowait({"type": "error", "text": "Couldn't open that address in your browser"})
 
     def _saved_port(self) -> int | None:
         """The port this home used before (the microphone grant belongs to that address), if it is one of ours."""
@@ -1113,6 +1151,8 @@ class AppServer:
                 self._sockets[ws] = queue
         elif kind == "settings_set":
             self._settings_set(queue, message)
+        elif kind == "open_url":
+            self._job(self._open_url(queue, message))
         elif kind == "new_task":
             request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
             text = _text(message.get("text"))
