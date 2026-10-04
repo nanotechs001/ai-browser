@@ -297,6 +297,9 @@ class AppServer:
         self.watcher_folder: str | None = None
         self._watcher_origins: set[str] = set()
         self._origin_of: dict[WebSocket, str] = {}
+        self._roles: dict[WebSocket, str] = {}  # "app" or "watcher", stored when a socket is accepted
+        self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: AI Home, Mission Control, Settings
+        self.window_seen = False  # the window's first socket has come in
         self._watcher: tuple[WebSocket, asyncio.Queue] | None = None  # Brave's watcher (the latest one to connect)
         if brain is not None:
             brain.broadcast = self._send_all
@@ -346,6 +349,34 @@ class AppServer:
         self._origins.add(origin)
         if watcher:
             self._watcher_origins.add(origin)
+
+    def allow_watcher(self, origin: str) -> None:
+        """Brave's watcher's origin (chrome-extension://<id>): it connects with the token from there, as role
+        "watcher"."""
+        self.allow_origin(origin, watcher=True)
+
+    @property
+    def window_count(self) -> int:
+        return len(self._windows)  # a set: never below 0, never a socket twice
+
+    def _socket_kind(self, ws: WebSocket) -> str | None:
+        """Who opens this socket: AI Browser's window (its cookie, our exact Origin and Host), Brave's watcher (the
+        token and a watcher origin), or, until AI Browser's own extension retires, that extension (the token and its
+        origin). None: refused."""
+        origin = ws.headers.get("origin")
+        if origin == self.origin and ws.headers.get("host") == self.host_header and self._cookie_ok(ws):
+            return "window"
+        if not hmac.compare_digest(ws.query_params.get("token", "").encode(), self.token.encode()):
+            return None
+        if origin in self._watcher_origins:
+            return "watcher"
+        if origin in self._origins:
+            return "extension"
+        # Only once the app has allowed its computed IDs: during start-up the extension can connect before allow_*
+        # runs, and that is no mismatch.
+        if self._origins and isinstance(origin, str) and origin.startswith("chrome-extension://"):
+            self._mismatch(origin)
+        return None
 
     @property
     def origin(self) -> str:
@@ -885,19 +916,17 @@ class AppServer:
 
     async def _socket(self, ws: WebSocket) -> None:
         await ws.accept()  # accept first, so a refusal arrives as a close code the page can read
-        token = ws.query_params.get("token", "")
-        origin = ws.headers.get("origin")
-        token_ok = hmac.compare_digest(token.encode(), self.token.encode())
-        if not token_ok or origin not in self._origins:
-            # Only once the app has allowed its computed IDs: during start-up the extension can connect before
-            # allow_origin runs (AI Browser is launched in a thread), and that is no mismatch.
-            if token_ok and self._origins and isinstance(origin, str) and origin.startswith("chrome-extension://"):
-                self._mismatch(origin)
+        kind = self._socket_kind(ws)
+        if kind is None:
             await ws.close(code=REFUSED)
             return
-        if origin not in self._watcher_origins:
-            self.extension_seen = True  # AI Browser's own extension (Brave's watcher is set up apart)
-        self._origin_of[ws] = origin
+        self._roles[ws] = "watcher" if kind == "watcher" else "app"
+        self._origin_of[ws] = ws.headers.get("origin", "")
+        if kind == "window":
+            self._windows.add(ws)
+            self.window_seen = True
+        elif kind == "extension":
+            self.extension_seen = True  # AI Browser's own extension, until it retires
         queue: asyncio.Queue = asyncio.Queue()
         self._writers[ws] = asyncio.create_task(self._write(ws, queue))
         try:
@@ -921,7 +950,7 @@ class AppServer:
     async def _write(self, ws: WebSocket, queue: asyncio.Queue) -> None:
         """Every message to a socket passes here (answers, _send_all, _to_watcher), so a path added later is covered:
         a watcher-origin socket gets only for_watcher's part of each."""
-        watcher = self._role(ws) == "watcher"  # read once: the socket's origin is set before this task starts
+        watcher = self._role(ws) != "app"  # read once (set at accept): all but our own pages get the watcher's part
         with contextlib.suppress(Exception):
             while True:
                 message = await queue.get()
@@ -934,6 +963,8 @@ class AppServer:
     def _unsubscribe(self, ws: WebSocket) -> None:
         self._sockets.pop(ws, None)
         self._origin_of.pop(ws, None)
+        self._roles.pop(ws, None)
+        self._windows.discard(ws)
         if self.hearing is not None:
             self.hearing.drop(ws)  # a closed page's turn, and its audio, go with it
         writer = self._writers.pop(ws, None)
@@ -979,10 +1010,10 @@ class AppServer:
         task.add_done_callback(self._jobs.discard)
 
     def _role(self, ws: WebSocket) -> str:
-        """ "watcher" for a socket from Brave's watcher's origin, else "app" (AI Browser's own pages). The origin was
-        checked when the socket opened, so every open socket has a role. (The app window, Wave B, maps its cookie to
-        "app" here; the table and the filter stay.)"""
-        return "watcher" if self._origin_of.get(ws) in self._watcher_origins else "app"
+        """The role stored when the socket was accepted: "app" (AI Browser's window, its cookie, Origin and Host; or,
+        until it retires, AI Browser's extension) or "watcher" (Brave's watcher: the token and a watcher origin). A
+        socket with no stored role is "none": it may send nothing (may_send), and gets no more than a watcher."""
+        return self._roles.get(ws, "none")
 
     async def _handle(self, ws: WebSocket, queue: asyncio.Queue, message: dict) -> None:
         if not may_send(self._role(ws), message):  # MESSAGE_RULES, before anything reads the message's fields

@@ -458,7 +458,7 @@ def test_only_the_role_reads_the_watchers_origins():
 
     readers = sorted(name for name, member in vars(AppServer).items()
                      if inspect.isfunction(member) and "_watcher_origins" in inspect.getsource(member))
-    assert readers == ["__init__", "_mismatch", "_role", "_socket", "allow_origin"]  # the rest asks _role
+    assert readers == ["__init__", "_mismatch", "_socket_kind", "allow_origin"]  # the rest asks _role
 
 
 def test_the_readme_says_what_ai_home_lists_and_where_always_allow_is():

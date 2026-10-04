@@ -19,7 +19,7 @@ from fake_brave import FakeBrave, add_agent
 from test_agents import sent_to_claude
 from test_bridge import EVENTS
 from test_oneshot import oneshots
-from ui_socket import ui_cookie
+from ui_socket import ui_cookie, ui_socket
 
 ORIGIN = "chrome-extension://good"
 WATCHER = "chrome-extension://watcher"
@@ -1695,5 +1695,124 @@ async def test_every_answer_carries_the_strict_headers(fake_claude, tmp_path):
             assert answer.headers["referrer-policy"] == "no-referrer", path
             assert answer.headers["cache-control"] == "no-store", path
             assert answer.headers["cross-origin-resource-policy"] == "same-origin", path
+    finally:
+        await server.stop()
+
+
+async def refused_socket(opening) -> int:
+    """The close code of a socket the server refuses (after accept, so the page can read it)."""
+    async with opening as ws:
+        with pytest.raises(ConnectionClosed) as closed:
+            await recv(ws)
+    return closed.value.rcvd.code
+
+
+async def test_only_the_windows_cookie_origin_and_host_open_a_window_socket(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            assert (await recv(ws))["type"] == "snapshot"
+        other = f"http://127.0.0.1:{server.port + 1}"
+        for opening in (ui_socket(server, url, cookie=False), ui_socket(server, url, secret="an-old-secret"),
+                        ui_socket(server, url, origin=other), ui_socket(server, url, origin=None),
+                        connect(socket_url(server, url), origin=url, proxy=None)):  # the token, from an http page
+            assert await refused_socket(opening) == 4403
+        server.allow_watcher(WATCHER)
+        async with connect(socket_url(server, url), origin=WATCHER, proxy=None) as ws:  # the watcher's path stays
+            await ws.send(json.dumps({"type": "hello", "view": "brain"}))
+            assert (await recv(ws))["type"] == "snapshot"
+        assert await refused_socket(connect(socket_url(server, url), origin="https://evil.example", proxy=None)) == 4403
+    finally:
+        await server.stop()
+
+
+async def test_the_window_count_follows_the_window_sockets(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        assert (server.window_count, server.window_seen) == (0, False)
+        async with ui_socket(server, url) as one, ui_socket(server, url) as two:
+            for ws in (one, two):
+                await ws.send(json.dumps({"type": "hello", "view": "home"}))
+                await recv(ws)
+            assert server.window_count == 2 and server.window_seen
+            server.allow_watcher(WATCHER)
+            async with connect(socket_url(server, url), origin=WATCHER, proxy=None) as watcher:
+                await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
+                await recv(watcher)
+                assert server.window_count == 2  # the watcher is no window of ours
+        for _ in range(50):
+            if server.window_count == 0:
+                break
+            await asyncio.sleep(0.05)
+        assert server.window_count == 0 and server.window_seen
+    finally:
+        await server.stop()
+
+
+async def test_a_window_socket_has_the_app_role(fake_claude, tmp_path):
+    from fake_brave import FakeBrave, add_agent
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    brave = FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
+    server.attach_brave(brave)
+    agent = add_agent(server.agents)
+    server.allow_watcher(WATCHER)
+    try:
+        async with connect(socket_url(server, url), origin=WATCHER, proxy=None) as watcher:
+            await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
+            await recv(watcher)
+            await watcher.send(json.dumps({"type": "hand_tab", "id": agent.id, "target": "U1"}))
+            await watcher.send(json.dumps({"type": "brain_ask", "talk": "t1", "request": "r", "text": "hi"}))
+            await asyncio.sleep(0.5)
+            assert agent.adopted == []  # refused for the watcher, with no answer
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            await recv(ws)
+            assert set(server._roles.values()) == {"app"}
+            await ws.send(json.dumps({"type": "brain_ask", "talk": "t1", "request": "r", "text": "hi"}))
+            answer = (await until(ws, lambda message: message["type"] == "brain_answer"))[-1]
+            assert answer["error"] == "The Brain isn't running"  # it reached the talk: a window may ask
+            await ws.send(json.dumps({"type": "hand_tab", "id": agent.id, "target": "U1"}))
+            for _ in range(50):
+                if agent.adopted:
+                    break
+                await asyncio.sleep(0.05)
+            assert agent.adopted == ["U1"]
+    finally:
+        await server.stop()
+
+
+async def test_a_socket_with_no_role_gets_no_rights_and_only_the_watchers_part(fake_claude, tmp_path):
+    """Fail closed (watcher-safety's deferred minor 7): a socket that is neither the window, AI Browser's own page nor
+    the watcher may send nothing, and is never sent more than a watcher socket gets."""
+    from ai_browser.app.server import may_send
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        stranger = object()
+        role = server._role(stranger)
+        assert role not in ("app", "watcher")
+        assert not any(may_send(role, {"type": kind, "item": "x", "answer": "once"})
+                       for kind in ("hello", "brain", "new_task", "permission", "workflow_run", "check_continue"))
+
+        class Socket:
+            def __init__(self):
+                self.sent = []
+
+            async def send_json(self, message):
+                self.sent.append(message)
+
+        ws, queue = Socket(), asyncio.Queue()
+        writer = asyncio.ensure_future(server._write(ws, queue))
+        for message in ({"type": "tabs", "tabs": []}, {"type": "ping"}):
+            queue.put_nowait(message)
+        for _ in range(50):
+            if ws.sent:
+                break
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.1)
+        writer.cancel()
+        assert ws.sent == [{"type": "ping"}]  # the tab list is never a stranger's
     finally:
         await server.stop()
