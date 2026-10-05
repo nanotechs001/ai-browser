@@ -58,8 +58,9 @@ function base64(buffer) {
   return btoa(binary);
 }
 
-// aboutPage(): the floating chat's "Ask about it": the tab a question reads, then (a target), or null. hintVoice: say
-// once that Voice reads answers aloud (Mission Control has the switch; the chat answers in text only).
+// aboutPage(): the floating chat's "Ask about it": {target, site}, the tab a question reads then and the site the user
+// marked on it, or null. hintVoice: say once that Voice reads answers aloud (Mission Control has the switch; the chat
+// answers in text only).
 export function mountTalk({ panel, micButton, link, voice, onState = () => {}, openAgent = () => {},
                             openBrain = () => {}, model = () => "sonnet", aboutPage = () => null,
                             hintVoice = true }) {
@@ -508,7 +509,10 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     asking = newId("t");
     const message = { type: "brain_ask", talk: talkId, request: asking, text: words };
     const about = aboutPage(); // the floating chat: this question reads that tab, then (the user's own mark)
-    if (typeof about === "string" && about) message.page = about;
+    if (typeof about?.target === "string" && about.target) {
+      message.page = about.target;
+      message.site = String(about.site || ""); // the engine uses the page only while it is on this site
+    }
     if (proposal?.node.isConnected) { // a plain yes runs this card as it now reads, only while it is on screen
       message.proposal = proposal.id;
       if (proposal.box) message.task = proposal.box.value;

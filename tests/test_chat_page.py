@@ -383,3 +383,19 @@ async def test_a_private_window_is_never_matched_and_offers_your_tabs(stack):  #
     assert await until(js, f"{bar('says')}.textContent === {json.dumps(private)}")
     assert await js(f"{bar('picker')}.hidden") is False and await js(f"{bar('title')}.textContent") == ""
     assert brave.read_pages == []
+
+
+@CHROME
+async def test_a_question_never_reads_another_site_the_tab_went_to_meanwhile(stack):  # fix pass 2, I3: the race
+    from ai_browser.app.server import CHAT_PAGE_CHANGED
+
+    js, brave = await open_chat(stack)
+    talk_script(stack, {"say": "It's a bank.", "action": "none"})
+    assert await until(js, f"{bar('title')}.textContent === 'Cart'")
+    await js(f"{bar('ask')}.click(); true")  # the mark: shop.example
+    # the tab goes to the bank, and the question leaves before the tab list says so: the read finds the bank
+    brave.page_answers["U1"] = {"title": "Bank", "url": "https://bank.example/", "text": "BANK-WORDS", "cut": False}
+    await ask_typed(js, "what is on it?")
+    assert await eventually(lambda: len(brave.read_pages) == 1)
+    assert await until(js, f"document.getElementById('talk').textContent.includes({json.dumps(CHAT_PAGE_CHANGED)})")
+    assert not any("BANK-WORDS" in call for call in talk_calls(stack))  # nothing of the bank reached Claude

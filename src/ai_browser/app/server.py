@@ -106,6 +106,7 @@ NOTES_KEPT = 50  # the app's notifications whose click is still answered
 PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
 APP_SILENT = "AI Browser's app didn't answer: try again"
 CHAT_NOT_CONNECTED = "Brave isn't connected to AI Browser, so the chat can't read that page: connect it in AI Home"
+CHAT_PAGE_CHANGED = "That tab went to another site before AI Browser read it, so nothing was sent: ask again"
 URL_LIMIT = 2000  # characters of a website address a page may ask the user's browser to open
 NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
 USED_CODE = "This start link was used already or has expired. Start AI Browser again."
@@ -604,16 +605,20 @@ class AppServer:
             self.desktop.send({"type": "show"})
         self._send_all({"type": "focus", **focus})
 
-    async def _this_page_text(self, target: str) -> dict:
+    async def _this_page_text(self, target: str, site: str) -> dict:
         """The page the user asked about in the floating chat, read now (native-app Decision 4): its title, address
         and words (brain/readers/page.js, at most PAGE_TEXT_LIMIT characters), or {"error": why} in plain words. It
-        never connects to Brave (Review Focus 2)."""
+        is used only when it is still on `site`, the site the user marked with Ask about it: a tab that went elsewhere
+        since gives nothing to Claude. It never connects to Brave (Review Focus 2)."""
         if self.brave is None or self.brave.state != "connected":
             return {"error": CHAT_NOT_CONNECTED}
         try:
-            return await self.brave.read_page(target, PAGE_TEXT_LIMIT)
+            read = await self.brave.read_page(target, PAGE_TEXT_LIMIT)
         except WorldError as exc:
             return {"error": f"Couldn't read that page: {exc}"}
+        if not site or pagematch.site(read.get("url")) != site:
+            return {"error": CHAT_PAGE_CHANGED}  # what was read is dropped here
+        return read
 
     def _saved_port(self) -> int | None:
         """The port this home used before (the microphone grant belongs to that address), if it is one of ours."""
@@ -1426,13 +1431,14 @@ class AppServer:
         if kind == "brain_ask":
             text = message.get("text").strip()[:2000] if isinstance(message.get("text"), str) else ""
             page = message.get("page") if isinstance(message.get("page"), str) and message.get("page") else None
+            site = message.get("site") if isinstance(message.get("site"), str) else ""  # the site the user marked
             if text and page is None:  # as before: no page is in it
                 self._job(self._answer(queue, talk, request,
                                        self.brain.respond(talk, text, proposal=proposal, task=task, model=model)))
             elif text:  # the floating chat's "Ask about it": the tab is read only if Claude is asked
                 self._job(self._answer(queue, talk, request, self.brain.respond(
                     talk, text, proposal=proposal, task=task, model=model,
-                    page=lambda: self._this_page_text(page))))
+                    page=lambda: self._this_page_text(page, site))))
         elif kind == "brain_confirm" and proposal is not None:
             self._job(self._answer(queue, talk, request, self.brain.confirm(talk, proposal, task=task, model=model)))
         elif kind == "brain_dismiss" and proposal is not None:

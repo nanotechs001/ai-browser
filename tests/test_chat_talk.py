@@ -112,16 +112,45 @@ async def test_a_question_about_this_page_reads_it_then_and_never_connects(fake_
         async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "chat"}))
             await recv(ws)
-            assert (await ask(ws, "t1", page="U1"))["say"] == "It opens at 9."
+            assert (await ask(ws, "t1", page="U1", site="shop.example"))["say"] == "It opens at 9."
             assert brave.read_pages == [("U1", PAGE_TEXT_LIMIT)]
             await ask(ws, "t2")  # no page: nothing is read
             await ask(ws, "t3", page=["U1"])  # not a tab's id: nothing is read
             assert brave.read_pages == [("U1", PAGE_TEXT_LIMIT)]
             brave.set_state("ready")  # Brave isn't connected: the chat is told so, and nothing connects
-            assert (await ask(ws, "t4", page="U1"))["error"] == CHAT_NOT_CONNECTED
+            assert (await ask(ws, "t4", page="U1", site="shop.example"))["error"] == CHAT_NOT_CONNECTED
             brave.set_state("connected")
             brave.page_answers["U1"] = WorldError("that tab is gone")
-            assert (await ask(ws, "t5", page="U1"))["error"] == "Couldn't read that page: that tab is gone"
+            assert (await ask(ws, "t5", page="U1", site="shop.example"))["error"] == "Couldn't read that page: that tab is gone"
             assert brave.connects == 0 and len(brave.read_pages) == 2
+    finally:
+        await server.stop()
+
+
+async def test_a_page_is_read_only_on_the_site_the_user_marked(fake_claude, tmp_path):  # fix pass 2, I3
+    from ai_browser.app.server import CHAT_PAGE_CHANGED
+
+    _, log, _ = fake_claude
+    server, url, _ = await with_brain(fake_claude, tmp_path, {
+        "default": [{"result": "[]"}],
+        TALKING: [{"result": json.dumps({"say": "It opens at 9.", "action": "none"})}]})
+    brave = FakeBrave([{"target": "U1", "url": SHOP["url"], "title": "Shop"}])
+    brave.page_answers["U1"] = {**SHOP, "url": "https://bank.example/", "text": "BANK-WORDS"}  # the tab moved on
+    server.attach_brave(brave)
+
+    async def ask(ws, request, **more):
+        await ws.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": request, "text": "what is it?",
+                                  **more}))
+        return (await until(ws, lambda message: message["type"] == "brain_answer"
+                            and message["request"] == request))[-1]
+
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "chat"}))
+            await recv(ws)
+            assert (await ask(ws, "t1", page="U1", site="shop.example"))["error"] == CHAT_PAGE_CHANGED
+            assert (await ask(ws, "t2", page="U1"))["error"] == CHAT_PAGE_CHANGED  # no mark sent: never read as one
+            assert (await ask(ws, "t3", page="U1", site="bank.example"))["say"] == "It opens at 9."
+        assert ["BANK-WORDS" in call["oneshot"] for call in talk_calls(log)] == [True]  # the marked site only
     finally:
         await server.stop()

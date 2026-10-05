@@ -243,5 +243,7 @@ export function mountPageBar(root, { link, aib, agents, input, onSay = () => {},
   addEventListener("focus", look);
   if (!document.hidden) timer = setInterval(look, every);
   render();
-  return { onMessage, look: again, asking: () => (asking && tab ? tab.target : null), current: () => tab };
+  // asking(): the tab a question reads, and the site the user marked on it ("Ask about <site>"), or null
+  const marked = () => (asking && tab ? { target: tab.target, site: host(tab.url) } : null);
+  return { onMessage, look: again, asking: marked, current: () => tab };
 }

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 URL_LIMIT = 2000  # characters of an address the chat may send
 TITLE_LIMIT = 300  # characters of a title
@@ -43,6 +43,21 @@ def address(url) -> str:
         path, tail = (rest[:end.start()], rest[end.start():]) if end else (rest, "")
         rest = path.rstrip("/") + tail
     return host + rest
+
+
+def site(url) -> str:
+    """A web address's site as the chat's page names it (JavaScript's URL.host): the host, lowercase, with a port only
+    when it isn't the scheme's own. "" for anything that isn't a web address. "Ask about it" marks a site: a page read
+    on another one is never used (the tab went elsewhere between the question and the read)."""
+    try:
+        parts = urlsplit(str(url or ""))
+        host, port = parts.hostname or "", parts.port
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https") or not host:
+        return ""
+    host = f"[{host}]" if ":" in host else host
+    return host + (f":{port}" if port is not None and port != {"http": 80, "https": 443}[parts.scheme] else "")
 
 
 def title(text) -> str:
