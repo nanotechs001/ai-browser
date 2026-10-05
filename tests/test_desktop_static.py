@@ -8,7 +8,7 @@ from pathlib import Path
 
 ELECTRON_DIR = Path(__file__).parents[1] / "src" / "ai_browser" / "desktop" / "electron"
 SRC = Path(__file__).parents[1] / "src" / "ai_browser"
-APP_FILES = ("package.json", "main.js", "preload.js", "policy.js", "line.js")
+APP_FILES = ("package.json", "main.js", "preload.js", "policy.js", "line.js", "thispage.js", "thispage.ps1")
 REFUSED_LIST = re.compile(r"const DEBUG_SWITCHES = \[([^\]]*)\];")
 NEVER = ("openDevTools", "remote-debugging", "appendSwitch", "--inspect", "devTools: true", ".debugger",
          "nodeIntegration: true", "contextIsolation: false", "sandbox: false", "webSecurity: false",
@@ -70,9 +70,29 @@ def test_no_npm_package_at_run_time():
     package = json.loads(text("package.json"))
     assert package["main"] == "main.js" and package["productName"] == "AI Browser" and package["private"] is True
     assert not {"dependencies", "devDependencies", "optionalDependencies", "scripts"} & set(package)
-    for name in ("main.js", "preload.js", "policy.js", "line.js"):
+    for name in ("main.js", "preload.js", "policy.js", "line.js", "thispage.js"):
         modules = set(re.findall(r'require\("([^"]+)"\)', text(name)))
-        assert modules <= {"electron", "node:fs", "node:net", "node:path", "./policy.js", "./line.js"}, (name, modules)
+        assert modules <= {"electron", "node:fs", "node:net", "node:path", "node:child_process", "./policy.js",
+                           "./line.js", "./thispage.js"}, (name, modules)
+    # thispage.js alone runs a program: its one fixed command, with execFile, never through a shell
+    assert set(re.findall(r'require\("([^"]+)"\)', text("thispage.js"))) == {"node:child_process", "node:path"}
+    assert not [name for name in ("main.js", "preload.js", "policy.js", "line.js") if "child_process" in text(name)]
+    reader = text("thispage.js")
+    assert "execFile(file, args," in reader and "shell: false" in reader and "windowsHide: true" in reader
+    for never in ("exec(", "execSync", "spawn", "fork(", "shell: true"):
+        assert never not in reader, never
+
+
+def test_the_windows_script_only_reads_the_front_brave_window():  # Safety: UI Automation only reads
+    script = text("thispage.ps1")
+    for needed in ("Get-Process -Name 'brave'", "MainWindowHandle", "AutomationElement]::FromHandle",
+                   "ControlType]::Edit", "ValuePattern]::Pattern", ".Current.Name", "LastIndexOf(' - Brave')",
+                   "ConvertTo-Json", "state = 'ok'", "state = 'closed'", "state = 'nowindow'", "state = 'failed'"):
+        assert needed in script, needed
+    for never in ("InvokePattern", "SendKeys", "SetFocus", "SetValue", "Start-Process", "Invoke-Expression", "iex ",
+                  "Invoke-WebRequest", "DownloadString", "-TypeDefinition", "Stop-Process", "Click", "param(",
+                  "$args", "$env:", "Read-Host", "Set-Item", "New-Item", "Remove-Item", "Out-File"):
+        assert never not in script, never
 
 
 def test_the_menu_bar_icon_closing_and_quitting():  # Review Focus 4

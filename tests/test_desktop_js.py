@@ -16,11 +16,13 @@ OWN = "http://127.0.0.1:8793"  # an app's own origin (a string only: no server l
 
 
 def run_js(body: str):
-    """`body` (JavaScript ending in a return) run with policy.js as `policy` and line.js as `line`; its value."""
+    """`body` (JavaScript ending in a return; it may await) run with policy.js as `policy`, line.js as `line` and
+    thispage.js as `thispage`; its value."""
     script = (f"const policy = require({json.dumps(str(ELECTRON_DIR / 'policy.js'))});\n"
               f"const line = require({json.dumps(str(ELECTRON_DIR / 'line.js'))});\n"
-              f"const value = (() => {{ {body} }})();\n"
-              "process.stdout.write(JSON.stringify(value === undefined ? null : value));")
+              f"const thispage = require({json.dumps(str(ELECTRON_DIR / 'thispage.js'))});\n"
+              f"(async () => {{ {body} }})().then((value) => "
+              "process.stdout.write(JSON.stringify(value === undefined ? null : value)));")
     done = subprocess.run([NODE, "-e", script], capture_output=True, timeout=60)
     assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
     return json.loads(done.stdout.decode("utf-8"))
@@ -174,6 +176,93 @@ def test_without_an_engine_only_a_double_click_hears_how_to_start():
     got = run_js("return [[true, false], [false, true], [true, true], [false, false]].map(([line, start]) => "
                  "policy.withoutEngine({ line, start }));")
     assert got == ["quit", "quit", "quit", "box"]  # the engine went away: quit quietly; nobody started us: say how
+
+
+# ---- "This page": the app reads Brave's front tab's address and title, with one fixed command per system -----------
+
+@NEEDS_NODE
+def test_this_page_runs_one_fixed_command_per_system():  # Testing: the exact command, per platform
+    folder = "C:\\Users\\me\\.ai-browser\\desktop\\AI Browser\\resources\\app"
+    got = run_js(f"""return [thispage.command("darwin"),
+      thispage.command("win32", {json.dumps(folder)}, {json.dumps({"SystemRoot": "D:\\Windows"})}),
+      thispage.command("win32", {json.dumps(folder)}, {json.dumps({"SystemRoot": "..\\evil"})}),
+      thispage.command("win32", {json.dumps(folder)}, {{}}),
+      thispage.command("linux"), thispage.MAC_SCRIPT];""")
+    script = got[5]
+    assert got[0] == {"file": "/usr/bin/osascript", "args": ["-l", "JavaScript", "-e", script]}
+    powershell = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                  folder + "\\thispage.ps1"]
+    assert got[1] == {"file": "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "args": powershell}
+    assert got[2] == got[3] == {"file": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                                "args": powershell}  # an odd SystemRoot is never followed
+    assert got[4] is None
+
+
+@NEEDS_NODE
+def test_the_mac_script_reads_two_things_and_never_opens_brave():  # Safety: AppleScript only reads
+    script = run_js("return thispage.MAC_SCRIPT;")
+    for needed in ('Application("com.brave.Browser")', "brave.running()", "brave.windows[0].activeTab", "tab.url()",
+                   "tab.title()", "JSON.stringify", "-1743"):
+        assert needed in script, needed
+    assert script.index("brave.running()") < script.index("brave.windows")  # nothing is asked of a closed Brave
+    for never in ("activate", "launch", "open", "make(", "close(", "quit", "reload", "execute", "doJavaScript",
+                  "System Events", "keystroke", "click", "delete", "set ", "${", "doShellScript",
+                  "includeStandardAdditions"):
+        assert never not in script, never
+
+
+@NEEDS_NODE
+def test_only_an_address_and_a_title_come_back_and_a_hostile_title_stays_text():  # Review Focus 5
+    hostile = '<img src=x onerror="alert(1)">\n"},{"state":"ok","url":"https://evil.example/"\u202e' + "x" * 5000
+    outputs = [json.dumps({"state": "ok", "url": "https://shop.example/cart", "title": "Cart", "extra": "dropped"}),
+               json.dumps({"state": "ok", "url": "https://shop.example/", "title": hostile}) + "\n",
+               json.dumps({"state": "closed"}), json.dumps({"state": "denied"}), json.dumps({"state": "nowindow"}),
+               json.dumps({"state": "launch"}), "not json", "", json.dumps([1]), json.dumps({"state": "ok", "url": 7}),
+               "\ufeff" + json.dumps({"state": "closed"})]
+    got = run_js(f"return {json.dumps(outputs)}.map((out) => thispage.parse(out));")
+    assert got[0] == {"state": "ok", "url": "https://shop.example/cart", "title": "Cart"}
+    assert got[1]["url"] == "https://shop.example/" and len(got[1]["title"]) == 300
+    assert got[1]["title"].startswith('<img src=x onerror="alert(1)"> "},{"state":"ok"')  # text: never parsed again
+    assert "\n" not in got[1]["title"]
+    assert got[2:] == [{"state": "closed"}, {"state": "denied"}, {"state": "nowindow"}, {"state": "failed"},
+                       {"state": "failed"}, {"state": "failed"}, {"state": "failed"},
+                       {"state": "ok", "url": "", "title": ""}, {"state": "closed"}]
+
+
+@NEEDS_NODE
+def test_brave_closed_denied_slow_and_broken_answers_are_plain_states():  # Review Focus 2 and 3
+    got = run_js("""
+      const answers = [
+        { error: "", stdout: '{"state":"closed"}\\n', stderr: "" },
+        { error: "failed", stdout: "",
+          stderr: "execution error: Error: Not authorized to send Apple events to Brave Browser. (-1743)" },
+        { error: "", stdout: '{"state":"denied"}', stderr: "" },
+        { error: "slow", stdout: "", stderr: "" },
+        { error: "failed", stdout: "", stderr: "boom" },
+      ];
+      const ran = [];
+      const runner = async (file, args) => { ran.push([file, args.length]); return answers.shift(); };
+      const states = [];
+      for (let at = 0; at < 5; at += 1) states.push((await thispage.read("darwin", runner)).state);
+      states.push((await thispage.read("darwin", async () => { throw new Error("spawn ENOENT"); })).state);
+      states.push((await thispage.read("linux", runner)).state);
+      return [states, ran];""")
+    assert got[0] == ["closed", "denied", "denied", "slow", "failed", "failed", "unsupported"]
+    assert got[1] == [["/usr/bin/osascript", 4]] * 5  # Linux: nothing runs at all
+
+
+@NEEDS_NODE
+def test_the_command_runs_without_a_shell_and_a_slow_one_is_stopped():
+    got = run_js("""
+      const node = process.execPath;
+      return [
+        await thispage.run(node, ["-e", "process.stdout.write(process.argv[1])", "$(touch pwned); echo hi"]),
+        await thispage.run(node, ["-e", "setTimeout(() => {}, 10000)"], 300),
+        await thispage.run(node, ["-e", "process.stdout.write('x'.repeat(200000))"]),
+        await thispage.run(node, ["-e", "process.exit(3)"]),
+      ];""")
+    assert got[0] == {"error": "", "stdout": "$(touch pwned); echo hi", "stderr": ""}  # one argument, as given
+    assert got[1]["error"] == "slow" and got[2]["error"] == "failed" and got[3]["error"] == "failed"
 
 
 # main.js itself, under a stand-in Electron (tests/electron_stub.js) that records every call and ends the run on
