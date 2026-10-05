@@ -264,6 +264,21 @@ def frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+def command(args: str) -> str:
+    """AI Browser's command line with `args`, as a message names it for the user to type: `uv run ai-browser <args>`
+    from the code; from the packaged program, which has no uv, the program itself as PowerShell runs it in its folder
+    (& ".\\AI Browser.exe" <args>, as the README says)."""
+    if frozen():
+        return f'& ".\\{Path(sys.executable).name}" {args}'
+    return f"uv run ai-browser {args}"
+
+
+def start_words() -> str:
+    """How the user starts AI Browser, after "Start it": with `uv run ai-browser app`, or by double-clicking the
+    packaged AI Browser.exe."""
+    return f"by double-clicking {Path(sys.executable).name}" if frozen() else f"with `{command('app')}`"
+
+
 def self_command(*args: str) -> list[str]:
     """The command that starts this AI Browser again with `args` (`self_command("mcp")`): this Python running
     ai_browser.cli, or the packaged AI Browser.exe itself, which takes the arguments directly and has no -m."""

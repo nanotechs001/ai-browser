@@ -313,20 +313,88 @@ def test_the_command_runs_without_a_shell_and_a_slow_one_is_stopped():
     assert got[1]["error"] == "slow" and got[2]["error"] == "failed" and got[3]["error"] == "failed"
 
 
+@NEEDS_NODE
+def test_the_apps_profile_is_beside_it_or_for_the_packaged_exe_in_the_users_own_folder():
+    # (where its program is, the system, $AIB_HOME, the files there) -> its profile; the home folder is /u
+    got = run_js("""
+      const there = (...paths) => (file) => paths.includes(file);
+      const exe = "/dl/AI Browser/desktop/AI Browser/AI Browser.exe"; // the zip, unzipped in Downloads
+      const packaged = there("/dl/AI Browser/_internal", "/dl/AI Browser/AI Browser.exe");
+      const own = (execPath, platform, env, exists) =>
+        policy.profileFor({ execPath, platform, env, homedir: "/u", cwd: "/w", exists });
+      return [
+        own(exe, "win32", {}, packaged),
+        own(exe, "win32", { AIB_HOME: "/data/aib" }, packaged),
+        own(exe, "win32", { AIB_HOME: "~/aib" }, packaged),
+        own(exe, "win32", { AIB_HOME: "aib" }, packaged),
+        own("/u/.ai-browser/desktop/AI Browser/AI Browser.exe", "win32", {}, there()),
+        own("/u/.ai-browser/desktop/AI Browser.app/Contents/MacOS/Electron", "darwin", {}, there()),
+        own(exe, "win32", {}, there("/dl/AI Browser/AI Browser.exe")),
+      ];""")
+    assert got == ["/u/.ai-browser/desktop-profile",  # the packaged exe's app: the home the engine uses
+                   "/data/aib/desktop-profile", "/u/aib/desktop-profile", "/w/aib/desktop-profile",
+                   "/u/.ai-browser/desktop/profile",  # an app doctor --setup built: beside it, as before
+                   "/u/.ai-browser/desktop/profile",  # the Mac's, as before
+                   "/dl/AI Browser/desktop/profile"]  # no PyInstaller bundle beside it: not the packaged exe's
+
+
+@NEEDS_NODE
+def test_the_start_menu_entry_is_made_or_kept_and_never_stops_the_start():
+    got = run_js("""
+      const done = [];
+      const app = (appData) => ({
+        setAppUserModelId: (id) => done.push(["id", id]),
+        getPath: (name) => {
+          if (appData === null) throw new Error("Failed to get 'appData' path"); // Windows run 37311955729
+          return appData;
+        },
+      });
+      const shell = (have) => ({
+        readShortcutLink: () => { if (!have) throw new Error("no such link"); return have; },
+        writeShortcutLink: (link, how, want) => {
+          done.push([how, link, want.target, want.appUserModelId]);
+          return true;
+        },
+      });
+      const exe = "/x/AI Browser.exe";
+      const ours = { target: exe, appUserModelId: "io.github.nanotechs001.ai-browser" };
+      return [
+        policy.startMenuEntry(app(null), shell(null), exe),
+        policy.startMenuEntry(app("/r"), shell(null), exe),
+        policy.startMenuEntry(app("/r"), shell(ours), exe),
+        policy.startMenuEntry(app("/r"), shell({ ...ours, target: "/old/AI Browser.exe" }), exe),
+        done.filter((step) => step[0] !== "id"),
+      ];""")
+    link = "/r/Microsoft/Windows/Start Menu/Programs/AI Browser.lnk"
+    assert got == ["failed: Failed to get 'appData' path", "made", "kept", "made",
+                   [["create", link, "/x/AI Browser.exe", "io.github.nanotechs001.ai-browser"],
+                    ["replace", link, "/x/AI Browser.exe", "io.github.nanotechs001.ai-browser"]]]
+
+
+@NEEDS_NODE
+def test_a_double_click_on_the_packaged_exes_app_says_to_start_ai_browser_exe():
+    got = run_js("return [policy.startHint(false), policy.startHint(true)];")
+    assert got == [{"message": "Start AI Browser from a terminal", "detail": "Run: uv run ai-browser app"},
+                   {"message": "Start AI Browser with AI Browser.exe",
+                    "detail": "Double-click AI Browser.exe, in the folder this app came in: it opens this app."}]
+
+
 # main.js itself, under a stand-in Electron (tests/electron_stub.js) that records every call and ends the run on
 # app.exit or app.quit. Nothing is shown, and nothing registers with the system.
 STUB = Path(__file__).parent / "electron_stub.js"
 START = b'{"type": "start", "open": "http://127.0.0.1:8793/open?code=the-code", "shortcut": null}\n'
 
 
-def run_main(tmp_path, *switches, feed=None, pause=0.0, **plan) -> list:
+def run_main(tmp_path, *switches, feed=None, pause=0.0, env=None, **plan) -> list:
     """main.js on the stand-in: the calls it made, in order. `feed` goes to its stdin (the line, when no
-    --aib-line names one), and the line ends `pause` seconds later; with no feed, stdin is empty."""
+    --aib-line names one), and the line ends `pause` seconds later; with no feed, stdin is empty. `env`: variables
+    of its own (AIB_DEBUG_START is never inherited from the test's shell)."""
     import os
     import time
 
     out = tmp_path / "calls.json"
-    env = {**os.environ, "STUB_PLAN": json.dumps(plan), "STUB_OUT": str(out)}
+    env = {**{key: value for key, value in os.environ.items() if key != "AIB_DEBUG_START"}, **(env or {}),
+           "STUB_PLAN": json.dumps(plan), "STUB_OUT": str(out)}
     process = subprocess.Popen([NODE, str(STUB), str(ELECTRON_DIR / "main.js"),
                                 f"--aib-profile={tmp_path / 'profile'}", *switches],
                                stdin=subprocess.PIPE if feed is not None else subprocess.DEVNULL,
@@ -395,6 +463,72 @@ def test_the_engine_gone_after_the_start_quits_the_app(tmp_path):  # Review Focu
     said = names(calls)
     assert ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"] in calls and "new Tray" in said
     assert "dialog.showMessageBox" not in said and calls[-1] == ["app.quit"]
+
+
+@NEEDS_NODE
+def test_the_start_log_follows_the_window_and_never_holds_a_code_or_a_cookie(tmp_path):
+    run_main(tmp_path, feed=START, pause=1.0, env={"AIB_DEBUG_START": "1"},
+             cookies=[{"name": "aib_ui_8793", "value": "the-cookie-value"}])
+    text = (tmp_path / "profile" / "debug-start.log").read_text(encoding="utf-8")
+    lines = [line.split(" ", 1)[1] for line in text.splitlines()]  # each line starts with its time
+    opened = "http://127.0.0.1:8793/open?code=…"
+    for expected in (f"profile {tmp_path / 'profile'}", "single-instance lock: held", "line: stdin",
+                     "start received", f"loadURL {opened}", "hello sent", f"did-navigate {opened} 200",
+                     f"did-finish-load {opened}: cookies for http://127.0.0.1:8793: aib_ui_8793", "the line ended"):
+        assert expected in lines, (expected, lines)
+    assert lines.index("start received") < lines.index(f"loadURL {opened}") < lines.index("hello sent")
+    assert "the-code" not in text and "the-cookie-value" not in text
+
+
+@NEEDS_NODE
+def test_the_line_is_a_sockets_path_or_a_loopback_port_with_its_key():
+    got = run_js("""return [
+      line.lineTarget("/tmp/aib-x/line", {}),
+      line.lineTarget("tcp:51234", { AIB_LINE_KEY: "k3y" }),
+      line.lineTarget("tcp:51234", {}),
+      line.lineTarget("tcp:0", { AIB_LINE_KEY: "k" }),
+      line.lineTarget("tcp:70000", { AIB_LINE_KEY: "k" }),
+      line.lineTarget("tcp:12ab", { AIB_LINE_KEY: "k" }),
+      line.lineTarget(null, {}),
+      line.LINE_KEY,
+    ];""")
+    assert got == [{"path": "/tmp/aib-x/line"}, {"host": "127.0.0.1", "port": 51234, "key": "k3y"},
+                   {"host": "127.0.0.1", "port": 51234, "key": ""}, None, None, None, None, "AIB_LINE_KEY"]
+
+
+@NEEDS_NODE
+def test_on_windows_the_app_joins_the_engines_loopback_line_with_its_key_first(tmp_path):
+    import socket
+    import threading
+
+    server = socket.create_server(("127.0.0.1", 0))
+    heard = []
+
+    def engine():  # the key, then the start; the hello; then the engine goes
+        connection, _ = server.accept()
+        with connection, connection.makefile("rwb") as line:
+            heard.append(line.readline())
+            line.write(START)
+            line.flush()
+            heard.append(line.readline())
+
+    thread = threading.Thread(target=engine, daemon=True)
+    thread.start()
+    try:
+        calls = run_main(tmp_path, f"--aib-line=tcp:{server.getsockname()[1]}", env={"AIB_LINE_KEY": "the-key"})
+    finally:
+        thread.join(10)
+        server.close()
+    assert heard[0] == b"the-key\n" and json.loads(heard[1])["type"] == "hello"
+    assert ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"] in calls
+    assert "dialog.showMessageBox" not in names(calls) and calls[-1] == ["app.quit"]  # the engine gone: it quits
+
+
+@NEEDS_NODE
+def test_without_the_switch_the_app_keeps_no_start_log(tmp_path):
+    calls = run_main(tmp_path, feed=START, pause=0.5)
+    assert ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"] in calls
+    assert not (tmp_path / "profile" / "debug-start.log").exists()
 
 
 # The floating chat: its window, the shortcut and the menu-bar icon's Show chat (on the stand-in Electron)

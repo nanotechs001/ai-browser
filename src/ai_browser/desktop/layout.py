@@ -4,7 +4,8 @@ on Windows), its Electron profile, app.json and problem.json.
   to the JavaScript is noticed (assemble.py).
 - problem.json says why the last setup or start didn't work, for Settings.
 The packaged AI Browser.exe (the Windows test build, packaging/) ships its app in a `desktop` folder beside itself,
-laid out the same way, and uses that one first: it is set up already.
+laid out the same way, and uses that one first: it is set up already. That app's profile is in the user's own folder,
+<home>/desktop-profile (profile()).
 The paths inside the bundle describe AI Browser's own app, never the user's computer."""
 
 from __future__ import annotations
@@ -59,7 +60,11 @@ def framework(app: Path) -> Path:
 
 
 def profile(home) -> Path:
-    return folder(home) / "profile"  # main.js finds the same folder from where its program is
+    """The app's Electron profile, as main.js finds it (policy.js's profileFor): beside the app built in
+    <home>/desktop; for the app shipped beside the packaged AI Browser.exe, <home>/desktop-profile, in the user's own
+    folder, so that app works wherever its zip was unzipped (even a folder the user can't write to) and a new copy
+    keeps the sign-in. Its app.json and program stay beside the exe."""
+    return Path(home) / "desktop-profile" if bundled() is not None else folder(home) / "profile"
 
 
 def _read(path: Path) -> dict | None:

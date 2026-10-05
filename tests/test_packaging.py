@@ -85,6 +85,68 @@ def test_the_zip_holds_the_package_under_its_own_name(windows_app, tmp_path):
     assert "AI Browser/AI Browser.exe" in names and all(name.startswith("AI Browser/") for name in names)
 
 
+CONNECTED_RUN = """\
+[start] app: starting "D:\\a\\AI Browser\\desktop\\AI Browser\\AI Browser.exe"
+[start] app: start sent (http://127.0.0.1:8792/open?code=…)
+[start] app: hello from pid 4242
+[start] window: AI Browser's own app
+[start] GET /open: a valid start code: the window's cookie aib_ui_8792 is set
+[start] GET /app: the window's cookie is there
+[start] window socket connected (1 open)
+"""
+
+
+def test_the_start_check_passes_only_when_ai_browsers_own_app_shows_a_connected_page(windows_app):
+    assert windows_app.start_problems(CONNECTED_RUN) == []
+    fell_back = ("[start] app: no hello within 20 s: it is ended\n"
+                 "AI Browser's app didn't answer as it started. AI Browser opens in a browser window this time.\n"
+                 "[start] window: a browser window (Microsoft Edge)\n[start] window socket connected (1 open)\n")
+    assert windows_app.start_problems(fell_back) == [
+        "AI Browser's own app didn't draw AI Browser: a browser window did, or nothing"]
+    refused = ("[start] app: hello from pid 4242\n[start] window: AI Browser's own app\n"
+               "[start] GET /app: no window cookie aib_ui_8792 (cookies sent: none)\n")
+    assert windows_app.start_problems(refused) == ["AI Browser's page never connected"]
+
+
+def fake_program(package: Path, body: str) -> None:
+    """A stand-in for AI Browser.exe (`AI Browser` on macOS and Linux): a Python script."""
+    import sys
+
+    package.mkdir(parents=True, exist_ok=True)
+    program = package / "AI Browser"
+    program.write_text(f"#!{sys.executable}\nimport os, sys, time\n{body}\n", encoding="utf-8")
+    program.chmod(0o755)
+
+
+@pytest.mark.posix_only  # the stand-in is a script; on Windows the program is AI Browser.exe
+def test_the_start_check_runs_the_program_with_the_start_log_on_and_stops_it(windows_app, tmp_path):
+    package = tmp_path / "AI Browser"
+    fake_program(package, "assert sys.argv[1:] == ['app'] and os.environ['AIB_DEBUG_START'] == '1'\n"
+                          "home = os.environ['AIB_HOME']\n"
+                          "assert os.path.isdir(os.path.join(os.environ['USERPROFILE'], 'AppData', 'Roaming'))\n"
+                          "assert home.startswith(os.environ['USERPROFILE']) and home.startswith(os.environ['HOME'])\n"
+                          "profile = os.path.join(home, 'desktop-profile')\n"
+                          "os.makedirs(profile)\n"
+                          "open(os.path.join(profile, 'debug-start.log'), 'w').write('2026 loadURL done\\n')\n"
+                          f"sys.stderr.write({CONNECTED_RUN!r})\nsys.stderr.flush()\ntime.sleep(600)")
+    said: list[str] = []
+    started = __import__("time").monotonic()
+    assert windows_app.start(package, seconds=60, after=1, out=said.append) == []
+    assert __import__("time").monotonic() - started < 30  # stopped soon after its page connected
+    text = "\n".join(said)
+    assert "[start] window socket connected (1 open)" in text and "2026 loadURL done" in text
+
+
+@pytest.mark.posix_only
+def test_a_start_whose_page_never_connects_fails_the_check(windows_app, tmp_path):
+    package = tmp_path / "AI Browser"
+    fake_program(package, "print('[start] window: AI Browser\\'s own app', file=sys.stderr, flush=True)\n"
+                          "time.sleep(600)")
+    said: list[str] = []
+    assert windows_app.start(package, seconds=2, after=1, out=said.append) == ["AI Browser's page never connected"]
+    assert any("was stopped" in line for line in said)
+
+
 def test_the_windows_build_runs_only_by_hand_with_pinned_actions():
     import yaml
 
@@ -111,6 +173,7 @@ def test_the_windows_build_runs_only_by_hand_with_pinned_actions():
     assert given["path"] == "AI-Browser-windows.zip" and given["archive"] is False  # the zip itself, not a zip in a zip
     assert given["retention-days"] == 14 and given["if-no-files-found"] == "error"
     assert "windows_app.py check" in job["steps"][upload + 1]["run"]  # after the upload: the zip is there either way
+    assert "windows_app.py start" in job["steps"][upload + 2]["run"]  # AI Browser.exe app, started for real
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["persist-credentials"] is False
 
@@ -120,5 +183,6 @@ def test_the_readme_says_how_to_get_and_start_the_windows_build():
     section = text.split("## Windows test build", 1)[1].split("\n## ", 1)[0]
     for needed in ("Actions", "Build Windows app", "Run workflow", "Artifacts", "AI-Browser-windows.zip",
                    "AI Browser.exe", "Windows protected your PC", "More info", "Run anyway", "Claude Code",
-                   "brave://inspect/#remote-debugging", "Docker", "voice"):
+                   "brave://inspect/#remote-debugging", "Docker", "voice", "desktop-profile",
+                   '& ".\\AI Browser.exe" doctor --setup'):
         assert needed in section, needed

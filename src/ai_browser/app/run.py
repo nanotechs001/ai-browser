@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from .. import platforms
+from .. import debugstart, platforms
 from ..accounts import DEFAULT, Accounts
 from ..brain.account import BrainAccount
 from ..brain.service import BrainService
@@ -30,7 +30,7 @@ from ..chrome import inspect_address, own_browser_dir
 from ..desktop import layout
 from ..desktop.assemble import stale
 from ..desktop.launch import default_desktop
-from ..desktop.release import SETUP_COMMAND, asset_for
+from ..desktop.release import asset_for, setup_command
 from ..hearing.engine import WhisperEngine
 from ..hearing.model import ModelStore
 from ..hearing.service import HearingService
@@ -49,9 +49,12 @@ NO_WINDOW = ("AI Browser's window didn't open: {name} started, but the page neve
 RETIRED_APP = ("AI Browser's own Chrome is gone: agents browse in your browser (Brave or Chrome). Drop --browser app "
                "(and AIB_APP_BROWSER).")
 APP_ENDED = "AI Browser's app closed by itself, so AI Browser stops too."
-NO_APP_PAGE = ("AI Browser's app started, but its page never connected. Try again, or use a browser window: "
-               "`uv run ai-browser app --window chrome`")
+NO_APP_PAGE = "AI Browser's app started, but its page never connected. Try again, or use a browser window: `{command}`"
 UPDATING = "Updating AI Browser's app for this version (nothing is downloaded)…"
+
+
+def no_app_page() -> str:
+    return NO_APP_PAGE.format(command=platforms.command("app --window chrome"))
 
 
 def ready_text(system: str | None = None) -> str:
@@ -72,7 +75,7 @@ def setup_hint(home, system: str | None = None, machine: str | None = None) -> s
     """The browser window's extra line, on a computer AI Browser's own app runs on, while it isn't set up."""
     if asset_for(system, machine) is None or layout.installed(home, system) is not None:
         return ""
-    return f"\nAI Browser can run as its own app, with a shortcut and notifications: run `{SETUP_COMMAND}` once."
+    return f"\nAI Browser can run as its own app, with a shortcut and notifications: run `{setup_command()}` once."
 
 
 BROWSERS = ("brave",)
@@ -233,6 +236,7 @@ async def _open_app(home: Path, server: AppServer, url: str, desktop: Callable |
         out(f"{exc}. AI Browser opens in a browser window this time.")
         return None
     layout.set_problem(home, None)
+    debugstart.say("window: AI Browser's own app")
     if app.note:
         out(app.note)
     return app
@@ -285,6 +289,7 @@ async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready
                 out(window.note)
             server.window_info = {"using": window.id, "name": window.name, "note": window.note,
                                   "choices": await asyncio.to_thread(choices)}  # detection once, at start
+            debugstart.say(f"window: a browser window ({window.name})")
             try:
                 await _call(window.launch, f"{url}/open?code={server.new_launch_code()}")
             except WindowError as exc:
@@ -293,7 +298,8 @@ async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready
         if not await _first_window(server, stop):
             if stop.is_set():
                 return 0
-            out(NO_APP_PAGE if server.desktop is not None else NO_WINDOW.format(name=window.name))
+            debugstart.say(f"window: no page connected within {WINDOW_START_WAIT} s")
+            out(no_app_page() if server.desktop is not None else NO_WINDOW.format(name=window.name))
             return 1
         out(app_text() if server.desktop is not None else ready_text() + setup_hint(home))
         if brave.state == "off":

@@ -11,6 +11,7 @@
 // - "area": the screen's work area (default {x: 0, y: 0, width: 1440, height: 900});
 // - "stdout": what a program run with execFile prints (default "");
 // - "folder": the path the folder dialog (dialog.showOpenDialog) returns; without it, the user cancels;
+// - "cookies": what session.defaultSession.cookies.get answers (default: none);
 // - "steps": [[ms, what, ...args]], done that many ms after the start, as the user or a page would:
 //   - ["press"]: the global shortcut; ["tray", label]: a click on the menu-bar icon's item;
 //   - ["focus", kind] and ["blur"]: a click in one of the app's windows ("main", "chat"), or in another app;
@@ -52,7 +53,8 @@ class Emitter {
   emit(name, ...args) { for (const handler of this.handlers[name] || []) handler(...args); }
 }
 
-const ready = new Promise((resolve) => setTimeout(resolve, plan.ready_after || 0));
+let isReady = false; // as Electron: session.defaultSession throws until the app is ready
+const ready = new Promise((resolve) => setTimeout(resolve, plan.ready_after || 0)).then(() => { isReady = true; });
 const app = Object.assign(new Emitter(), {
   isPackaged: false,
   commandLine: { hasSwitch: (name) => process.argv.some((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`)) },
@@ -86,6 +88,7 @@ class WebContents extends Emitter {
   }
 
   setWindowOpenHandler() {}
+  getURL() { return this.mainFrame.url; }
 }
 
 class BrowserWindow extends Emitter {
@@ -110,7 +113,10 @@ class BrowserWindow extends Emitter {
     this.webContents.mainFrame.url = url;
     const codes = (plan.statuses || {})[url];
     const code = Array.isArray(codes) && codes.length ? codes.shift() : 200;
-    setTimeout(() => this.webContents.emit("did-navigate", {}, url, code, ""), 0);
+    setTimeout(() => {
+      this.webContents.emit("did-navigate", {}, url, code, "");
+      this.webContents.emit("did-finish-load", {});
+    }, 0);
     return Promise.resolve();
   }
 
@@ -136,6 +142,9 @@ class Tray extends Emitter {
   setContextMenu(menu) { this.menu = menu; }
 }
 
+const defaultSession = { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {},
+                         setDevicePermissionHandler: () => {}, on: () => {},
+                         cookies: { get: async () => plan.cookies || [], on: () => {} } };
 const electron = {
   app, BrowserWindow, Notification, Tray,
   Menu: { setApplicationMenu: () => {}, buildFromTemplate: (template) => template },
@@ -159,8 +168,12 @@ const electron = {
   ipcMain: { handle: (channel, handler) => { handlers.set(channel, handler); } },
   nativeImage: { createFromPath: () => ({ resize: () => ({}) }) },
   screen: { getAllDisplays: () => [{ workArea: plan.area || { x: 0, y: 0, width: 1440, height: 900 } }] },
-  session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {},
-                               setDevicePermissionHandler: () => {}, on: () => {} } },
+  session: {
+    get defaultSession() {
+      if (!isReady) throw new Error("Session can only be received when app is ready");
+      return defaultSession;
+    },
+  },
   shell: {},
 };
 
