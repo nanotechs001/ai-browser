@@ -48,6 +48,7 @@ READS = frozenset({"Read", "Glob", "Grep"})
 EDITS = frozenset({"Edit", "Write"})
 
 COMMAND_LIMIT = 10_000  # characters: a longer command is never one plain command
+OPTION_LIMIT = 256  # characters of a cluster of short options whose every tail is checked as a path
 _NEVER_PLAIN = re.compile(r"[\n\r\x00`$\\{}*?\[\]!]")  # a new line, a substitution, a variable, an escape, a glob
 _OPERATOR = re.compile(r"[;&|<>()]+")
 _PROGRAM = re.compile(r"(?:\./|/)?[A-Za-z0-9_][A-Za-z0-9_.+-]*(?:/[A-Za-z0-9_.+-]+)*")
@@ -136,14 +137,20 @@ def inside(path, folder) -> bool:
 
 
 def _targets(word: str) -> list[str]:
-    """What in one argument may name a file: the word, an option's value (--output=/x, -o/x), what follows an =."""
+    """What in one argument may name a file: the word, an option's value (--output=/x), what follows an =, and in a
+    cluster of short options every tail after its first letter, since any letter may be the one that takes a value
+    (-o/x, -so/x, -sSo~/.zshrc)."""
     if word.startswith("-"):
-        value = word.split("=", 1)[1] if "=" in word else word.lstrip("-")[1:]
-        return [value] if value else []
+        if "=" in word or word.startswith("--"):
+            value = word.split("=", 1)[1] if "=" in word else word.lstrip("-")[1:]
+            return [value] if value else []
+        return [word[start:] for start in range(2, len(word))]
     return [word, word.split("=", 1)[1]] if "=" in word else [word]
 
 
 def _outside(word: str, folder) -> bool:
+    if word.startswith("-") and not word.startswith("--") and "=" not in word and len(word) > OPTION_LIMIT:
+        return True  # too long to check each tail: asked every time
     return any(part.lower().startswith("file:") or not inside(part, folder) for part in _targets(word))
 
 

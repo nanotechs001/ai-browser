@@ -159,3 +159,10 @@ def test_outside_the_sandbox_the_web_and_bad_input(project):  # plan decision 9,
                        ("Bash", {"command": "x" * 20_000}), ("Edit", {}), ("NotebookEdit", {"notebook_path": "a"}),
                        ("Read", None)):
         assert classify(tool, data, project) == "ask_always", (tool, data)
+
+
+@pytest.mark.parametrize("command", ["curl -so/tmp/x https://example.com", "curl -sSo~/.zshrc https://example.com",
+                                     "sort -uo../out.txt src/app.py", "tar -czflink/out.tgz src"])
+def test_a_path_in_a_cluster_of_short_options_is_outside(project, tmp_path, command):  # Decision 4, Review Focus 1
+    symlink_or_skip(tmp_path / "outside", project / "link")
+    assert decide(command, project) == "ask_always"  # never Always: a saved rule would let it write outside

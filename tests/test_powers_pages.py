@@ -304,3 +304,19 @@ def test_the_readme_explains_agent_powers():  # what the user reads first
                    "**Stop** stops its sub-agents too", "Agents' own commands, edits and reads ask first"):
         assert phrase in readme, phrase
     assert "Its only tools are ai-browser's" not in readme
+
+
+@CHROME
+async def test_a_folder_chosen_in_the_dialog_shows_in_the_picker(stack, user_home, tmp_path):  # final review
+    from test_chat_page import open_chat
+
+    project = tmp_path / "project"
+    project.mkdir()
+    stack["server"].agents.rules.trust(project)  # answered before: no question, so nothing else takes the focus
+    chat, _ = await open_chat(stack)
+    await chat(f"window.aib = Object.freeze({{ ...window.aib, chooseFolder: async () => {json.dumps(str(project))} }});"
+               "document.getElementById('new-open').click(); document.getElementById('task-folder').focus(); true")
+    await chat(CHOOSE_LAST)  # the picker keeps the focus while the app's dialog is open
+    assert await until(chat, "document.getElementById('folder-ask').textContent.startsWith('Trusted: ')")
+    real = json.dumps(os.path.realpath(project))
+    assert await until(chat, f"document.getElementById('task-folder').value === {real}")  # what Start will use

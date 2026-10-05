@@ -314,7 +314,10 @@ class ClaudeBridge:
     async def _power(self, request_id: str, request: dict, tool: str, data: dict) -> tuple[str, str]:
         """One of Claude Code's own tools (Decisions 2 to 5): allowed without asking, by a rule the user saved for this
         folder (only the whole request matches one: plan decision 1), or by the user's card. Always allow saves the
-        rule only where the card offered it (Decision 4)."""
+        rule only where the card offered it (Decision 4). After Stop nothing runs, not even what needs no card
+        (Review Focus 3)."""
+        if self._stopping:
+            return "deny", ""
         decision = powers.classify(tool, data, self.work, moved=self._moved)
         rule = powers.rule_for(tool, data) if decision == "ask" else None
         if decision == "allow" or (rule is not None and rule in self._rules()):

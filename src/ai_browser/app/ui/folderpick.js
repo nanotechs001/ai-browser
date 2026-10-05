@@ -172,6 +172,7 @@ export function mountFolderPicker({ select, box }, send) {
       } else if (message.type === "folder" && message.request && message.request === waiting) {
         waiting = null;
         chosen = message.folder || null;
+        if (document.activeElement === select) select.blur(); // the pick is made: the list may show it now
         fill();
         showChosen();
       } else if (message.type === "error" && message.request && message.request === waiting) {
