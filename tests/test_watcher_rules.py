@@ -121,11 +121,10 @@ async def test_show_me_with_no_tab_source_does_nothing(fake_claude, tmp_path):  
 
 def test_the_readme_says_what_ai_home_lists_and_where_always_allow_is():
     text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
-    assert ("**Tabs:** the web tabs of the Brave profile the watcher is in (without the watcher, the profile you used "
-            "last), each marked with whose it is") in text
+    assert ("**Tabs:** the web tabs of the Brave profile where agents browse (Settings → **Where agents browse**; until "
+            "you pick one, the profile you used last), each marked with whose it is") in text
     assert "Other profiles and private windows are only counted, never listed." in text
-    assert ("The watcher's Brain page in Brave shows them with **Allow once** and **Deny** only, because Always "
-            "allow is kept for AI Home's Tools.") in text
-    assert "and the watcher's Brain page all show the tool" not in text
+    assert "**Always allow** is remembered in `~/.ai-browser/tools.json`" in text
+    assert "watcher's Brain page" not in text  # the extension retired
     assert ("AI Home shows the ones in the agents' profile (other profiles and private windows only as a count)"
             in text)

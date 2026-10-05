@@ -33,3 +33,16 @@ def test_the_permission_card_always_offers_its_three_answers():
     text = (UI / "permission.js").read_text(encoding="utf-8")
     assert "export function permissionCard(request, send, agentName = \"\") {" in text
     assert "always-elsewhere" not in text and "{ always" not in text
+
+
+def test_the_readme_tells_the_new_way_and_not_the_old_one():
+    text = " ".join((SRC.parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for words in ("Settings → **Brain** → **Read my Gmail, Slack and Asana tabs**", "It is off until you turn it on.",
+                  "Turning it off stops reading at once, and a read under way keeps nothing.",
+                  "**Pick the part to watch**", "then click **Use draft**",
+                  "**You press Send**: the Brain never sends anything.", "Settings → **Where agents browse**",
+                  "never among your windows", 'click **Remove** on "AI Browser Watcher"',
+                  "AI Browser never removes either"):
+        assert words in text, words
+    for gone in ("type `ai`", "tab group", "Load unpacked", "the watcher's Brain page", "Pause watching", "**Approve**"):
+        assert gone not in text, gone

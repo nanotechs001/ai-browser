@@ -295,6 +295,6 @@ def test_the_readme_explains_ai_accounts():
     for needed in ("### AI accounts (Settings → Accounts)", "**Open Terminal**", "**Copy the command**",
                    "AI Browser never sees a password or a token", "never your email or your organisation",
                    "**Continue on Work**", "**Wait for the reset**",
-                   "The watcher, the Brain and voice never move an agent",
+                   "The Brain and voice never move an agent",
                    "**Remove** only makes AI Browser forget an account"):
         assert needed in text, needed
