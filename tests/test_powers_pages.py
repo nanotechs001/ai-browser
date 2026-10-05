@@ -106,3 +106,49 @@ async def test_mission_control_and_the_chat_show_the_same_card(stack):  # the sp
     assert "1 · test it wants to run a command" in await chat(f"{needs}.textContent")
     await chat(f"{needs}.querySelector('.allow-once').click(); true")
     assert [answer["behavior"] for answer in await answered(stack["log"])] == ["allow"]
+
+
+def planned():
+    """An agent that keeps a to-do list, opens a page, and starts a sub-agent that runs ls, then stays at work."""
+    from ai_browser.app.powers import SUBAGENT_TOOL
+
+    return [INIT, use("t1", "TodoWrite", PLAN), use("u0", "mcp__ai-browser__open", {"url": "https://shop.example/"}),
+            use("u1", SUBAGENT_TOOL, {"description": "Research", "prompt": "Look it up"}),
+            use("u2", "Bash", {"command": "ls"}, parent="u1"), {"sleep": 30}]
+
+
+@CHROME
+async def test_ai_homes_row_and_chat_show_the_folder_the_plan_the_sub_agents_and_badges(home):  # Decisions 6, 8-10
+    js, stack = home
+    stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
+    await stack["server"].agents.create("fix the footer")
+    assert await until(js, f"{ROW}?.querySelector('.subagents')?.textContent === '1 sub-agent working'")
+    assert await js(f"{ROW}.querySelector('.plan').textContent") == "1 / 3 steps · 33%"
+    assert await js(f"{ROW}.querySelector('.folder').textContent") == "No folder"
+    await js(f"{ROW}.querySelector('.chat').click(); true")
+    rows = "[...document.querySelectorAll('#chat-messages .action')]"
+    assert await until(js, f"{rows}.length === 3")  # TodoWrite is the plan, not a line
+    assert await js(f"{rows}.map((row) => [row.querySelector('.badge').textContent, row.classList.contains('sub')])"
+                    ) == [["Browser Agent", False], ["Sub-agent", False], ["Bash", True]]
+    assert await js(f"{rows}.every((row) => /^\\d\\d:\\d\\d$/.test(row.querySelector('.at').textContent))")
+
+
+@CHROME
+async def test_mission_controls_drawer_lists_the_plan_and_the_sub_agents(stack):  # Decisions 8 and 9, Review Focus 3
+    from test_mission import open_mission, station
+
+    stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
+    agent = await stack["server"].agents.create("fix the footer")
+    assert await settled(lambda: bool(agent.subagents) and bool(agent.subagents[0]["action"]))
+    mission = await open_mission(stack)  # opened later: the plan comes with the agent
+    assert await until(mission, f"{station('a1')} != null")
+    await mission(f"{station('a1')}.click(); true")
+    plan = "[...document.querySelectorAll('#drawer-body .plan li')].map((item) => item.textContent)"
+    assert await until(mission, f"{plan}.length === 3")
+    assert await mission(plan) == ["✓ Read the code", "● Fixing the bug", "○ Run the tests"]
+    assert await mission("document.querySelector('#drawer-body .plan-progress').textContent") == "1 / 3 steps · 33%"
+    assert await mission("document.querySelector('#drawer-body .subagents li').textContent") == "● Research · Bash ls"
+    assert await mission("document.querySelector('#drawer-body .folder').textContent") == \
+        "No folder: its own scratch folder"
+    await mission("document.querySelector('#drawer-body .stop').click(); true")  # Stop stops its sub-agents
+    assert await until(mission, "document.querySelector('#drawer-body .subagents li')?.textContent.startsWith('■')")

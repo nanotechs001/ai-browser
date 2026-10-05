@@ -8,6 +8,7 @@ import { agentLabel, createChat } from "./chat.js";
 import { connect } from "./link.js";
 import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
 import { permissionCard } from "./permission.js";
+import { renderPlan, renderSubagents } from "./plan.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
 import { mountTalk } from "./talk.js";
 import { mountYourTabs } from "./tablist.js";
@@ -256,7 +257,9 @@ function openAgent(id, { tabs: showTabs = false } = {}) {
                   messages: el("div", "messages"),
                   composer: el("div", "composer"), input: el("textarea"), card: null,
                   account: el("span", "chip account"), moved: el("div", "status muted moved"),
-                  askSlot: el("div", "ask-slot"), ask: null, askKey: "" };
+                  askSlot: el("div", "ask-slot"), ask: null, askKey: "",
+                  folder: el("div", "status muted folder"), plan: el("section", "plan"),
+                  subs: el("section", "subagents") };
   parts.watch = button("watch", "Watch", () => {
     const current = agents.get(id);
     if (current?.working_tab) link.send({ type: "watch", target: current.working_tab });
@@ -279,8 +282,9 @@ function openAgent(id, { tabs: showTabs = false } = {}) {
   });
   drawer.yourTabs = mountYourTabs(parts.yourTabs, { send: (message) => link.send(message), agentId: () => id });
   parts.yourTabs.open = showTabs; // folded, unless the Brain pointed here to hand a tab over
-  $("drawer-body").replaceChildren(parts.status, parts.moved, parts.buttons, parts.permission, parts.askSlot,
-                                   parts.yourTabs, parts.messages, parts.composer);
+  $("drawer-body").replaceChildren(parts.status, parts.moved, parts.folder, parts.buttons, parts.permission,
+                                   parts.askSlot, parts.plan, parts.subs, parts.yourTabs, parts.messages,
+                                   parts.composer);
   showList(false); // the drawer takes the List's place
   drawer.parts = parts;
   drawer.chat = createChat(parts.messages);
@@ -312,6 +316,9 @@ function fillDrawer(agent) { // the drawer's agent changed: its parts are update
   }
   setText(parts.status, agent.status || agent.last_action || "");
   parts.status.hidden = !parts.status.textContent;
+  setText(parts.folder, agent.folder ? `Folder: ${agent.folder}` : "No folder: its own scratch folder");
+  renderPlan(parts.plan, agent.todos); // Decision 9: the agent's plan, live
+  renderSubagents(parts.subs, agent.subagents); // Decision 8: each sub-agent, its task and its current action
   parts.watch.disabled = !agent.working_tab;
   parts.stop.hidden = !(agent.state === "working" || agent.state === "waiting" || agent.check);
   const check = agent.check; // a bot check waiting for the user: the same card as AI Home's

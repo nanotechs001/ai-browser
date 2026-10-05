@@ -6,6 +6,7 @@ import { checkCard } from "./check.js";
 import { connect } from "./link.js";
 import { agentLabel, createChat, el } from "./chat.js";
 import { permissionCard } from "./permission.js";
+import { folderName, planProgress, subagentCount } from "./plan.js";
 import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
@@ -137,8 +138,10 @@ function makeAgentRow(id) {
   const parts = { dot: el("span", "dot"), name: el("span", "name"), state: el("span", "chip"),
                   account: el("span", "chip account"), status: el("div", "status"), moved: el("div", "status moved"),
                   last: el("div", "last"), totals: el("div", "status totals"), thumb: el("img", "thumb"),
+                  folder: el("span", "chip folder"), plan: el("div", "status plan"),
+                  subs: el("div", "status subagents"),
                   ask: null, askKey: "" };
-  head.append(parts.dot, parts.name, parts.state, parts.account);
+  head.append(parts.dot, parts.name, parts.state, parts.account, parts.folder);
   const buttons = el("div", "buttons");
   parts.watch = button("watch", "Watch", () => {
     const agent = agents.get(id);
@@ -149,7 +152,7 @@ function makeAgentRow(id) {
   parts.close = button("close", "Close", () => link.send({ type: "close", id }));
   parts.close.title = "End this agent and close the tabs it opened (your own tabs stay open)";
   buttons.append(parts.watch, parts.chat, parts.stop, parts.close);
-  main.append(head, parts.status, parts.moved, parts.last, parts.totals, buttons);
+  main.append(head, parts.status, parts.plan, parts.subs, parts.moved, parts.last, parts.totals, buttons);
   parts.thumb.alt = "";
   parts.thumb.hidden = true;
   row.append(main, parts.thumb);
@@ -183,6 +186,12 @@ function fillAgentRow(row, agent) {
   }
   setText(parts.status, agent.status || "");
   parts.status.hidden = !agent.status;
+  setText(parts.folder, agent.folder ? folderName(agent.folder) : "No folder"); // agent powers, Decision 6
+  parts.folder.title = agent.folder || "The agent's own scratch folder";
+  setText(parts.plan, planProgress(agent.todos)); // Decision 9: "3 / 5 steps · 60%"
+  parts.plan.hidden = !parts.plan.textContent;
+  setText(parts.subs, subagentCount(agent)); // Decision 8: "2 sub-agents working"
+  parts.subs.hidden = !parts.subs.textContent;
   setText(parts.last, agent.last_action || "");
   parts.last.hidden = !agent.last_action;
   const totals = [`${Math.round(agent.seconds || 0)} s`];
