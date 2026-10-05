@@ -89,10 +89,17 @@ capability for faster navigation and all feature of the claude app". Four projec
 - **The workflow** "Build Windows app" (`.github/workflows/windows-app.yml`) makes AI-Browser-windows.zip. The
   first build (run 37290385976) opened a white window with "AI Browser's pages open only in its own window".
 - **The cause:** on Windows the app never heard the engine over stdin, so the sign-in never happened.
-- **The fix** is on branch `win-fix`: the line moves to a loopback port, the profile moves to the user's folder,
-  there are AIB_DEBUG_START start logs, and a real start check runs in the workflow.
-- **Still open:** an "appData path" error in the CI's throwaway user folder. Merge `win-fix` once its workflow passes,
-  then send the user the new artifact link.
+- **The fix, merged as b1c7670:**
+  - the line moves to a keyed loopback port;
+  - the bundled app's profile moves to the user's AI Browser home;
+  - AIB_DEBUG_START start logs;
+  - a real start check in the workflow, which passed in run 37312699966. That run's AI-Browser-windows.zip is the one
+    the user tests.
+- **On the Mac:** main.js changed, so the next `uv run ai-browser app` rebuilds the Mac app once ("updated for this
+  version"). The local checkout still runs older code until the user restarts the app and `main` is fast-forwarded.
+- **The user's Windows laptop:** it needed Claude Code installed (`irm https://claude.ai/install.ps1 | iex`). Its
+  added account (folder `acct-e9e5a3`) is signed in by hand in PowerShell with `CLAUDE_CONFIG_DIR` set. The user said
+  they don't see Settings' "Copy the command" button there; they asked not to fix that for now.
 
 ## Next
 
