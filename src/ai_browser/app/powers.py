@@ -14,6 +14,8 @@ rule: a second command, a pipe, a substitution, a variable, a redirect, a glob o
 
 from __future__ import annotations
 
+import difflib
+import json
 import os
 import re
 import shlex
@@ -311,3 +313,162 @@ _MOVES = re.compile(r"(?:^|[\s;&|(`])(?:cd|pushd|popd)(?=$|[\s;&|)])")
 def moves_folder(command) -> bool:
     """Whether a command may change the shell's folder (cd, pushd, popd), which Claude Code keeps between commands."""
     return isinstance(command, str) and bool(_MOVES.search(command))
+
+
+# ---- the card: what a request will do, as plain text (Decision 2), and each action's badge (Decision 10) -------------
+
+LINES_SHOWN = 300  # lines of a diff or of a new file a card shows
+LINE_LIMIT = 300  # characters of one of them
+TEXT_LIMIT = 4000  # characters of a command, a path, an address or a query
+DIFF_LIMIT = 200_000  # characters of each side an edit is compared on; past it, each side is listed (Review Focus 5)
+MATCH_LIMIT = 4_000_000  # lines × lines past which two sides are listed rather than compared
+BINARY_PROBE = 8192  # characters looked at for a NUL: a binary file shows its size only
+_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f؜​-‏‪-‮⁦-⁩﻿]")
+TITLES = {"Bash": "run a command", "Edit": "edit a file", "Write": "write a file",
+          "Read": "read a file outside its folder", "Glob": "list files outside its folder",
+          "Grep": "search files outside its folder", "WebFetch": "fetch a page", "WebSearch": "search the web"}
+SANDBOXED = "Runs in Claude Code's sandbox: it can't write outside this folder."
+SANDBOXED_OFFLINE = "Runs in Claude Code's sandbox: it can't write outside this folder or reach the network."
+BADGES = {"Bash": "Bash", "Edit": "Edit", "Write": "Write", "Read": "Read", "Glob": "Read", "Grep": "Read",
+          "WebSearch": "Web Search", "WebFetch": "Web Fetch", "Agent": "Sub-agent", "Task": "Sub-agent",
+          "TodoWrite": "To-do list"}
+OWN = "mcp__ai-browser__"  # the browser's tools
+SKILL_TOOLS = frozenset({"load_skill", "find_skills", "read_skill_file", "shell"})  # skills, in the sealed Docker box
+SUMMARIZED = frozenset({"Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"}) | SUBAGENTS
+SUMMARY_LIMIT = 120
+TODO_LIMIT = 50
+STATUSES = ("pending", "in_progress", "completed")
+
+
+def plain(text) -> str:
+    """Text as a card shows it: tabs and new lines kept, a carriage return made visible (␍), and every other control
+    character, zero-width character and direction mark replaced (�), so nothing can hide or reorder what a line says."""
+    return _CONTROL.sub("�", str(text).replace("\r", "␍"))
+
+
+def _clip(value, limit: int = TEXT_LIMIT) -> str:
+    text = plain(value) if isinstance(value, str) else ""
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _line(value, limit: int) -> str:
+    """One line: plain, its whitespace squeezed, clipped."""
+    return _clip(" ".join(plain(value).split()) if isinstance(value, str) else "", limit)
+
+
+def _binary(text: str) -> bool:
+    return "\x00" in text[:BINARY_PROBE]
+
+
+def diff_rows(old: str, new: str) -> list[list[str]]:
+    """An edit as lines: [" ", line] around a change, ["-", line] removed, ["+", line] added, and ["…", ""] between
+    two changes far apart. Two sides too long to compare are listed whole instead: removed, then added."""
+    a, b = old[:DIFF_LIMIT].splitlines(), new[:DIFF_LIMIT].splitlines()
+    if len(old) > DIFF_LIMIT or len(new) > DIFF_LIMIT or len(a) * len(b) > MATCH_LIMIT:
+        return [["-", line] for line in a] + [["+", line] for line in b]
+    rows: list[list[str]] = []
+    for group in difflib.SequenceMatcher(None, a, b, autojunk=False).get_grouped_opcodes(2):
+        if rows:
+            rows.append(["…", ""])
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                rows += [[" ", line] for line in a[i1:i2]]
+            if tag in ("replace", "delete"):
+                rows += [["-", line] for line in a[i1:i2]]
+            if tag in ("replace", "insert"):
+                rows += [["+", line] for line in b[j1:j2]]
+    return rows
+
+
+def _lines(shown: dict, old: str | None, new: str) -> None:
+    """An edit's diff (old is a string) or a new file's lines (old is None), clipped, and the size in bytes."""
+    shown["size"] = len(new.encode("utf-8", "replace")) + (len(old.encode("utf-8", "replace")) if old else 0)
+    if _binary(new) or (old is not None and _binary(old)):
+        shown["binary"] = True
+        return
+    rows = diff_rows(old, new) if old is not None else [["+", line] for line in new[:DIFF_LIMIT].splitlines()]
+    shown["lines"] = [[sign, _clip(text, LINE_LIMIT)] for sign, text in rows[:LINES_SHOWN]]
+    shown["hidden"] = len(rows) - len(shown["lines"])
+
+
+def card(tool: str, data, folder, moved: bool = False, sandbox: bool = False) -> dict:
+    """What a card shows for one request, as plain text (Decision 2): the command and its folder, a clipped diff or
+    the new file, the path, the site or the query; whether Always allow is offered, and if not, why. `sandbox`: the
+    command will run in Claude Code's sandbox (R1)."""
+    data = data if isinstance(data, dict) else {}
+    decision, why = _decide(tool, data, folder, moved)
+    shown = {"tool": tool, "badge": badge(tool), "title": TITLES.get(tool, "use a tool"), "text": "",
+             "folder": _clip(str(folder)), "site": "", "lines": [], "hidden": 0, "size": None, "binary": False,
+             "why": why, "always": decision == "ask" and rule_for(tool, data) is not None, "sandbox": ""}
+    if tool == "Bash":
+        shown["text"] = _clip(data.get("command"))
+        if data.get("dangerouslyDisableSandbox") is True:
+            shown["title"] = "run a command outside the sandbox"
+        elif sandbox:
+            shown["sandbox"] = SANDBOXED_OFFLINE if SANDBOX_NETWORK else SANDBOXED
+    elif tool in EDITS:
+        shown["text"] = _clip(data.get("file_path"))
+        new = data.get("new_string" if tool == "Edit" else "content")
+        old = (data.get("old_string") if isinstance(data.get("old_string"), str) else "") if tool == "Edit" else None
+        _lines(shown, old, new if isinstance(new, str) else "")
+    elif tool in READS:
+        where = data.get("file_path") if tool == "Read" else data.get("path", str(folder))
+        where = where if isinstance(where, str) else ""
+        pattern = data.get("pattern") if tool != "Read" and isinstance(data.get("pattern"), str) else ""
+        shown["text"] = _clip(f"{pattern} in {where}" if pattern else where)
+    elif tool == "WebFetch":
+        shown["text"], shown["site"] = _clip(data.get("url")), _host(data.get("url"))
+    elif tool == "WebSearch":
+        shown["text"] = _clip(data.get("query"))
+    else:
+        shown["text"] = _clip(json.dumps(data, ensure_ascii=False))
+    return shown
+
+
+def badge(name) -> str:
+    """The badge of an action line (Decision 10): Claude Code's own tools by name, the browser's tools "Browser
+    Agent" (their skill tools "Skill"), and the user's own MCP tools "Tool"."""
+    name = str(name)
+    if name in BADGES:
+        return BADGES[name]
+    if name.startswith(OWN):
+        return "Skill" if name[len(OWN):] in SKILL_TOOLS else "Browser Agent"
+    return "Tool"
+
+
+def summary(tool: str, data) -> str:
+    """One line for the action feed: the command, the path, the pattern, the address, the query or the sub-agent's
+    task."""
+    data = data if isinstance(data, dict) else {}
+    if tool in SUBAGENTS:
+        return subagent_task(data)
+    key = {"Bash": "command", "Read": "file_path", "Edit": "file_path", "Write": "file_path", "Glob": "pattern",
+           "Grep": "pattern", "WebFetch": "url", "WebSearch": "query"}.get(tool)
+    return _line(data.get(key), SUMMARY_LIMIT) if key else ""
+
+
+def subagent_task(data) -> str:
+    """A sub-agent's task as its card and the drawer name it: its description, else its type, else its prompt's
+    start."""
+    data = data if isinstance(data, dict) else {}
+    for key in ("description", "subagent_type", "prompt"):
+        task = _line(data.get(key), 60)
+        if task:
+            return task
+    return "a sub-agent"
+
+
+def todos(data) -> list[dict]:
+    """TodoWrite's list ({"todos": [{content, status, activeForm}]}) as the drawer shows it: at most TODO_LIMIT
+    items, each line plain and clipped, an unknown status read as pending (Decision 9)."""
+    items = data.get("todos") if isinstance(data, dict) else None
+    out = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("content"), str):
+            continue
+        status = item.get("status") if item.get("status") in STATUSES else "pending"
+        active = item.get("activeForm") if isinstance(item.get("activeForm"), str) else item["content"]
+        out.append({"content": _line(item["content"], 200), "status": status, "active": _line(active, 200)})
+        if len(out) == TODO_LIMIT:
+            break
+    return out
