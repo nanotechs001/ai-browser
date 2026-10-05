@@ -3,6 +3,8 @@ on Windows), its Electron profile, app.json and problem.json.
 - app.json says what was built: the Electron version, the system, and a hash of AI Browser's own part, so a change
   to the JavaScript is noticed (assemble.py).
 - problem.json says why the last setup or start didn't work, for Settings.
+The packaged AI Browser.exe (the Windows test build, packaging/) ships its app in a `desktop` folder beside itself,
+laid out the same way, and uses that one first: it is set up already.
 The paths inside the bundle describe AI Browser's own app, never the user's computer."""
 
 from __future__ import annotations
@@ -22,8 +24,18 @@ def _system(system: str | None) -> str:
     return system or sys.platform
 
 
+def bundled() -> Path | None:
+    """The packaged AI Browser.exe's own app (the Windows test build, packaging/): a `desktop` folder beside the exe,
+    built there with this same layout. None when this isn't that exe, or no app was built beside it."""
+    if not platforms.frozen():
+        return None
+    found = Path(sys.executable).parent / "desktop"
+    return found if (found / "app.json").is_file() else None
+
+
 def folder(home) -> Path:
-    return Path(home) / "desktop"
+    """Where the app lives: beside the packaged AI Browser.exe when it ships one, else <home>/desktop."""
+    return bundled() or Path(home) / "desktop"
 
 
 def app_path(home, system: str | None = None) -> Path:
