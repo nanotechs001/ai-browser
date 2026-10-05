@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Browser chat</title>
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="chatpage.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
+    <h1>AI Browser</h1></div>
+  <div class="row">
+    <button id="new-open" type="button" aria-expanded="false" aria-controls="new">New task</button>
+    <button id="hide" class="ghost" type="button" title="Hide the chat (Esc)" aria-label="Hide the chat">✕</button>
+  </div>
+</header>
+<section id="page" class="page-bar" aria-label="This page">
+  <div class="page-line"><span class="page-label muted">This page</span>
+    <strong id="page-title" class="page-title"></strong><span id="page-host" class="page-host muted"></span></div>
+  <p id="page-says" class="page-says muted" role="status"></p>
+  <p id="page-steps" class="page-steps" hidden></p>
+  <div class="row page-actions">
+    <button id="page-ask" type="button" aria-pressed="false" disabled
+            title="While it's on, each question you ask reads this page">Ask about it</button>
+    <select id="page-hand" aria-label="Hand over this page to an agent" disabled></select>
+    <button id="page-pick" class="ghost" type="button">Pick…</button>
+    <button id="page-look" class="ghost" type="button" title="Look again" aria-label="Look again">↻</button>
+    <button id="page-home" class="ghost" type="button" hidden>Open AI Home</button>
+  </div>
+  <select id="page-picker" aria-label="Pick the tab you mean" hidden></select>
+</section>
+<section id="new" class="new-task" hidden aria-label="New task">
+  <textarea id="task" rows="3" maxlength="20000" placeholder="What should the agent do?"
+            aria-label="What the agent should do"></textarea>
+  <div class="row">
+    <select id="task-model" aria-label="Model">
+      <option value="sonnet">Sonnet · balanced</option>
+      <option value="opus">Opus · best</option>
+      <option value="haiku">Haiku · fastest</option>
+    </select>
+    <select id="task-account" aria-label="Account" hidden></select>
+  </div>
+  <label class="check"><input id="task-here" type="checkbox" disabled> Start it in this page (it's handed
+    over)</label>
+  <div class="row"><button id="task-start" class="primary" type="button">Start</button>
+    <button id="task-cancel" class="ghost" type="button">Cancel</button></div>
+</section>
+<nav id="agents" class="agents" aria-label="Open agents" hidden></nav>
+<section id="needs-you" class="needs-you" aria-live="assertive"></section>
+<section id="talk" class="talk" data-state="idle" aria-label="Talk to the Brain">
+  <ol id="talk-log" class="talk-log" aria-live="polite"></ol>
+  <div id="talk-status" class="talk-status muted"></div>
+  <div id="talk-notice" class="talk-notice" role="status"></div>
+  <div id="talk-card" class="talk-card"></div>
+  <form id="talk-form" class="talk-form">
+    <input id="talk-text" type="text" maxlength="2000" autocomplete="off" placeholder="Ask the Brain"
+           aria-label="Ask the Brain">
+    <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
+            title="Talk to the Brain: hold or click here"><svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/>
+    </svg></button>
+    <button type="submit" class="primary">Ask</button>
+  </form>
+  <p class="talk-note muted">Your voice stays on this computer. Your words go to Claude, like typed text.</p>
+</section>
+<p id="hint" class="hint muted" role="status"></p>
+<script type="module" src="chatpage.js"></script>
+</body>
+</html>

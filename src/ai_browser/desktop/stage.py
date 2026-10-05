@@ -12,7 +12,7 @@ from .. import platforms
 
 ELECTRON = Path(__file__).with_name("electron")
 ICON = Path(__file__).parents[1] / "app" / "ui" / "icon.png"
-APP_FILES = ("package.json", "main.js", "preload.js", "policy.js", "line.js")
+APP_FILES = ("package.json", "main.js", "preload.js", "policy.js", "line.js", "thispage.js", "thispage.ps1")
 
 
 def stage_app(dest: Path) -> None:

@@ -39,6 +39,7 @@ from ..brain.inbox import InboxReader
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.store import built_in
+from ..brain.talk import PAGE_TEXT_LIMIT
 from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
@@ -58,6 +59,7 @@ from ..live import _bind, _QuietServer, _serve
 from ..settings import Settings
 from ..skills import Catalog
 from ..syncdir import write_atomic
+from . import pagematch
 from .agents import Agent, AgentManager
 from .bravelink import NOT_CONNECTED, PlaceError
 from .inworld import WorldError
@@ -88,7 +90,8 @@ WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabl
 UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
 SETUP_PAGE = UI / "setup.html"
 SHELL = "/app"  # the window's own page: the tab menu, which shows the others in frames
-PAGES = {SHELL: "app.html", "/home": "home.html", "/mission": "mission.html", "/settings": "settings.html"}
+PAGES = {SHELL: "app.html", "/home": "home.html", "/mission": "mission.html", "/settings": "settings.html",
+         "/chat": "chat.html"}  # /chat: the floating chat, in a window of its own (nothing frames it)
 FRAMED = frozenset({"/home", "/mission", "/settings", "/setup"})  # the pages the tab menu shows: only it frames them
 LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an engine's live view binds one of these
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
@@ -102,6 +105,8 @@ SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", 
 NOTES_KEPT = 50  # the app's notifications whose click is still answered
 PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
 APP_SILENT = "AI Browser's app didn't answer: try again"
+CHAT_NOT_CONNECTED = "Brave isn't connected to AI Browser, so the chat can't read that page: connect it in AI Home"
+CHAT_PAGE_CHANGED = "That tab went to another site before AI Browser read it, so nothing was sent: ask again"
 URL_LIMIT = 2000  # characters of a website address a page may ask the user's browser to open
 NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
 USED_CODE = "This start link was used already or has expired. Start AI Browser again."
@@ -152,6 +157,8 @@ MESSAGE_RULES: dict[str, Rule] = {
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
     "settings_set": APP_ONLY,  # the window's Settings, AI Home's and Mission Control's picks
     "open_url": APP_ONLY,  # a website link in one of our pages
+    # the floating chat (native-app part c): "This page" as AI Browser's own app read it, and Open AI Home
+    "this_page": APP_ONLY, "show_app": APP_ONLY,
     # AI accounts: Settings → Accounts, the Account pickers and Continue on. The Brain and voice never add, sign in,
     # choose or move (the spec's Safety)
     "accounts": APP_ONLY, "account_add": APP_ONLY, "account_add_existing": APP_ONLY, "account_remove": APP_ONLY,
@@ -569,6 +576,50 @@ class AppServer:
         if not await asyncio.to_thread(platforms.open_url, url, browser):
             queue.put_nowait({"type": "error", "text": "Couldn't open that address in your browser"})
 
+    def _this_page(self, queue: asyncio.Queue, message: dict) -> None:
+        """The floating chat's "This page" (native-app Decision 4): the address and title AI Browser's own app read
+        from Brave's front tab, matched to the tab list (pagematch). The answer, to the asking page only: "found" with
+        the tab's row, "choose" (the user picks), or "not_connected" with Brave's state. It never connects to Brave,
+        so Brave asks nothing new (Review Focus 2)."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        answer = {"type": "this_page", "request": request}
+        if self.brave is None or self.brave.state != "connected":
+            queue.put_nowait({**answer, "state": "not_connected",
+                              "browser": self.brave.state if self.brave is not None else "off"})
+            return
+        found = pagematch.seen(message)
+        tabs = self.brave.tabs()
+        target = pagematch.match(found, tabs) if found is not None else None
+        tab = next((row for row in tabs if row["target"] == target), None)
+        queue.put_nowait({**answer, "state": "found", "tab": tab} if tab is not None else {**answer, "state": "choose"})
+
+    def _show_app(self, message: dict) -> None:
+        """The floating chat's Open AI Home (or an agent's number in it): AI Browser's window comes forward on AI Home,
+        at that agent's row, or the Brain's. A view only: nothing runs."""
+        agent = message.get("agent")
+        if isinstance(agent, str) and AGENT_ID.match(agent):
+            focus = {"agent": agent}
+        else:
+            focus = {"brain": True} if message.get("brain") is True else {}
+        if self.desktop is not None:
+            self.desktop.send({"type": "show"})
+        self._send_all({"type": "focus", **focus})
+
+    async def _this_page_text(self, target: str, site: str) -> dict:
+        """The page the user asked about in the floating chat, read now (native-app Decision 4): its title, address
+        and words (brain/readers/page.js, at most PAGE_TEXT_LIMIT characters), or {"error": why} in plain words. It
+        is used only when it is still on `site`, the site the user marked with Ask about it: a tab that went elsewhere
+        since gives nothing to Claude. It never connects to Brave (Review Focus 2)."""
+        if self.brave is None or self.brave.state != "connected":
+            return {"error": CHAT_NOT_CONNECTED}
+        try:
+            read = await self.brave.read_page(target, PAGE_TEXT_LIMIT)
+        except WorldError as exc:
+            return {"error": f"Couldn't read that page: {exc}"}
+        if not site or pagematch.site(read.get("url")) != site:
+            return {"error": CHAT_PAGE_CHANGED}  # what was read is dropped here
+        return read
+
     def _saved_port(self) -> int | None:
         """The port this home used before (the microphone grant belongs to that address), if it is one of ours."""
         if self.port_file is None:
@@ -618,7 +669,7 @@ class AppServer:
     async def start(self) -> str:
         app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open), Route(SHELL, self._page),
                                        Route("/home", self._page), Route("/mission", self._page),
-                                       Route("/settings", self._page),
+                                       Route("/settings", self._page), Route("/chat", self._page),
                                        Route("/health", self._health), Route("/setup", self._setup),
                                        Route("/agent-events", self._agent_events, methods=["POST"]),
                                        Route("/agent-tab", self._agent_tab, methods=["POST"]),
@@ -1244,6 +1295,10 @@ class AppServer:
             self._settings_set(queue, message)
         elif kind == "open_url":
             self._job(self._open_url(queue, message))
+        elif kind == "this_page":  # the floating chat: which listed tab the user is on
+            self._this_page(queue, message)
+        elif kind == "show_app":  # the floating chat's Open AI Home, or an agent's number in it
+            self._show_app(message)
         elif kind == "new_task":
             request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
             text = _text(message.get("text"))
@@ -1375,9 +1430,15 @@ class AppServer:
         model = message.get("model") if message.get("model") in MODELS else None
         if kind == "brain_ask":
             text = message.get("text").strip()[:2000] if isinstance(message.get("text"), str) else ""
-            if text:
+            page = message.get("page") if isinstance(message.get("page"), str) and message.get("page") else None
+            site = message.get("site") if isinstance(message.get("site"), str) else ""  # the site the user marked
+            if text and page is None:  # as before: no page is in it
                 self._job(self._answer(queue, talk, request,
                                        self.brain.respond(talk, text, proposal=proposal, task=task, model=model)))
+            elif text:  # the floating chat's "Ask about it": the tab is read only if Claude is asked
+                self._job(self._answer(queue, talk, request, self.brain.respond(
+                    talk, text, proposal=proposal, task=task, model=model,
+                    page=lambda: self._this_page_text(page, site))))
         elif kind == "brain_confirm" and proposal is not None:
             self._job(self._answer(queue, talk, request, self.brain.confirm(talk, proposal, task=task, model=model)))
         elif kind == "brain_dismiss" and proposal is not None:

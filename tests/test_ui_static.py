@@ -11,8 +11,9 @@ def test_the_pages_live_in_app_ui():
     for name in ("home.html", "mission.html", "home.js", "mission.js", "link.js", "brainui.js", "brainui.css",
                  "check.js", "mic.js", "mic-worklet.js", "talk.js", "tablist.js", "chat.js", "permission.js"):
         assert (UI / name).is_file(), name
-    assert sorted(path.name for path in (APP / "extension").iterdir() if not path.name.startswith(".")) == [
-        "panel.css", "panel.html", "panel.js"]  # the old side panel: part c keeps, ports or deletes it
+    assert not (APP / "extension").exists()  # the old side panel retired: the floating chat (/chat) took its place
+    for name in ("chat.html", "chatpage.js", "chatpage.css", "pagebar.js"):
+        assert (UI / name).is_file(), name
 
 
 INLINE_SCRIPT = re.compile(r"<script(?![^>]*\ssrc=)[^>]*>", re.IGNORECASE)

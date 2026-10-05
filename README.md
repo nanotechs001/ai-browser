@@ -252,9 +252,9 @@ apart.
 ### AI Browser's own app (a menu-bar icon, a shortcut and notifications)
 
 AI Browser can run as an app of its own, built on Electron, instead of in a browser window. It has its own Dock
-icon (a taskbar icon on Windows) and an icon in the menu bar (by the clock on Windows). It also adds a shortcut that
-shows and hides it from any app, and native notifications. The engine stays the same: `uv run ai-browser app` starts
-it, then the app.
+icon (a taskbar icon on Windows) and an icon in the menu bar (by the clock on Windows). It also adds the floating
+chat, which a shortcut shows and hides from any app, and native notifications. The engine stays the same:
+`uv run ai-browser app` starts it, then the app.
 
 **Setting it up (once):** run `uv run ai-browser doctor --setup` in a terminal.
 - It shows what it would download: Electron 44.5.1 for your computer, its size (about 130 MB on a Mac, 158 MB on
@@ -262,23 +262,26 @@ it, then the app.
 - The download is checked against Electron's `SHASUMS256.txt` from the same release. If it doesn't match, or it
   stops halfway, nothing is kept, the browser window still works, and Settings says what happened.
 - The app is built in `~/.ai-browser/desktop/`: "AI Browser.app" on a Mac, signed on your Mac, ad hoc, so macOS
-  remembers its microphone permission; an "AI Browser" folder on Windows. Running it needs no Node.js and no npm.
+  remembers its microphone permission, and its permission to see Brave's tab; an "AI Browser" folder on Windows.
+  Running it needs no Node.js and no npm.
 - On Windows it also adds AI Browser to the Start menu: Windows shows an app's notifications only then. AI Browser.exe
   keeps Electron's icon in File Explorer. Its window, its icon by the clock and its notifications show AI Browser's.
 - When an update of AI Browser changes the app's own files, `ai-browser app` builds the app again before it starts,
-  with no download. macOS may then ask for the microphone once more.
+  with no download. macOS may then ask for the microphone, and for Brave, once more.
 
 **Using it:**
-- **Closing the window hides it.** The app keeps running in the menu bar (by the clock on Windows), agents keep
-  working, and the shortcut brings it back.
+- **Closing the window hides it.** The app keeps running in the menu bar (by the clock on Windows), and agents keep
+  working. Its Dock icon (the taskbar on Windows), or **Open AI Browser** in the menu-bar icon, brings it back.
 - **Quit** stops the app and every agent, as Ctrl-C in the terminal does. Quit is in the menu-bar icon's menu, or
   press ⌘Q on a Mac.
-- **The shortcut** is ⌥Space (Alt+Space on Windows). Settings → AI Browser app offers two others, and Off. If another
-  app already uses it, Settings says so: pick another one. Press it once after a change, to check it.
+- **The shortcut** is ⌥Space (Alt+Space on Windows): it shows and hides the floating chat. Settings → AI Browser app
+  offers two others, and Off. If another app already uses it, Settings says so: pick another one. Press it once after
+  a change, to check it.
 - **Notifications** say only what needs you: "An agent is waiting for you", "A bot check on example.com", "The Brain
   has 2 new notes". Never a message's text or a page's. A click opens AI Home at that agent's row, or brings the
   agent's tab forward in Brave.
-- The menu-bar icon offers **Open AI Browser**, **Show chat** (the floating chat, coming next) and **Quit**.
+- The menu-bar icon offers **Open AI Browser**, **Show chat** and **Quit**. **Show chat** works even when another app
+  holds the shortcut.
 - Until it is set up, or with `--window`, AI Browser opens in a browser window as before, and AI Home offers the
   setup.
 - Started by a double-click (Finder, or the Start menu), it asks you to start AI Browser from a terminal. A
@@ -287,6 +290,31 @@ it, then the app.
 **Locked down:** its pages are AI Browser's own (`http://127.0.0.1:<port>`) and nothing else. A website link opens in
 Brave, and no page opens a window. Pages may use the microphone, and write to the clipboard on a Copy button; nothing
 else. It has no debugging port and no DevTools, and it refuses to start with a debugging switch.
+
+### The floating chat (⌥Space, beside Brave)
+
+Press ⌥Space (Alt+Space on Windows), or **Show chat** in the menu-bar icon, from any app: a small chat window opens
+above your other windows, at the right of the screen. Move it and size it as you like: it opens there next time.
+Press the shortcut again, Esc or ✕ to hide it. It needs AI Browser's own app (above).
+
+- **This page** shows the Brave tab you're on, by its title and site. While the chat shows, AI Browser asks Brave for
+  the address and title of its front tab, and nothing else: through AppleScript on a Mac, through UI Automation on
+  Windows. It never types, clicks or opens anything in Brave, and when Brave isn't running, Brave stays closed.
+  - **On a Mac,** macOS asks once whether "AI Browser" may control "Brave Browser". If you said no: System Settings →
+    Privacy & Security → Automation → AI Browser → turn on Brave Browser.
+  - When AI Browser can't tell which tab you're on (the same page in two windows, a tab in another profile with its
+    own title, a private window), pick it from your tabs. If Brave isn't running, or isn't connected to AI Browser, the chat says so: the chat never
+    connects by itself.
+- **Ask about it:** turn it on, then ask. Only then does AI Browser read that page's words (at most 12,000
+  characters, never its scripts), and the Brain answers from them. Page text is data: about a page, the Brain only
+  answers, and proposes nothing.
+- **Talk to the Brain:** type, or hold the mic button. "Tell agent 2 to check the footer" makes a card: press **Send**
+  or **Start**, or say yes. The open agents show by number; a click opens one in AI Home.
+- **New task** starts an agent with the model and the account you pick. It replaces typing `ai` in Brave's address
+  bar. **Start it in this page** hands this tab over to it as it starts.
+- **Hand over…** gives this page to an open agent. Only your click hands a tab over, as in AI Home.
+- An agent that waits for you (a tool to allow, a bot check) shows its card in the chat too.
+- The old side panel is gone: the floating chat takes its place.
 
 ## The Brain (reads your messages, tells you what needs you)
 
@@ -657,6 +685,9 @@ uv run ai-browser build                      # rebuild the image
 - AI Browser's own app has no debugging port and no DevTools, and refuses to start with a debugging switch. Its
   fuses keep any other program from running it as Node.js or with an inspector. Its pages are AI Browser's own
   only. They may use the microphone, and write to the clipboard on a Copy button.
+- The floating chat reads only the address and title of Brave's front tab, only while it shows, through AppleScript
+  (a Mac) or UI Automation (Windows): one fixed command, never built from a page's or your words. It reads a page's
+  words only when you ask about that page, and an agent works in your tab only after your Hand over.
 - ⚠ risky buttons are refused unless `confirmed=true`; Claude asks you first. Page dialogs are treated the same way:
   - Alerts are accepted and reported.
   - `confirm()`, `prompt()` and "leave page with unsaved changes?" are dismissed unless the step was confirmed.

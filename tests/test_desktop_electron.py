@@ -50,15 +50,16 @@ async def page_at(cdp, url: str, seconds: float = 30) -> str:
     raise AssertionError(f"no page at {url}")
 
 
-async def started_app(tmp_path, server, url):
-    """The test's Electron on the staged app, its start message sent and its hello read: (process, port)."""
+async def started_app(tmp_path, server, url, *switches):
+    """The test's Electron on the staged app (with `switches` of the test's own), its start message sent and its hello
+    read: (process, port)."""
     from ai_browser.desktop.stage import stage_app
 
     stage_app(tmp_path / "app")
     port = free_port()
     process = subprocess.Popen([ELECTRON, str(tmp_path / "app"), f"--aib-profile={tmp_path / 'profile'}",
-                                f"--remote-debugging-port={port}"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL)
+                                f"--remote-debugging-port={port}", *switches], stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     start = {"type": "start", "open": f"{url}/open?code={server.new_launch_code()}", "shortcut": None}
     process.stdin.write((json.dumps(start) + "\n").encode("utf-8"))
     process.stdin.flush()
@@ -85,7 +86,7 @@ async def test_the_real_app_is_locked_down(fake_claude, tmp_path):  # Review Foc
         js = await page_js(cdp, await page_at(cdp, url + "/app"))
         assert await until(js, connected("/home"), seconds=30)  # the tab menu, and AI Home's line to the engine
         assert await js("typeof require === 'undefined' && typeof process === 'undefined'")  # no Node.js in pages
-        assert await js("JSON.stringify(Object.keys(window.aib))") == "[]"  # the bridge: no action in part a
+        assert await js("JSON.stringify(Object.keys(window.aib))") == '["chat","thisPage"]'  # the bridge: two actions
         assert await js(f"typeof {frame('/home')}.aib") == "undefined"  # framed pages get no bridge at all
         assert await js("window.open('https://example.com/') === null")  # no window opens another
         await js("location.href = 'https://example.com/'; true")  # a website, in the window itself: refused
@@ -142,3 +143,48 @@ def test_the_assembled_app_refuses_a_debugging_port(tmp_path):
     holder = layout.framework(app) if sys.platform == "darwin" else layout.executable(app, sys.platform)
     for wire in fuses.states(holder):
         assert wire[0] == wire[2] == wire[3] == "0"
+
+
+@REAL
+async def test_the_real_chat_shows_its_page_only_and_learns_the_tab_only_while_shown(fake_claude, tmp_path):
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.cdp import CDP
+    from test_home import page_js, until
+    from test_tab_menu import connected
+
+    runner, _, _ = fake_claude
+    server = AppServer(tmp_path / "home", AgentManager(tmp_path / "home", claude=runner))
+    url = await server.start()
+    answer = tmp_path / "page.json"  # what "Brave's front tab" says: a file of the test's, never the user's Brave
+    answer.write_text(json.dumps({"state": "ok", "url": "https://shop.example/cart", "title": "Cart"}),
+                      encoding="utf-8")
+    process, cdp = None, None
+    try:
+        process, port = await started_app(tmp_path, server, url, f"--aib-fake-page={answer}")
+        cdp = await CDP.connect(await asyncio.to_thread(browser_ws, port))
+        window = await page_js(cdp, await page_at(cdp, url + "/app"))
+        assert await until(window, connected("/home"), seconds=30)
+        assert await window("window.aib.thisPage().then((seen) => seen.state)") == "hidden"  # only the chat learns it
+        await window("window.aib.chat('show'); true")
+        chat = await page_js(cdp, await page_at(cdp, url + "/chat"))
+        assert await until(chat, "typeof window.aib === 'object' && document.readyState === 'complete'", seconds=30)
+        assert json.loads(await chat("window.aib.thisPage().then((seen) => JSON.stringify(seen))")) == {
+            "state": "ok", "url": "https://shop.example/cart", "title": "Cart"}
+        assert await chat("typeof require === 'undefined' && typeof process === 'undefined'")  # no Node.js
+        await chat("location.href = '/home'; true")  # the chat's window shows its page and nothing else
+        assert await chat("window.open('https://example.com/') === null")
+        await asyncio.sleep(1.5)
+        assert await chat("location.pathname") == "/chat"
+        await chat("window.aib.chat('hide'); true")
+        assert await until(chat, "document.visibilityState === 'hidden'", seconds=10)
+        assert await chat("window.aib.thisPage().then((seen) => seen.state)") == "hidden"  # hidden: never read
+        process.stdin.write(b'{"type": "quit"}\n')
+        process.stdin.flush()
+        assert await asyncio.to_thread(process.wait, 30) == 0
+    finally:
+        if cdp is not None:
+            await cdp.close()
+        if process is not None and process.poll() is None:
+            process.kill()
+        await server.stop()

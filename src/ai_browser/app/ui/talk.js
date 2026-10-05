@@ -1,5 +1,6 @@
-// Talking to the Brain in Mission Control: push-to-talk. The mic opens only while the user holds Space or the mic
-// button (or from one click on the button to the next) and its tracks stop when the turn ends: there is no wake word
+// Talking to the Brain, in Mission Control and in the floating chat: push-to-talk. The mic opens only while the user
+// holds Space or the mic button (or from one click on the button to the next) and its tracks stop when the turn ends:
+// there is no wake word
 // and nothing listens in the background. The sound goes to `ai-browser app` over the 127.0.0.1 link and becomes text
 // on this computer; the words then go to the Brain like typed words, and its answer shows in the log and the bubble.
 // Every word here is set with textContent.
@@ -57,8 +58,12 @@ function base64(buffer) {
   return btoa(binary);
 }
 
+// aboutPage(): the floating chat's "Ask about it": {target, site}, the tab a question reads then and the site the user
+// marked on it, or null. hintVoice: say once that Voice reads answers aloud (Mission Control has the switch; the chat
+// answers in text only).
 export function mountTalk({ panel, micButton, link, voice, onState = () => {}, openAgent = () => {},
-                            openBrain = () => {}, model = () => "sonnet" }) {
+                            openBrain = () => {}, model = () => "sonnet", aboutPage = () => null,
+                            hintVoice = true }) {
   const log = panel.querySelector(".talk-log");
   const status = panel.querySelector(".talk-status");
   const notice = panel.querySelector(".talk-notice");
@@ -503,6 +508,11 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     lastYou = line("You", words);
     asking = newId("t");
     const message = { type: "brain_ask", talk: talkId, request: asking, text: words };
+    const about = aboutPage(); // the floating chat: this question reads that tab, then (the user's own mark)
+    if (typeof about?.target === "string" && about.target) {
+      message.page = about.target;
+      message.site = String(about.site || ""); // the engine uses the page only while it is on this site
+    }
     if (proposal?.node.isConnected) { // a plain yes runs this card as it now reads, only while it is on screen
       message.proposal = proposal.id;
       if (proposal.box) message.task = proposal.box.value;
@@ -543,7 +553,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
       const say = String(message.say);
       line("Brain", say);
       voice.say(say, { priority: true }); // ahead of any waiting update; spoken when Voice is on
-      if (!voice.enabled && !hinted) {
+      if (hintVoice && !voice.enabled && !hinted) {
         hinted = true;
         tell("Switch on Voice to hear answers");
       }

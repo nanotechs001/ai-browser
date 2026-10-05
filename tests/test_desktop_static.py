@@ -8,7 +8,7 @@ from pathlib import Path
 
 ELECTRON_DIR = Path(__file__).parents[1] / "src" / "ai_browser" / "desktop" / "electron"
 SRC = Path(__file__).parents[1] / "src" / "ai_browser"
-APP_FILES = ("package.json", "main.js", "preload.js", "policy.js", "line.js")
+APP_FILES = ("package.json", "main.js", "preload.js", "policy.js", "line.js", "thispage.js", "thispage.ps1")
 REFUSED_LIST = re.compile(r"const DEBUG_SWITCHES = \[([^\]]*)\];")
 NEVER = ("openDevTools", "remote-debugging", "appendSwitch", "--inspect", "devTools: true", ".debugger",
          "nodeIntegration: true", "contextIsolation: false", "sandbox: false", "webSecurity: false",
@@ -49,10 +49,13 @@ def test_every_window_is_locked_down():
     assert main.count("new BrowserWindow(") == 1 and "webPreferences: { ...WEB }" in main  # every one: makeWindow
     for needed in ('contents.setWindowOpenHandler(() => ({ action: "deny" }))',
                    '["will-navigate", "will-frame-navigate", "will-redirect"]',
-                   "policy.mayNavigate(details.url, own, details.isMainFrame)", "setPermissionRequestHandler",
+                   "policy.mayNavigate(details.url, own, details.isMainFrame, kindOf(contents))",
+                   "setPermissionRequestHandler",
                    "policy.mayRequest(permission, details, own)", "setPermissionCheckHandler",
                    "setDevicePermissionHandler(() => false)", '"will-download"', '"will-attach-webview"',
-                   "requestSingleInstanceLock()", 'app.on("web-contents-created"', "policy.startOrigin(message.open)"):
+                   "requestSingleInstanceLock()", 'app.on("web-contents-created"', "policy.startOrigin(message.open)",
+                   'title: "AI Browser chat", alwaysOnTop: true',
+                   'win.on("close", (event) => { // closing it hides it'):
         assert needed in main, needed
 
 
@@ -60,7 +63,12 @@ def test_the_bridge_holds_named_actions_only():
     preload, main = text("preload.js"), text("main.js")
     assert preload.count("exposeInMainWorld(") == 1
     assert 'contextBridge.exposeInMainWorld("aib", Object.freeze(bridge));' in preload
-    assert "const ACTIONS = [];" in preload and "const ACTIONS = new Map();" in main  # part c adds chat, thisPage
+    assert 'const ACTIONS = ["chat", "thisPage"];' in preload
+    assert 'const ACTIONS = new Map([["chat", chatAction], ["thisPage", thisPageAction]]);' in main
+    assert "return handler(event.sender, ...args);" in main
+    asks = re.search(r"function thisPageAction\(sender\) \{\n(.*?)\n\}\n", main, re.S).group(1)
+    assert 'if (!chat || sender !== chat.webContents || !chat.isVisible()) return { state: "hidden" };' in asks
+    assert "if (!given || !UNPACKAGED) return thispage.run;" in main  # the fake page: a test's Electron only
     assert "ipcRenderer.invoke(`aib:${name}`, ...args)" in preload
     assert re.findall(r'require\("([^"]+)"\)', preload) == ["electron"]  # a sandboxed preload: the bridge alone
     assert "frame !== event.sender.mainFrame || policy.originOf(frame.url) !== own" in main
@@ -70,15 +78,43 @@ def test_no_npm_package_at_run_time():
     package = json.loads(text("package.json"))
     assert package["main"] == "main.js" and package["productName"] == "AI Browser" and package["private"] is True
     assert not {"dependencies", "devDependencies", "optionalDependencies", "scripts"} & set(package)
-    for name in ("main.js", "preload.js", "policy.js", "line.js"):
+    for name in ("main.js", "preload.js", "policy.js", "line.js", "thispage.js"):
         modules = set(re.findall(r'require\("([^"]+)"\)', text(name)))
-        assert modules <= {"electron", "node:fs", "node:net", "node:path", "./policy.js", "./line.js"}, (name, modules)
+        assert modules <= {"electron", "node:fs", "node:net", "node:path", "node:child_process", "./policy.js",
+                           "./line.js", "./thispage.js"}, (name, modules)
+    # thispage.js alone runs a program: its one fixed command, with execFile, never through a shell
+    assert set(re.findall(r'require\("([^"]+)"\)', text("thispage.js"))) == {"node:child_process", "node:path"}
+    assert not [name for name in ("main.js", "preload.js", "policy.js", "line.js") if "child_process" in text(name)]
+    reader = text("thispage.js")
+    assert "execFile(file, args," in reader and "shell: false" in reader and "windowsHide: true" in reader
+    for never in ("exec(", "execSync", "spawn", "fork(", "shell: true"):
+        assert never not in reader, never
+
+
+def test_the_windows_script_only_reads_the_front_brave_window():  # Safety: UI Automation only reads
+    script = text("thispage.ps1")
+    for needed in ("Get-Process -Name 'brave'", "MainWindowHandle", "AutomationElement]::FromHandle",
+                   "ControlType]::Edit", "ValuePattern]::Pattern", ".Current.Name", "LastIndexOf(' - Brave')",
+                   "ConvertTo-Json", "state = 'ok'", "state = 'closed'", "state = 'nowindow'", "state = 'failed'",
+                   "-eq 'OmniboxViewViews'", "ControlType]::Document", "state = 'unknown'", "ControlViewWalker"):
+        assert needed in script, needed
+    # the address bar is Chromium's own edit box, found in the window's frame: nothing under a page (a Document),
+    # whose fields could carry any name, is ever searched or read (fix pass 2, I5)
+    for never in ("FindFirst(", "FindAll(", "TreeScope]::Descendants", "TreeScope]::Subtree"):
+        assert never not in script, never
+    assert script.index("ControlType]::Document") < script.index("-eq 'OmniboxViewViews'")
+    for never in ("InvokePattern", "SendKeys", "SetFocus", "SetValue", "Start-Process", "Invoke-Expression", "iex ",
+                  "Invoke-WebRequest", "DownloadString", "-TypeDefinition", "Stop-Process", "Click", "param(",
+                  "$args", "$env:", "Read-Host", "Set-Item", "New-Item", "Remove-Item", "Out-File"):
+        assert never not in script, never
 
 
 def test_the_menu_bar_icon_closing_and_quitting():  # Review Focus 4
     main = text("main.js")
-    for item in ('label: "Open AI Browser"', 'label: "Show chat", enabled: false', 'label: "Quit"'):
+    for item in ('label: "Open AI Browser"', 'label: "Show chat", click: () => showChat()', 'label: "Quit"'):
         assert item in main, item
+    assert "policy.moveShortcut(globalShortcut, shortcut, value, toggleChat)" in main  # ⌥Space: the chat
+    assert "function toggleMain()" not in main
     assert 'win.on("close", (event) => {' in main and "win.hide();" in main  # closing hides it
     assert 'send({ type: "quit" })' in main  # Quit tells the engine
     assert re.search(r"\}, \(\) => \{\n    clearTimeout\(waiting\);\n    noEngine\(\);",
@@ -109,11 +145,11 @@ def test_the_product_never_passes_a_debugging_switch():
                    f"--aib-line={Path('/t/aib-1/line')}"]
     assert windows == [str(Path("/x/AI Browser/AI Browser.exe"))]
     banned = ("--remote-debugging", "--inspect", "--remote-allow-origins", "--js-flags", "--enable-logging",
-              "--auto-open-devtools", "--user-data-dir", "--load-extension")
+              "--auto-open-devtools", "--user-data-dir", "--load-extension", "--aib-fake-page", "--aib-profile")
     assert not [arg for arg in mac + windows if arg.startswith(banned)]
     for path in sorted((SRC / "desktop").glob("*.py")):
         source = path.read_text(encoding="utf-8")
-        for word in ("remote-debugging", "--inspect", "ELECTRON_RUN_AS_NODE", "openDevTools"):
+        for word in ("remote-debugging", "--inspect", "ELECTRON_RUN_AS_NODE", "openDevTools", "aib-fake-page"):
             assert word not in source, (path.name, word)
 
 

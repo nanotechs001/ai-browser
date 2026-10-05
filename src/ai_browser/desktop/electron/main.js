@@ -1,24 +1,30 @@
 // AI Browser's own app (Electron). `ai-browser app` starts it (desktop/launch.py) and talks to it over one private
 // line (line.js): the start address, with its one-time code, comes that way, never on a command line.
 // - It shows the tab menu at http://127.0.0.1:<port>/app in a window locked down as policy.js says.
-// - It keeps an icon in the menu bar (by the clock on Windows), and holds the shortcut picked in Settings (in part a
-//   it shows and hides the window).
+// - The floating chat: a small window above the others, beside Brave, that shows /chat and nothing else. The shortcut
+//   picked in Settings (⌥Space) shows and hides it from any app, and so does the menu-bar icon's Show chat. It opens
+//   where the user left it, at the size they left it (chat.json, in the profile).
+// - Its pages may ask it for two things (preload.js): to show or hide the chat; and, from the chat alone while it
+//   shows, which Brave tab the user is on (thispage.js: the tab's address and title, nothing else).
+// - It keeps an icon in the menu bar (by the clock on Windows).
 // - It shows the notifications the engine writes, word for word.
-// Closing the window hides it. Quit ends the app and tells the engine, which stops too. When the engine goes, the app
+// Closing a window hides it. Quit ends the app and tells the engine, which stops too. When the engine goes, the app
 // quits. The packaged app never runs with a debugging port or an inspector, and its pages never get DevTools.
 "use strict";
 
-const { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, ipcMain, nativeImage, session, shell } =
-  require("electron");
+const { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, ipcMain, nativeImage, screen, session,
+        shell } = require("electron");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 const policy = require("./policy.js");
+const thispage = require("./thispage.js");
 const { encode, lineOption, splitter } = require("./line.js");
 
 const APP_ID = "io.github.nanotechs001.ai-browser"; // desktop/layout.py's BUNDLE_ID, and Windows' AppUserModelID
 const TOAST_CLSID = "{52E8D68C-5CAC-4680-848A-E80657E0B4D5}"; // Windows: the Start menu entry's toast activator
 const PROFILE = "--aib-profile="; // an unpackaged Electron only (the tests'): its throwaway profile
+const FAKE_PAGE = "--aib-fake-page="; // an unpackaged Electron only (the tests'): a file that stands in for Brave
 // A test's Electron, started on this folder: Electron's own default app loaded it, and its program has Electron's
 // name. Never AI Browser's app, whose Electron loads resources/app and has no default app left. app.isPackaged alone
 // isn't enough: it only compares the program's name, and the Mac app's program keeps Electron's (Contents/MacOS).
@@ -26,6 +32,8 @@ const UNPACKAGED = !app.isPackaged && process.defaultApp === true;
 const ICON = path.join(__dirname, "icon.png");
 const START_WAIT = 20000; // ms for the engine's start message
 const NOTES_KEPT = 20; // notifications whose click still reaches the engine
+const CHAT_FILE = "chat.json"; // in the profile: where the floating chat was, and its size
+const SAVE_AFTER = 500; // ms after the chat stops moving or resizing before its place is kept
 const WEB = Object.freeze({ // every window's webPreferences (makeWindow)
   contextIsolation: true,
   sandbox: true,
@@ -42,9 +50,11 @@ const WEB = Object.freeze({ // every window's webPreferences (makeWindow)
   autoplayPolicy: "no-user-gesture-required", // Mission Control speaks without a click first
   preload: path.join(__dirname, "preload.js"),
 });
-const ACTIONS = new Map(); // name -> handler: what a page may ask the app for (preload.js lists the same names)
+// What a page may ask the app for, by name (preload.js lists the same names, in the same order). Each handler gets the
+// asking page's webContents first: answerActions has checked it is AI Browser's own top-level page.
+const ACTIONS = new Map([["chat", chatAction], ["thisPage", thisPageAction]]);
 
-const windows = new Map(); // "main" (the floating chat adds "chat")
+const windows = new Map(); // "main", and "chat" once the floating chat has shown
 const notes = new Map(); // id -> Notification, kept so a click still reaches us
 let own = null; // the app's own origin, http://127.0.0.1:<port>, once the engine has started it
 let send = () => false; // a message to the engine
@@ -55,6 +65,10 @@ let engineQuit = false; // the engine asked for the quit, or went away: there is
 let shortcut = null; // the accelerator registered now
 let pressed = false; // it fired since it was registered
 let tray = null;
+let chatLoaded = false; // the chat's window shows /chat now (the engine answered it with 200)
+let chatFrom = false; // another app was in front when the chat came: on a Mac, hiding the chat goes back to it
+let saving = null; // the timer that keeps the chat's place
+let looking = null; // a look at Brave's front tab under way: one at a time
 
 function profileFolder() { // <home>/desktop/profile, beside the app (a test's unpackaged Electron: its own)
   const given = process.argv.find((arg) => arg.startsWith(PROFILE));
@@ -131,18 +145,114 @@ function showWindow(kind) {
   if (process.platform === "darwin") app.focus({ steal: true });
 }
 
-function toggleMain() { // the shortcut: AI Browser's window comes forward, or hides when it is in front
+function kindOf(contents) { // which of our windows a page is in: "chat" for the floating chat's, else "main"
+  const chat = windows.get("chat");
+  return chat && chat.webContents === contents ? "chat" : "main";
+}
+
+function chatFile() {
+  return path.join(app.getPath("userData"), CHAT_FILE);
+}
+
+function savedPlace() { // where the chat was last time; null when it never was, or the file can't be read
+  try {
+    return JSON.parse(fs.readFileSync(chatFile(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function keepPlace() { // where the chat is now, for the next time (a write that fails only forgets it)
+  clearTimeout(saving);
+  saving = null;
+  const win = windows.get("chat");
+  if (!win) return;
+  try {
+    fs.writeFileSync(chatFile(), JSON.stringify(win.getBounds()), { mode: 0o600 });
+  } catch {
+    // the first-time place, next time
+  }
+}
+
+function makeChat() { // the floating chat: small, above the other windows, where the user left it
+  const areas = screen.getAllDisplays().map((display) => display.workArea);
+  const win = makeWindow("chat", { ...policy.chatBounds(savedPlace(), areas), minWidth: policy.CHAT_SIZE.minWidth,
+                                   minHeight: policy.CHAT_SIZE.minHeight,
+                                   title: "AI Browser chat", alwaysOnTop: true, minimizable: false,
+                                   maximizable: false, fullscreenable: false, skipTaskbar: true,
+                                   backgroundColor: "#faf9f5", icon: ICON });
+  win.on("close", (event) => { // closing it hides it, like the shortcut
+    if (!quitting) {
+      event.preventDefault();
+      hideChat();
+    }
+  });
+  for (const name of ["moved", "resized"]) {
+    win.on(name, () => {
+      clearTimeout(saving);
+      saving = setTimeout(keepPlace, SAVE_AFTER);
+    });
+  }
+  win.webContents.on("did-navigate", (event, url, code) => {
+    chatLoaded = code === 200 && policy.mayNavigate(url, own, true, "chat");
+  });
+  return win;
+}
+
+function showChat() { // the floating chat comes forward; its page loads the first time, and again after a refusal
+  if (!own) return;
+  const win = windows.get("chat") || makeChat();
+  if (!chatLoaded) win.loadURL(own + policy.CHAT_PATH).catch(() => {});
+  if (!win.isVisible() || !win.isFocused()) chatFrom = BrowserWindow.getFocusedWindow() === null;
+  showWindow("chat");
+}
+
+function hideChat() { // the chat goes, and keeps its place; on a Mac, the app that was in front comes back
+  const win = windows.get("chat");
+  if (!win || !win.isVisible()) return;
+  keepPlace();
+  win.hide();
+  if (process.platform === "darwin" && chatFrom) app.hide();
+}
+
+function toggleChat() { // the shortcut: the floating chat comes forward, or hides when it is the window in front
   if (!pressed) {
     pressed = true; // it works: Settings says so
     send({ type: "shortcut", value: shortcut, ok: true, why: "", pressed: true });
   }
-  const win = windows.get("main");
-  if (win && win.isVisible() && win.isFocused()) win.hide();
-  else showWindow("main");
+  const win = windows.get("chat");
+  if (win && win.isVisible() && win.isFocused()) hideChat();
+  else showChat();
+}
+
+// The bridge's "chat": AI Browser's pages may show the chat, and the chat hides itself.
+function chatAction(sender, what) {
+  if (what === "show") showChat();
+  else if (what === "hide") hideChat();
+  return null;
+}
+
+// The bridge's "thisPage": which Brave tab the user is on. Only the chat's own page gets an answer, and only while
+// the chat shows: nothing reads Brave's tab in the background. One look at a time: an ask while one runs gets its
+// answer.
+function thisPageAction(sender) {
+  const chat = windows.get("chat");
+  if (!chat || sender !== chat.webContents || !chat.isVisible()) return { state: "hidden" };
+  if (!looking) looking = thispage.read(process.platform, pageRunner()).finally(() => { looking = null; });
+  return looking;
+}
+
+// The real osascript or PowerShell. A test's unpackaged Electron alone may name a file (--aib-fake-page) whose text
+// stands in for what they would print: the packaged app never reads one, and no test reads the user's Brave.
+function pageRunner() {
+  const given = process.argv.find((arg) => arg.startsWith(FAKE_PAGE));
+  if (!given || !UNPACKAGED) return thispage.run;
+  const file = given.slice(FAKE_PAGE.length);
+  return async () => ({ error: "", stdout: fs.readFileSync(file, "utf8"), stderr: "" });
 }
 
 function useShortcut(value, request) { // move the global shortcut, and tell the engine how it went
-  const result = policy.moveShortcut(globalShortcut, shortcut, value, toggleMain);
+  const result = policy.moveShortcut(globalShortcut, shortcut, value, toggleChat);
   if (result.registered !== shortcut) pressed = false;
   shortcut = result.registered;
   send({ type: "shortcut", value: value ?? null, ok: result.ok, why: result.why, pressed: false,
@@ -154,7 +264,7 @@ function lockContents(contents) { // every page, frame and window: AI Browser's 
   contents.on("will-attach-webview", (event) => event.preventDefault());
   for (const name of ["will-navigate", "will-frame-navigate", "will-redirect"]) {
     contents.on(name, (details) => {
-      if (!policy.mayNavigate(details.url, own, details.isMainFrame)) details.preventDefault();
+      if (!policy.mayNavigate(details.url, own, details.isMainFrame, kindOf(contents))) details.preventDefault();
     });
   }
 }
@@ -188,7 +298,7 @@ function makeTray() { // the menu-bar icon (by the clock on Windows)
   tray.setToolTip("AI Browser");
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "Open AI Browser", click: () => showWindow("main") },
-    { label: "Show chat", enabled: false }, // the floating chat: part c
+    { label: "Show chat", click: () => showChat() }, // works whatever the shortcut, even one another app holds
     { type: "separator" },
     { label: "Quit", click: () => app.quit() },
   ]));
@@ -238,7 +348,7 @@ function answerActions() { // each named action, for AI Browser's own top-level 
     ipcMain.handle(`aib:${name}`, (event, ...args) => {
       const frame = event.senderFrame;
       if (!frame || frame !== event.sender.mainFrame || policy.originOf(frame.url) !== own) return null;
-      return handler(...args);
+      return handler(event.sender, ...args);
     });
   }
 }
@@ -290,6 +400,7 @@ function main() {
   app.on("activate", () => showWindow("main")); // a click on the Dock icon
   app.on("before-quit", () => {
     quitting = true;
+    keepPlace(); // the chat's place, if it has one
     if (!engineQuit) send({ type: "quit" });
   });
   app.on("will-quit", () => globalShortcut.unregisterAll());

@@ -350,6 +350,8 @@ class FakeBrave:
         self.place = FakePlace()  # Settings → Where agents browse
         self.opened_ai: list[str] = []  # who each tab open_ai_tab opened was for (N1, N2, …)
         self.ai_tab_error: Exception | None = None  # what open_ai_tab raises instead
+        self.page_answers: dict = {}  # target -> what read_page answers (a dict, or an Exception it raises)
+        self.read_pages: list[tuple[str, int]] = []  # (target, limit) of each read_page: the chat's asks
         self._changes, self._states = [], []
 
     def on_change(self, callback):
@@ -424,6 +426,14 @@ class FakeBrave:
 
     async def page_text(self, target, picked=False):
         return ""
+
+    async def read_page(self, target, limit):
+        """The floating chat's read of the page the user asked about (BraveLink.read_page), recorded."""
+        self.read_pages.append((target, limit))
+        answer = self.page_answers.get(target, {"title": "", "url": "", "text": "", "cut": False})
+        if isinstance(answer, Exception):
+            raise answer
+        return dict(answer)
 
 
 class NoBridge:

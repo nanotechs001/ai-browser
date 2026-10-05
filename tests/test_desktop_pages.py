@@ -47,11 +47,24 @@ async def test_settings_says_the_shortcut_is_taken_and_offers_another(stack):  #
     assert await settings("[...document.querySelectorAll('#shortcut-choices label')].map((one) => one.textContent)"
                           ) == [label(one) for one in SHORTCUTS] + ["Off"]
     await settings("document.querySelector('#shortcut-choices input[value=\"Alt+Shift+Space\"]').click(); true")
-    ready = (f"{label('Alt+Shift+Space')} shows and hides AI Browser. Press it once to check: if another app answers "
+    ready = (f"{label('Alt+Shift+Space')} shows and hides the chat. Press it once to check: if another app answers "
              "instead, pick another shortcut.")
     assert await until(settings, f"document.getElementById('shortcut-note').textContent === {json.dumps(ready)}")
     assert read_settings(stack["home"])["shortcut"] == "Alt+Shift+Space"
     assert await settings("document.querySelector('#shortcut-choices input:checked').value") == "Alt+Shift+Space"
+
+
+@CHROME
+async def test_settings_says_what_the_shortcut_does(stack):  # Review Focus 1
+    stack["server"].attach_desktop(FakeDesktop())
+    settings = await open_settings(stack)
+    what = "document.getElementById('shortcut-what').textContent"
+    assert await until(settings, f"{what}.startsWith('The shortcut shows and hides the floating chat from any app.')")
+    platform = stack["server"]._desktop_payload()["platform"]
+    if platform == "mac":
+        assert "opens from its Dock icon, or Open AI Browser in the menu-bar icon" in await settings(what)
+    elif platform == "windows":
+        assert "opens from the taskbar, or Open AI Browser in the icon by the clock" in await settings(what)
 
 
 @CHROME

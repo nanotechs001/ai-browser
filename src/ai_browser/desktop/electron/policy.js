@@ -1,7 +1,7 @@
 // What AI Browser's own app allows, as small functions main.js calls (and the tests run under Node.js): where a frame
 // may go, which permission a page may have, which global shortcuts there are and how one is moved, what a
-// notification may say, and which switches the packaged app refuses. Nothing here touches Electron, the network or
-// the disk.
+// notification may say, which switches the packaged app refuses, and where the floating chat opens. Nothing here
+// touches Electron, the network or the disk.
 "use strict";
 
 const LIVE_PORTS = [8770, 8790]; // an engine's live view binds one of these (config.LIVE_PORTS)
@@ -13,6 +13,13 @@ const NOTE_ID = /^n\d{1,9}$/;
 const TITLE_LIMIT = 120;
 const BODY_LIMIT = 240;
 const CONTROL = /[\u0000-\u001f\u007f]/g;
+const CHAT_PATH = "/chat"; // the floating chat's page: its window shows this one page and nothing else
+const CHAT_SIZE = Object.freeze({ width: 380, height: 560, minWidth: 320, minHeight: 360 });
+const CHAT_EDGE = 16; // px between the chat and the main screen's right edge, the first time
+const CHAT_TOP = 48; // px below the top of the main screen's work area, the first time
+const TITLE_BAR = 28; // px: the chat's title bar, which must stay on a screen so it can be dragged back
+const ON_SCREEN = 64; // px of the title bar's width that must be on one screen
+const LARGEST = 4000; // px: the most a remembered width or height may be
 
 function originOf(url) { // an http(s) address's origin, or null
   try {
@@ -42,12 +49,58 @@ function isLiveView(url) { // an engine's live view (the tab menu shows one in a
 }
 
 // A frame may load AI Browser's own pages only; a frame inside our page (never the window itself) may also show an
-// engine's live view. Anything else stays where it was: a website link goes to the user's own browser through the
-// engine (open_url), never into this window. Before the engine's start (no `own`), nothing loads.
-function mayNavigate(url, own, isMainFrame) {
+// engine's live view. The floating chat's window (`kind` "chat") shows its one page, /chat, and nothing else, in no
+// frame. Anything else stays where it was: a website link goes to the user's own browser through the engine
+// (open_url), never into a window of ours. Before the engine's start (no `own`), nothing loads.
+function mayNavigate(url, own, isMainFrame, kind = "main") {
   if (typeof own !== "string" || !own) return false;
+  if (kind === "chat") return isMainFrame !== false && isChatPage(url, own);
   if (originOf(url) === own) return true;
   return isMainFrame === false && isLiveView(url);
+}
+
+function isChatPage(url, own) { // own + /chat, a #part allowed; no query, no user name, no other address
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return parsed.origin === own && parsed.pathname === CHAT_PATH && parsed.search === "" && parsed.username === ""
+    && parsed.password === "";
+}
+
+function isRect(value) {
+  return Boolean(value) && typeof value === "object"
+    && ["x", "y", "width", "height"].every((key) => Number.isFinite(value[key])) && value.width > 0 && value.height > 0;
+}
+
+function shared(a, b) { // the width and the height two rectangles have in common (negative: none)
+  return [Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x),
+          Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)];
+}
+
+// Where the floating chat opens. `areas`: each screen's work area, the main screen first. `saved`: where the user left
+// it (chat.json). It opens there, at its size kept within limits, while ON_SCREEN px of its title bar are still on one
+// screen. Else it opens at the main screen's right edge, near the top, at the default size. Always whole pixels.
+function chatBounds(saved, areas) {
+  const screens = (Array.isArray(areas) ? areas : []).filter(isRect);
+  const first = screens[0] || { x: 0, y: 0, width: 1280, height: 800 };
+  if (isRect(saved)) {
+    const place = { x: Math.round(saved.x), y: Math.round(saved.y),
+                    width: Math.round(Math.min(Math.max(saved.width, CHAT_SIZE.minWidth), LARGEST)),
+                    height: Math.round(Math.min(Math.max(saved.height, CHAT_SIZE.minHeight), LARGEST)) };
+    const bar = { x: place.x, y: place.y, width: place.width, height: TITLE_BAR };
+    const seen = screens.some((area) => {
+      const [wide, tall] = shared(bar, area);
+      return wide >= ON_SCREEN && tall >= TITLE_BAR / 2;
+    });
+    if (seen) return place;
+  }
+  const width = Math.min(CHAT_SIZE.width, Math.round(first.width));
+  const height = Math.min(CHAT_SIZE.height, Math.round(first.height));
+  return { x: Math.round(Math.max(first.x, first.x + first.width - width - CHAT_EDGE)),
+           y: Math.round(first.y + CHAT_TOP), width, height };
 }
 
 // A permission request (setPermissionRequestHandler): the microphone alone (talking to the Brain), and writing to the
@@ -109,6 +162,6 @@ function withoutEngine({ line, start }) {
 }
 
 module.exports = {
-  DEBUG_SWITCHES, LIVE_PORTS, SHORTCUTS, isLiveView, mayCheck, mayNavigate, mayRequest, moveShortcut, notice,
-  originOf, shortcutOk, startOrigin, withoutEngine,
+  CHAT_PATH, CHAT_SIZE, DEBUG_SWITCHES, LIVE_PORTS, SHORTCUTS, chatBounds, isLiveView, mayCheck, mayNavigate,
+  mayRequest, moveShortcut, notice, originOf, shortcutOk, startOrigin, withoutEngine,
 };

@@ -22,6 +22,7 @@ from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HAND_OVER_ANY_SAY, HAND_
                    Pick, Talks, agent_choices, check_say, choices, explicit_pick, is_no, is_send_yes, is_yes, label,
                    number_of, parse_answer, reference_pick, resolve_agent, resolve_among, secret_like, shown_rows,
                    state_summary, tab_hint, talk_prompt, target_state)
+from .talk import PAGE_ANSWERED, PAGE_ONLY, PAGE_SAY_LIMIT  # the floating chat's questions about a page
 
 KINDS = {"needs_reply", "new", "skip"}
 SUGGESTIONS = {"draft", "agent", "tell"}
@@ -703,16 +704,17 @@ class BrainService:
     # ---- talking: the user's own words, spoken or typed in Mission Control ------------------------------------------
 
     async def respond(self, talk: str, text: str, proposal: str | None = None, task: str | None = None,
-                      model: str | None = None) -> dict:
+                      model: str | None = None, page=None) -> dict:
         """The Brain's answer to the user's words. A newer question in the same talk cancels this one (its claude
-        process ends with it), and its answer is never given."""
+        process ends with it), and its answer is never given. `page` (the floating chat's "Ask about it") reads the
+        page the user asked about: it is called once, only when Claude is about to be asked."""
         current = asyncio.current_task()
         earlier = self._asking.get(talk)
         if earlier is not None and earlier is not current and not earlier.done():
             earlier.cancel()
         self._asking[talk] = current
         try:
-            return await self._respond(talk, _clip(text, 2000), proposal, task, model)
+            return await self._respond(talk, _clip(text, 2000), proposal, task, model, page)
         finally:
             if self._asking.get(talk) is current:
                 del self._asking[talk]
@@ -723,7 +725,7 @@ class BrainService:
         return [row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)]
 
     async def _respond(self, talk: str, text: str, proposal_id: str | None, task: str | None,
-                       model: str | None) -> dict:
+                       model: str | None, page=None) -> dict:
         """In this order: the open card, a bare yes or no, a secret, a pending "which agent?" question, then
         Claude."""
         if not text:
@@ -756,8 +758,11 @@ class BrainService:
         elif asking is not None and (pick := resolve_among(text, rows, asking.candidates)).outcome != "none":
             reply = self._answer_pick(talk, pick, asking.words, rows)  # the first words, with no Claude call
         else:
-            reply = await self._ask_claude(talk, text, rows, asking)
+            reply = await self._ask_claude(talk, text, rows, asking, page)
             if "error" in reply:
+                return reply
+            if page is not None:  # about a page: the user's words stay, and the page-shaped answer never does
+                self.talks.add(talk, text, PAGE_ANSWERED)
                 return reply
         self.talks.add(talk, text, reply["say"])
         return reply
@@ -779,18 +784,29 @@ class BrainService:
         waiting = any(row.get("permission") or row.get("check") for row in rows)
         return {"say": NOTHING_OPEN_WAITING if waiting else NOTHING_OPEN}
 
-    async def _ask_claude(self, talk: str, text: str, rows: list[dict], asking=None) -> dict:
+    async def _ask_claude(self, talk: str, text: str, rows: list[dict], asking=None, page=None) -> dict:
+        about = None
+        if page is not None:  # the floating chat's "Ask about it": the page is read now, as Claude is about to be asked
+            about = await page()
+            if not isinstance(about, dict) or about.get("error"):
+                error = about.get("error") if isinstance(about, dict) else ""
+                return {"say": "", "error": str(error or "Couldn't read that page")}
         ids = {row["id"] for row in rows}
         last = self.talks.last_agent(talk)
         items = [item.public() for item in self.store.items()]
         state = state_summary(rows, items, self.store.others, self._working[-1] if self._working else "",
                               last_agent=last if last in ids else None,
                               asking=asking.candidates if asking is not None else None)
-        with self._busy("Thinking about what you said"):
-            answer = await self.ask(talk_prompt(text, self.talks.history(talk), state), model="haiku",
+        with self._busy("Reading the page you asked about" if about is not None else "Thinking about what you said"):
+            answer = await self.ask(talk_prompt(text, self.talks.history(talk), state, page=about), model="haiku",
                                     claude=self.claude, cwd=self.store.folder / "calls", timeout=TALK_TIMEOUT)
         if answer.error:
             return {"say": "", "error": f"The Brain couldn't answer: {answer.error}"}
+        if about is not None:  # about a page, an answer only: page text can't make a card (Plan decision 10)
+            if asking is not None:
+                self.talks.clear_asking(talk)
+            parsed = parse_answer(answer.text, ids, {item["id"] for item in items}, say_limit=PAGE_SAY_LIMIT)
+            return {"say": parsed.say if parsed.action == "none" else PAGE_ONLY}
         parsed = parse_answer(answer.text, ids, {item["id"] for item in items})
         if asking is not None:  # the question ends, unless Claude picked one of the agents it named
             self.talks.clear_asking(talk)
