@@ -121,3 +121,25 @@ def test_the_to_do_list_and_a_sub_agents_task_are_plain_and_bounded():  # Decisi
     assert subagent_task({"description": "Research‮", "prompt": "x"}) == "Research�"
     assert subagent_task({"prompt": "Find the footer's bug and tell me"}) == "Find the footer's bug and tell me"
     assert subagent_task({}) == "a sub-agent"
+
+
+def test_padding_can_never_push_a_commands_end_out_of_sight(project):  # fresh review F3, Decision 2
+    from ai_browser.app.powers import TEXT_LIMIT, card
+
+    padded = card("Bash", {"command": "ls" + " " * 300 + "; rm -rf x"}, project)
+    assert padded["text"] == "ls⟨300 spaces⟩; rm -rf x"  # the rm part is in plain sight
+    assert card("Bash", {"command": "echo a\t\t\t\tb    c"}, project)["text"] == "echo a⟨4 tabs⟩b⟨4 spaces⟩c"
+    assert card("Bash", {"command": "echo a   b"}, project)["text"] == "echo a   b"  # three are left as they are
+    long = card("Bash", {"command": "echo " + "y" * 9000}, project)["text"]
+    assert len(long) <= TEXT_LIMIT and long.endswith(" more characters not shown)")
+    cut = int(long.rsplit("(", 1)[1].split()[0])
+    assert len(long.split("…")[0]) + cut == len("echo " + "y" * 9000)  # it says exactly how much was cut
+
+
+def test_every_page_wraps_the_command_on_its_card():  # fresh review F3: nothing scrolls off to the side
+    from pathlib import Path
+
+    ui = Path(__file__).parents[1] / "src" / "ai_browser" / "app" / "ui"
+    for sheet in ("brainui.css", "chatpage.css"):
+        rule = next(line for line in (ui / sheet).read_text(encoding="utf-8").split("}") if ".permission-text {" in line)
+        assert "white-space: pre-wrap" in rule and "overflow-wrap: anywhere" in rule, sheet

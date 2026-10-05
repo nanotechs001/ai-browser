@@ -64,6 +64,12 @@ LAUNCHERS = frozenset({  # they run another command, which no rule of theirs cou
 RISKY = frozenset({  # Decision 4's, and programs whose saved rule would cover their dangerous uses too
     "rm", "rmdir", "chmod", "chown", "chgrp", "dd", "shred", "truncate", "diskutil", "fdisk", "newfs", "launchctl",
     "crontab", "defaults"})
+# Everyday programs whose saved rule would also cover a use that deletes files or throws work away (fresh review F2):
+# those uses are asked every time, never Always (Decision 4), while the program's other uses still offer it.
+FIND_DELETES = frozenset({"-delete"})  # find removes what it finds
+FIND_RUNS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})  # find runs another program on what it finds
+GIT_DISCARDS = frozenset({"clean", "restore"})  # git deletes untracked files, or throws away uncommitted changes
+GIT_FORCE = ("--force", "--mirror", "--delete")  # git push options that overwrite or delete the remote's work
 INTERPRETERS = frozenset({"python", "python3", "node", "ruby", "perl", "php", "lua", "Rscript"})
 INLINE = frozenset({"-c", "-e", "-p", "-r", "--eval", "--print", "--command"})  # code on the command line
 SUBCOMMANDS = frozenset({"git", "npm", "pnpm", "yarn", "bun", "uv", "pip", "pip3", "poetry", "cargo", "go", "docker",
@@ -80,6 +86,7 @@ _GIT_SECTION = re.compile(r"^\s*\[\s*(include|includeif|alias)\b", re.IGNORECASE
 WHY_NOT_PLAIN = "It isn't one plain command: it has a second command, a pipe, a redirect, a substitution or a glob"
 WHY_LAUNCHER = "It runs another command, which a rule can't cover"
 WHY_RISKY = "It can delete or change files beyond repair"
+WHY_DISCARDS = "It deletes files or throws away work beyond repair"
 WHY_OUTSIDE = "It names a path outside the task's folder"
 WHY_INLINE = "It runs code written on the command line"
 WHY_OPTION = "An option comes before the command's own name"
@@ -119,6 +126,34 @@ def _real(path) -> str:
     return os.path.normcase(os.path.realpath(path))
 
 
+def _identity(path) -> tuple[int, int] | None:
+    """A file's identity on its disk (device, inode), or None when it isn't there. Two spellings name the same folder
+    when their identities match: a case variant on a disk that ignores case (macOS's and Windows' default), where
+    realpath keeps the case it was given (fresh review F1)."""
+    try:
+        info = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (info.st_dev, info.st_ino) if info.st_ino else None
+
+
+def _same(real: str, other: str) -> bool:
+    """Whether two real paths name the same file: as text, or by identity."""
+    if real == other:
+        return True
+    mine = _identity(real)
+    return mine is not None and mine == _identity(other)
+
+
+def _under(real: str, folder: str) -> bool:
+    """Whether the real path `real` is in the real folder `folder`: as text, or because a folder above it is that
+    folder by identity."""
+    if real.startswith(folder.rstrip(os.sep) + os.sep):
+        return True
+    theirs = _identity(folder)
+    return theirs is not None and any(_identity(above) == theirs for above in Path(real).parents)
+
+
 def real_path(path) -> str:
     """A folder as the rules file keys it: ~ expanded, absolute, symlinks and .. resolved."""
     return os.path.realpath(os.path.expanduser(str(path)))
@@ -126,14 +161,14 @@ def real_path(path) -> str:
 
 def inside(path, folder) -> bool:
     """Whether `path` (absolute, ~, or relative to the folder) is the folder or in it, once symlinks and .. are
-    resolved. Anything that isn't a path is outside."""
+    resolved, and however its name is spelled where the disk ignores case. Anything that isn't a path is outside."""
     if not isinstance(path, str) or not path or "\x00" in path:
         return False
     target = Path(os.path.expanduser(path))
     if not target.is_absolute():
         target = Path(folder) / target
     real, root = _real(target), _real(folder)
-    return real == root or real.startswith(root.rstrip(os.sep) + os.sep)
+    return _same(real, root) or _under(real, root)
 
 
 def _targets(word: str) -> list[str]:
@@ -204,6 +239,27 @@ def _prefix(words: list[str]) -> tuple[list[str] | None, str]:
     return words[:2], ""
 
 
+def _destroys(program: str, words: list[str]) -> str:
+    """Why this use of an everyday program deletes files or throws work away, or "": find -delete, -exec, -execdir,
+    -ok or -okdir; git clean, restore, reset --hard, checkout -- / . / --force, push --force (or +branch, --mirror,
+    --delete), branch -D (fresh review F2)."""
+    rest = words[1:]
+    if program == "find":
+        return WHY_DISCARDS if FIND_DELETES & set(rest) else WHY_LAUNCHER if FIND_RUNS & set(rest) else ""
+    if program != "git" or not rest:
+        return ""
+    sub, args = rest[0], rest[1:]
+    short = "".join(arg[1:] for arg in args if arg.startswith("-") and not arg.startswith("--"))  # -fd: f and d
+    force = "--force" in args or "f" in short
+    if sub in GIT_DISCARDS or (sub == "reset" and "--hard" in args) \
+            or (sub == "checkout" and ("--" in args or "." in args or force)) \
+            or (sub == "push" and (force or "d" in short or any(arg.startswith(GIT_FORCE) or arg.startswith("+")
+                                                                for arg in args))) \
+            or (sub == "branch" and ("D" in short or (force and ("--delete" in args or "d" in short)))):
+        return WHY_DISCARDS
+    return ""
+
+
 def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
     if data.get("dangerouslyDisableSandbox") is True:
         return "ask_always", WHY_SANDBOX
@@ -215,6 +271,9 @@ def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
         return "ask_always", WHY_LAUNCHER
     if program in RISKY or program.startswith("mkfs"):
         return "ask_always", WHY_RISKY
+    why = _destroys(program, words)
+    if why:
+        return "ask_always", why
     if any(_outside(word, folder) for word in words[1:]):
         return "ask_always", WHY_OUTSIDE
     if not moved and _harmless(program, words, folder):
@@ -253,8 +312,11 @@ def _guarded(path: str, folder) -> bool:
     an edit there could turn "edit files" into "run programs" (plan decision 7)."""
     target = Path(os.path.expanduser(path))
     target = target if target.is_absolute() else Path(folder) / target
-    parts = Path(os.path.relpath(_real(target), _real(folder))).parts
-    return any(part in (".git", ".claude") for part in parts) or parts[:1] == (".mcp.json",)
+    real, root = _real(target), _real(folder)
+    parts = [part.casefold() for part in Path(os.path.relpath(real, root)).parts]  # .GIT is .git where case is ignored
+    if any(part in (".git", ".claude") for part in parts):
+        return True
+    return Path(real).name.casefold() == ".mcp.json" and _same(str(Path(real).parent), root)
 
 
 def _host(url) -> str:
@@ -305,7 +367,7 @@ def rule_for(tool: str, data) -> str | None:
         if words is None or data.get("dangerouslyDisableSandbox") is True:
             return None
         program = _program(words[0])
-        if program in LAUNCHERS or program in RISKY or program.startswith("mkfs"):
+        if program in LAUNCHERS or program in RISKY or program.startswith("mkfs") or _destroys(program, words):
             return None
         prefix, _ = _prefix(words)
         return f"Bash({' '.join(prefix)}:*)" if prefix else None
@@ -363,6 +425,26 @@ def _clip(value, limit: int = TEXT_LIMIT) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+_PADDING = re.compile(r"[ \t]{4,}")  # a run of blanks long enough to push what follows out of sight
+
+
+def _blanks(match) -> str:
+    run = match.group(0)
+    kind = "spaces" if set(run) == {" "} else "tabs" if set(run) == {"\t"} else "spaces and tabs"
+    return f"⟨{len(run)} {kind}⟩"
+
+
+def _said(value, limit: int = TEXT_LIMIT) -> str:
+    """A card's text: plain, each run of 4 or more spaces or tabs shown as a marker (⟨12 spaces⟩), and when it is too
+    long, clipped with how much was cut. So padding can't push the part the user approves out of sight (fresh review
+    F3)."""
+    text = _PADDING.sub(_blanks, plain(value)) if isinstance(value, str) else ""
+    if len(text) <= limit:
+        return text
+    room = limit - len(f"… ({len(text)} more characters not shown)")
+    return f"{text[:room]}… ({len(text) - room} more characters not shown)"
+
+
 def _line(value, limit: int) -> str:
     """One line: plain, its whitespace squeezed, clipped."""
     return _clip(" ".join(plain(value).split()) if isinstance(value, str) else "", limit)
@@ -413,13 +495,13 @@ def card(tool: str, data, folder, moved: bool = False, sandbox: bool = False) ->
              "folder": _clip(str(folder)), "site": "", "lines": [], "hidden": 0, "size": None, "binary": False,
              "why": why, "always": decision == "ask" and rule_for(tool, data) is not None, "sandbox": ""}
     if tool == "Bash":
-        shown["text"] = _clip(data.get("command"))
+        shown["text"] = _said(data.get("command"))
         if data.get("dangerouslyDisableSandbox") is True:
             shown["title"] = "run a command outside the sandbox"
         elif sandbox:
             shown["sandbox"] = SANDBOXED_OFFLINE if SANDBOX_NETWORK else SANDBOXED
     elif tool in EDITS:
-        shown["text"] = _clip(data.get("file_path"))
+        shown["text"] = _said(data.get("file_path"))
         new = data.get("new_string" if tool == "Edit" else "content")
         old = (data.get("old_string") if isinstance(data.get("old_string"), str) else "") if tool == "Edit" else None
         _lines(shown, old, new if isinstance(new, str) else "")
@@ -427,13 +509,13 @@ def card(tool: str, data, folder, moved: bool = False, sandbox: bool = False) ->
         where = data.get("file_path") if tool == "Read" else data.get("path", str(folder))
         where = where if isinstance(where, str) else ""
         pattern = data.get("pattern") if tool != "Read" and isinstance(data.get("pattern"), str) else ""
-        shown["text"] = _clip(f"{pattern} in {where}" if pattern else where)
+        shown["text"] = _said(f"{pattern} in {where}" if pattern else where)
     elif tool == "WebFetch":
-        shown["text"], shown["site"] = _clip(data.get("url")), _host(data.get("url"))
+        shown["text"], shown["site"] = _said(data.get("url")), _host(data.get("url"))
     elif tool == "WebSearch":
-        shown["text"] = _clip(data.get("query"))
+        shown["text"] = _said(data.get("query"))
     else:
-        shown["text"] = _clip(json.dumps(data, ensure_ascii=False))
+        shown["text"] = _said(json.dumps(data, ensure_ascii=False))
     return shown
 
 
@@ -640,18 +722,18 @@ def check_folder(path, *, home, claude_dirs: Iterable = ()) -> str | None:
         return GONE
     if not given.is_dir():
         return NOT_A_FOLDER
-    real = _real(given)
-    if real == _real(Path(real).anchor or os.sep):
+    real = _real(given)  # compared as text and by identity, so a case variant is the folder it names (F1)
+    if _same(real, _real(Path(real).anchor or os.sep)):
         return WHOLE_DISK
-    if real == _real(user_home()):
+    if _same(real, _real(user_home())):
         return WHOLE_HOME
     rows, exact = _protected(home, claude_dirs)
-    if real in exact:
+    if any(_same(real, folder) for folder in exact):
         return IT_IS.format(what=SYSTEM_FOLDER)
     for folder, what in rows:
-        if real == folder or real.startswith(folder.rstrip(os.sep) + os.sep):
+        if _same(real, folder) or _under(real, folder):
             return IT_IS.format(what=what)
-        if folder.startswith(real.rstrip(os.sep) + os.sep):
+        if _under(folder, real):
             return IT_HOLDS.format(what=what)
     return None
 

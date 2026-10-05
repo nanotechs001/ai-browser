@@ -274,9 +274,14 @@ Web Fetch, sub-agents, and a to-do list.
   - `ls`, `cat`, `pwd`, `git status`, `git diff` and `git log`.
 - **Asked every time, never "Always":**
   - `sudo`, `rm`, `chmod`, `chown`, `dd` and `mkfs`;
+  - uses that delete files or throw work away: `find -delete` or `-exec`, `git clean`, `git reset --hard`,
+    `git checkout -- …`, `git restore`, `git push --force` and `git branch -D`;
   - a download piped into a shell;
   - anything that reads or writes outside the folder, including edits to its `.git` or `.claude` settings;
   - anything that is more than one plain command (`;`, `&&`, `|`, `$(…)`, a redirect).
+- **Always allow trusts the whole program:** once you always-allow a program (`curl`, `sed`, `tar`, `make`), later
+  uses run without a card, and AI Browser can't see inside that program's own options: `curl -T` or `-d @file`,
+  `sed 'w …'`, an archive's `../` entries. Allow only programs you trust with any input.
 - **Your answers are kept per folder** in `~/.ai-browser/permissions.json`. **Settings → Permissions** lists each
   folder with your trust answer and the rules you allowed always, each with **Remove**. A folder that was deleted,
   renamed or unplugged keeps its rules until you remove them.

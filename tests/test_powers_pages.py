@@ -320,3 +320,13 @@ async def test_a_folder_chosen_in_the_dialog_shows_in_the_picker(stack, user_hom
     assert await until(chat, "document.getElementById('folder-ask').textContent.startsWith('Trusted: ')")
     real = json.dumps(os.path.realpath(project))
     assert await until(chat, f"document.getElementById('task-folder').value === {real}")  # what Start will use
+
+
+def test_the_readme_says_always_trusts_the_whole_program():  # fresh review: per-program rules
+    from pathlib import Path
+
+    readme = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for phrase in ("can't see inside that program's own options", "`curl -T`", "`sed 'w …'`",
+                   "Allow only programs you trust with any input", "`find -delete`", "`git reset --hard`",
+                   "`git push --force`", "`git branch -D`"):
+        assert phrase in readme, phrase

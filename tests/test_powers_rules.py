@@ -135,3 +135,29 @@ def test_trust_decides_the_sources_and_the_settings_ask_for_everything(monkeypat
     assert powers.sandbox_on() is (sys.platform == "darwin")  # macOS only: Task 1 probed nothing else
     monkeypatch.setattr(powers, "SANDBOX", False)
     assert powers.sandbox_on() is False
+
+
+def case_blind(folder) -> bool:
+    """Whether this disk treats names alike whatever their case (macOS's and Windows' default)."""
+    return (folder.parent / folder.name.swapcase()).exists()
+
+
+def test_a_case_variant_of_a_refused_folder_is_refused(tmp_path, user_home):  # fresh review F1, Decision 6
+    from ai_browser.app import powers
+
+    home = tmp_path / "aib-home"
+    home.mkdir()
+    (user_home / ".claude").mkdir()
+    (user_home / "Library").mkdir()
+    if not case_blind(user_home / ".claude"):
+        pytest.skip("this disk tells names apart by case: no case variant names the same folder")
+
+    def check(path):
+        return powers.check_folder(str(path), home=home)
+
+    assert "Claude Code's own folder" in check(user_home / ".CLAUDE")  # the same folder as ~/.claude
+    assert "Library" in check(user_home / "LIBRARY")
+    assert "AI Browser's own folder" in check(tmp_path / "AIB-HOME")
+    assert check(tmp_path.parent / tmp_path.name.swapcase()).startswith("That folder holds")
+    assert check(user_home.parent / "USER-HOME") == powers.WHOLE_HOME
+    assert check(home.parent / "Project") is None or not (home.parent / "Project").exists()

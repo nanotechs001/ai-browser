@@ -166,3 +166,34 @@ def test_outside_the_sandbox_the_web_and_bad_input(project):  # plan decision 9,
 def test_a_path_in_a_cluster_of_short_options_is_outside(project, tmp_path, command):  # Decision 4, Review Focus 1
     symlink_or_skip(tmp_path / "outside", project / "link")
     assert decide(command, project) == "ask_always"  # never Always: a saved rule would let it write outside
+
+
+def test_containment_is_blind_to_case_where_the_disk_is(project, tmp_path):  # fresh review F1, Review Focus 2
+    from ai_browser.app.powers import classify, inside
+
+    variant = project.parent / project.name.upper()  # the same folder, spelled otherwise
+    if not variant.exists():
+        pytest.skip("this disk tells names apart by case: no case variant names the same folder")
+    assert inside(str(variant / "src" / "app.py"), project) and inside(str(project / "src" / "app.py"), variant)
+    assert not inside(str(tmp_path / "OUTSIDE" / "secret.txt"), project)
+    for guarded in (".GIT/config", ".Git/hooks/pre-commit", ".CLAUDE/settings.json", ".MCP.json"):
+        assert classify("Write", {"file_path": str(project / guarded), "content": "x"},
+                        project) == "ask_always", guarded  # Git's and Claude Code's settings, however spelled
+
+
+@pytest.mark.parametrize("command", [
+    "find . -delete", "find src -name old.pyc -delete", "find . -exec rm x +", "find . -execdir touch y +",
+    "find . -ok rm x +", "find . -okdir rm x +", "git clean -fdx", "git clean -n", "git reset --hard",
+    "git reset --hard HEAD~1", "git checkout -- src/app.py", "git checkout .", "git restore src/app.py",
+    "git restore --staged src/app.py", "git push --force", "git push -f origin main", "git push origin +main",
+    "git push --force-with-lease", "git branch -D topic"])
+def test_deleting_files_or_discarding_work_never_offers_always(project, command):  # fresh review F2, Decision 4
+    assert decide(command, project) == "ask_always" and rule(command) is None
+
+
+def test_the_safe_uses_of_find_and_git_still_offer_always(project):  # F2 keeps the everyday ones
+    assert decide("find . -name app.py", project) == "ask" and rule("find . -name app.py") == "Bash(find:*)"
+    for command, expected in (("git commit -m 'Fix'", "Bash(git commit:*)"), ("git push origin main", "Bash(git push:*)"),
+                              ("git checkout main", "Bash(git checkout:*)"), ("git branch topic", "Bash(git branch:*)"),
+                              ("git reset src/app.py", "Bash(git reset:*)")):
+        assert decide(command, project) == "ask" and rule(command) == expected, command
