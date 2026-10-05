@@ -323,3 +323,17 @@ async def test_the_chat_shows_the_same_bot_check_card_for_the_users_own_tab(stac
     assert await heard(seen, ("watch", "U1"))
     await js(f"{card}.querySelector('.continue').click(); true")
     assert await heard(seen, ("check_continue", agent.id))
+
+
+def test_the_readme_explains_the_floating_chat():
+    from pathlib import Path
+
+    text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for needed in ("### The floating chat (⌥Space, beside Brave)",
+                   "**Show chat** works even when another app holds the shortcut",
+                   "Privacy & Security → Automation → AI Browser → turn on Brave Browser", "**Ask about it:**",
+                   "It replaces typing `ai` in Brave's address bar", "**Hand over…**",
+                   "the chat never connects by itself", "the Brain only answers, and proposes nothing",
+                   "and for Brave, once more", "The old side panel is gone"):
+        assert needed in text, needed
+    assert "(the floating chat, coming next)" not in text

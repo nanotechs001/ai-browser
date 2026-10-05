@@ -48,12 +48,20 @@ function renderWindow() {
 }
 
 const SHORTCUT_NOTES = { // what Settings says about the saved shortcut, by its state (the app's word on it)
-  ready: (label) => `${label} shows and hides AI Browser. Press it once to check: if another app answers instead, `
+  ready: (label) => `${label} shows and hides the chat. Press it once to check: if another app answers instead, `
     + "pick another shortcut.",
-  works: (label) => `${label} shows and hides AI Browser.`,
+  works: (label) => `${label} shows and hides the chat.`,
   taken: (label) => `${label} is used by another app, so it does nothing here. Pick another shortcut.`,
   off: () => "No shortcut.",
   unknown: () => "",
+};
+
+const SHORTCUT_WHAT = { // what the shortcut does, and where AI Browser's own window opens from instead
+  mac: "The shortcut shows and hides the floating chat from any app. AI Browser's window opens from its Dock icon, "
+    + "or Open AI Browser in the menu-bar icon.",
+  windows: "The shortcut shows and hides the floating chat from any app. AI Browser's window opens from the "
+    + "taskbar, or Open AI Browser in the icon by the clock.",
+  other: "The shortcut shows and hides the floating chat from any app.",
 };
 
 function appState(app) {
@@ -64,6 +72,7 @@ function appState(app) {
 }
 
 function renderShortcut(app) { // the offered shortcuts and Off, the saved one checked
+  $("shortcut-what").textContent = SHORTCUT_WHAT[app.platform] || SHORTCUT_WHAT.other;
   const options = [...(app.shortcuts || []), { value: null, label: "Off" }];
   const box = $("shortcut-choices");
   if (box.dataset.options !== JSON.stringify(options)) { // rebuilt only when the choices change
