@@ -23,8 +23,14 @@
     return Boolean(node && node.getClientRects().length);
   }
 
-  function replyBox() {
-    return [...document.querySelectorAll(S.replyBox)].find(shown) || null;
+  function replyBox() { // the thread's own reply box: in the main region, never a New message window or a dialog
+    return [...document.querySelectorAll(`${S.main} ${S.replyBox}`)].find((box) => shown(box)
+      && !box.closest('[role="dialog"]')) || null;
+  }
+
+  function threadIn(url) { // "t1" from ".../#all/t1": the thread an address names
+    const hash = String(url || "").split("#")[1] || "";
+    return hash.split(/[/?]/).filter(Boolean).pop() || "";
   }
 
   // The reply goes in a block of its own at the top of the reply box, above the signature and the quoted text. A newer
@@ -94,7 +100,11 @@
       });
       return [text(document.querySelector(S.threadSubject)), ...parts].filter(Boolean).join("\n\n");
     },
-    async fill(value) {
+    async fill(value, config = {}) {
+      const want = threadIn(config.url);
+      if (config.url && (!want || !location.hash.replace(/^#/, "").split(/[/?]/).includes(want))) {
+        return { ok: false, reason: "the thread isn't open in this tab" }; // the draft stays; nothing is typed
+      }
       let box = replyBox();
       if (!box) {
         const buttons = [...document.querySelectorAll(S.reply)];

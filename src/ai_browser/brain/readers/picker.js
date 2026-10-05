@@ -48,6 +48,7 @@
       }
 
       function onClick(event) {
+        if (!event.isTrusted) return; // only the user's own click picks: never one the page dispatched
         event.preventDefault();
         event.stopPropagation();
         const picked = event.target instanceof Element ? event.target : current;
@@ -56,7 +57,7 @@
       }
 
       function onKey(event) {
-        if (event.key === "Escape") finish({ cancelled: true });
+        if (event.isTrusted && event.key === "Escape") finish({ cancelled: true });
       }
 
       function finish(answer) {

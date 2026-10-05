@@ -193,6 +193,40 @@ async def test_the_picker_picks_cancels_and_gives_up(tabs):
 
 
 @CHROME
+async def test_a_gmail_reply_never_goes_into_a_new_message_or_another_thread(tabs):  # the coordinator's review, F4
+    open_tab, read, js, base = tabs
+    page = await open_tab(base + "brain/gmail.html#all/t1")
+    await js(page, "(() => { const dialog = document.createElement('div'); dialog.setAttribute('role', 'dialog');"
+                   " const box = document.createElement('div'); box.id = 'new-message'; box.contentEditable = 'true';"
+                   " box.setAttribute('role', 'textbox'); box.textContent = 'Hi Bob,'; dialog.append(box);"
+                   " document.body.prepend(dialog); return true; })()")  # an open New message, first on the page
+    here = {"url": base + "brain/gmail.html#all/t1"}
+    assert await read(page, "fill", "gmail", "Monday works.", here) == {"ok": True, "reason": ""}
+    assert await js(page, "document.getElementById('new-message').innerText") == "Hi Bob,"  # untouched
+    assert (await js(page, "document.getElementById('box').innerText")).startswith("Monday works.")
+    elsewhere = {"url": base + "brain/gmail.html#inbox/t2"}  # the thread being answered isn't the one shown
+    assert await read(page, "fill", "gmail", "Tuesday, then.", elsewhere) == {
+        "ok": False, "reason": "the thread isn't open in this tab"}
+    assert (await js(page, "document.getElementById('box').innerText")).startswith("Monday works.")
+    assert await js(page, "window.sendClicks") == 0
+
+
+@CHROME
+async def test_the_picker_ignores_what_the_page_itself_dispatches(tabs):  # the coordinator's review, F5
+    open_tab, read, js, base = tabs
+    page = await open_tab(base + "brain/orders.html")
+    picking = asyncio.ensure_future(read(page, "pick", timeout=30))
+    await asyncio.sleep(0.5)
+    await js(page, "(() => { const item = document.querySelector('#notes li'); item.id = 'chosen-by-page';"
+                   " item.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));"
+                   " dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); return true; })()")
+    await asyncio.sleep(0.5)
+    assert not picking.done()  # no user click, no user Escape: the pick waits for the user
+    assert await read(page, "unpick") is True
+    assert await asyncio.wait_for(picking, 10) == {"cancelled": True}
+
+
+@CHROME
 async def test_the_page_cant_see_or_change_the_readers(tabs):  # Review Focus 3
     from ai_browser.brain import readers
 
