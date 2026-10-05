@@ -468,10 +468,6 @@ function main() {
     return;
   }
   debug("single-instance lock: held");
-  if (DEBUG) {
-    session.defaultSession.cookies.on("changed", (event, cookie, cause, removed) =>
-      debug(`cookie ${removed ? "removed" : "set"}: ${cookie.name} (${cause})`));
-  }
   app.on("second-instance", () => showWindow("main"));
   app.on("activate", () => showWindow("main")); // a click on the Dock icon
   app.on("before-quit", () => {
@@ -502,6 +498,10 @@ function main() {
   });
   app.whenReady().then(() => {
     debug("ready");
+    if (DEBUG) { // the session exists only once the app is ready
+      session.defaultSession.cookies.on("changed", (event, cookie, cause, removed) =>
+        debug(`cookie ${removed ? "removed" : "set"}: ${cookie.name} (${cause})`));
+    }
     lockSession(session.defaultSession);
     makeMenu();
     answerActions();

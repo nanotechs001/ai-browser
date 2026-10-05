@@ -53,7 +53,8 @@ class Emitter {
   emit(name, ...args) { for (const handler of this.handlers[name] || []) handler(...args); }
 }
 
-const ready = new Promise((resolve) => setTimeout(resolve, plan.ready_after || 0));
+let isReady = false; // as Electron: session.defaultSession throws until the app is ready
+const ready = new Promise((resolve) => setTimeout(resolve, plan.ready_after || 0)).then(() => { isReady = true; });
 const app = Object.assign(new Emitter(), {
   isPackaged: false,
   commandLine: { hasSwitch: (name) => process.argv.some((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`)) },
@@ -141,6 +142,9 @@ class Tray extends Emitter {
   setContextMenu(menu) { this.menu = menu; }
 }
 
+const defaultSession = { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {},
+                         setDevicePermissionHandler: () => {}, on: () => {},
+                         cookies: { get: async () => plan.cookies || [], on: () => {} } };
 const electron = {
   app, BrowserWindow, Notification, Tray,
   Menu: { setApplicationMenu: () => {}, buildFromTemplate: (template) => template },
@@ -164,9 +168,12 @@ const electron = {
   ipcMain: { handle: (channel, handler) => { handlers.set(channel, handler); } },
   nativeImage: { createFromPath: () => ({ resize: () => ({}) }) },
   screen: { getAllDisplays: () => [{ workArea: plan.area || { x: 0, y: 0, width: 1440, height: 900 } }] },
-  session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {},
-                               setDevicePermissionHandler: () => {}, on: () => {},
-                               cookies: { get: async () => plan.cookies || [], on: () => {} } } },
+  session: {
+    get defaultSession() {
+      if (!isReady) throw new Error("Session can only be received when app is ready");
+      return defaultSession;
+    },
+  },
   shell: {},
 };
 
