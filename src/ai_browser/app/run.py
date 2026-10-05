@@ -247,7 +247,7 @@ async def _open_app(home: Path, server: AppServer, url: str, desktop: Callable |
         out(UPDATING)
     server.attach_desktop(app)
     try:
-        await _call(app.launch, f"{url}/open?code={server.new_launch_code()}")
+        await _call(app.launch, lambda: f"{url}/open?code={server.new_launch_code()}")  # made after any rebuild
     except WindowError as exc:
         server.detach_desktop()
         layout.set_problem(home, str(exc))

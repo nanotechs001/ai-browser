@@ -180,3 +180,43 @@ def test_the_app_is_used_only_once_it_is_built_here(tmp_path):
     found = default_desktop(home, "Alt+Shift+Space")
     assert isinstance(found, DesktopWindow) and found.start_shortcut == "Alt+Shift+Space"
     assert (found.id, found.name, found.note) == ("desktop", "AI Browser", "")
+
+
+def first_answer(url: str) -> int:
+    """The status the server gives a start address, without following its redirect."""
+    import http.client
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    connection = http.client.HTTPConnection(parts.hostname, parts.port, timeout=10)
+    try:
+        connection.request("GET", f"{parts.path}?{parts.query}")
+        return connection.getresponse().status
+    finally:
+        connection.close()
+
+
+async def test_the_start_code_is_made_after_a_slow_rebuild(fake_claude, tmp_path, monkeypatch):
+    import time
+
+    from ai_browser.app import run
+    from ai_browser.app import server as server_module
+    from ai_browser.desktop import launch
+    from test_app_server import started
+    from test_bridge import EVENTS
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    log = plan(tmp_path, monkeypatch)
+    monkeypatch.setattr(server_module, "CODE_TTL", 1)  # a start code lives 1 s here (60 s in the product)
+    monkeypatch.setattr(launch, "stale", lambda home, system=None: True)  # a pull changed AI Browser's part,
+    monkeypatch.setattr(launch, "refresh", lambda home, system=None: time.sleep(1.5))  # and the rebuild is slower
+    app = launch.DesktopWindow(server.home, None, system="win32",
+                               program=[fake_python(), str(TESTS / "fake_electron.py")])
+    try:
+        assert await run._open_app(server.home, server, url, lambda home, shortcut: app, None, lambda line: None) is app
+        start = next(entry["got"] for entry in entries(log) if "got" in entry)
+        assert start["open"].startswith(url + "/open?code=")
+        assert await asyncio.to_thread(first_answer, start["open"]) == 303  # still good: made after the rebuild
+    finally:
+        await app.close()
+        await server.stop()

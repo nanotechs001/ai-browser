@@ -29,8 +29,8 @@ class FakeDesktop:
         self.closed = False
         self.ws = None
 
-    async def launch(self, url: str) -> None:
-        self.launched.append(url)
+    async def launch(self, url) -> None:
+        self.launched.append(url() if callable(url) else url)  # the app's address: a function makes it after a rebuild
         if self.launch_error is not None:
             raise self.launch_error
         if self.servers:

@@ -88,9 +88,11 @@ class DesktopWindow:
     def running(self) -> bool:
         return self._process is not None and self._process.returncode is None
 
-    async def launch(self, url: str) -> None:
-        """Start the app on `url` (the /open address with its one-time code), and wait for its hello. A stale app is
-        built again first. DesktopError when it can't start: nothing is left running then."""
+    async def launch(self, url: str | Callable[[], str]) -> None:
+        """Start the app on `url` (the /open address with its one-time code, or a function that makes it), and wait for
+        its hello. A stale app is built again first. A function is called only once the app is up, right before the
+        start: its one-time code (good for a minute) never waits out a rebuild. DesktopError when it can't start:
+        nothing is left running then."""
         if stale(self.home, self.system):
             try:
                 await asyncio.to_thread(refresh, self.home, self.system)
@@ -100,7 +102,7 @@ class DesktopWindow:
         self._hello = asyncio.get_running_loop().create_future()
         try:
             await (self._start_mac() if self.system == "darwin" else self._start_direct())
-            self.send({"type": "start", "open": url, "shortcut": self.start_shortcut})
+            self.send({"type": "start", "open": url() if callable(url) else url, "shortcut": self.start_shortcut})
             hello = await asyncio.wait_for(self._hello, START_WAIT)
         except TimeoutError:
             await self._end_now()
