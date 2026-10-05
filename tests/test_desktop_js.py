@@ -244,8 +244,10 @@ def test_this_page_runs_one_fixed_command_per_system():  # Testing: the exact co
 def test_the_mac_script_reads_two_things_and_never_opens_brave():  # Safety: AppleScript only reads
     script = run_js("return thispage.MAC_SCRIPT;")
     for needed in ('Application("com.brave.Browser")', "brave.running()", "brave.windows[0].activeTab", "tab.url()",
-                   "tab.title()", "JSON.stringify", "-1743"):
+                   "tab.title()", "JSON.stringify", "-1743", "brave.windows[0].mode()", '"incognito"',
+                   'state: "private"'):
         assert needed in script, needed
+    assert script.index('state: "private"') < script.index("tab.url()")  # a private window's tab is never read
     assert script.index("brave.running()") < script.index("brave.windows")  # nothing is asked of a closed Brave
     for never in ("activate", "launch", "open", "make(", "close(", "quit", "reload", "execute", "doJavaScript",
                   "System Events", "keystroke", "click", "delete", "set ", "${", "doShellScript",
@@ -290,6 +292,8 @@ def test_brave_closed_denied_slow_and_broken_answers_are_plain_states():  # Revi
       states.push((await thispage.read("linux", runner)).state);
       return [states, ran];""")
     assert got[0] == ["closed", "denied", "denied", "slow", "failed", "failed", "unsupported"]
+    private = run_js("""return [thispage.parse('{"state":"private"}'), thispage.STATES.includes("private")];""")
+    assert private == [{"state": "private"}, True]  # a private window: its address and title never leave the app
     assert got[1] == [["/usr/bin/osascript", 4]] * 5  # Linux: nothing runs at all
 
 

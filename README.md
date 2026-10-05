@@ -302,8 +302,8 @@ Press the shortcut again, Esc or ✕ to hide it. It needs AI Browser's own app (
   Windows. It never types, clicks or opens anything in Brave, and when Brave isn't running, Brave stays closed.
   - **On a Mac,** macOS asks once whether "AI Browser" may control "Brave Browser". If you said no: System Settings →
     Privacy & Security → Automation → AI Browser → turn on Brave Browser.
-  - When AI Browser can't tell which tab you're on (the same page in two windows, a tab in another profile), pick it
-    from your tabs. If Brave isn't running, or isn't connected to AI Browser, the chat says so: the chat never
+  - When AI Browser can't tell which tab you're on (the same page in two windows, a tab in another profile with its
+    own title, a private window), pick it from your tabs. If Brave isn't running, or isn't connected to AI Browser, the chat says so: the chat never
     connects by itself.
 - **Ask about it:** turn it on, then ask. Only then does AI Browser read that page's words (at most 12,000
   characters, never its scripts), and the Brain answers from them. Page text is data: about a page, the Brain only

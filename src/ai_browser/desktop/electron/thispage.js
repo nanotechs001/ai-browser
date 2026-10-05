@@ -11,8 +11,8 @@ const path = require("node:path");
 
 const OSASCRIPT = "/usr/bin/osascript";
 // JavaScript for Automation (osascript -l JavaScript). running() asks macOS, never Brave, so a closed Brave stays
-// closed. Then only Brave's front window's active tab is asked, for its address and title. Application() of an app
-// that isn't installed throws, with no box. Brave Beta and Nightly are other apps: the chat's picker covers them.
+// closed. Then only Brave's front window is asked: whether it is private (then nothing more: the chat's picker), and
+// its active tab's address and title. Application() of an app that isn't installed throws, with no box. Brave Beta and Nightly are other apps: the chat's picker covers them.
 const MAC_SCRIPT = [
   "(() => {",
   "  const answer = (value) => JSON.stringify(value);",
@@ -25,6 +25,13 @@ const MAC_SCRIPT = [
   "  }",
   "  try {",
   '    if (brave.windows.length === 0) return answer({ state: "nowindow" });',
+  '    let mode = "";',
+  "    try {",
+  "      mode = String(brave.windows[0].mode());",
+  "    } catch (error) {",
+  '      mode = "";',
+  "    }",
+  '    if (mode === "incognito") return answer({ state: "private" });',
   "    const tab = brave.windows[0].activeTab;",
   '    return answer({ state: "ok", url: String(tab.url() || ""), title: String(tab.title() || "") });',
   "  } catch (error) {",
@@ -38,7 +45,7 @@ const WAIT = 20000; // ms for one look: the first time, macOS asks the user, and
 const OUT_LIMIT = 64 * 1024; // characters a look may print
 const URL_LIMIT = 2000;
 const TITLE_LIMIT = 300;
-const STATES = Object.freeze(["ok", "closed", "nowindow", "denied", "failed"]);
+const STATES = Object.freeze(["ok", "closed", "nowindow", "private", "denied", "failed"]);
 const CONTROL = /[\u0000-\u001f\u007f]/g;
 const SYSTEM_ROOT = /^[A-Za-z]:\\[A-Za-z0-9_-]+$/; // C:\Windows, or another single folder on a drive
 

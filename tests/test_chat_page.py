@@ -374,3 +374,12 @@ async def test_start_it_in_this_page_never_hands_over_a_tab_the_user_didnt_mark(
              "document.getElementById('task-start').click(); true")
     assert await eventually(lambda: len(made) == 1)
     assert made[0]["adopt"] is None  # nothing is handed over that the user didn't tick
+
+
+@CHROME
+async def test_a_private_window_is_never_matched_and_offers_your_tabs(stack):  # fix pass 2, I2
+    js, brave = await open_chat(stack, answer={"state": "private"})
+    private = "That's a private window: AI Browser doesn't read those. Pick the tab you mean."
+    assert await until(js, f"{bar('says')}.textContent === {json.dumps(private)}")
+    assert await js(f"{bar('picker')}.hidden") is False and await js(f"{bar('title')}.textContent") == ""
+    assert brave.read_pages == []

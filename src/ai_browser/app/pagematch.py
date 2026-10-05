@@ -1,7 +1,8 @@
 """The floating chat's "This page" (native-app Decision 4): the Brave tab the user is on, as AI Browser's own app read
 it from Brave's front window (an address and a title, nothing else: desktop/electron/thispage.js), matched to the tab
 list (BraveLink.tabs(): the profile where agents browse, and the AI's own tabs).
-- One listed web tab at that address is the one.
+- One listed web tab at that address is the one, when its title is the one read too: a tab in another profile (Gmail
+  in two profiles, say) has the same address, and the title tells them apart. No title read: the address alone.
 - Several are told apart by the title. On Windows, the window's title may go on with " - " and a profile's name.
 - With no address (an address bar the user is typing in), the title alone must name one tab.
 - Anything else is the user's to pick: never a guess.
@@ -49,7 +50,10 @@ def title(text) -> str:
     return " ".join(unicodedata.normalize("NFC", _CONTROL.sub(" ", str(text or ""))).split())
 
 
-def _titled(found: str, listed: str) -> bool:
+def _titled(found: str, listed) -> bool:
+    """Whether the title read (already cut to TITLE_LIMIT by the app and seen()) names this listed title, cut the
+    same way; on Windows it may go on with " - " and a profile's name."""
+    listed = title(str(listed or "")[:TITLE_LIMIT])
     return bool(listed) and (found == listed or found.startswith(listed + " - "))
 
 
@@ -61,9 +65,9 @@ def match(found: dict, tabs) -> str | None:
     if found.get("url"):
         wanted = address(found["url"])
         rows = [tab for tab in rows if address(tab["url"]) == wanted]
-        if len(rows) == 1:
+        if len(rows) == 1 and (not named or _titled(named, rows[0].get("title"))):
             return rows[0]["target"]
     elif not named:
         return None
-    titled = [tab for tab in rows if _titled(named, title(tab.get("title")))]
+    titled = [tab for tab in rows if _titled(named, tab.get("title"))]
     return titled[0]["target"] if len(titled) == 1 else None

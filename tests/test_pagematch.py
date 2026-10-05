@@ -16,7 +16,7 @@ def test_the_one_tab_at_the_address_is_the_one():
     tabs = [CART, NEWS, tab("A1", "https://flights.example/", "Flights", kind="agent")]
     assert match({"url": "https://shop.example/cart", "title": "Cart"}, tabs) == "U1"
     assert match({"url": "shop.example/cart", "title": "Cart"}, tabs) == "U1"  # Windows' address bar: no scheme
-    assert match({"url": "https://www.shop.example/cart/", "title": "Something else"}, tabs) == "U1"
+    assert match({"url": "https://www.shop.example/cart/", "title": ""}, tabs) == "U1"  # no title read: the address
     assert match({"url": "https://flights.example/", "title": "Flights"}, tabs) == "A1"  # the AI's tabs are listed too
     assert match({"url": "https://bank.example/", "title": "Cart"}, tabs) is None  # not listed: another profile
     settings = tab("X", "brave://settings", "Settings")
@@ -57,3 +57,11 @@ def test_what_the_chat_says_it_read_is_kept_to_two_strings():
         "url": "https://shop.example/", "title": "Cart"}
     assert seen({"url": "x" * 5000, "title": "y" * 5000}) == {"url": "x" * URL_LIMIT, "title": "y" * TITLE_LIMIT}
     assert seen({"url": 7, "title": "Cart"}) is None and seen({"title": "Cart"}) is None
+
+
+def test_one_tab_at_the_address_with_another_title_is_yours_to_pick():  # fix pass 2, I2: another profile's tab
+    work = tab("U1", "https://mail.google.com/mail/u/0/#inbox", "Inbox (3) - work@corp.example - Gmail")
+    home = {"url": "https://mail.google.com/mail/u/0/#inbox", "title": "Inbox - me@home.example - Gmail"}
+    assert match(home, [work, NEWS]) is None  # the front tab is another profile's, at the same address: never a guess
+    assert match({**home, "title": "Inbox (3) - work@corp.example - Gmail"}, [work, NEWS]) == "U1"
+    assert match({**home, "title": "Inbox (3) - work@corp.example - Gmail - Work"}, [work]) == "U1"  # Windows
