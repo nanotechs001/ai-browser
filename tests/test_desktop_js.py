@@ -389,3 +389,79 @@ def test_the_engine_gone_after_the_start_quits_the_app(tmp_path):  # Review Focu
     said = names(calls)
     assert ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"] in calls and "new Tray" in said
     assert "dialog.showMessageBox" not in said and calls[-1] == ["app.quit"]
+
+
+# The floating chat: its window, the shortcut and the menu-bar icon's Show chat (on the stand-in Electron)
+START_ALT_SPACE = b'{"type": "start", "open": "http://127.0.0.1:8793/open?code=the-code", "shortcut": "Alt+Space"}\n'
+CHAT = "http://127.0.0.1:8793/chat"
+
+
+def chat_made(calls) -> list:
+    return [call for call in calls if call[:2] == ["new BrowserWindow", "AI Browser chat"]]
+
+
+def shown(calls) -> list:
+    return [call for call in calls if call[0] in ("win.show", "win.hide", "app.hide")]
+
+
+@NEEDS_NODE
+def test_the_shortcut_shows_and_hides_the_chat(tmp_path):  # Review Focus 1, Plan decision 2
+    import sys
+
+    calls = run_main(tmp_path, feed=START_ALT_SPACE, pause=2.0,
+                     steps=[[300, "press"], [600, "press"], [900, "press"], [1100, "blur"], [1300, "press"]])
+    assert ["globalShortcut.register", "Alt+Space"] in calls
+    [made] = chat_made(calls)  # one chat window, made at the first press
+    assert made[2] == {"x": 1044, "y": 48, "width": 380, "height": 560, "alwaysOnTop": True, "skipTaskbar": True}
+    assert [call for call in calls if call[0] == "win.loadURL"] == [
+        ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"], ["win.loadURL", CHAT]]  # its page loads once
+    back = [["app.hide"]] if sys.platform == "darwin" else []  # a Mac: the app that was in front gets the keys back
+    assert shown(calls) == [["win.show", "AI Browser chat"], ["win.hide", "AI Browser chat"], *back,
+                            ["win.show", "AI Browser chat"],
+                            ["win.show", "AI Browser chat"]]  # shown, but behind the user's click: in front again
+    assert ["win.show", "AI Browser"] not in calls  # the shortcut never brings up the main window
+
+
+@NEEDS_NODE
+def test_show_chat_works_when_another_app_holds_the_shortcut(tmp_path):  # Review Focus 1
+    calls = run_main(tmp_path, feed=START_ALT_SPACE, pause=1.5, taken=["Alt+Space"],
+                     steps=[[300, "press"], [500, "tray", "Show chat"], [800, "tray", "Open AI Browser"]])
+    assert ["globalShortcut.register", "Alt+Space"] in calls and ["press"] in calls  # the press reached nobody
+    assert ["tray", "Show chat", True] in calls  # enabled now
+    assert calls.index(["win.show", "AI Browser chat"]) > calls.index(["tray", "Show chat", True])
+    assert ["win.show", "AI Browser"] in calls  # Open AI Browser: the main window, from the menu-bar icon
+
+
+@NEEDS_NODE
+def test_the_chats_window_shows_its_page_and_nothing_else(tmp_path):  # Plan decision 15
+    tries = [["chat", "http://127.0.0.1:8793/home", False], ["chat", CHAT, True], ["chat", CHAT + "#ask", True],
+             ["chat", CHAT + "?x=1", False], ["chat", "https://example.com/", False],
+             ["chat", "http://127.0.0.1:8793/open?code=x", False], ["main", "http://127.0.0.1:8793/home", True],
+             ["main", "https://example.com/", False]]
+    calls = run_main(tmp_path, feed=START, pause=1.5,
+                     steps=[[300, "tray", "Show chat"], *[[500 + 40 * at, "navigate", kind, url]
+                                                          for at, (kind, url, _) in enumerate(tries)]])
+    assert [call[1:] for call in calls if call[0] == "navigate"] == tries
+
+
+@NEEDS_NODE
+def test_a_refused_chat_page_loads_again_the_next_time(tmp_path):
+    calls = run_main(tmp_path, feed=START, pause=1.5, statuses={CHAT: [403, 200]},
+                     steps=[[300, "tray", "Show chat"], [600, "tray", "Show chat"], [900, "tray", "Show chat"]])
+    assert [call for call in calls if call == ["win.loadURL", CHAT]] == [["win.loadURL", CHAT]] * 2  # not a third
+
+
+@NEEDS_NODE
+def test_the_chat_opens_where_it_was_left(tmp_path):  # Decision 4: it remembers its place and size
+    from conftest import file_mode
+
+    place = {"x": 100, "y": 120, "width": 420, "height": 640}
+    run_main(tmp_path, feed=START, pause=1.5, steps=[[300, "tray", "Show chat"], [500, "move", place]])
+    kept = tmp_path / "profile" / "chat.json"
+    assert json.loads(kept.read_text(encoding="utf-8")) == place and file_mode(kept) in (0o600, None)
+    again = run_main(tmp_path, feed=START, pause=1.0, steps=[[300, "tray", "Show chat"]])
+    assert chat_made(again)[0][2] == {**place, "alwaysOnTop": True, "skipTaskbar": True}
+    kept.write_text(json.dumps({"x": 5000, "y": 5000, "width": 420, "height": 640}), encoding="utf-8")  # gone screen
+    gone = run_main(tmp_path, feed=START, pause=1.0, steps=[[300, "tray", "Show chat"]])
+    assert chat_made(gone)[0][2] == {"x": 1044, "y": 48, "width": 380, "height": 560, "alwaysOnTop": True,
+                                     "skipTaskbar": True}

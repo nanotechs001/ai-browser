@@ -1,15 +1,17 @@
 // AI Browser's own app (Electron). `ai-browser app` starts it (desktop/launch.py) and talks to it over one private
 // line (line.js): the start address, with its one-time code, comes that way, never on a command line.
 // - It shows the tab menu at http://127.0.0.1:<port>/app in a window locked down as policy.js says.
-// - It keeps an icon in the menu bar (by the clock on Windows), and holds the shortcut picked in Settings (in part a
-//   it shows and hides the window).
+// - The floating chat: a small window above the others, beside Brave, that shows /chat and nothing else. The shortcut
+//   picked in Settings (⌥Space) shows and hides it from any app, and so does the menu-bar icon's Show chat. It opens
+//   where the user left it, at the size they left it (chat.json, in the profile).
+// - It keeps an icon in the menu bar (by the clock on Windows).
 // - It shows the notifications the engine writes, word for word.
-// Closing the window hides it. Quit ends the app and tells the engine, which stops too. When the engine goes, the app
+// Closing a window hides it. Quit ends the app and tells the engine, which stops too. When the engine goes, the app
 // quits. The packaged app never runs with a debugging port or an inspector, and its pages never get DevTools.
 "use strict";
 
-const { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, ipcMain, nativeImage, session, shell } =
-  require("electron");
+const { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, ipcMain, nativeImage, screen, session,
+        shell } = require("electron");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
@@ -26,6 +28,8 @@ const UNPACKAGED = !app.isPackaged && process.defaultApp === true;
 const ICON = path.join(__dirname, "icon.png");
 const START_WAIT = 20000; // ms for the engine's start message
 const NOTES_KEPT = 20; // notifications whose click still reaches the engine
+const CHAT_FILE = "chat.json"; // in the profile: where the floating chat was, and its size
+const SAVE_AFTER = 500; // ms after the chat stops moving or resizing before its place is kept
 const WEB = Object.freeze({ // every window's webPreferences (makeWindow)
   contextIsolation: true,
   sandbox: true,
@@ -44,7 +48,7 @@ const WEB = Object.freeze({ // every window's webPreferences (makeWindow)
 });
 const ACTIONS = new Map(); // name -> handler: what a page may ask the app for (preload.js lists the same names)
 
-const windows = new Map(); // "main" (the floating chat adds "chat")
+const windows = new Map(); // "main", and "chat" once the floating chat has shown
 const notes = new Map(); // id -> Notification, kept so a click still reaches us
 let own = null; // the app's own origin, http://127.0.0.1:<port>, once the engine has started it
 let send = () => false; // a message to the engine
@@ -55,6 +59,9 @@ let engineQuit = false; // the engine asked for the quit, or went away: there is
 let shortcut = null; // the accelerator registered now
 let pressed = false; // it fired since it was registered
 let tray = null;
+let chatLoaded = false; // the chat's window shows /chat now (the engine answered it with 200)
+let chatFrom = false; // another app was in front when the chat came: on a Mac, hiding the chat goes back to it
+let saving = null; // the timer that keeps the chat's place
 
 function profileFolder() { // <home>/desktop/profile, beside the app (a test's unpackaged Electron: its own)
   const given = process.argv.find((arg) => arg.startsWith(PROFILE));
@@ -131,18 +138,88 @@ function showWindow(kind) {
   if (process.platform === "darwin") app.focus({ steal: true });
 }
 
-function toggleMain() { // the shortcut: AI Browser's window comes forward, or hides when it is in front
+function kindOf(contents) { // which of our windows a page is in: "chat" for the floating chat's, else "main"
+  const chat = windows.get("chat");
+  return chat && chat.webContents === contents ? "chat" : "main";
+}
+
+function chatFile() {
+  return path.join(app.getPath("userData"), CHAT_FILE);
+}
+
+function savedPlace() { // where the chat was last time; null when it never was, or the file can't be read
+  try {
+    return JSON.parse(fs.readFileSync(chatFile(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function keepPlace() { // where the chat is now, for the next time (a write that fails only forgets it)
+  clearTimeout(saving);
+  saving = null;
+  const win = windows.get("chat");
+  if (!win) return;
+  try {
+    fs.writeFileSync(chatFile(), JSON.stringify(win.getBounds()), { mode: 0o600 });
+  } catch {
+    // the first-time place, next time
+  }
+}
+
+function makeChat() { // the floating chat: small, above the other windows, where the user left it
+  const areas = screen.getAllDisplays().map((display) => display.workArea);
+  const win = makeWindow("chat", { ...policy.chatBounds(savedPlace(), areas), minWidth: policy.CHAT_SIZE.minWidth,
+                                   minHeight: policy.CHAT_SIZE.minHeight,
+                                   title: "AI Browser chat", alwaysOnTop: true, minimizable: false,
+                                   maximizable: false, fullscreenable: false, skipTaskbar: true,
+                                   backgroundColor: "#faf9f5", icon: ICON });
+  win.on("close", (event) => { // closing it hides it, like the shortcut
+    if (!quitting) {
+      event.preventDefault();
+      hideChat();
+    }
+  });
+  for (const name of ["moved", "resized"]) {
+    win.on(name, () => {
+      clearTimeout(saving);
+      saving = setTimeout(keepPlace, SAVE_AFTER);
+    });
+  }
+  win.webContents.on("did-navigate", (event, url, code) => {
+    chatLoaded = code === 200 && policy.mayNavigate(url, own, true, "chat");
+  });
+  return win;
+}
+
+function showChat() { // the floating chat comes forward; its page loads the first time, and again after a refusal
+  if (!own) return;
+  const win = windows.get("chat") || makeChat();
+  if (!chatLoaded) win.loadURL(own + policy.CHAT_PATH).catch(() => {});
+  if (!win.isVisible() || !win.isFocused()) chatFrom = BrowserWindow.getFocusedWindow() === null;
+  showWindow("chat");
+}
+
+function hideChat() { // the chat goes, and keeps its place; on a Mac, the app that was in front comes back
+  const win = windows.get("chat");
+  if (!win || !win.isVisible()) return;
+  keepPlace();
+  win.hide();
+  if (process.platform === "darwin" && chatFrom) app.hide();
+}
+
+function toggleChat() { // the shortcut: the floating chat comes forward, or hides when it is the window in front
   if (!pressed) {
     pressed = true; // it works: Settings says so
     send({ type: "shortcut", value: shortcut, ok: true, why: "", pressed: true });
   }
-  const win = windows.get("main");
-  if (win && win.isVisible() && win.isFocused()) win.hide();
-  else showWindow("main");
+  const win = windows.get("chat");
+  if (win && win.isVisible() && win.isFocused()) hideChat();
+  else showChat();
 }
 
 function useShortcut(value, request) { // move the global shortcut, and tell the engine how it went
-  const result = policy.moveShortcut(globalShortcut, shortcut, value, toggleMain);
+  const result = policy.moveShortcut(globalShortcut, shortcut, value, toggleChat);
   if (result.registered !== shortcut) pressed = false;
   shortcut = result.registered;
   send({ type: "shortcut", value: value ?? null, ok: result.ok, why: result.why, pressed: false,
@@ -154,7 +231,7 @@ function lockContents(contents) { // every page, frame and window: AI Browser's 
   contents.on("will-attach-webview", (event) => event.preventDefault());
   for (const name of ["will-navigate", "will-frame-navigate", "will-redirect"]) {
     contents.on(name, (details) => {
-      if (!policy.mayNavigate(details.url, own, details.isMainFrame)) details.preventDefault();
+      if (!policy.mayNavigate(details.url, own, details.isMainFrame, kindOf(contents))) details.preventDefault();
     });
   }
 }
@@ -188,7 +265,7 @@ function makeTray() { // the menu-bar icon (by the clock on Windows)
   tray.setToolTip("AI Browser");
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "Open AI Browser", click: () => showWindow("main") },
-    { label: "Show chat", enabled: false }, // the floating chat: part c
+    { label: "Show chat", click: () => showChat() }, // works whatever the shortcut, even one another app holds
     { type: "separator" },
     { label: "Quit", click: () => app.quit() },
   ]));
@@ -290,6 +367,7 @@ function main() {
   app.on("activate", () => showWindow("main")); // a click on the Dock icon
   app.on("before-quit", () => {
     quitting = true;
+    keepPlace(); // the chat's place, if it has one
     if (!engineQuit) send({ type: "quit" });
   });
   app.on("will-quit", () => globalShortcut.unregisterAll());

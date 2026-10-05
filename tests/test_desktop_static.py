@@ -49,10 +49,13 @@ def test_every_window_is_locked_down():
     assert main.count("new BrowserWindow(") == 1 and "webPreferences: { ...WEB }" in main  # every one: makeWindow
     for needed in ('contents.setWindowOpenHandler(() => ({ action: "deny" }))',
                    '["will-navigate", "will-frame-navigate", "will-redirect"]',
-                   "policy.mayNavigate(details.url, own, details.isMainFrame)", "setPermissionRequestHandler",
+                   "policy.mayNavigate(details.url, own, details.isMainFrame, kindOf(contents))",
+                   "setPermissionRequestHandler",
                    "policy.mayRequest(permission, details, own)", "setPermissionCheckHandler",
                    "setDevicePermissionHandler(() => false)", '"will-download"', '"will-attach-webview"',
-                   "requestSingleInstanceLock()", 'app.on("web-contents-created"', "policy.startOrigin(message.open)"):
+                   "requestSingleInstanceLock()", 'app.on("web-contents-created"', "policy.startOrigin(message.open)",
+                   'title: "AI Browser chat", alwaysOnTop: true',
+                   'win.on("close", (event) => { // closing it hides it'):
         assert needed in main, needed
 
 
@@ -97,8 +100,10 @@ def test_the_windows_script_only_reads_the_front_brave_window():  # Safety: UI A
 
 def test_the_menu_bar_icon_closing_and_quitting():  # Review Focus 4
     main = text("main.js")
-    for item in ('label: "Open AI Browser"', 'label: "Show chat", enabled: false', 'label: "Quit"'):
+    for item in ('label: "Open AI Browser"', 'label: "Show chat", click: () => showChat()', 'label: "Quit"'):
         assert item in main, item
+    assert "policy.moveShortcut(globalShortcut, shortcut, value, toggleChat)" in main  # ⌥Space: the chat
+    assert "function toggleMain()" not in main
     assert 'win.on("close", (event) => {' in main and "win.hide();" in main  # closing hides it
     assert 'send({ type: "quit" })' in main  # Quit tells the engine
     assert re.search(r"\}, \(\) => \{\n    clearTimeout\(waiting\);\n    noEngine\(\);",
