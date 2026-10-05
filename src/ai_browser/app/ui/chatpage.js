@@ -9,7 +9,7 @@ import { checkCard } from "./check.js";
 import { agentLabel, el } from "./chat.js";
 import { connect } from "./link.js";
 import { guardLinks } from "./nav.js";
-import { mountPageBar, pickable } from "./pagebar.js";
+import { host, mountPageBar, pickable } from "./pagebar.js";
 import { permissionCard } from "./permission.js";
 import { mountTalk } from "./talk.js";
 
@@ -22,6 +22,7 @@ const agents = new Map(); // the open agents, by id
 let accounts = []; // Settings → Accounts as the app lists them: names and "signed in", never an email
 let pending = null; // the new_task request waiting for its "created"
 let pendingTimer = null;
+let hereTab = null; // the tab This page showed when "Start it in this page" was last looked at
 let talk = null;
 let bar = null;
 
@@ -87,10 +88,14 @@ function setNew(open) { // New task, shown on its button's click
   if (open) $("task").focus();
 }
 
-function hereChanged(tab) { // Start it in this page: only for one of your own web tabs
+// Start it in this page: only for one of your own web tabs, and only the one the user ticked it on. Another tab, or
+// this tab on another site, unticks it, so Start never hands over a tab the user didn't mark.
+function hereChanged(tab) {
   const mine = Boolean(tab) && pickable([tab]).length === 1;
+  const moved = tab?.target !== hereTab?.target || host(tab?.url) !== host(hereTab?.url);
+  hereTab = tab;
   $("task-here").disabled = !mine;
-  if (!mine) $("task-here").checked = false;
+  if (!mine || moved) $("task-here").checked = false;
 }
 
 function finish() { // the Start's answer came, or never will: Start can be pressed again

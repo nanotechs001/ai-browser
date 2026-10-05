@@ -357,3 +357,20 @@ async def test_ask_about_it_goes_off_when_the_tab_goes_to_another_site(stack):  
     await go("https://bank.example/", "Bank")  # another site: the user never marked it
     assert await js(f"{bar('ask')}.getAttribute('aria-pressed')") == "false"
     assert await js("document.getElementById('talk-text').placeholder") == "Ask the Brain"
+
+
+@CHROME
+async def test_start_it_in_this_page_never_hands_over_a_tab_the_user_didnt_mark(stack):  # fix pass 2, I1
+    made = record_creates(stack)
+    js, _ = await open_chat(stack)
+    assert await until(js, f"{bar('title')}.textContent === 'Cart'")
+    await js("document.getElementById('new-open').click(); true")
+    assert await until(js, "document.getElementById('task-here').disabled === false")
+    await js("document.getElementById('task-here').click(); true")  # ticked on Cart (U1)
+    await look_again(js, {"state": "ok", "url": NEWS["url"], "title": "News"})  # then the user went to News (U2)
+    assert await until(js, f"{bar('title')}.textContent === 'News'")
+    assert await js("document.getElementById('task-here').checked") is False  # the mark was for Cart
+    await js("document.getElementById('task').value = 'compare prices';"
+             "document.getElementById('task-start').click(); true")
+    assert await eventually(lambda: len(made) == 1)
+    assert made[0]["adopt"] is None  # nothing is handed over that the user didn't tick
