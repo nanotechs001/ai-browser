@@ -1,5 +1,5 @@
 """AI Home's phase-2 sections against a real app server (agents on the fake claude): the permission card (also in the
-chat panel and on the watcher's Brain page, with a Brave notification), Tools, Workflows, and Train a new agent."""
+chat panel and Mission Control), Tools, Workflows, and Train a new agent."""
 
 import asyncio
 import json

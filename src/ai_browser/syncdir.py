@@ -2,9 +2,7 @@
 
 write_atomic writes a temp file in the same folder (opened with O_BINARY: without it Windows turns every "\n" into
 "\r\n", which corrupts icon.png and keeps "rewrite only what changed" from ever matching), then replaces the target
-with platforms.replace, which waits out a moment's hold by Defender, Brave or an editor on Windows. sync_folder
-updates a folder in place, as Chrome and Brave need for an unpacked extension: a file is rewritten only when its
-bytes changed, and a file that is no longer wanted is removed."""
+with platforms.replace, which waits out a moment's hold by Defender, Brave or an editor on Windows."""
 
 from __future__ import annotations
 
@@ -29,21 +27,3 @@ def write_atomic(path, data: bytes, mode: int = 0o644) -> None:
         with contextlib.suppress(OSError):
             os.unlink(temp)
         raise
-
-
-def sync_folder(folder, files: dict[str, bytes], keep: set[str]) -> None:
-    """Make `folder` hold `files` (relative POSIX names -> bytes), touching only what changed; the names in `keep`
-    (such as config.json, written apart) stay."""
-    folder = Path(folder)
-    for name, data in files.items():
-        path = folder / name
-        try:
-            if path.read_bytes() == data:
-                continue
-        except OSError:
-            pass
-        write_atomic(path, data)
-    wanted = set(files) | set(keep)
-    for path in list(folder.rglob("*")):
-        if path.is_file() and path.relative_to(folder).as_posix() not in wanted:
-            platforms.unlink(path, missing_ok=True)

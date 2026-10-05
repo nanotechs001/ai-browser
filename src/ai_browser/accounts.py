@@ -349,7 +349,7 @@ class Accounts:
 
     def rows(self) -> list[dict]:
         """The accounts as Settings, the pickers and the asks show them (the snapshot's `accounts`): each one's last
-        status, never an email or an organisation. It never runs Claude Code. Brave's watcher never gets these."""
+        status, never an email or an organisation. It never runs Claude Code."""
         default, brain = self.default_id(), self.brain_id()
         rows = []
         for account in self.list():

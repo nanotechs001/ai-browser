@@ -1519,7 +1519,8 @@ async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude,
             snapshot = await recv(one)
             assert snapshot["settings"] == {"model": None, "voice": False, "window_browser": "auto",
                                             "shortcut": "Alt+Space", "read_tabs": False, "agents_profile": None,
-                                            "watcher_note": True, "window": server.window_info,
+                                            "watcher_note": True, "old_watcher": False,
+                                            "window": server.window_info,
                                             "desktop": server._desktop_payload()}
             await recv(two)
             await one.send(json.dumps({"type": "settings_set", "key": "model", "value": "opus", "request": "s1"}))
@@ -1536,6 +1537,23 @@ async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude,
             assert read_settings(tmp_path / "home") == {"model": "opus"}  # the bad ones changed nothing
     finally:
         await server.stop()
+async def test_the_old_extensions_note_follows_its_folder_and_got_it(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "home"}))
+            assert (await recv(ws))["settings"]["old_watcher"] is False  # no folder: nothing to say
+            folder = tmp_path / "home" / "app" / "watcher"
+            folder.mkdir(parents=True)
+            (folder / "manifest.json").write_text("{}", encoding="utf-8")  # an earlier AI Browser made it
+            await ws.send(json.dumps({"type": "settings_set", "key": "watcher_note", "value": False, "request": "n1"}))
+            seen = (await until(ws, lambda message: message["type"] == "settings"))[-1]
+            assert seen["old_watcher"] is True and seen["watcher_note"] is False  # Got it, remembered
+            assert (folder / "manifest.json").is_file()  # AI Browser never removes it
+    finally:
+        await server.stop()
+
+
 
 
 async def test_a_setting_that_cant_be_saved_is_said_and_changes_nothing(fake_claude, tmp_path):  # Review Focus 3

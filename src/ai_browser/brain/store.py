@@ -58,7 +58,7 @@ class WatchEntry:
     selector: str = ""  # added sites: the part of the page the user picked
     instructions: str = ""  # the user's own words for this site
     enabled: bool = False
-    status: str = ""  # the watcher's latest note ("reader needs an update", "no open tab"); not saved
+    status: str = ""  # the reading's latest note ("reader needs an update", "no open tab"); not saved
 
     def public(self) -> dict:
         return asdict(self)
@@ -89,8 +89,6 @@ class BrainStore:
         self._watch = [WatchEntry(site, label, match) for site, label, match in BUILT_IN]
         self.paused = False
         self.style = ""
-        self.watcher_seen = False  # the watcher has connected once: Brave's one-time setup is done
-        self.watcher_prompted = False  # its setup steps were shown once (with a Finder window)
         self._read_inbox()
         self._read_watch()
 
@@ -179,15 +177,7 @@ class BrainStore:
         self.style = str(text)
         self._save_watch()
 
-    def set_watcher_seen(self) -> None:
-        if not self.watcher_seen:
-            self.watcher_seen = True
-            self._save_watch()
 
-    def set_watcher_prompted(self) -> None:
-        if not self.watcher_prompted:
-            self.watcher_prompted = True
-            self._save_watch()
 
     # ---- files --------------------------------------------------------------------------------------------
 
@@ -214,8 +204,6 @@ class BrainStore:
             entry.status = ""
         self.paused = bool(data.get("paused"))
         self.style = str(data.get("style") or "")
-        self.watcher_seen = bool(data.get("watcher_seen"))
-        self.watcher_prompted = bool(data.get("watcher_prompted"))
 
     def _read(self, name: str) -> dict | None:
         path = self.folder / name
@@ -239,8 +227,7 @@ class BrainStore:
 
     def _save_watch(self) -> None:
         watch = [{key: value for key, value in entry.public().items() if key != "status"} for entry in self._watch]
-        self._write("watch.json", {"watch": watch, "paused": self.paused, "style": self.style,
-                                   "watcher_seen": self.watcher_seen, "watcher_prompted": self.watcher_prompted})
+        self._write("watch.json", {"watch": watch, "paused": self.paused, "style": self.style})
 
     def _write(self, name: str, data: dict) -> None:
         write_atomic(self.folder / name, json.dumps(data).encode("utf-8"), 0o600)

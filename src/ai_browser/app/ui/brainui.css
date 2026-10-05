@@ -1,8 +1,6 @@
-/* The Brain's inbox (brainui.js), in AI Home and on the watcher's Brain page. Colours come from the page's own
-   variables (--card, --line, --muted, --accent…). */
+/* The Brain's inbox (brainui.js), in AI Home and Mission Control. Colours come from the page's own variables (--card,
+   --line, --muted, --accent…). */
 .brain-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
-.brain-watcher { color: var(--wait); }
-.brain-watcher a { color: inherit; }
 .brain-item { display: flex; flex-direction: column; gap: 4px; }
 .brain-item .brain-line { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .brain-item .chip { font-size: 12px; border-radius: 999px; padding: 1px 8px; background: var(--soft); white-space: nowrap; }

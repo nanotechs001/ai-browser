@@ -91,7 +91,7 @@ LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an e
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
 CODE_TTL = 60  # seconds a one-time start code is good for
-SETTING_KEYS = ("model", "voice", "window_browser", "shortcut")
+SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note")  # watcher_note: AI Home's Got it
 NOTES_KEPT = 50  # the app's notifications whose click is still answered
 PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
 APP_SILENT = "AI Browser's app didn't answer: try again"
@@ -408,7 +408,13 @@ class AppServer:
         return bool(given) and hmac.compare_digest(given.encode(), self.ui_secret.encode())
 
     def _settings_payload(self) -> dict:
-        return {**self.settings.get(), "window": dict(self.window_info), "desktop": self._desktop_payload()}
+        return {**self.settings.get(), "window": dict(self.window_info), "desktop": self._desktop_payload(),
+                "old_watcher": self._old_watcher()}
+
+    def _old_watcher(self) -> bool:
+        """Whether an earlier AI Browser's copy of Brave's watcher is still in <home>/app/watcher, so the extension may
+        still be loaded in Brave: AI Home then says the user can remove it. AI Browser never removes either."""
+        return (self.home / "app" / "watcher" / "manifest.json").is_file()
 
     def _settings_set(self, queue: asyncio.Queue, message: dict) -> None:
         request = message.get("request") if isinstance(message.get("request"), (str, int)) else None

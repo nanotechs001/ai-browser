@@ -2,7 +2,7 @@
 // Show me brings the agent's tab forward (or shows the live view of the browser that shows it, through the caller's
 // openLive: in AI Browser's window, a tab of its own), Continue tells the agent the user dealt with it, and Skip this
 // site closes the agent's own tab with the check. The agent never touches the check, and nothing a page says can press
-// these buttons. This file imports nothing, so Brave's watcher can share it.
+// these buttons.
 "use strict";
 
 const LIVE = /^http:\/\/127\.0\.0\.1:\d{1,5}\/live\?token=[A-Za-z0-9_-]{1,64}$/; // an engine's live view, nothing else

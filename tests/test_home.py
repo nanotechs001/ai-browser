@@ -593,10 +593,35 @@ async def test_a_browser_that_isnt_installed_is_greyed_out(home):
 @CHROME
 async def test_ai_homes_words_for_the_window(home):
     js, _ = home
-    assert await js("document.querySelector('.new-task .grow').textContent") == (
-        "Or type ai and a space in Brave's address bar")
+    assert await js("document.querySelector('.new-task .grow').textContent") == ""  # the keyword's line is gone
+    assert await js("document.body.textContent.includes('address bar')") is False
     assert await until(js, "document.querySelector('#agents .empty')?.textContent === "
                            "'No agents yet. Start a task above.'")
+
+
+@CHROME
+async def test_ai_home_says_the_old_extension_can_be_removed_until_got_it(home):
+    js, stack = home
+    server, note = stack["server"], "document.getElementById('watcher-note')"
+    assert await js(f"{note}.hidden") is True  # no old folder here: nothing to say
+    folder = stack["home"] / "app" / "watcher"
+    folder.mkdir(parents=True)
+    (folder / "manifest.json").write_text("{}", encoding="utf-8")  # an earlier AI Browser made it
+    server._send_all({"type": "settings", **server._settings_payload()})
+    assert await until(js, f"!{note}.hidden")
+    text = " ".join((await js(f"{note}.textContent")).split())
+    assert 'You can remove "AI Browser Watcher" from Brave' in text and "brave://extensions" in text
+    assert "AI Browser never removes it for you." in text
+    await js("document.getElementById('watcher-note-close').click()")
+    assert await until(js, f"{note}.hidden")
+    for _ in range(50):
+        if server.settings.get()["watcher_note"] is False:
+            break
+        await asyncio.sleep(0.1)
+    assert server.settings.get()["watcher_note"] is False and (folder / "manifest.json").is_file()
+    server._send_all({"type": "settings", **server._settings_payload()})  # the folder is still there: still hidden
+    await asyncio.sleep(0.3)
+    assert await js(f"{note}.hidden") is True
 
 
 @CHROME

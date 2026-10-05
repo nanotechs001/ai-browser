@@ -32,6 +32,12 @@
     <p id="browser-clients-note" class="muted"></p>
   </div>
 </section>
+<section id="watcher-note" class="card old-watcher" aria-label="Brave's old extension" role="status" hidden>
+  <p>AI Browser doesn't use its Brave extension any more. You can remove "AI Browser Watcher" from Brave: open
+    <code>brave://extensions</code> in Brave and click <strong>Remove</strong> on it. AI Browser never removes it for
+    you.</p>
+  <button id="watcher-note-close" type="button">Got it</button>
+</section>
 <section id="app-card" class="card app-card" aria-label="AI Browser's own app" hidden>
   <div class="line"><strong>Get AI Browser's own app</strong>
     <button id="app-card-close" class="ghost" type="button">Not now</button></div>
@@ -54,7 +60,7 @@
         <option value="haiku">Haiku · fastest</option>
       </select>
       <select id="task-account" aria-label="Account" hidden></select>
-      <span class="muted grow">Or type <kbd>ai</kbd> and a space in Brave's address bar</span>
+      <span class="grow"></span>
       <button id="start" class="primary">Start</button>
     </div>
     <p id="handing" class="muted" hidden><span id="handing-text"></span>

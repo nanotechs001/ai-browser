@@ -1,6 +1,6 @@
-// The AI accounts' pieces that AI Home, Mission Control and Settings share (never Brave's watcher): when a usage limit
-// resets, what an account's status says, the Account picker, an agent's ask (Continue on, Wait for the reset), and the
-// Brain's card. Every text is built here and set as text; none is an email or an organisation.
+// The AI accounts' pieces that AI Home, Mission Control and Settings share: when a usage limit resets, what an
+// account's status says, the Account picker, an agent's ask (Continue on, Wait for the reset), and the Brain's card.
+// Every text is built here and set as text; none is an email or an organisation.
 import { el } from "./chat.js";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

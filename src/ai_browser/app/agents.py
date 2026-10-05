@@ -99,7 +99,7 @@ class Agent:
     # a bot check waiting for the user: {kind, check, what, site, target, adopted, live, since}
     check: dict | None = None
     # AI accounts: the account it runs on, and the usage limit that paused it, if any (public: AI Browser's own pages
-    # show them; WATCHER_AGENT_FIELDS keeps them from the watcher)
+    # show them)
     account: dict = field(default_factory=lambda: {"id": DEFAULT, "name": DEFAULT_NAME})  # {"id", "name"}
     limit: dict | None = None  # {"account": id, "resets_at": seconds since 1970, or None}
     moved: str = ""  # how its last move went: "Moved to Work with its conversation"
@@ -420,7 +420,7 @@ class AgentManager:
                        "since": time.time() if fresh else agent.check["since"]}
         agent.state = "needs_you"
         self._changed(agent)
-        if fresh:  # once per hold: every page, and Brave's watcher
+        if fresh:  # once per hold: every page, and AI Browser's own app
             self._broadcast({"type": "check_request", "agent": agent.id, "name": agent.name,
                              **{key: agent.check[key] for key in ("site", "what", "target", "live")}})
 

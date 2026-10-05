@@ -65,6 +65,8 @@ function applySettings(settings) { // the model picked last, here or in Mission 
   const model = settings.model ?? defaultModel;
   if ([...$("task-model").options].some((option) => option.value === model)) $("task-model").value = model;
   renderAppCard(settings.desktop);
+  // Brave's old extension: AI Browser never removes it, and says until Got it that the user can
+  $("watcher-note").hidden = !(settings.old_watcher === true && settings.watcher_note !== false);
 }
 
 let appCardClosed = false; // Not now: hidden until this page loads again
@@ -643,6 +645,10 @@ $("mission").addEventListener("click", () => openTab("/mission"));
 $("settings").addEventListener("click", () => openTab("/settings"));
 $("start").addEventListener("click", start);
 $("browser-action").addEventListener("click", browserAction);
+$("watcher-note-close").addEventListener("click", () => {
+  $("watcher-note").hidden = true;
+  link.send({ type: "settings_set", key: "watcher_note", value: false });
+});
 $("handing-clear").addEventListener("click", () => setHanding(null));
 $("app-card-close").addEventListener("click", () => {
   appCardClosed = true;

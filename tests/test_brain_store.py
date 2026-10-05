@@ -64,13 +64,12 @@ def test_added_sites_and_settings(tmp_path):
     from ai_browser.brain.store import BrainStore, WatchEntry
 
     store = BrainStore(tmp_path)
-    assert not store.watcher_seen and store.style == "" and not store.paused
+    assert store.style == "" and not store.paused
     store.set_watch(WatchEntry(site="custom:shop.example", label="shop.example", url_match="https://shop.example/*",
                                selector="#orders tbody", instructions="Summarize new orders", enabled=True))
     store.set_style("Short and friendly, sign as Alex")
-    store.set_watcher_seen()
     again = BrainStore(tmp_path)
-    assert again.entry("custom:shop.example").selector == "#orders tbody" and again.watcher_seen
+    assert again.entry("custom:shop.example").selector == "#orders tbody"
     assert again.style == "Short and friendly, sign as Alex"
     again.remove_watch("custom:shop.example")
     assert again.entry("custom:shop.example") is None
@@ -97,3 +96,16 @@ def test_a_damaged_file_is_set_aside_even_while_windows_holds_it(tmp_path, monke
     monkeypatch.setattr(platforms, "WINDOWS", True)  # only the retry loop changes: no Win32 call is made
     BrainStore(tmp_path)
     assert (folder / "inbox.json.bad").read_text(encoding="utf-8") == "not json"
+
+
+def test_an_older_watch_file_loads_and_the_watchers_flags_go(tmp_path):
+    from ai_browser.brain.store import BrainStore
+
+    (tmp_path / "brain").mkdir()
+    (tmp_path / "brain" / "watch.json").write_text(json.dumps({
+        "watch": [], "style": "Short", "watcher_seen": True, "watcher_prompted": True}), encoding="utf-8")
+    store = BrainStore(tmp_path)
+    assert store.style == "Short" and not hasattr(store, "watcher_seen") and not hasattr(store, "watcher_prompted")
+    store.set_style("Shorter")
+    saved = json.loads((tmp_path / "brain" / "watch.json").read_text(encoding="utf-8"))
+    assert saved["style"] == "Shorter" and "watcher_seen" not in saved and "watcher_prompted" not in saved

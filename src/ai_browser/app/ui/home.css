@@ -119,6 +119,10 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .browser-card .line { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
 .browser-card ol { margin: 8px 0 0 18px; padding: 0; }
 .browser-card[data-state="connected"] #browser-title { color: var(--ok); }
+.old-watcher { max-width: 1180px; margin: 12px auto 0; display: flex; gap: 12px; align-items: center;
+               justify-content: space-between; }
+.old-watcher[hidden] { display: none; }
+.old-watcher p { margin: 0; }
 .tab { position: relative; flex-wrap: wrap; }
 .tab .actions { display: flex; gap: 4px; }
 .tab .actions button { font-size: 12px; padding: 1px 8px; }
