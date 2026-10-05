@@ -1,11 +1,12 @@
-// Settings, in its tab of AI Browser's window: AI Browser's own app (its state, its shortcut, its setup), which
-// browser draws that window, the Accounts section (AI accounts), where agents browse, and the Brain's reading of the
-// user's tabs. The choices come from the app; a change is saved there, and the window's browser applies the next time
-// AI Browser starts. Every name is set as text.
+// Settings, in its tab of AI Browser's window: AI Browser's own app (its state, its shortcut, its setup), which browser
+// draws that window, the Accounts section (AI accounts), the folders agents worked in, with their trust and rules
+// (agent powers), where agents browse, and the Brain's reading of the user's tabs. The choices come from the app; a
+// change is saved there, and the window's browser applies the next time AI Browser starts. Every name is set as text.
 import { mountAccounts } from "./accountsettings.js";
 import { mountBrainSettings } from "./brainsettings.js";
 import { connect } from "./link.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
+import { mountPermissions } from "./permsettings.js";
 import { mountPlaceSettings } from "./placesettings.js";
 
 const $ = (id) => document.getElementById(id);
@@ -116,6 +117,7 @@ function renderApp() { // AI Browser's own app: running, set up, or offered (its
 function handle(message) {
   brain.onMessage(message); // Settings → Brain
   place.onMessage(message); // Settings → Where agents browse
+  permissions.onMessage(message); // Settings → Permissions (agent powers)
   if (message.type === "snapshot") {
     current = message.settings || null;
     renderWindow();
@@ -149,6 +151,8 @@ const accounts = mountAccounts({ // Settings → Accounts (AI accounts)
 
 const place = mountPlaceSettings({ choices: $("place-choices"), state: $("place-state") },
                                  (message) => link.send(message));
+const permissions = mountPermissions({ list: $("permissions"), note: $("permissions-note") },
+                                     (message) => link.send(message));
 const brain = mountBrainSettings({ // Settings → Brain (native app part b)
   toggle: $("read-tabs"), state: $("reading-state"), sites: $("brain-sites"), watched: $("brain-watched"),
   pickTab: $("pick-tab"), pickStart: $("pick-start"), pickNote: $("pick-note"),

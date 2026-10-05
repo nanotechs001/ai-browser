@@ -254,3 +254,41 @@ async def test_mission_control_starts_a_task_in_a_recent_folder(stack, user_home
                   "document.getElementById('start').click(); true")
     agents = stack["server"].agents
     assert await settled(lambda: "a1" in agents.agents and agents.agents["a1"].folder == os.path.realpath(project))
+
+
+def folder_box(path):
+    """Settings → Permissions' card for one folder, found by its real path (as text, never a selector)."""
+    return (f"[...document.querySelectorAll('#permissions .perm-folder')]"
+            f".find((node) => node.dataset.path === {json.dumps(os.path.realpath(path))})")
+
+
+@CHROME
+async def test_settings_lists_folders_and_removes_rules_and_trust(stack, user_home, tmp_path):  # Review Focus 4
+    from test_accounts_pages import open_settings
+
+    project, gone = tmp_path / "project", tmp_path / "old-project"
+    project.mkdir()
+    gone.mkdir()
+    rules = stack["server"].agents.rules
+    for rule in ("Bash(npm test:*)", "Edit"):
+        rules.add(project, rule)
+    rules.trust(project)
+    rules.note_used(project)
+    rules.add(gone, "WebSearch")
+    gone.rmdir()  # unplugged since: its rules stay until removed
+    settings = await open_settings(stack)
+    mine, old = folder_box(project), folder_box(gone)
+    assert await until(settings, f"{mine} != null && {old} != null")
+    assert await settings(f"{mine}.querySelector('.trust').textContent") == "Trusted"
+    assert await settings(f"[...{mine}.querySelectorAll('.rule-label')].map((node) => node.textContent)") == [
+        "Run commands that start with: npm test", "Edit and write files in this folder"]
+    assert "isn't there any more" in await settings(f"{old}.querySelector('.missing').textContent")
+    await settings(f"{mine}.querySelector('.rule[data-rule=\"Edit\"] .remove').click(); true")
+    assert await until(settings, f"{mine}.querySelectorAll('.rule-label').length === 1")
+    assert rules.allowed(project) == ["Bash(npm test:*)"]
+    await settings(f"{mine}.querySelector('.untrust').click(); true")
+    assert await until(settings, f"{mine}.querySelector('.trust').textContent === 'Not trusted'")
+    assert rules.trusted(project) is False
+    await settings(f"{old}.querySelector('.forget').click(); true")
+    assert await until(settings, f"{old} == null")
+    assert [row["path"] for row in rules.folders()] == [os.path.realpath(project)]

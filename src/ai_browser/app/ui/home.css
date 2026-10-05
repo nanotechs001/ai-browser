@@ -186,3 +186,12 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .folder-ask p { margin: 0; }
 .folder-ask .folder-path { font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
 #task-folder { max-width: 180px; }
+
+/* Settings → Permissions (agent powers): a card per folder, its trust and its rules. */
+.permissions { display: flex; flex-direction: column; gap: 8px; }
+.perm-folder .top-line { display: flex; gap: 8px; align-items: center; }
+.perm-folder .path { margin: 2px 0; font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+.perm-folder .rules { margin: 4px 0; padding-left: 0; list-style: none; display: flex; flex-direction: column;
+                      gap: 4px; }
+.perm-folder .rule { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.perm-folder .row { display: flex; gap: 6px; }
