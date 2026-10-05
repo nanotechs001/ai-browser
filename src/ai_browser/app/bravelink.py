@@ -5,7 +5,9 @@ agent and every Claude Code session share, so Brave asks "Allow remote debugging
 That connection opens only right after something the user did (the app starting, Connect or Try again in AI Home, an
 agent starting a turn, a session's browser call). While it isn't connected the relay looks at the switch every few
 seconds with a TCP check alone, which never opens a debugging session. The app never attaches to, reads or pictures a
-tab of the user's: only the AI's tabs, a tab handed over, or the page the user picked in the Train form.
+tab of the user's: only the AI's tabs, a tab handed over, or the page the user picked in the Train form; and, while
+Settings → Brain's switch is on, the user's Gmail, Slack and Asana tabs and the parts of pages they picked to watch,
+where the Brain's readers run in an isolated world (may_run decides; app/inworld.py runs).
 
 AI Home lists the user's web tabs of one profile only, the agents' (the one the watcher runs in, else the one Brave
 used last): other profiles and private windows are only counted. The AI's tabs are listed wherever they are. Context
@@ -18,6 +20,8 @@ import contextlib
 from collections.abc import Callable
 from pathlib import Path
 
+from ..brain import readers
+from . import inworld
 from .cdprelay import ALLOW_WAIT, SWITCH_EVERY, Relay, Tokens
 from .tabs import TabWatch
 
@@ -45,6 +49,8 @@ class BraveLink:
         self._watcher_contexts: set[str] = set()  # every context its worker was seen in, on this connection
         self._seen_on: TabWatch | None = None  # the connection those were seen on: a new one starts again
         self._last = None  # (connection, rows, scope) last sent to the on_change callbacks
+        self.brain_reading: Callable[[], bool] = lambda: False  # the server's: Settings → Brain's switch
+        self.brain_site: Callable[[str], str | None] = lambda url: None  # the server's: which site an address is
         self.relay.on_state(self._state_changed)  # first: the tab list follows the connection
 
     # ---- the connection (the relay's) ------------------------------------------------------------------------
@@ -203,6 +209,47 @@ class BraveLink:
         found = [tab["target"] for tab in self.tabs() if tab["url"] == url and tab["owner"]["kind"] == "you"]
         if len(found) == 1:
             self.set_owner(found[0], {"kind": "brain", "name": "Brain", "color": "purple"})
+
+    # ---- the Brain's readers: which tab may be read, and running them there -----------------------------------
+
+    def client(self):
+        """The relay's in-process client the tab list reads through, while Brave is connected; else None."""
+        watch = self._watch
+        return watch.cdp if watch is not None and not watch.closed else None
+
+    def brain_tabs(self) -> list[dict]:
+        """The user's tabs the Brain may read now, as {"target", "url", "site"}: listed in tabs() (the profile where
+        agents browse; the user's own, a Brain row too), web pages, on a site the Brain reads. None while Settings →
+        Brain's switch is off, or while Brave isn't connected."""
+        if self._watch is None or not self.brain_reading():
+            return []
+        found = []
+        for tab in self.tabs():
+            site = self.brain_site(tab["url"]) if tab["owner"]["kind"] in USERS and tab["url"].startswith(WEB) else None
+            if site:
+                found.append({"target": tab["target"], "url": tab["url"], "site": site})
+        return found
+
+    def may_run(self, target: str, purpose: str) -> bool:
+        """Whether one of AI Browser's page scripts may run in this tab, for this purpose. "brain": a tab brain_tabs()
+        lists. "pick": one of the user's listed web tabs, while Settings → Brain's switch is on (the user clicked
+        Pick the part to watch there). Never another profile's tab or a private window's, never an agent's for the
+        Brain, and nothing while Brave isn't connected."""
+        if purpose == "brain":
+            return any(tab["target"] == target for tab in self.brain_tabs())
+        if purpose == "pick":
+            tab = next((tab for tab in self.tabs() if tab["target"] == target), None)
+            return (tab is not None and self.brain_reading() and tab["owner"]["kind"] in USERS
+                    and tab["url"].startswith(WEB))
+        return False
+
+    async def run_reader(self, target: str, purpose: str, name: str, *args, timeout: float = inworld.SCRIPT_WAIT):
+        """One of the Brain's readers (brain/readers/) in the tab's isolated world, only where may_run says so: its
+        plain JSON answer. inworld.WorldError says, in plain words, why it couldn't."""
+        if not self.may_run(target, purpose):
+            raise inworld.WorldError("AI Browser doesn't read that tab")
+        return await inworld.run(self.client(), target, readers.call(name, *args), install=readers.BUNDLE,
+                                 missing=readers.MISSING, timeout=timeout)
 
     # ---- actions ---------------------------------------------------------------------------------------------
 

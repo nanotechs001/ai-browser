@@ -14,6 +14,7 @@ import contextlib
 from collections.abc import Callable
 
 from ..cdp import CDP, CDPError
+from . import inworld
 
 THUMB_WIDTH = 320  # pixels: enough to recognise a page in an AI Home row
 THUMB_TIMEOUT = 3  # seconds; a page too busy to draw gets no new thumbnail this time
@@ -69,6 +70,11 @@ class TabWatch:
     @property
     def closed(self) -> bool:
         return self._cdp is None or self._cdp.closed
+
+    @property
+    def cdp(self):
+        """The connection this list reads through (in brave mode, the relay's in-process client)."""
+        return self._cdp
 
     # ---- the tab list -------------------------------------------------------------------------------------
 
@@ -170,19 +176,14 @@ class TabWatch:
         read quickly."""
         try:
             return await asyncio.wait_for(self._text(target), THUMB_TIMEOUT)
-        except (TimeoutError, CDPError, KeyError, ValueError):
+        except (TimeoutError, CDPError, KeyError, ValueError, inworld.WorldError):
             return ""
 
     async def _text(self, target: str) -> str:
-        cdp = self._cdp
-        session = (await cdp.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
-        try:
-            result = await cdp.send("Runtime.evaluate", {"expression": "document.body ? document.body.innerText : ''",
-                                                         "returnByValue": True}, session_id=session)
-            return str(result.get("result", {}).get("value") or "")[:PAGE_TEXT_LIMIT]
-        finally:
-            with contextlib.suppress(CDPError):
-                await cdp.send("Target.detachFromTarget", {"sessionId": session})
+        """Read in AI Browser's isolated world: the page's own scripts can't change what is read."""
+        value = await inworld.run(self._cdp, target, "document.body ? document.body.innerText : ''",
+                                  timeout=THUMB_TIMEOUT)
+        return str(value or "")[:PAGE_TEXT_LIMIT]
 
     async def thumbnail(self, target: str) -> bytes | None:
         """A small JPEG of what the tab shows now, or None if it can't be had quickly."""
