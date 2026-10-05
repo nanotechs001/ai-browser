@@ -342,3 +342,19 @@ async def test_an_agents_mcp_json_holds_its_own_token_and_the_relay(fake_claude,
     assert env["AIB_APP_CDP"] == "ws://127.0.0.1:8792/cdp" and env["AIB_APP_AGENT_TOKEN"] == "token-of-a1"
     assert file_mode(config) in (0o600, None)
     await agents.close_all()
+
+
+def test_agents_start_ai_browsers_mcp_server_with_this_python_or_the_frozen_exe(tmp_path, monkeypatch):
+    import sys
+
+    from ai_browser.app.bridge import ClaudeBridge
+
+    def server() -> dict:
+        path = ClaudeBridge(tmp_path / "home", agent_id="a1")._mcp_config()
+        return json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["ai-browser"]
+
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert (server()["command"], server()["args"]) == (sys.executable, ["-m", "ai_browser.cli", "mcp"])
+    monkeypatch.setattr(sys, "frozen", True, raising=False)  # AI Browser.exe, the Windows test build (packaging/)
+    assert (server()["command"], server()["args"]) == (sys.executable, ["mcp"])
+    assert server()["env"]["PYTHONUTF8"] == "1"

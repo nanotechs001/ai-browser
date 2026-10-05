@@ -153,6 +153,14 @@ def test_unlink_and_rmtree_wait_out_a_short_hold(tmp_path, monkeypatch):
     assert not (tmp_path / "file").exists() and not (tmp_path / "folder").exists()
 
 
+def test_self_command_starts_this_ai_browser_again(monkeypatch):
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert platforms.self_command("mcp") == [sys.executable, "-m", "ai_browser.cli", "mcp"]
+    monkeypatch.setattr(sys, "frozen", True, raising=False)  # PyInstaller's AI Browser.exe (packaging/): no -m there
+    assert platforms.self_command("mcp") == [sys.executable, "mcp"]
+    assert platforms.self_command() == [sys.executable]
+
+
 def test_pid_alive():
     import subprocess
 
