@@ -1,8 +1,10 @@
-"""The Windows test build (packaging/): its helper builds AI Browser's own app beside AI Browser.exe with the project's
-own download and assemble code, then zips the package. The Electron release is a miniature
-(tests/fake_electron_zip.py): no test downloads Electron, and no test runs PyInstaller."""
+"""The Windows test build (packaging/, .github/workflows/windows-app.yml): the workflow runs only by hand, and its
+helper builds AI Browser's own app beside AI Browser.exe with the project's own download and assemble code, then zips
+the package. The Electron release is a miniature (tests/fake_electron_zip.py): no test downloads Electron, and no
+test runs PyInstaller."""
 
 import importlib.util
+import re
 import zipfile
 from pathlib import Path
 
@@ -82,3 +84,32 @@ def test_the_zip_holds_the_package_under_its_own_name(windows_app, tmp_path):
         assert zipped.read("AI Browser/_internal/skills/SKILL.md") == b"# skill"
     assert "AI Browser/AI Browser.exe" in names and all(name.startswith("AI Browser/") for name in names)
 
+
+def test_the_windows_build_runs_only_by_hand_with_pinned_actions():
+    import yaml
+
+    text = (ROOT / ".github" / "workflows" / "windows-app.yml").read_text(encoding="utf-8")
+    workflow = yaml.safe_load(text)
+    assert workflow["name"] == "Build Windows app"
+    assert list(workflow[True]) == ["workflow_dispatch"]  # PyYAML reads `on:` as True: never a push or a schedule
+    assert workflow["permissions"] == {"contents": "read"}
+    job = workflow["jobs"]["build"]
+    assert job["runs-on"] == "windows-latest" and job["timeout-minutes"] == 40
+    tests = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    pins = set(re.findall(r"uses: (\S+@[0-9a-f]{40}) +# v\d", tests))
+    uses = [step["uses"] for step in job["steps"] if "uses" in step]
+    assert len(uses) == 3 and set(uses) == pins  # checkout, setup-uv and upload-artifact, pinned as tests.yml pins them
+    assert len(re.findall(r"uses: \S+@[0-9a-f]{40} +# v\d", text)) == 3
+    assert "secrets." not in text
+    runs = [step.get("run", "") for step in job["steps"]]
+    assert "uv sync --locked --group packaging" in runs  # the project with PyInstaller, and no voice extra
+    assert any("pyinstaller" in run and "packaging/ai-browser.spec" in run for run in runs)
+    assert any("windows_app.py electron" in run for run in runs)
+    assert any("windows_app.py zip" in run and "AI-Browser-windows.zip" in run for run in runs)
+    upload = next(index for index, step in enumerate(job["steps"]) if "upload-artifact" in step.get("uses", ""))
+    given = job["steps"][upload]["with"]
+    assert given["path"] == "AI-Browser-windows.zip" and given["archive"] is False  # the zip itself, not a zip in a zip
+    assert given["retention-days"] == 14 and given["if-no-files-found"] == "error"
+    assert "windows_app.py check" in job["steps"][upload + 1]["run"]  # after the upload: the zip is there either way
+    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["persist-credentials"] is False

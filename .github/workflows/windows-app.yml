@@ -1,0 +1,32 @@
+name: Build Windows app
+# A test build of AI Browser for Windows: AI-Browser-windows.zip, with AI Browser.exe and AI Browser's own app
+# (Electron) beside it. It runs only by hand (Actions → Build Windows app → Run workflow); the zip is on the run's
+# page, under Artifacts, for 14 days. It is unsigned: Windows' SmartScreen asks before the first start.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - run: uv sync --locked --group packaging
+      - name: Package the engine as AI Browser.exe (one folder)
+        run: uv run --no-sync pyinstaller --noconfirm --clean --distpath dist --workpath build packaging/ai-browser.spec
+      - name: Add AI Browser's own app beside it (Electron 44.5.1, checked against its SHASUMS256.txt)
+        run: uv run --no-sync python packaging/windows_app.py electron "dist/AI Browser"
+      - name: Zip it
+        run: uv run --no-sync python packaging/windows_app.py zip "dist/AI Browser" AI-Browser-windows.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          path: AI-Browser-windows.zip
+          archive: false
+          retention-days: 14
+          if-no-files-found: error
+      - name: Check that it starts (after the upload, so the zip is there either way)
+        run: uv run --no-sync python packaging/windows_app.py check "dist/AI Browser" --bundled
