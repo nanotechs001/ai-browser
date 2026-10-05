@@ -19,8 +19,13 @@ import json
 import os
 import re
 import shlex
+import sys
+import time
+from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from ..syncdir import write_atomic
 
 # Task 1's probe sets these (the plan's rulings R1 to R4): facts about Claude Code 2.1.263 on macOS, not choices.
 # Task 1: Ruling: the probe is deferred to the user (it needs a hand sign-in); the build uses the safest values until
@@ -472,3 +477,194 @@ def todos(data) -> list[dict]:
         if len(out) == TODO_LIMIT:
             break
     return out
+
+
+# ---- the user's rules and trusted folders, and the folders no task may use (Decisions 5 to 7) ------------------------
+
+FILE = "permissions.json"
+_RULE = re.compile(r"Bash\([A-Za-z0-9_./][^\x00-\x1f()]{0,499}:\*\)|Edit|WebSearch"
+                   r"|WebFetch\(domain:[a-z0-9.-]{1,253}\)")  # the rules AI Browser keeps; never a wildcard
+TRUSTED_SOURCES = "local,project"  # Decision 7: its CLAUDE.md, its .claude agents and its settings load
+NOT_A_PATH = "Give the folder's full path"
+GONE = "That folder isn't there: it was deleted, renamed or unplugged"
+NOT_A_FOLDER = "That's a file, not a folder"
+WHOLE_DISK = "That's the whole disk: pick a project folder"
+WHOLE_HOME = "That's your whole home folder: pick a project folder in it"
+IT_IS = "That folder is {what}: pick a project folder"
+IT_HOLDS = "That folder holds {what}: pick a project folder"
+CLAUDE_FOLDER = "Claude Code's own folder, with your logins"
+SYSTEM_FOLDER = "a system folder"
+SYSTEM_INSIDE = ("/System", "/Library", "/bin", "/sbin", "/usr", "/etc", "/private/etc", "/dev", "/Applications",
+                 "/cores")  # refused, and everything in them
+SYSTEM_EXACT = ("/Users", "/Volumes", "/private", "/var", "/tmp", "/opt", "/Network", "/home")  # these alone
+WINDOWS_SYSTEM = ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData")
+
+
+def rule_label(rule: str) -> str:
+    """A rule in Settings → Permissions' words."""
+    if rule == "Edit":
+        return "Edit and write files in this folder"
+    if rule == "WebSearch":
+        return "Search the web"
+    if rule.startswith("Bash(") and rule.endswith(":*)"):
+        return f"Run commands that start with: {rule[5:-3]}"
+    if rule.startswith("WebFetch(domain:") and rule.endswith(")"):
+        return f"Fetch pages from {rule[16:-1]}"
+    return rule
+
+
+def _valid(entry: dict) -> list[str]:
+    rules = entry.get("rules")
+    return [rule for rule in rules if isinstance(rule, str) and _RULE.fullmatch(rule)] if isinstance(rules, list) \
+        else []
+
+
+class Rules:
+    """The user's answers per folder (its real path), in <home>/permissions.json (mode 0600):
+    {"folders": {"<real path>": {"trusted": true | false, "rules": ["Bash(npm test:*)", …], "used": <seconds>}}}.
+    A missing or damaged file reads as no folders and never raises; a write keeps every folder and key it doesn't
+    change. A folder that was deleted, renamed or unplugged keeps its entry until the user removes it (Review Focus
+    4)."""
+
+    def __init__(self, home):
+        self.path = Path(home) / FILE
+
+    def _whole(self) -> dict:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _folders(self) -> dict[str, dict]:
+        folders = self._whole().get("folders")
+        if not isinstance(folders, dict):
+            return {}
+        return {path: entry for path, entry in folders.items() if isinstance(path, str) and isinstance(entry, dict)}
+
+    def _change(self, folder, change) -> None:
+        """One folder's entry changed by `change(entry)` and written back; `change` returning False forgets it."""
+        whole, folders, key = self._whole(), self._folders(), real_path(folder)
+        entry = dict(folders.get(key) or {})
+        if change(entry) is False:
+            folders.pop(key, None)
+        else:
+            folders[key] = entry
+        whole["folders"] = folders
+        write_atomic(self.path, (json.dumps(whole, indent=1, ensure_ascii=False) + "\n").encode("utf-8"), 0o600)
+
+    def _entry(self, folder) -> dict:
+        return self._folders().get(real_path(folder)) or {}
+
+    def allowed(self, folder) -> list[str]:
+        return _valid(self._entry(folder))
+
+    def add(self, folder, rule) -> None:
+        if not isinstance(rule, str) or not _RULE.fullmatch(rule):
+            raise ValueError(f"Not a rule AI Browser keeps: {rule!r}")
+
+        def change(entry):
+            rules = _valid(entry)
+            entry["rules"] = rules if rule in rules else [*rules, rule]
+
+        self._change(folder, change)
+
+    def remove(self, folder, rule) -> None:
+        self._change(folder, lambda entry: entry.update(rules=[kept for kept in _valid(entry) if kept != rule]))
+
+    def trusted(self, folder) -> bool | None:
+        value = self._entry(folder).get("trusted")
+        return value if isinstance(value, bool) else None
+
+    def trust(self, folder) -> None:
+        self._change(folder, lambda entry: entry.update(trusted=True))
+
+    def untrust(self, folder) -> None:
+        self._change(folder, lambda entry: entry.update(trusted=False))
+
+    def note_used(self, folder) -> None:
+        self._change(folder, lambda entry: entry.update(used=time.time()))
+
+    def forget(self, folder) -> None:
+        self._change(folder, lambda entry: False)
+
+    def folders(self) -> list[dict]:
+        """Every folder the user answered for, newest first: for Settings → Permissions and the picker's recents."""
+        rows = []
+        for path, entry in self._folders().items():
+            trusted, used = entry.get("trusted"), entry.get("used")
+            rows.append({"path": path, "name": Path(path).name or path,
+                         "trusted": trusted if isinstance(trusted, bool) else None, "missing": not os.path.isdir(path),
+                         "used": used if isinstance(used, (int, float)) and not isinstance(used, bool) else 0,
+                         "rules": [{"rule": rule, "label": rule_label(rule)} for rule in _valid(entry)]})
+        return sorted(rows, key=lambda row: row["used"], reverse=True)
+
+    def claude_rules(self, folder) -> list[str]:
+        """The rules handed to Claude Code as --allowedTools: a site's only (plan decision 1)."""
+        return [rule for rule in self.allowed(folder) if rule.startswith("WebFetch(domain:")]
+
+
+def _protected(home, claude_dirs: Iterable) -> tuple[list[tuple[str, str]], list[str]]:
+    """(folders refused with everything in them, and what each is), and the system's folders refused alone."""
+    user = user_home()
+    inside_rows = [(user / "Library", "your Library folder, where apps keep their data"),
+                   (user / ".claude", CLAUDE_FOLDER), (Path(home), "AI Browser's own folder")]
+    inside_rows += [(Path(folder), CLAUDE_FOLDER) for folder in claude_dirs if folder]
+    exact: list[str] = []
+    if os.name == "nt":
+        inside_rows += [(Path(os.environ[name]), SYSTEM_FOLDER) for name in WINDOWS_SYSTEM if os.environ.get(name)]
+        inside_rows += [(user / "AppData", "your AppData folder, where apps keep their data")]
+    else:
+        inside_rows += [(Path(folder), SYSTEM_FOLDER) for folder in SYSTEM_INSIDE]
+        exact = [_real(folder) for folder in SYSTEM_EXACT]
+    return [(_real(path), what) for path, what in inside_rows], exact
+
+
+def check_folder(path, *, home, claude_dirs: Iterable = ()) -> str | None:
+    """Why `path` can't be a task's folder (Decision 6), or None. `home` is AI Browser's own; `claude_dirs` are Claude
+    Code's folders (the environment's CLAUDE_CONFIG_DIR and each account's). Compared after realpath, so a symlink to
+    a refused folder is refused too; a folder that holds a refused one is refused as well."""
+    if not isinstance(path, str) or not path.strip() or len(path) > 4096 or "\x00" in path:
+        return NOT_A_PATH
+    given = Path(os.path.expanduser(path.strip()))
+    if not given.is_absolute():
+        return NOT_A_PATH
+    if not given.exists():
+        return GONE
+    if not given.is_dir():
+        return NOT_A_FOLDER
+    real = _real(given)
+    if real == _real(Path(real).anchor or os.sep):
+        return WHOLE_DISK
+    if real == _real(user_home()):
+        return WHOLE_HOME
+    rows, exact = _protected(home, claude_dirs)
+    if real in exact:
+        return IT_IS.format(what=SYSTEM_FOLDER)
+    for folder, what in rows:
+        if real == folder or real.startswith(folder.rstrip(os.sep) + os.sep):
+            return IT_IS.format(what=what)
+        if folder.startswith(real.rstrip(os.sep) + os.sep):
+            return IT_HOLDS.format(what=what)
+    return None
+
+
+def setting_sources(trusted: bool) -> str:
+    """--setting-sources for the task's folder (Decision 7, plan decision 2)."""
+    return TRUSTED_SOURCES if trusted else UNTRUSTED_SOURCES
+
+
+def sandbox_on() -> bool:
+    """Whether commands run in Claude Code's sandbox: where Task 1's probe saw it hold (R1), on macOS only."""
+    return SANDBOX and sys.platform == "darwin"
+
+
+def claude_settings(sandbox: bool) -> dict:
+    """The agent's --settings: every command, read and edit asked of the app (R3, plan decision 3), and the Bash
+    sandbox where it holds (R1). A sandboxed command is still asked (plan decision 9)."""
+    settings: dict = {}
+    if ASK_ALL:
+        settings["permissions"] = {"ask": list(ASKED)}
+    if sandbox:
+        settings["sandbox"] = {"enabled": True, "autoAllowBashIfSandboxed": False, "allowUnsandboxedCommands": True}
+    return settings
