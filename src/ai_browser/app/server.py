@@ -100,7 +100,7 @@ PICK_WAIT = 120.0  # seconds a pick may take: the user points and clicks in Brav
 PICK_OFF = "Turn on Read my Gmail, Slack and Asana tabs first"
 PICK_TAB = "Pick one of your open tabs in Brave"
 # watcher_note: AI Home's Got it; read_tabs: Settings → Brain's switch
-SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs")
+SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs", "agents_profile")
 NOTES_KEPT = 50  # the app's notifications whose click is still answered
 PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
 APP_SILENT = "AI Browser's app didn't answer: try again"
@@ -422,7 +422,12 @@ class AppServer:
 
     def _settings_payload(self) -> dict:
         return {**self.settings.get(), "window": dict(self.window_info), "desktop": self._desktop_payload(),
-                "old_watcher": self._old_watcher()}
+                "old_watcher": self._old_watcher(), "profiles": self._profiles()}
+
+    def _profiles(self) -> list[dict]:
+        """Brave's profiles for Settings → Where agents browse (folder, name, colour; never an email), or none
+        without Brave. Only AI Browser's own pages get them: never Claude, an agent or the Brain."""
+        return self.brave.place.profiles() if self.brave is not None else []
 
     def _old_watcher(self) -> bool:
         """Whether an earlier AI Browser's copy of Brave's watcher is still in <home>/app/watcher, so the extension may
@@ -434,6 +439,11 @@ class AppServer:
         key = message.get("key")
         if key not in SETTING_KEYS:
             queue.put_nowait({"type": "error", "text": "There is no such setting", "request": request})
+            return
+        value = message.get("value")
+        if key == "agents_profile" and value is not None and (not isinstance(value, str) or value not in {
+                profile["folder"] for profile in self._profiles()}):
+            queue.put_nowait({"type": "error", "text": "Pick one of the profiles listed", "request": request})
             return
         if key == "shortcut" and self.desktop is not None:  # the app tries it first: only one it could take is saved
             self._job(self._shortcut_set(queue, message.get("value"), request))
@@ -447,6 +457,8 @@ class AppServer:
             queue.put_nowait({"type": "error", "text": f"Couldn't save that setting: {exc.strerror or exc}",
                               "request": request})
             return
+        if key == "agents_profile" and self.brave is not None:  # Settings → Where agents browse
+            self.brave.set_place(self.settings.get()["agents_profile"])
         if key == "read_tabs" and self.inbox is not None:  # Settings → Brain: reading starts or stops at once
             self.inbox.set_on(self.settings.get()["read_tabs"])
         if key == "read_tabs" and not self.settings.get()["read_tabs"]:
@@ -948,6 +960,7 @@ class AppServer:
         relay.on_grant(lambda identity, target: self._own(target, self._owner_of(identity)))
         relay.on_change(self._clients_changed)
         brave.on_state(lambda state: self._browser_changed())
+        brave.set_place(self.settings.get()["agents_profile"])  # Settings → Where agents browse
         brave.brain_reading = lambda: self.settings.get()["read_tabs"]  # BraveLink's gate asks: Settings → Brain
         brave.brain_site = self._brain_site
         if self.inbox is not None:

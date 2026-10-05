@@ -9,9 +9,9 @@ tab of the user's: only the AI's tabs, a tab handed over, or the page the user p
 Settings → Brain's switch is on, the user's Gmail, Slack and Asana tabs and the parts of pages they picked to watch,
 where the Brain's readers run in an isolated world (may_run decides; app/inworld.py runs).
 
-AI Home lists the user's web tabs of one profile only, the agents' (the one the watcher runs in, else the one Brave
-used last): other profiles and private windows are only counted. The AI's tabs are listed wherever they are. Context
-ids never leave this class."""
+AI Home lists the user's web tabs of one profile only, the agents' (the one chosen in Settings → Where agents browse,
+app/place.py; else the one Brave used last): other profiles and private windows are only counted. The AI's tabs are
+listed wherever they are. Context ids never leave this class."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from ..brain import readers
 from ..cdp import CDPError
 from . import inworld
 from .cdprelay import ALLOW_WAIT, SWITCH_EVERY, Relay, Tokens
+from .place import PLACE_EVERY, SETTLE, ProfilePlace
 from .tabs import TabWatch
 
 READABLE = {"agent", "session", "handed"}  # tabs whose picture or text the app may take
@@ -45,11 +46,12 @@ __all__ = ["ALLOW_WAIT", "SWITCH_EVERY", "BraveLink"]
 
 
 class BraveLink:
-    def __init__(self, folder: Path, watcher_id: str = "", allow_wait: float = ALLOW_WAIT, every: float = SWITCH_EVERY,
-                 tokens: Tokens | None = None, app_origin: str = ""):
+    def __init__(self, folder: Path, allow_wait: float = ALLOW_WAIT, every: float = SWITCH_EVERY,
+                 tokens: Tokens | None = None, app_origin: str = "", settle: float = SETTLE):
         self.folder = Path(folder)
         self.app_origin = app_origin  # AI Browser's own pages: a copy opened in Brave is never one of the user's tabs
-        self.watcher_id = watcher_id  # the watcher's extension id; "" = no watcher, so the profile used last
+        self.place = ProfilePlace(self.folder, settle=settle)  # Settings → Where agents browse
+        self._placing: asyncio.Task | None = None  # its looks, while Brave is connected
         self.relay = Relay(self.folder, tokens if tokens is not None else Tokens(), allow_wait=allow_wait,
                            every=every)
         self.name = self.relay.name
@@ -58,8 +60,6 @@ class BraveLink:
         self._starting: asyncio.Task | None = None
         self._owners: dict[str, dict] = {}  # target id -> its owner (no entry: the user's)
         self._changes: list[Callable[[list[dict]], None]] = []
-        self._watcher_contexts: set[str] = set()  # every context its worker was seen in, on this connection
-        self._seen_on: TabWatch | None = None  # the connection those were seen on: a new one starts again
         self._last = None  # (connection, rows, scope) last sent to the on_change callbacks
         self.brain_reading: Callable[[], bool] = lambda: False  # the server's: Settings → Brain's switch
         self.brain_site: Callable[[str], str | None] = lambda url: None  # the server's: which site an address is
@@ -111,10 +111,27 @@ class BraveLink:
             return
         self._watch = watch
         watch.on_change(lambda _tabs: self._changed())
+        self._placing = asyncio.ensure_future(self._place_loop(watch))
+        self._changed()
+
+    async def _place_loop(self, watch: TabWatch) -> None:
+        """Brave's record of the profile it used last, every PLACE_EVERY seconds while connected: what Where agents
+        browse learns from it redraws the list."""
+        while self._watch is watch and not watch.closed:
+            if self.place.look(watch, watch.default_context):
+                self._changed()
+            await asyncio.sleep(PLACE_EVERY)
+
+    def set_place(self, folder: str | None) -> None:
+        """Settings → Where agents browse: a profile's folder, or None for the profile Brave used last."""
+        self.place.chosen = folder
         self._changed()
 
     def _drop_watch(self) -> None:
         watch, self._watch, self._starting = self._watch, None, None
+        if self._placing is not None:
+            self._placing.cancel()
+            self._placing = None
         if watch is not None:
             asyncio.ensure_future(self._close_watch(watch))
             self._changed()
@@ -128,6 +145,8 @@ class BraveLink:
         """The app quits (after its agents ended): the tab list, then the one connection."""
         if self._starting is not None and not self._starting.done():
             self._starting.cancel()
+        if self._placing is not None:
+            self._placing.cancel()
         watch, self._watch = self._watch, None
         if watch is not None:
             await self._close_watch(watch)
@@ -139,9 +158,9 @@ class BraveLink:
         self._changes.append(callback)
 
     def _changed(self) -> None:
-        """Call back only when the rows or the scope changed (a worker waking or sleeping changes neither), or the
-        connection did: connecting and losing it always call back. While Brave is connected and the tab list is still
-        starting, nothing is sent: the list's first round calls back."""
+        """Call back only when the rows or the scope changed (a look at the profile that changes neither doesn't), or
+        the connection did: connecting and losing it always call back. While Brave is connected and the tab list is
+        still starting, nothing is sent: the list's first round calls back."""
         if self._watch is None and self.relay.state == "connected":
             return
         tabs, scope = self.tabs(), self.scope()
@@ -154,21 +173,13 @@ class BraveLink:
                 callback(tabs)
 
     def agents_context(self) -> tuple[str | None, str]:
-        """(context, source) of the profile whose tabs AI Home lists: the one the watcher runs in ("watcher"), else
-        the one Brave used last ("last_used"), else none ("none"). A sleeping worker drops out of Brave's target list,
-        so a context it was seen in counts for the rest of this connection."""
+        """(context, source) of the profile where agents browse: the one chosen in Settings, once Brave has shown it
+        on this connection ("chosen"), else none ("not_open"); with none chosen, the one Brave used last
+        ("last_used"), or none yet ("none")."""
         watch = self._watch
-        if watch is not self._seen_on:  # a new connection (or none): what the last one saw is forgotten
-            self._seen_on, self._watcher_contexts = watch, set()
         if watch is None:
             return None, "none"
-        if self.watcher_id:
-            self._watcher_contexts |= watch.worker_contexts(self.watcher_id)
-        if len(self._watcher_contexts) == 1:  # in two profiles the app can't tell which one groups: the fallback
-            return next(iter(self._watcher_contexts)), "watcher"
-        if watch.default_context:
-            return watch.default_context, "last_used"
-        return None, "none"
+        return self.place.context(watch.default_context)
 
     def _shown(self, page: dict, context: str | None) -> bool:
         owner = self._owners.get(page["target"], YOU)

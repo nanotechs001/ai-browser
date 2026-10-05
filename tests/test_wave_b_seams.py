@@ -17,7 +17,7 @@ def test_the_relay_and_wave_a_have_the_names_this_plan_uses():
     assert {"hello", "new_task", "hand_tab", "brave_connect", "check_show", "browser_disconnect",
             "tell_confirm"} <= set(server.MESSAGE_RULES)
     # the relay: one connection to the browser, a token per agent, BraveLink and TabWatch on it
-    assert {"tokens", "watcher_id"} <= set(inspect.signature(BraveLink).parameters)
+    assert "tokens" in inspect.signature(BraveLink).parameters  # the watcher's id went with Where agents browse
     assert "cdp" in inspect.signature(TabWatch).parameters
     assert callable(Tokens.mint) and callable(Relay.serve) and callable(server.AppServer.token_for)
     assert list(inspect.signature(server.AppServer.connect_brave).parameters)[:2] == ["self", "why"]

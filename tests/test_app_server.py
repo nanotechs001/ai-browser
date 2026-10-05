@@ -587,12 +587,12 @@ async def test_new_task_may_start_only_in_a_tab_brave_lists(fake_claude, tmp_pat
 async def test_the_tab_list_carries_its_scope(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"}])
-    brave.set_scope("watcher", 2)
+    brave.set_scope("chosen", 2)
     server.attach_brave(brave)
     try:
         async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
-            assert (await recv(page))["tab_scope"] == {"profile": "watcher", "elsewhere": 2}
+            assert (await recv(page))["tab_scope"] == {"profile": "chosen", "elsewhere": 2}
             brave.set_scope("last_used", 3)
             message = (await until(page, lambda m: m["type"] == "tabs"))[-1]
             assert message["tab_scope"] == {"profile": "last_used", "elsewhere": 3}
@@ -1519,7 +1519,7 @@ async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude,
             snapshot = await recv(one)
             assert snapshot["settings"] == {"model": None, "voice": False, "window_browser": "auto",
                                             "shortcut": "Alt+Space", "read_tabs": False, "agents_profile": None,
-                                            "watcher_note": True, "old_watcher": False,
+                                            "watcher_note": True, "old_watcher": False, "profiles": [],
                                             "window": server.window_info,
                                             "desktop": server._desktop_payload()}
             await recv(two)

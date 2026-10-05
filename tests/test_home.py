@@ -311,8 +311,7 @@ async def test_the_tab_list_marks_owners_and_hands_tabs_over(home):
     assert server.agents.agents["a2"].adopted == ["B1"]
 
 
-LAST_USED = ("Showing the Brave profile you used last. With the watcher loaded, this list stays on the watcher's "
-             "profile.")
+LAST_USED = "Showing the Brave profile you used last. Pick the one agents use in Settings → Where agents browse."
 NO_PROFILE = "Your tabs aren't listed: AI Browser can't tell which Brave profile is yours yet."
 
 
@@ -322,7 +321,7 @@ async def test_the_tab_list_counts_what_it_doesnt_show(home):
 
     js, stack = home
     brave = FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
-    brave.set_scope("watcher", 3)
+    brave.set_scope("chosen", 3)
     stack["server"].attach_brave(brave)
     source = "document.querySelector('#tabs p.scope-source')?.textContent ?? null"
     count = "document.querySelector('#tabs p.elsewhere')?.textContent ?? null"
@@ -333,7 +332,7 @@ async def test_the_tab_list_counts_what_it_doesnt_show(home):
 
     assert await shows(count, "3 more tabs in other profiles or private windows: not shown here.")
     assert await js(source) is None
-    brave.set_scope("watcher", 1)
+    brave.set_scope("chosen", 1)
     assert await shows(count, "1 more tab in other profiles or private windows: not shown here.")
     brave.set_scope("last_used", 0)
     assert await shows(source, LAST_USED)
@@ -341,7 +340,7 @@ async def test_the_tab_list_counts_what_it_doesnt_show(home):
     brave.set_scope("none", 2)
     assert await shows(source, NO_PROFILE)
     assert await shows(count, "2 more tabs in other profiles or private windows: not shown here.")
-    brave.set_scope("watcher", 0)
+    brave.set_scope("chosen", 0)
     assert await shows(source, None)
     assert await js(count) is None
     brave.pages = []
@@ -358,7 +357,7 @@ async def test_the_tab_list_counts_what_it_doesnt_show(home):
     brave.changed()  # the new connection's first list brings its own scope
     assert await shows(source, NO_PROFILE)
     assert await shows(count, "4 more tabs in other profiles or private windows: not shown here.")
-    brave.set_scope("watcher", 0)
+    brave.set_scope("chosen", 0)
     assert await shows(source, None)
     await js("window.flashed = []; new MutationObserver(() => { const line = document.querySelector("
              "'#tabs p.scope-source'); if (line) window.flashed.push(line.textContent); }).observe("
@@ -401,7 +400,7 @@ async def test_while_brave_connects_ai_home_claims_no_profile(home, tmp_path):  
         await port.answer_held()
         await connecting
         assert await until(late, "document.querySelector(\"#tabs .tab[data-target='U1']\") !== null")
-        assert await late(source) == LAST_USED  # the first list brings its scope (no watcher here)
+        assert await late(source) == LAST_USED  # the first list brings its scope (none chosen here)
         assert port.sessions == 1  # one connection: Brave asked "Allow remote debugging?" once
     finally:
         connecting.cancel()

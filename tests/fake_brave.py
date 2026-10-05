@@ -133,7 +133,8 @@ class FakePort:
             error, result = (missing, {}) if page is None else (None, {"targetInfo": self.info(page)})
         elif method == "Target.createTarget":
             self._targets += 1
-            page = {"target": f"T{self._targets}", "url": params.get("url", ""), "title": ""}
+            page = {"target": f"T{self._targets}", "url": params.get("url", ""), "title": "",
+                    "context": self.default or "C1"}  # as Chromium: in the profile used last
             self.pages.append(page)
             before.append(("Target.targetCreated", {"targetInfo": self.info(page)}, None))  # as Chrome may
             result = {"targetId": page["target"]}
@@ -322,6 +323,17 @@ class FakeRelay:
         self.closed_clients.append(code)
 
 
+class FakePlace:
+    """ProfilePlace's surface: the profiles a test lists ({"folder", "name", "color"})."""
+
+    def __init__(self):
+        self.listed: list[dict] = []
+        self.chosen = None
+
+    def profiles(self):
+        return [dict(profile) for profile in self.listed]
+
+
 class FakeBrave:
     """BraveLink's surface, holding the tabs a test gives it; owners, Watch, closes and connects are recorded."""
 
@@ -335,6 +347,7 @@ class FakeBrave:
         self.connects = 0
         self.connect_calls = []  # (why, identity) of each connect
         self.relay = FakeRelay()
+        self.place = FakePlace()  # Settings → Where agents browse
         self._changes, self._states = [], []
 
     def on_change(self, callback):
@@ -351,7 +364,7 @@ class FakeBrave:
     def tabs(self):
         return [{**page, "owner": dict(self.owners.get(page["target"], {"kind": "you"}))} for page in self.pages]
 
-    tab_scope = {"profile": "watcher", "elsewhere": 0}  # what BraveLink.scope() answers (watcher-safety)
+    tab_scope = {"profile": "chosen", "elsewhere": 0}  # what BraveLink.scope() answers (watcher-safety)
 
     def scope(self):
         return dict(self.tab_scope)
@@ -383,6 +396,9 @@ class FakeBrave:
 
     async def watch(self, target):
         self.watched.append(target)
+
+    def set_place(self, folder):
+        self.place.chosen = folder
 
     def brain_tabs(self):  # the Brain's reading: nothing here (tests/fake_reading.py fakes it whole)
         return []

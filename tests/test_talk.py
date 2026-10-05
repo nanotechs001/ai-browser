@@ -1021,7 +1021,7 @@ async def test_your_tabs_say_what_the_list_leaves_out(stack):
     not_listed = "Your tabs aren't listed: AI Browser can't tell which Brave profile is yours yet."
     assert await until(js, f"{text}.includes({json.dumps(not_listed)})")
     assert not await js(f"{text}.includes('None of your tabs are open')")
-    brave.set_scope("watcher", 3)  # the watcher's profile, with three of the user's tabs in other profiles
+    brave.set_scope("chosen", 3)  # the chosen profile, with three of the user's tabs in other profiles
     brave.changed()
     assert await until(js, f"{text}.includes('3 more tabs in other profiles or private windows: not shown here.')")
     assert await js(f"{text}.includes('None of your tabs are open in this profile.')")
