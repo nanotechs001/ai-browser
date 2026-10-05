@@ -22,7 +22,7 @@ from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HAND_OVER_ANY_SAY, HAND_
                    Pick, Talks, agent_choices, check_say, choices, explicit_pick, is_no, is_send_yes, is_yes, label,
                    number_of, parse_answer, reference_pick, resolve_agent, resolve_among, secret_like, shown_rows,
                    state_summary, tab_hint, talk_prompt, target_state)
-from .talk import PAGE_ONLY, PAGE_SAY_LIMIT  # the floating chat's questions about a page
+from .talk import PAGE_ANSWERED, PAGE_ONLY, PAGE_SAY_LIMIT  # the floating chat's questions about a page
 
 KINDS = {"needs_reply", "new", "skip"}
 SUGGESTIONS = {"draft", "agent", "tell"}
@@ -760,6 +760,9 @@ class BrainService:
         else:
             reply = await self._ask_claude(talk, text, rows, asking, page)
             if "error" in reply:
+                return reply
+            if page is not None:  # about a page: the user's words stay, and the page-shaped answer never does
+                self.talks.add(talk, text, PAGE_ANSWERED)
                 return reply
         self.talks.add(talk, text, reply["say"])
         return reply
