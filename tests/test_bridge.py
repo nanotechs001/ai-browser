@@ -31,7 +31,10 @@ async def test_bridge_streams_text_tools_and_results(fake_claude, tmp_path):
     events = [event async for event in bridge.send("click it", "https://s.com/", "Shop")]
     kinds = [event["type"] for event in events]
     assert kinds == ["status", "delta", "delta", "tool", "message_end", "tool_result", "done"]
-    assert events[3] == {"type": "tool", "id": "u1", "name": "act", "summary": 'click e5 · type e7 "hi"'}
+    tool = events[3]
+    assert {key: tool[key] for key in ("type", "id", "name", "summary")} == {
+        "type": "tool", "id": "u1", "name": "act", "summary": 'click e5 · type e7 "hi"'}
+    assert tool["badge"] == "Browser Agent" and isinstance(tool["at"], float) and "sub" not in tool  # agent powers
     assert events[5]["lines"][0] == "✓ click e5 41 ms" and not events[5]["is_error"]
     assert bridge.session_id == "s-1"
     argv = json.loads(log.read_text(encoding="utf-8").splitlines()[0])

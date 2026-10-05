@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -92,6 +93,8 @@ def page_line(url: str, title: str, label: str = "panel") -> str:
 
 def _summary(name: str, data: dict) -> str:
     """One line for the panel: what the action does."""
+    if name in powers.SUMMARIZED:  # Claude Code's own tools: the command, the path, the address or the query
+        return powers.summary(name, data)
     if name == "act" and isinstance(data.get("steps"), list):
         return " · ".join(str(step) for step in data["steps"])
     if name == "open":
@@ -130,6 +133,9 @@ class ClaudeBridge:
         self.work = Path(work) if work is not None else self.folder / "work"
         self.rules = rules  # the user's rules per folder (<home>/permissions.json)
         self.trusted = bool(trusted) and self.chosen  # Decision 7: what of the folder's own Claude Code loads
+        self._parents: dict[str, str] = {}  # a sub-agent's tool use id -> its sub-agent tool's id
+        self._subagents: dict[str, str] = {}  # the sub-agent tool's id -> its task, as cards and the drawer name it
+        self._quiet: set[str] = set()  # TodoWrite's tool use ids: the list is their view, never an action line
         self.loaded_skills: set[str] = set()  # skills Claude loaded in this conversation
         self.model = model  # a change applies from the next message, in the same process (set_model)
         self.claude = claude  # resolved when a process starts (claude_argv): a list too, such as the tests' fake
@@ -310,12 +316,16 @@ class ClaudeBridge:
 
     def _translate(self, event: dict) -> list[dict]:
         kind = event.get("type")
+        parent = event.get("parent_tool_use_id")
+        parent = parent if isinstance(parent, str) and parent else None  # a sub-agent's event: its tool's id
         if kind == "system" and event.get("subtype") == "init":
             self.session_id = event.get("session_id") or self.session_id
             servers = {server.get("name"): server.get("status") for server in event.get("mcp_servers", [])}
             return [{"type": "status", "model": event.get("model", self.model),
                      "connected": servers.get("ai-browser") == "connected"}]
         if kind == "stream_event":
+            if parent:
+                return []  # a sub-agent's words: they come back as its tool's result
             inner = event.get("event", {})
             delta = inner.get("delta", {})
             if inner.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
@@ -325,24 +335,14 @@ class ClaudeBridge:
             out = []
             for block in event.get("message", {}).get("content", []):
                 if isinstance(block, dict) and block.get("type") == "tool_use":
-                    name, data = _short(block.get("name", "")), block.get("input") or {}
-                    self._tools[block.get("id", "")] = name
-                    if name == "load_skill" and isinstance(data.get("name"), str):
-                        self.loaded_skills.add(data["name"])
-                    out.append({"type": "tool", "id": block.get("id", ""), "name": name, "summary": _summary(name, data)})
-            return out + [{"type": "message_end"}]
+                    out += self._tool_use(block, parent)
+            return out if parent else out + [{"type": "message_end"}]
         if kind == "user":
             out = []
             content = event.get("message", {}).get("content", [])
             for block in content if isinstance(content, list) else []:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
-                    name = self._tools.get(block.get("tool_use_id", ""), "tool")
-                    result = _text(block.get("content"))
-                    timing = _TIMING.search(result)
-                    out.append({"type": "tool_result", "id": block.get("tool_use_id", ""), "name": name,
-                                "ms": int(timing.group(1)) if timing else None, "lines": result.splitlines()[:LINES],
-                                "page": result[:PAGE_LIMIT] if name in PAGE_TOOLS else "",
-                                "is_error": bool(block.get("is_error"))})
+                    out += self._tool_result(block, parent)
             return out
         if kind == "result":
             self.session_id = event.get("session_id") or self.session_id
@@ -361,6 +361,44 @@ class ClaudeBridge:
             return [{"type": "done", "seconds": round((event.get("duration_ms") or 0) / 1000, 1),
                      "cost": event.get("total_cost_usd")}]
         return []
+
+    def _tool_use(self, block: dict, parent: str | None) -> list[dict]:
+        """One tool use as panel events (Decisions 8 to 10): an action line with its badge and time, a sub-agent
+        starting, or the agent's to-do list (TodoWrite's uses are the list, never lines). A sub-agent's own lines
+        carry "sub"; its own to-do list isn't the agent's."""
+        full = str(block.get("name", ""))
+        name, use = _short(full), str(block.get("id", ""))
+        data = block.get("input") if isinstance(block.get("input"), dict) else {}
+        self._tools[use] = name
+        if parent:
+            self._parents[use] = parent
+        if name == "load_skill" and isinstance(data.get("name"), str):
+            self.loaded_skills.add(data["name"])
+        if full == "TodoWrite":
+            self._quiet.add(use)
+            return [] if parent else [{"type": "todos", "todos": powers.todos(data)}]
+        line = {"type": "tool", "id": use, "name": name, "summary": _summary(name, data), "badge": powers.badge(full),
+                "at": round(time.time(), 1), **({"sub": parent} if parent else {})}
+        if full in powers.SUBAGENTS and not parent:
+            self._subagents[use] = powers.subagent_task(data)
+            return [line, {"type": "subagent", "id": use, "task": self._subagents[use], "state": "working"}]
+        return [line]
+
+    def _tool_result(self, block: dict, parent: str | None) -> list[dict]:
+        """A tool's result; a sub-agent tool's result ends that sub-agent, done or failed."""
+        use = str(block.get("tool_use_id", ""))
+        if use in self._quiet:
+            return []
+        name = self._tools.get(use, "tool")
+        result = _text(block.get("content"))
+        timing = _TIMING.search(result)
+        out = [{"type": "tool_result", "id": use, "name": name, "ms": int(timing.group(1)) if timing else None,
+                "lines": result.splitlines()[:LINES], "page": result[:PAGE_LIMIT] if name in PAGE_TOOLS else "",
+                "is_error": bool(block.get("is_error")), **({"sub": parent} if parent else {})}]
+        if use in self._subagents and not parent:
+            out.append({"type": "subagent", "id": use, "task": self._subagents[use],
+                        "state": "failed" if block.get("is_error") else "done"})
+        return out
 
     # ---- the Claude Code process ---------------------------------------------------------------------------
 

@@ -172,3 +172,65 @@ def test_the_prompt_tells_agents_about_their_own_tools():  # Decision 12
                  "use sub-agents for independent parts", "never type passwords",
                  "if a result says ⛔ bot check, stop and tell the user"):
         assert line in words, line
+
+
+async def test_each_action_has_a_badge_a_summary_and_a_time(fake_claude, tmp_path):  # Decision 10
+    import time
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps([INIT, use("u1", "Bash", {"command": "npm test"}), result("u1", "3 passed"),
+                                  use("u2", "WebFetch", {"url": "https://docs.python.org/3/", "prompt": "x"}),
+                                  use("u3", "mcp__ai-browser__load_skill", {"name": "ai-browser:website-qa"}),
+                                  use("u4", "mcp__ai-browser__open", {"url": "https://shop.example/"}), RESULT]),
+                      encoding="utf-8")
+    bridge, _ = bridge_for(tmp_path, runner)
+    before = time.time()
+    events = [event async for event in bridge.send("go")]
+    await bridge.close()
+    tools = [event for event in events if event["type"] == "tool"]
+    assert [(tool["name"], tool["badge"]) for tool in tools] == [
+        ("Bash", "Bash"), ("WebFetch", "Web Fetch"), ("load_skill", "Skill"), ("open", "Browser Agent")]
+    assert [tools[0]["summary"], tools[1]["summary"], tools[3]["summary"]] == [
+        "npm test", "https://docs.python.org/3/", "https://shop.example/"]
+    assert all(before - 1 <= tool["at"] <= time.time() + 1 and "sub" not in tool for tool in tools)
+    done = next(event for event in events if event["type"] == "tool_result")
+    assert (done["id"], done["name"], done["lines"]) == ("u1", "Bash", ["3 passed"])
+
+
+async def test_the_to_do_list_comes_from_the_stream_and_is_no_action_line(fake_claude, tmp_path):  # Decision 9
+    runner, _, script = fake_claude
+    script.write_text(json.dumps([INIT, use("t1", "TodoWrite", PLAN), result("t1", "Todos have been modified"),
+                                  RESULT]), encoding="utf-8")
+    bridge, _ = bridge_for(tmp_path, runner)
+    events = [event async for event in bridge.send("plan it")]
+    await bridge.close()
+    assert [event["type"] for event in events] == ["status", "todos", "message_end", "done"]
+    assert events[1]["todos"] == [{"content": "Read the code", "status": "completed", "active": "Reading the code"},
+                                  {"content": "Fix the bug", "status": "in_progress", "active": "Fixing the bug"},
+                                  {"content": "Run the tests", "status": "pending", "active": "Running the tests"}]
+
+
+async def test_sub_agents_start_work_and_end_in_the_stream(fake_claude, tmp_path):  # Decision 8
+    from ai_browser.app.powers import SUBAGENT_TOOL
+
+    runner, _, script = fake_claude
+    sub_words = {"type": "stream_event", "parent_tool_use_id": "u1",
+                 "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "sub words"}}}
+    script.write_text(json.dumps([INIT, use("u1", SUBAGENT_TOOL, {"description": "Research", "prompt": "Find it"}),
+                                  sub_words, use("u2", "Bash", {"command": "ls"}, parent="u1"),
+                                  result("u2", "src", parent="u1"), use("t2", "TodoWrite", PLAN, parent="u1"),
+                                  result("u1", "Found it"), RESULT]), encoding="utf-8")
+    bridge, _ = bridge_for(tmp_path, runner)
+    events = [event async for event in bridge.send("research it")]
+    await bridge.close()
+    assert {"type": "subagent", "id": "u1", "task": "Research", "state": "working"} in events
+    started = next(event for event in events if event["type"] == "tool" and event["id"] == "u1")
+    assert started["badge"] == "Sub-agent" and started["summary"] == "Research" and "sub" not in started
+    sub_tool = next(event for event in events if event["type"] == "tool" and event["id"] == "u2")
+    assert sub_tool["sub"] == "u1" and sub_tool["badge"] == "Bash"
+    assert next(event for event in events if event["type"] == "tool_result" and event["id"] == "u2")["sub"] == "u1"
+    assert events[-2] == {"type": "subagent", "id": "u1", "task": "Research", "state": "done"}
+    assert not any(event["type"] == "delta" and "sub words" in event["text"] for event in events)  # its words stay out
+    assert not any(event["type"] == "todos" for event in events)  # a sub-agent's own list isn't the agent's
+    assert [event["type"] for event in events].count("message_end") == 1  # the agent's own message only
+    assert bridge._parents == {"u2": "u1", "t2": "u1"} and bridge._subagents == {"u1": "Research"}
