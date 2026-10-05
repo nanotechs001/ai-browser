@@ -12,7 +12,8 @@ const path = require("node:path");
 const OSASCRIPT = "/usr/bin/osascript";
 // JavaScript for Automation (osascript -l JavaScript). running() asks macOS, never Brave, so a closed Brave stays
 // closed. Then only Brave's front window is asked: whether it is private (then nothing more: the chat's picker), and
-// its active tab's address and title. Application() of an app that isn't installed throws, with no box. Brave Beta and Nightly are other apps: the chat's picker covers them.
+// its active tab's address and title. Application() of an app that isn't installed throws, with no box. Brave Beta
+// and Nightly are other apps: the chat's picker covers them.
 const MAC_SCRIPT = [
   "(() => {",
   "  const answer = (value) => JSON.stringify(value);",
