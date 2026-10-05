@@ -319,14 +319,16 @@ STUB = Path(__file__).parent / "electron_stub.js"
 START = b'{"type": "start", "open": "http://127.0.0.1:8793/open?code=the-code", "shortcut": null}\n'
 
 
-def run_main(tmp_path, *switches, feed=None, pause=0.0, **plan) -> list:
+def run_main(tmp_path, *switches, feed=None, pause=0.0, env=None, **plan) -> list:
     """main.js on the stand-in: the calls it made, in order. `feed` goes to its stdin (the line, when no
-    --aib-line names one), and the line ends `pause` seconds later; with no feed, stdin is empty."""
+    --aib-line names one), and the line ends `pause` seconds later; with no feed, stdin is empty. `env`: variables
+    of its own (AIB_DEBUG_START is never inherited from the test's shell)."""
     import os
     import time
 
     out = tmp_path / "calls.json"
-    env = {**os.environ, "STUB_PLAN": json.dumps(plan), "STUB_OUT": str(out)}
+    env = {**{key: value for key, value in os.environ.items() if key != "AIB_DEBUG_START"}, **(env or {}),
+           "STUB_PLAN": json.dumps(plan), "STUB_OUT": str(out)}
     process = subprocess.Popen([NODE, str(STUB), str(ELECTRON_DIR / "main.js"),
                                 f"--aib-profile={tmp_path / 'profile'}", *switches],
                                stdin=subprocess.PIPE if feed is not None else subprocess.DEVNULL,
@@ -395,6 +397,28 @@ def test_the_engine_gone_after_the_start_quits_the_app(tmp_path):  # Review Focu
     said = names(calls)
     assert ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"] in calls and "new Tray" in said
     assert "dialog.showMessageBox" not in said and calls[-1] == ["app.quit"]
+
+
+@NEEDS_NODE
+def test_the_start_log_follows_the_window_and_never_holds_a_code_or_a_cookie(tmp_path):
+    run_main(tmp_path, feed=START, pause=1.0, env={"AIB_DEBUG_START": "1"},
+             cookies=[{"name": "aib_ui_8793", "value": "the-cookie-value"}])
+    text = (tmp_path / "profile" / "debug-start.log").read_text(encoding="utf-8")
+    lines = [line.split(" ", 1)[1] for line in text.splitlines()]  # each line starts with its time
+    opened = "http://127.0.0.1:8793/open?code=…"
+    for expected in (f"profile {tmp_path / 'profile'}", "single-instance lock: held", "line: stdin",
+                     "start received", f"loadURL {opened}", "hello sent", f"did-navigate {opened} 200",
+                     f"did-finish-load {opened}: cookies for http://127.0.0.1:8793: aib_ui_8793", "the line ended"):
+        assert expected in lines, (expected, lines)
+    assert lines.index("start received") < lines.index(f"loadURL {opened}") < lines.index("hello sent")
+    assert "the-code" not in text and "the-cookie-value" not in text
+
+
+@NEEDS_NODE
+def test_without_the_switch_the_app_keeps_no_start_log(tmp_path):
+    calls = run_main(tmp_path, feed=START, pause=0.5)
+    assert ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"] in calls
+    assert not (tmp_path / "profile" / "debug-start.log").exists()
 
 
 # The floating chat: its window, the shortcut and the menu-bar icon's Show chat (on the stand-in Electron)

@@ -35,6 +35,10 @@ const START_WAIT = 20000; // ms for the engine's start message
 const NOTES_KEPT = 20; // notifications whose click still reaches the engine
 const CHAT_FILE = "chat.json"; // in the profile: where the floating chat was, and its size
 const SAVE_AFTER = 500; // ms after the chat stops moving or resizing before its place is kept
+// AIB_DEBUG_START=1 (the engine's start log, ai_browser/debugstart.py): each step of the start, in debug-start.log in
+// the profile. Off by default, and on it changes nothing else. Never a cookie's value or a start code.
+const DEBUG = process.env.AIB_DEBUG_START === "1";
+const DEBUG_FILE = "debug-start.log";
 const WEB = Object.freeze({ // every window's webPreferences (makeWindow)
   contextIsolation: true,
   sandbox: true,
@@ -71,6 +75,40 @@ let chatFrom = false; // another app was in front when the chat came: on a Mac, 
 let saving = null; // the timer that keeps the chat's place
 let looking = null; // a look at Brave's front tab under way: one at a time
 let choosing = null; // the folder dialog open now: one at a time
+let debugFile = null; // the start log's file, once the profile is known
+
+function debug(text) {
+  if (!DEBUG || !debugFile) return;
+  try {
+    fs.appendFileSync(debugFile, `${new Date().toISOString()} ${text}\n`);
+  } catch {
+    // the start log only
+  }
+}
+
+function shown(url) { // an address for the start log: its code hidden
+  const text = String(url || "");
+  const at = text.indexOf("?");
+  return at === -1 ? text : `${text.slice(0, at)}?code=…`;
+}
+
+function watchContents(contents) { // the start log: where each page and frame went, and how
+  contents.on("did-navigate", (event, url, code) => debug(`did-navigate ${shown(url)} ${code}`));
+  contents.on("did-frame-navigate", (event, url, code, status, isMainFrame) => {
+    if (!isMainFrame) debug(`did-frame-navigate ${shown(url)} ${code}`);
+  });
+  contents.on("did-fail-load", (event, code, description, url, isMainFrame) =>
+    debug(`did-fail-load ${shown(url)} ${code} ${description} ${isMainFrame ? "main" : "frame"}`));
+  contents.on("render-process-gone", (event, details) => debug(`render-process-gone ${details && details.reason}`));
+  contents.on("did-finish-load", () => {
+    const where = own;
+    if (!where) return;
+    session.defaultSession.cookies.get({ url: where })
+      .then((found) => debug(`did-finish-load ${shown(contents.getURL())}: cookies for `
+                             + `${where}: ${found.map((cookie) => cookie.name).join(", ") || "none"}`))
+      .catch((error) => debug(`did-finish-load: the cookies couldn't be read: ${error}`));
+  });
+}
 
 function profileFolder() { // <home>/desktop/profile, beside the app (a test's unpackaged Electron: its own)
   const given = process.argv.find((arg) => arg.startsWith(PROFILE));
@@ -85,6 +123,7 @@ function openLine(onMessage, onEnd) {
   const end = () => {
     if (!ended) {
       ended = true;
+      debug("the line ended");
       onEnd();
     }
   };
@@ -116,7 +155,9 @@ function openLine(onMessage, onEnd) {
 // away, the app quits quietly, before any window or menu-bar icon. Started by a double-click, it says how to start AI
 // Browser, after letting go of the single-instance lock: while the box is up, a real start is never blocked.
 function noEngine() {
-  if (policy.withoutEngine({ line: lineOption(process.argv) !== null, start: starting }) === "quit") {
+  const verdict = policy.withoutEngine({ line: lineOption(process.argv) !== null, start: starting });
+  debug(`no engine: ${verdict}`);
+  if (verdict === "quit") {
     engineQuit = true; // there is no one to tell
     if (started) app.quit();
     else app.exit(0);
@@ -283,9 +324,13 @@ function lockContents(contents) { // every page, frame and window: AI Browser's 
   contents.on("will-attach-webview", (event) => event.preventDefault());
   for (const name of ["will-navigate", "will-frame-navigate", "will-redirect"]) {
     contents.on(name, (details) => {
-      if (!policy.mayNavigate(details.url, own, details.isMainFrame, kindOf(contents))) details.preventDefault();
+      if (!policy.mayNavigate(details.url, own, details.isMainFrame, kindOf(contents))) {
+        debug(`${name} refused: ${shown(details.url)}`);
+        details.preventDefault();
+      }
     });
   }
+  if (DEBUG) watchContents(contents);
 }
 
 function lockSession(ses) { // the microphone and copying, for AI Browser's own pages; nothing else, for anyone
@@ -391,8 +436,12 @@ function begin(message) { // the engine's start: the window on its start address
     }
   });
   win.once("ready-to-show", () => showWindow("main"));
-  win.loadURL(message.open).catch(() => {}); // a page that can't load: the engine says so (it waits for the page)
-  send({ type: "hello", pid: process.pid });
+  debug(`loadURL ${shown(message.open)}`);
+  win.loadURL(message.open)
+    .then(() => debug(`loadURL done: ${shown(message.open)}`))
+    .catch((error) => debug(`loadURL failed: ${error && (error.code || error.message)}`)); // the engine says so
+  const said = send({ type: "hello", pid: process.pid });
+  debug(said === false ? "hello not sent" : "hello sent");
   useShortcut(policy.shortcutOk(message.shortcut) ? message.shortcut : null, null);
 }
 
@@ -411,9 +460,17 @@ function main() {
   const profile = profileFolder();
   fs.mkdirSync(profile, { recursive: true });
   app.setPath("userData", profile);
+  if (DEBUG) debugFile = path.join(profile, DEBUG_FILE);
+  debug(`profile ${profile}`);
   if (!app.requestSingleInstanceLock()) {
+    debug("single-instance lock: another copy holds it");
     app.exit(0); // one app per profile: the running one comes forward instead (second-instance)
     return;
+  }
+  debug("single-instance lock: held");
+  if (DEBUG) {
+    session.defaultSession.cookies.on("changed", (event, cookie, cause, removed) =>
+      debug(`cookie ${removed ? "removed" : "set"}: ${cookie.name} (${cause})`));
   }
   app.on("second-instance", () => showWindow("main"));
   app.on("activate", () => showWindow("main")); // a click on the Dock icon
@@ -426,11 +483,16 @@ function main() {
   app.on("window-all-closed", () => {}); // only Quit ends the app
   app.on("web-contents-created", (event, contents) => lockContents(contents));
   const waiting = setTimeout(noEngine, START_WAIT);
+  debug(`line: ${lineOption(process.argv) ? "socket" : "stdin"}`);
   openLine((message) => {
     if (message.type === "start" && !starting) {
+      debug("start received");
       starting = true;
       clearTimeout(waiting);
-      app.whenReady().then(() => begin(message)).catch(() => app.exit(1)); // a broken start: the engine hears it
+      app.whenReady().then(() => begin(message)).catch((error) => { // a broken start: the engine hears it
+        debug(`start failed: ${error}`);
+        app.exit(1);
+      });
     } else if (started) {
       onEngine(message);
     }
@@ -439,6 +501,7 @@ function main() {
     noEngine(); // the engine is gone: quit (test_desktop_js runs these under a stand-in Electron)
   });
   app.whenReady().then(() => {
+    debug("ready");
     lockSession(session.defaultSession);
     makeMenu();
     answerActions();

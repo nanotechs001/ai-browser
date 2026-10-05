@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from .. import platforms
+from .. import debugstart, platforms
 from ..accounts import DEFAULT, Accounts
 from ..brain.account import BrainAccount
 from ..brain.service import BrainService
@@ -233,6 +233,7 @@ async def _open_app(home: Path, server: AppServer, url: str, desktop: Callable |
         out(f"{exc}. AI Browser opens in a browser window this time.")
         return None
     layout.set_problem(home, None)
+    debugstart.say("window: AI Browser's own app")
     if app.note:
         out(app.note)
     return app
@@ -285,6 +286,7 @@ async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready
                 out(window.note)
             server.window_info = {"using": window.id, "name": window.name, "note": window.note,
                                   "choices": await asyncio.to_thread(choices)}  # detection once, at start
+            debugstart.say(f"window: a browser window ({window.name})")
             try:
                 await _call(window.launch, f"{url}/open?code={server.new_launch_code()}")
             except WindowError as exc:
@@ -293,6 +295,7 @@ async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready
         if not await _first_window(server, stop):
             if stop.is_set():
                 return 0
+            debugstart.say(f"window: no page connected within {WINDOW_START_WAIT} s")
             out(NO_APP_PAGE if server.desktop is not None else NO_WINDOW.format(name=window.name))
             return 1
         out(app_text() if server.desktop is not None else ready_text() + setup_hint(home))

@@ -7,7 +7,11 @@ Python: `python packaging/windows_app.py <step> ...`.
 - zip <package> <archive>: the package folder in one zip, under its own name.
 - check <package> [--bundled]: the packaged program starts. The files the engine reads are in its bundle, --help
   lists every command, and its MCP server answers initialize and lists its tools. With --bundled, doctor --setup says
-  AI Browser's own app is ready beside it. Each run has a throwaway home folder and AIB_HOME."""
+  AI Browser's own app is ready beside it. Each run has a throwaway home folder and AIB_HOME.
+- start <package>: `AI Browser.exe app` for real, as a double-click starts it, with the start log on (AIB_DEBUG_START,
+  ai_browser/debugstart.py) and a throwaway home folder. Brave isn't set up there, which the app handles. Its output,
+  and the start log AI Browser's own app keeps in its profile, are printed. It fails unless AI Browser's own app drew
+  AI Browser and the page connected (a window socket, which needs the window's cookie), within START_SECONDS."""
 
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -34,6 +39,11 @@ BUNDLED = ("ai_browser/app/ui/app.html", "ai_browser/app/ui/icon.png", "ai_brows
 COMMANDS = ("mcp", "build", "doctor", "bench", "live", "stop", "app")
 TOOLS = ("act", "observe", "open", "find_skills")
 WAIT = 120  # seconds for one run of the program (a first start on Windows is slow while Defender scans it)
+START_SECONDS = 90  # how long the start check watches `AI Browser.exe app` at most
+AFTER_CONNECTED = 15  # seconds it keeps watching once the page connected: the frames' lines come then
+OWN_APP = "[start] window: AI Browser's own app"
+CONNECTED = "[start] window socket connected"
+DEBUG_FILE = "debug-start.log"  # AI Browser's own app's start log, in its profile (main.js)
 
 
 def windows_asset():
@@ -161,6 +171,61 @@ def check(package: Path, bundled: bool = False, out: Callable[[str], None] = pri
     return problems
 
 
+def start_problems(text: str) -> list[str]:
+    """What the start log of one `AI Browser.exe app` says went wrong: [] when AI Browser's own app drew AI Browser
+    and its page connected."""
+    problems = []
+    if OWN_APP not in text:
+        problems.append("AI Browser's own app didn't draw AI Browser: a browser window did, or nothing")
+    if CONNECTED not in text:
+        problems.append("AI Browser's page never connected")
+    return problems
+
+
+def _stop(process: subprocess.Popen) -> None:
+    """The program and everything it started (AI Browser's own app, a browser window), at once."""
+    if process.poll() is None and os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=WAIT)
+    if process.poll() is None:
+        process.kill()
+    process.wait(timeout=WAIT)
+
+
+def start(package: Path, seconds: float = START_SECONDS, after: float = AFTER_CONNECTED,
+          out: Callable[[str], None] = print) -> list[str]:
+    """`AI Browser.exe app` started for real with the start log on, watched up to `seconds` (`after` more once its
+    page connected), then stopped. Everything it said is printed, and so is any start log its own app kept. What went
+    wrong: [] when it works."""
+    package = Path(package).resolve()
+    with tempfile.TemporaryDirectory(prefix="aib-start-", ignore_cleanup_errors=True) as folder:
+        env = {**os.environ, "HOME": folder, "USERPROFILE": folder, "AIB_HOME": str(Path(folder) / "aib-home"),
+               "AIB_DEBUG_START": "1", "PYTHONUNBUFFERED": "1"}
+        said = Path(folder) / "start.log"
+        with open(said, "wb") as log:
+            process = subprocess.Popen([str(program(package)), "app"], cwd=package, env=env,
+                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+            deadline = time.monotonic() + seconds
+            connected, ended = False, None
+            try:
+                while time.monotonic() < deadline and process.poll() is None:
+                    if not connected and CONNECTED in said.read_text(encoding="utf-8", errors="replace"):
+                        connected = True
+                        deadline = min(deadline, time.monotonic() + after)
+                    time.sleep(0.25)
+                ended = process.poll()
+            finally:
+                _stop(process)
+        text = said.read_text(encoding="utf-8", errors="replace")
+        out("--- AI Browser.exe app, with the start log on ---")
+        out(text.rstrip())
+        out(f"--- it ended by itself, with exit code {ended}" if ended is not None else "--- it was stopped")
+        for log_file in sorted({*Path(folder).rglob(DEBUG_FILE), *package.rglob(DEBUG_FILE)}):
+            out(f"--- AI Browser's own app's start log: {log_file}")
+            out(log_file.read_text(encoding="utf-8", errors="replace").rstrip())
+    return start_problems(text)
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace")  # ✓ in doctor's lines, on Windows' console too
@@ -173,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     checking = steps.add_parser("check")
     checking.add_argument("package", type=Path)
     checking.add_argument("--bundled", action="store_true", help="AI Browser's own app must be beside the program")
+    steps.add_parser("start").add_argument("package", type=Path)
     args = parser.parse_args(argv)
     if args.step == "electron":
         electron(args.package)
@@ -181,6 +247,12 @@ def main(argv: list[str] | None = None) -> int:
         zip_folder(args.package, args.archive)
         print(f"{args.archive}: {args.archive.stat().st_size // 1_000_000} MB")
         return 0
+    if args.step == "start":
+        problems = start(args.package)
+        for problem in problems:
+            print(f"✗ {problem}", file=sys.stderr)
+        print("✗ AI Browser didn't open" if problems else "✓ AI Browser opened in its own app; its page connected")
+        return 1 if problems else 0
     problems = check(args.package, args.bundled)
     for problem in problems:
         print(f"✗ {problem}", file=sys.stderr)

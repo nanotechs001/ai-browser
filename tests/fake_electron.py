@@ -1,7 +1,8 @@
 """A stand-in for AI Browser's own app (desktop/electron/main.js), for the launcher's tests. It speaks the same line:
 JSON lines on its stdin and stdout, or on the socket --aib-line=<path> names. It answers start with hello (its pid),
 answers a shortcut as its plan says, and quits on the engine's quit or when the line ends. FAKE_ELECTRON_LOG gets its
-argv and every message it reads. FAKE_ELECTRON_PLAN (JSON) says what else it does:
+argv (and ELECTRON_ENABLE_LOGGING, when set) and every message it reads. FAKE_ELECTRON_PLAN (JSON) says what else it
+does:
 - "hello": false: it never says hello;
 - "start_status": {...}: right after hello, the state of the shortcut it was started with;
 - "shortcuts": {value: {"ok", "why"}}: its answer to a shortcut request (any other value: ok);
@@ -27,7 +28,8 @@ def main(argv: list[str]) -> int:
             log.write(json.dumps(entry) + "\n")
             log.flush()
 
-    note({"argv": argv})
+    logging = os.environ.get("ELECTRON_ENABLE_LOGGING")  # Chromium's log on stderr: the start log asks for it
+    note({"argv": argv, **({"electron_logging": logging} if logging else {})})
     path = next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--aib-line=")), None)
     if path:
         line = socket.socket(socket.AF_UNIX)

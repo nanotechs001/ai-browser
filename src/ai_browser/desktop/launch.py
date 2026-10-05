@@ -23,11 +23,13 @@ import itertools
 import json
 import os
 import signal
+import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from .. import debugstart
 from ..app.window import WindowError
 from . import layout
 from .assemble import SetupError, refresh, stale
@@ -103,25 +105,35 @@ class DesktopWindow:
         self._hello = asyncio.get_running_loop().create_future()
         try:
             await (self._start_mac() if self.system == "darwin" else self._start_direct())
-            self.send({"type": "start", "open": url() if callable(url) else url, "shortcut": self.start_shortcut})
+            start = url() if callable(url) else url
+            sent = self.send({"type": "start", "open": start, "shortcut": self.start_shortcut})
+            debugstart.say(f"app: start sent ({debugstart.address(start)})" if sent
+                           else "app: the start couldn't be sent")
             hello = await asyncio.wait_for(self._hello, START_WAIT)
         except TimeoutError:
+            debugstart.say(f"app: no hello within {START_WAIT:g} s: it is ended")
             await self._end_now()
             raise DesktopError("AI Browser's app didn't answer as it started") from None
-        except DesktopError:
+        except DesktopError as exc:
+            debugstart.say(f"app: {exc}")
             await self._end_now()
             raise
         except OSError as exc:  # the line couldn't be made (a temporary folder too deep for a socket, a full disk)
+            debugstart.say(f"app: the line couldn't be made: {exc}")
             await self._end_now()
             raise DesktopError(f"AI Browser's app could not start: {exc.strerror or exc}") from None
+        debugstart.say(f"app: hello from pid {hello.get('pid')}")
         pid = hello.get("pid")
         self.pid = pid if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 else None
 
     async def _start_direct(self) -> None:
+        debugstart.say(f"app: starting {subprocess.list2cmdline(self.program)}")
+        logging = debugstart.on()  # the start log: the app's stderr, with Chromium's own log, on the engine's
         try:
             self._process = await asyncio.create_subprocess_exec(
                 *self.program, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL, limit=LINE_LIMIT)
+                stderr=None if logging else asyncio.subprocess.DEVNULL, limit=LINE_LIMIT,
+                env={**os.environ, "ELECTRON_ENABLE_LOGGING": "1"} if logging else None)
         except OSError as exc:
             raise DesktopError(f"AI Browser's app could not start: {exc.strerror or exc}") from None
         self._listen(self._process.stdout, self._process.stdin)
@@ -147,6 +159,7 @@ class DesktopWindow:
             raise
         try:
             os.chmod(line, 0o600)
+            debugstart.say(f"app: starting {self.app}")
             try:
                 self._process = await asyncio.create_subprocess_exec(
                     *mac_command(self.app, line, self.opener), stdin=asyncio.subprocess.DEVNULL,
@@ -230,6 +243,8 @@ class DesktopWindow:
         if self.ended.is_set():
             return
         self.ended.set()
+        code = self._process.returncode if self._process is not None else None
+        debugstart.say(f"app: its line or its process ended (exit code {code})")
         if self._hello is not None and not self._hello.done():
             self._hello.set_exception(DesktopError("AI Browser's app closed as it started"))
             self._hello.exception()  # read once here: a hello nobody waits for any more leaves no warning

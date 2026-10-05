@@ -32,7 +32,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from .. import browsers, platforms
+from .. import browsers, debugstart, platforms
 from ..accounts import Accounts
 from ..brain import sites
 from ..brain.inbox import InboxReader
@@ -753,15 +753,28 @@ class AppServer:
         from the window's address and history. A used or unknown code is a 403, unless the cookie is already there (a
         reload)."""
         if self._take_code(request.query_params.get("code", "")):
+            debugstart.say(f"GET /open: a valid start code: the window's cookie {self.cookie_name} is set")
             response = RedirectResponse(SHELL, status_code=303)
             response.set_cookie(self.cookie_name, self.ui_secret, httponly=True, samesite="strict", path="/")
             return response
         if self._cookie_ok(request):
+            debugstart.say("GET /open: an unknown, used or expired start code, but the window's cookie is there")
             return RedirectResponse(SHELL, status_code=303)
+        debugstart.say(f"GET /open: an unknown, used or expired start code, and no window cookie {self.cookie_name}")
         return _refused_page(USED_CODE)
 
+    def _say_cookie(self, request: Request, ok: bool) -> None:
+        """The start log's line for a page: whether the window's cookie came, and the names of those that did."""
+        if ok:
+            debugstart.say(f"GET {request.url.path}: the window's cookie is there")
+        else:
+            sent = ", ".join(sorted(request.cookies)) or "none"
+            debugstart.say(f"GET {request.url.path}: no window cookie {self.cookie_name} (cookies sent: {sent})")
+
     async def _page(self, request: Request) -> Response:
-        if not self._cookie_ok(request):
+        ok = self._cookie_ok(request)
+        self._say_cookie(request, ok)
+        if not ok:
             return _refused_page(NOT_HERE)
         path = UI / PAGES[request.url.path]
         if not path.is_file():
@@ -774,6 +787,7 @@ class AppServer:
         if name not in self._files:
             return Response(status_code=404)
         if name not in OPEN_ANYWHERE and not self._cookie_ok(request):
+            self._say_cookie(request, False)
             return _refused_page(NOT_HERE)
         return Response((UI / name).read_bytes(), media_type=FILE_TYPES[Path(name).suffix])
 
@@ -1171,11 +1185,17 @@ class AppServer:
         await ws.accept()  # accept first, so a refusal arrives as a close code the page can read
         kind = self._socket_kind(ws)
         if kind is None:
+            if debugstart.on():
+                origin, host = ws.headers.get("origin") == self.origin, ws.headers.get("host") == self.host_header
+                debugstart.say(f"socket refused: origin {'ok' if origin else 'wrong'}, "
+                               f"host {'ok' if host else 'wrong'}, "
+                               f"window cookie {'ok' if self._cookie_ok(ws) else 'missing'}")
             await ws.close(code=REFUSED)
             return
         self._roles[ws] = "app"  # AI Browser's window: _socket_kind takes no other socket
         self._windows.add(ws)
         self.window_seen = True
+        debugstart.say(f"window socket connected ({len(self._windows)} open)")
         queue: asyncio.Queue = asyncio.Queue()
         self._writers[ws] = asyncio.create_task(self._write(ws, queue))
         try:

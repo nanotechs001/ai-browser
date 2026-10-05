@@ -11,6 +11,7 @@
 // - "area": the screen's work area (default {x: 0, y: 0, width: 1440, height: 900});
 // - "stdout": what a program run with execFile prints (default "");
 // - "folder": the path the folder dialog (dialog.showOpenDialog) returns; without it, the user cancels;
+// - "cookies": what session.defaultSession.cookies.get answers (default: none);
 // - "steps": [[ms, what, ...args]], done that many ms after the start, as the user or a page would:
 //   - ["press"]: the global shortcut; ["tray", label]: a click on the menu-bar icon's item;
 //   - ["focus", kind] and ["blur"]: a click in one of the app's windows ("main", "chat"), or in another app;
@@ -86,6 +87,7 @@ class WebContents extends Emitter {
   }
 
   setWindowOpenHandler() {}
+  getURL() { return this.mainFrame.url; }
 }
 
 class BrowserWindow extends Emitter {
@@ -110,7 +112,10 @@ class BrowserWindow extends Emitter {
     this.webContents.mainFrame.url = url;
     const codes = (plan.statuses || {})[url];
     const code = Array.isArray(codes) && codes.length ? codes.shift() : 200;
-    setTimeout(() => this.webContents.emit("did-navigate", {}, url, code, ""), 0);
+    setTimeout(() => {
+      this.webContents.emit("did-navigate", {}, url, code, "");
+      this.webContents.emit("did-finish-load", {});
+    }, 0);
     return Promise.resolve();
   }
 
@@ -160,7 +165,8 @@ const electron = {
   nativeImage: { createFromPath: () => ({ resize: () => ({}) }) },
   screen: { getAllDisplays: () => [{ workArea: plan.area || { x: 0, y: 0, width: 1440, height: 900 } }] },
   session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {},
-                               setDevicePermissionHandler: () => {}, on: () => {} } },
+                               setDevicePermissionHandler: () => {}, on: () => {},
+                               cookies: { get: async () => plan.cookies || [], on: () => {} } } },
   shell: {},
 };
 
