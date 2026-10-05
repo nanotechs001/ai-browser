@@ -734,7 +734,7 @@ async def test_voice_never_approves_or_fills_a_draft(stack):
     entry.state, entry.draft, entry.draft_version = "draft_ready", "Monday works.", 1
     brain.store.put(entry)
     sent, approved = [], []
-    brain.send_watcher = lambda message: sent.append(message) or True
+    brain.outbox = lambda message: sent.append(message) or True
 
     async def approve(*args, **kwargs):
         approved.append(args)

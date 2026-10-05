@@ -156,7 +156,7 @@ async def test_a_message_workflow_is_offered_or_runs_right_away(fake_claude, tmp
     brain = BrainService(BrainStore(tmp_path / "home"), agents, claude=runner_bin, batch_wait=0.1)
     brain.workflows, brain.runner = workflows, WorkflowRunner(workflows, agents)
     sent = []
-    brain.send_watcher = lambda message: sent.append(message) or True
+    brain.outbox = lambda message: sent.append(message) or True
     brain.set_watch({"site": "asana", "enabled": True, "url_match": "https://app.asana.com/*"})
 
     def raw(raw_id):

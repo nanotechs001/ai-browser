@@ -1,12 +1,15 @@
 """The app server's AI accounts: Settings → Accounts' messages, the snapshot's rows, a new task on an account, Open
-Terminal and the sign-in watch, Continue on, and what the watcher may send and get: nothing of accounts."""
+Terminal and the sign-in watch, Continue on, and a socket from Brave's old watcher: refused, so it gets and changes
+nothing of accounts."""
 
 import asyncio
 import json
 import logging
 from pathlib import Path
 
+import pytest
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
 from fake_accounts import EMAIL, ORG_ID, ORG_NAME, sign_in
 from test_agent_accounts import SESSION_EVENTS, argvs, given
@@ -178,9 +181,8 @@ async def test_continue_on_moves_the_agent_with_its_tabs_in_the_note(fake_claude
         await server.stop()
 
 
-async def test_a_watcher_socket_cant_send_any_account_message(fake_claude, tmp_path):
+async def test_a_socket_from_the_old_watcher_gets_and_changes_nothing_of_accounts(fake_claude, tmp_path):
     server, url, accounts, work, log = await server_rig(fake_claude, tmp_path)
-    server.allow_watcher(WATCHER)
     opened = []
     server.open_terminal = lambda *args, **kwargs: opened.append(args) or True
     agent = await server.agents.create("check the shop")
@@ -193,16 +195,13 @@ async def test_a_watcher_socket_cant_send_any_account_message(fake_claude, tmp_p
                {"type": "account_signin", "id": work.id, "how": "terminal"},
                {"type": "account_move", "id": agent.id, "account": work.id}]
     try:
-        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
-            await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
-            snapshot = (await until(watcher, lambda m: m["type"] == "snapshot"))[-1]
-            for sample in samples:
-                await watcher.send(json.dumps(sample))
-            seen = [snapshot, *await quiet(watcher, 1.0)]
-        assert set(snapshot) == {"type", "agents"}  # never the accounts
-        assert all(set(row) <= {"id", "name", "color", "state", "permission"} for row in snapshot["agents"])
-        assert not {m["type"] for m in seen} & {"accounts", "account_added", "account_signin", "error"}
-        assert "Work" not in json.dumps(seen) and work.id not in json.dumps(seen)
+        async with connect(socket_url(server, url), origin=WATCHER, proxy=None) as watcher:
+            with pytest.raises(ConnectionClosed) as closed:  # refused at once: the watcher's role retired
+                for sample in samples:
+                    await watcher.send(json.dumps(sample))
+                while True:
+                    assert json.loads(await asyncio.wait_for(watcher.recv(), 5))["type"] not in ("accounts", "snapshot")
+        assert closed.value.rcvd is not None and closed.value.rcvd.code == 4403
         assert accounts.path.read_bytes() == before and opened == [] and server._signing_in == {}
         assert agent.account["id"] == "default" and len(argvs(log)) == started  # never moved
     finally:

@@ -360,7 +360,7 @@ def brain_for(fake_claude, tmp_path, *answers, agents=None):
     sent, shown = [], []
     brain = BrainService(BrainStore(tmp_path / "home"), agents if agents is not None else Recorder(),
                          claude=runner)
-    brain.send_watcher = lambda message: sent.append(message) or True
+    brain.outbox = lambda message: sent.append(message) or True
     brain.broadcast = shown.append
     return brain, sent, shown, log
 

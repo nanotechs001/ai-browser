@@ -24,9 +24,8 @@ def test_the_merged_code_has_the_names_this_plan_uses():
     assert run.WINDOW_GRACE and run.WINDOW_START_WAIT and "{name}" in run.NO_WINDOW
     # the server: its settings, the watcher's notifications, a bot check's tab
     assert {"model", "voice", "window_browser"} <= set(server.SETTING_KEYS)
-    for name in ("_settings_payload", "_settings_set", "_forward", "_to_watcher", "_show_check", "_send_all", "_job"):
+    for name in ("_settings_payload", "_settings_set", "_forward", "_show_check", "_send_all", "_job"):
         assert callable(getattr(server.AppServer, name)), name
-    assert "focus" not in server.WATCHER_RECEIVES and "settings" not in server.WATCHER_RECEIVES
     assert server.CHECK_SITE.pattern == r"[a-z0-9.-]{1,253}"
     assert {"window_browser", "model", "voice"} <= set(settings.DEFAULTS)
     assert callable(settings.read_settings) and callable(settings.write_setting)

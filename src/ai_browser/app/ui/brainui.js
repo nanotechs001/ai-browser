@@ -1,6 +1,6 @@
-// The Brain's inbox, shared by AI Home and the watcher's Brain page: only what is new or needs the user, each with
-// what the Brain makes of it and what to do next. Message text is set as text, never as HTML. Approve sends the reply
-// the user sees (and may have edited), once; the watcher then puts it in the reply box, and the user presses Send.
+// The Brain's inbox, in AI Home and Mission Control: only what is new or needs the user, each with what the Brain
+// makes of it and what to do next. Message text is set as text, never as HTML. Approve sends the reply the user sees
+// (and may have edited), once; AI Browser then puts it in the reply box, and the user presses Send.
 "use strict";
 
 const KIND = { needs_reply: "needs your reply", new: "new" };
@@ -17,10 +17,9 @@ const CARD_STATE = { // a send card's state line: the same three lines as talk.j
   waiting: "It's waiting in line: it reads your words when its turn comes.",
   permission: "It's waiting for your Allow or Deny: your words wait too, and don't answer it.",
 };
-const WATCHER_CARD = "Press Start or Send on this card in AI Browser: the watcher can't.";
 const EXPIRED = "This has expired: ask again";
 
-function digits(id) { // "a12" is 12: the watcher ships this file alone, so it works the number out itself
+function digits(id) { // "a12" is 12: this file imports nothing, so it works the number out itself
   const found = String(id || "").replace(/\D/g, "");
   return found ? Number(found) : null;
 }
@@ -38,11 +37,10 @@ function el(tag, className, text) {
   return node;
 }
 
-export function mountBrain(root, link, { compact = false, openAgent = null, cards = "view", openSetup = null } = {}) {
+export function mountBrain(root, link, { compact = false, openAgent = null } = {}) {
   const head = el("div", "brain-head");
   const counts = el("span", "brain-others muted");
-  const watcher = el("span", "brain-watcher");
-  head.append(counts, watcher);
+  head.append(counts);
   const list = el("div", "brain-items list");
   const more = el("button", "brain-more ghost");
   more.hidden = true;
@@ -51,17 +49,9 @@ export function mountBrain(root, link, { compact = false, openAgent = null, card
   const rows = new Map(); // id -> its row, built once and updated in place
   let order = []; // ids, newest first
   let others = 0;
-  let watcherOn = true;
   let showAll = !compact;
-  let setupUrl = null;
   let focusing = null;
 
-  if (!openSetup && location.protocol === "chrome-extension:") { // the watcher's Brain page: the server's address
-    fetch(chrome.runtime.getURL("config.json"), { cache: "no-store" }).then((answer) => answer.json()).then((config) => {
-      setupUrl = `${config.server}/setup#brave`;
-      renderHead();
-    }).catch(() => {});
-  }
   more.addEventListener("click", () => {
     showAll = !showAll;
     render();
@@ -125,7 +115,7 @@ export function mountBrain(root, link, { compact = false, openAgent = null, card
       const text = p.say.value.trim();
       if (!text) return;
       const message = { type: "tell", id, text };
-      if (cards === "confirm" && p.card.dataset.id) { // a typed yes runs this card as its box now reads
+      if (p.card.dataset.id) { // a typed yes runs this card as its box now reads
         message.proposal = p.card.dataset.id;
         if (p.cardTask) message.task = p.cardTask.value;
       }
@@ -167,7 +157,7 @@ export function mountBrain(root, link, { compact = false, openAgent = null, card
     }, HOLD);
   }
 
-  function showCard(node, card) { // an inbox card: Start (Send) and Cancel in AI Browser; on the watcher, words only
+  function showCard(node, card) { // an inbox card: its words, which the user may edit, and Start (Send) and Cancel
     const p = node.parts;
     clearTimeout(node.cardTimer);
     p.card.replaceChildren();
@@ -177,37 +167,31 @@ export function mountBrain(root, link, { compact = false, openAgent = null, card
     if (!card) return;
     p.card.append(el("p", "brain-card-head", cardHeading(card)));
     const state = card.kind === "message_agent" ? CARD_STATE[card.state] : "";
-    if (cards === "confirm") {
-      const task = el("textarea", "brain-card-task");
-      task.rows = 2;
-      task.value = String(card.task || ""); // the user's own words, which they may edit
-      task.setAttribute("aria-label", "Your words");
-      p.cardTask = task;
-      const go = el("button", "brain-card-go primary", card.kind === "message_agent" ? "Send" : "Start");
-      const cancel = el("button", "brain-card-cancel ghost", "Cancel");
-      go.addEventListener("click", () => { // one click, one run: the app closes the card before it runs
-        if (go.disabled) return;
-        if (send({ type: "tell_confirm", id: node.dataset.id, proposal: card.id, task: task.value })) {
-          go.disabled = true;
-          cancel.disabled = true;
-        }
-      });
-      cancel.addEventListener("click", () => {
-        if (!cancel.disabled && send({ type: "tell_dismiss", id: node.dataset.id, proposal: card.id })) {
-          go.disabled = true;
-          cancel.disabled = true;
-        }
-      });
-      const buttons = el("div", "row");
-      buttons.append(go, cancel, el("span", "muted", "or type yes"));
-      p.card.append(task);
-      if (state) p.card.append(el("p", "brain-card-state muted", state));
-      p.card.append(buttons);
-    } else {
-      p.card.append(el("blockquote", "brain-card-words", String(card.task || "")));
-      if (state) p.card.append(el("p", "brain-card-state muted", state));
-      p.card.append(el("p", "brain-card-note muted", WATCHER_CARD));
-    }
+    const task = el("textarea", "brain-card-task");
+    task.rows = 2;
+    task.value = String(card.task || ""); // the user's own words, which they may edit
+    task.setAttribute("aria-label", "Your words");
+    p.cardTask = task;
+    const go = el("button", "brain-card-go primary", card.kind === "message_agent" ? "Send" : "Start");
+    const cancel = el("button", "brain-card-cancel ghost", "Cancel");
+    go.addEventListener("click", () => { // one click, one run: the app closes the card before it runs
+      if (go.disabled) return;
+      if (send({ type: "tell_confirm", id: node.dataset.id, proposal: card.id, task: task.value })) {
+        go.disabled = true;
+        cancel.disabled = true;
+      }
+    });
+    cancel.addEventListener("click", () => {
+      if (!cancel.disabled && send({ type: "tell_dismiss", id: node.dataset.id, proposal: card.id })) {
+        go.disabled = true;
+        cancel.disabled = true;
+      }
+    });
+    const buttons = el("div", "row");
+    buttons.append(go, cancel, el("span", "muted", "or type yes"));
+    p.card.append(task);
+    if (state) p.card.append(el("p", "brain-card-state muted", state));
+    p.card.append(buttons);
     const seconds = Number(card.expires_in);
     node.cardTimer = setTimeout(() => { // past its two minutes: the app won't run it any more either
       if (p.card.dataset.id !== card.id) return;
@@ -265,21 +249,6 @@ export function mountBrain(root, link, { compact = false, openAgent = null, card
     counts.textContent = order.length
       ? [needs && `${needs} need you`, fresh && `${fresh} new`, others && `${others} others`].filter(Boolean).join(" · ")
       : others ? `${others} others, nothing needs you` : "Nothing new";
-    watcher.replaceChildren();
-    if (!watcherOn) {
-      watcher.append("The watcher isn't connected in Brave");
-      if (openSetup) { // AI Browser's window: the setup steps in a tab of their own
-        const setup = el("button", "brain-setup link", "Set it up");
-        setup.type = "button";
-        setup.addEventListener("click", () => openSetup());
-        watcher.append(" · ", setup);
-      } else if (setupUrl) { // the watcher's Brain page, in Brave: a new tab there is right
-        const setup = el("a", "brain-setup", "Set it up");
-        setup.href = setupUrl;
-        setup.target = "_blank";
-        watcher.append(" · ", setup);
-      }
-    }
   }
 
   function render() {
@@ -311,7 +280,6 @@ export function mountBrain(root, link, { compact = false, openAgent = null, card
 
   function settings(message) {
     others = message.others || 0;
-    watcherOn = Boolean(message.watcher);
   }
 
   function onMessage(message) {

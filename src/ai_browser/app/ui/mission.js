@@ -226,8 +226,7 @@ function openBrain() {
   $("drawer-dot").style.background = "var(--accent)";
   const root = el("div", "drawer-brain");
   $("drawer-body").replaceChildren(root);
-  drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id), cards: "confirm",
-                                          openSetup: () => openTab("/setup#brave") });
+  drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id) });
   $("drawer").hidden = false;
 }
 

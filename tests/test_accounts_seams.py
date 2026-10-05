@@ -13,10 +13,8 @@ def test_wave_b_has_the_names_this_plan_uses():
 
     assert callable(settings.read_settings) and callable(settings.write_setting) and callable(settings.Settings)
     assert {"window_browser", "model", "voice"} <= set(settings.DEFAULTS)  # native-app part a adds "shortcut"
-    assert callable(server.may_send) and callable(server.for_watcher) and callable(server.AppServer._role)
+    assert callable(server.may_send) and callable(server.AppServer._role)
     assert {"settings_set", "new_task", "model", "open_url", "tools", "tool_set"} <= set(server.MESSAGE_RULES)
-    assert "settings" not in server.WATCHER_RECEIVES and "tools_snapshot" not in server.WATCHER_RECEIVES
-    assert server.WATCHER_AGENT_FIELDS == ("id", "name", "color", "state", "permission")
     for name in ("_handle", "_snapshot", "_settings_payload", "_tools_command", "probe_tools", "_tools_snapshot",
                  "_job", "_send_all"):
         assert callable(getattr(server.AppServer, name)), name

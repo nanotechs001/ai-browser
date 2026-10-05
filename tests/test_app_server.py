@@ -36,8 +36,9 @@ async def started(fake_claude, tmp_path, events, **options):
     return server, url
 
 
-def socket_url(server, url, token=None):
-    return url.replace("http", "ws") + "/ws?token=" + (server.token if token is None else token)
+def socket_url(server, url, token="t0ken"):
+    """/ws with a token in its address, as Brave's watcher once connected: refused now, whatever it carries."""
+    return url.replace("http", "ws") + "/ws?token=" + token
 
 
 async def recv(ws) -> dict:
@@ -60,8 +61,8 @@ def finished(message) -> bool:
 async def test_strangers_are_refused(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
-        for token, origin in ((server.token, "https://evil.example"), ("wrong", ORIGIN)):
-            async with connect(socket_url(server, url, token), origin=origin) as ws:
+        for origin in ("https://evil.example", ORIGIN, WATCHER, url):
+            async with connect(socket_url(server, url), origin=origin) as ws:
                 with pytest.raises(ConnectionClosed) as closed:
                     await ws.recv()
                 assert closed.value.rcvd.code == 4403
@@ -92,96 +93,23 @@ async def test_a_task_runs_and_every_socket_sees_it(fake_claude, tmp_path):
         await server.stop()
 
 
-async def test_the_setup_page_holds_no_secret_and_says_the_watchers_state(fake_claude, tmp_path):
+async def test_the_setup_page_holds_no_secret(fake_claude, tmp_path):
     from fake_brave import add_agent
 
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
         add_agent(server.agents)
         page = (await fetch("GET", url + "/setup")).text  # opens anywhere: no cookie needed
-        assert "data-key" not in page and "X-AIB-Setup" not in page
-        for secret in (server.token, server.session_token, server.ui_secret, server.token_for("a1")):
+        for secret in (server.session_token, server.ui_secret, server.token_for("a1")):
             assert secret not in page
-        assert "brave://extensions" in page and str(tmp_path / "home" / "app" / "watcher") in page
-        assert "chrome://extensions" not in page and 'id="reveal"' not in page  # AI Browser's extension is gone
+        assert "brave://inspect/#remote-debugging" in page and 'id="switch"' in page
+        assert "brave://extensions" not in page and "watcher" not in page  # the watcher's steps are gone
         assert '<link rel="stylesheet" href="setup.css">' in page and '<script src="setup.js"></script>' in page
-        assert (await fetch("GET", url + "/setup/status")).json() == {"watcher": False}
         assert (await fetch("GET", url + "/setup.js")).status_code == 200  # its own files open anywhere too
         assert (await fetch("GET", url + "/setup.css")).status_code == 200
-    finally:
-        await server.stop()
-
-
-async def test_showing_the_folder_needs_the_window(fake_claude, tmp_path):
-    server, url = await started(fake_claude, tmp_path, EVENTS)
-    shown = []
-    server.reveal = lambda path: shown.append(path) or True
-    try:
-        assert (await fetch("POST", url + "/setup/reveal")).status_code == 403  # a page in Brave: no cookie
-        other = {**ui_cookie(server), "Origin": f"http://127.0.0.1:{server.port + 1}"}
-        assert (await fetch("POST", url + "/setup/reveal", headers=other)).status_code == 403
-        bare = {"Origin": server.origin}
-        assert (await fetch("POST", url + "/setup/reveal", headers=bare)).status_code == 403
-        assert shown == []
-        right = {**ui_cookie(server), "Origin": server.origin}
-        assert (await fetch("POST", url + "/setup/reveal", headers=right)).status_code == 204
-        assert shown == [os.path.realpath(tmp_path / "home" / "app" / "watcher")]
-        server.reveal = lambda path: False  # no file manager could start
-        assert (await fetch("POST", url + "/setup/reveal", headers=right)).status_code == 501
-    finally:
-        await server.stop()
-
-
-async def test_the_setup_page_shows_the_path_the_id_is_hashed_from(fake_claude, tmp_path):
-    import html
-
-    from conftest import symlink_or_skip
-
-    from ai_browser.app.agents import AgentManager
-    from ai_browser.app.server import AppServer
-    from ai_browser.extension_id import extension_id_for, extension_path
-
-    real = tmp_path / "real"
-    real.mkdir()
-    symlink_or_skip(real, tmp_path / "link")
-    home = tmp_path / "link" / "home"  # a home reached through a link
-    server = AppServer(home, AgentManager(home))
-    revealed = []
-    server.reveal = lambda path: revealed.append(path) or True
-    url = await server.start()
-    try:
-        page = (await fetch("GET", url + "/setup")).text
-        await fetch("POST", url + "/setup/reveal", headers={**ui_cookie(server), "Origin": server.origin})
-        shown = extension_path(home / "app" / "watcher")
-        assert html.escape(shown) in page and revealed == [shown]
-        assert extension_id_for(home / "app" / "watcher") == extension_id_for(shown)
-        if os.name != "nt":  # on POSIX, the real path (Brave resolves the link too)
-            assert shown == os.path.realpath(home / "app" / "watcher")
-    finally:
-        await server.stop()
-
-
-@pytest.mark.windows_only
-async def test_a_home_through_a_junction_keeps_the_path_brave_sees(tmp_path):
-    import _winapi
-    import html
-
-    from ai_browser.app.agents import AgentManager
-    from ai_browser.app.server import AppServer
-    from ai_browser.extension_id import extension_path
-
-    real = tmp_path / "real-home"
-    real.mkdir()
-    link = tmp_path / "home-link"
-    _winapi.CreateJunction(str(real), str(link))
-    folder = link / "app" / "watcher"
-    folder.mkdir(parents=True)
-    assert extension_path(folder) == str(folder)  # not the resolved path
-    server = AppServer(link, AgentManager(link))
-    assert server._watcher_folder() == str(folder)
-    url = await server.start()
-    try:
-        assert html.escape(str(folder)) in (await fetch("GET", url + "/setup")).text
+        assert (await fetch("GET", url + "/setup/status")).status_code == 404
+        assert (await fetch("POST", url + "/setup/reveal", headers={**ui_cookie(server),
+                                                                    "Origin": server.origin})).status_code in (404, 405)
     finally:
         await server.stop()
 
@@ -190,21 +118,18 @@ def test_the_setup_page_sets_its_lines_as_text():
     from ai_browser.app.server import SETUP_PAGE, UI
 
     script = (UI / "setup.js").read_text(encoding="utf-8")
-    assert SETUP_PAGE == UI / "setup.html" and 'id="mismatch"' in SETUP_PAGE.read_text(encoding="utf-8")
-    assert "mismatch.textContent" in script and "innerHTML" not in script
-    assert "This button works in AI Browser's own window" in script
+    assert SETUP_PAGE == UI / "setup.html" and "{{" not in SETUP_PAGE.read_text(encoding="utf-8").replace(
+        "{{THIS_COMPUTER}}", "")
+    assert "innerHTML" not in script and "fetch(" not in script  # it asks the app nothing
 
 
 def test_the_setup_page_is_worded_for_each_computer():
     from ai_browser.app.server import setup_page
 
-    windows = setup_page("C:\\Users\\José & Ana\\.ai-browser\\app\\watcher", system="win32")
-    assert "File Explorer" in windows and 'data-manager="File Explorer"' in windows
-    assert "click the address bar at the top of the folder window, paste the path and press Enter" in windows
-    assert "⌘" not in windows and "Finder" not in windows and "{{" not in windows
-    assert "C:\\Users\\José &amp; Ana\\.ai-browser\\app\\watcher" in windows  # whole, accents kept, escaped
-    mac = setup_page("/Users/me/.ai-browser/app/watcher", system="darwin")
-    assert "Finder" in mac and "press ⌘⇧G, paste the path and press Enter" in mac and "<kbd>" not in mac
+    windows, mac = setup_page(system="win32"), setup_page(system="darwin")
+    assert "any program on this PC can reach your Brave" in " ".join(windows.split())
+    assert "any program on this Mac can reach your Brave" in " ".join(mac.split())
+    assert "{{" not in windows and "⌘" not in windows
 
 
 async def test_skills_for_the_dashboard(fake_claude, tmp_path):
@@ -322,64 +247,12 @@ async def with_brain(fake_claude, tmp_path, answers):
     brain = BrainService(BrainStore(home), agents, claude=runner, batch_wait=0.1)
     server = AppServer(home, agents, brain=brain)
     url = await server.start()
-    server.allow_watcher(WATCHER)
     brain.set_watch({"site": "gmail", "enabled": True, "url_match": "https://mail.google.com/*"})
     return server, url, brain
 
 
-async def test_the_watcher_feeds_the_brain_and_pages_see_it(fake_claude, tmp_path):
-    verdicts = [{"id": "gmail:t1", "kind": "needs_reply", "summary": "Maria asks to move the launch", "why": "a client",
-                 "suggest": "draft"}]
-    server, url, brain = await with_brain(fake_claude, tmp_path, [{"result": json.dumps(verdicts)}])
-    try:
-        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
-            await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
-            greeting = await until(watcher, lambda m: m["type"] == "watch_list")
-            assert greeting[0]["type"] == "watcher_hello" and greeting[-1]["sites"][0]["site"] == "gmail"
-            async with httpx.AsyncClient() as client:  # Brave's watcher is not AI Browser's extension
-                assert (await client.get(url + "/setup/status")).json() == {"watcher": True}
-            async with ui_socket(server, url) as page:
-                await page.send(json.dumps({"type": "hello", "view": "home"}))
-                await page.send(json.dumps({"type": "brain"}))
-                assert (await until(page, lambda m: m["type"] == "brain_snapshot"))[-1]["watcher"] is True
-                await watcher.send(json.dumps({"type": "items", "site": "gmail", "items": [
-                    {"id": "t1", "from": "Maria", "subject": "Launch", "snippet": "Monday?", "url": "https://x/1",
-                     "time": "1"}]}))
-                item = (await until(page, lambda m: m["type"] == "brain_item"))[-1]["item"]
-                assert item["kind"] == "needs_reply" and item["summary"] == "Maria asks to move the launch"
-                assert (await until(watcher, lambda m: m["type"] == "notify"))[-1]["count"] == 1
-                await watcher.send(json.dumps({"type": "reader_status", "site": "gmail", "ok": False,
-                                               "note": "reader needs an update"}))
-                state = (await until(page, lambda m: m["type"] == "brain_state"))[-1]
-                assert state["watch_list"][0]["status"] == "reader needs an update"
-            await watcher.close()
-        for _ in range(50):
-            if not brain.watcher:
-                break
-            await asyncio.sleep(0.05)
-        assert brain.watcher is False
-    finally:
-        await server.stop()
-
-
-async def test_only_the_watcher_may_report_items(fake_claude, tmp_path):
-    server, url, brain = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
-    log = fake_claude[1]
-    try:
-        async with ui_socket(server, url) as page:
-            await page.send(json.dumps({"type": "hello", "view": "watcher"}))
-            assert (await recv(page))["type"] == "snapshot"  # AI Browser's own page, not the watcher
-            await page.send(json.dumps({"type": "items", "site": "gmail", "items": [
-                {"id": "t1", "from": "Maria", "subject": "Launch", "snippet": "Monday?", "url": "https://x/1"}]}))
-            await page.send(json.dumps({"type": "brain"}))
-            snapshot = (await until(page, lambda m: m["type"] == "brain_snapshot"))[-1]
-            await brain.settle()
-            assert snapshot["items"] == [] and snapshot["watcher"] is False and oneshots(log) == []
-    finally:
-        await server.stop()
-
-
-async def test_a_draft_without_the_watcher_says_so(fake_claude, tmp_path):
+async def test_a_draft_that_cant_open_its_thread_says_why(fake_claude, tmp_path):
+    from ai_browser.brain.service import CLOSED
     from ai_browser.brain.store import Item
 
     server, url, brain = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
@@ -389,31 +262,10 @@ async def test_a_draft_without_the_watcher_says_so(fake_claude, tmp_path):
         async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await page.send(json.dumps({"type": "draft", "id": "gmail:t1"}))
-            seen = await until(page, lambda m: m["type"] == "brain_item" and "isn't connected" in m["item"]["note"])
-            assert seen[-1]["item"]["state"] == "open"
+            seen = await until(page, lambda m: m["type"] == "brain_item" and m["item"]["note"] == CLOSED)
+            assert seen[-1]["item"]["state"] == "open"  # nothing took it: the item is as it was, and says why
     finally:
         await server.stop()
-
-
-def test_prepare_watcher_updates_its_folder_in_place(tmp_path):
-    from ai_browser.extension_id import extension_id_for
-    from ai_browser.brain.watcher import prepare_watcher
-
-    folder, build = prepare_watcher(tmp_path, "http://127.0.0.1:8792", "secret")
-    assert folder == tmp_path / "app" / "watcher" and len(build) == 12
-    assert json.loads((folder / "config.json").read_text(encoding="utf-8")) == {
-        "server": "http://127.0.0.1:8792", "token": "secret"}
-    assert file_mode(folder / "config.json") in (0o600, None)
-    assert (folder / "link.js").exists() and f'"{build}"' in (folder / "build.js").read_text(encoding="utf-8")
-    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-    assert "https://mail.google.com/*" in manifest["host_permissions"]
-    assert extension_id_for(folder) != extension_id_for(tmp_path / "app" / "extension")  # another folder, another ID
-    (folder / "stale.js").write_text("old", encoding="utf-8")
-    before = (folder / "manifest.json").stat().st_mtime_ns
-    again, same = prepare_watcher(tmp_path, "http://127.0.0.1:8793", "other")
-    assert same == build and (folder / "manifest.json").stat().st_mtime_ns == before  # unchanged files stay as they are
-    assert json.loads((folder / "config.json").read_text(encoding="utf-8"))["token"] == "other"
-    assert not (folder / "stale.js").exists()
 
 
 async def test_late_pages_get_the_latest_thumbnails(fake_claude, tmp_path):
@@ -487,18 +339,13 @@ def told(log) -> list[str]:
     return [line["message"]["content"] for line in lines if isinstance(line, dict) and line.get("type") == "user"]
 
 
-async def test_check_reports_are_checked_then_reach_pages_and_the_watcher(fake_claude, tmp_path):
-    from ai_browser.checks import KINDS
-
+async def test_check_reports_are_checked_then_reach_pages(fake_claude, tmp_path):
     server, url, _ = await with_brain(fake_claude, tmp_path, EVENTS)
     try:
         agent = await server.agents.create("Flights to Manila")
         good = {**CHECK_REPORT, "agent": agent.id}
         headers = agent_headers(server, agent.id)
-        async with (connect(socket_url(server, url), origin=WATCHER) as watcher,
-                    ui_socket(server, url) as page):
-            await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
-            await until(watcher, lambda message: message["type"] == "watch_list")
+        async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await until(page, lambda message: message["type"] == "snapshot")
             async with httpx.AsyncClient() as client:
@@ -508,11 +355,8 @@ async def test_check_reports_are_checked_then_reach_pages_and_the_watcher(fake_c
                     response = await client.post(url + "/agent-events", json=bad, headers=headers)
                     assert response.status_code == 204 and agent.check is None, bad
                 await client.post(url + "/agent-events", json=good, headers=headers)
-                request = (await until(watcher, lambda message: message["type"] == "check_request"))[-1]
-                assert request == {"type": "check_request", "agent": agent.id, "name": "Flights to Manila",
-                                   "site": "www.google.com", "what": KINDS["google"], "live": None}  # no tab id
                 shown = (await until(page, lambda message: message["type"] == "check_request"))[-1]
-                assert shown["target"] == "T1"  # AI Home's own check card still has it (its Watch sends it)
+                assert shown["target"] == "T1"  # AI Home's own check card has it (its Watch sends it)
                 assert agent.state == "needs_you" and agent.check["check"] == "google"
                 cleared = {"agent": agent.id, "kind": "check_cleared", "target": "T1", "adopted": False,
                            "how": "solved"}
@@ -522,12 +366,11 @@ async def test_check_reports_are_checked_then_reach_pages_and_the_watcher(fake_c
         await server.stop()
 
 
-async def test_check_buttons_come_from_our_pages_and_the_watcher_only_continues(fake_claude, tmp_path):
+async def test_check_buttons_come_from_our_pages(fake_claude, tmp_path):
     from ai_browser.app.agents import CONTINUE_TEXT, SKIP_TEXT
 
     _, log, _ = fake_claude
     server, url = await started(fake_claude, tmp_path, EVENTS)
-    server.allow_watcher(WATCHER)
     closed = []
 
     async def close_tabs(targets):
@@ -540,14 +383,10 @@ async def test_check_buttons_come_from_our_pages_and_the_watcher_only_continues(
         for agent in (first, second):
             agents.tab_event(agent.id, "tab_opened", f"T{agent.id}")
             agents.check_event(agent.id, {**CHECK_REPORT, "target": f"T{agent.id}"})
-        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
-            await watcher.send(json.dumps({"type": "check_skip", "id": first.id}))  # the watcher never closes a tab
-            await watcher.send(json.dumps({"type": "check_continue", "id": second.id}))
-            await wait_for(lambda: second.check is None)
-        assert first.check is not None and closed == []
         async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "check_skip", "id": first.id}))
-            await wait_for(lambda: first.check is None)
+            await page.send(json.dumps({"type": "check_continue", "id": second.id}))
+            await wait_for(lambda: first.check is None and second.check is None)
         assert closed == [[f"T{first.id}"]]
         await wait_for(lambda: SKIP_TEXT in told(log) and CONTINUE_TEXT in told(log))
     finally:
@@ -562,19 +401,6 @@ def session_headers(server):
     return {"X-AIB-Agent-Token": server.session_token}
 
 
-async def watcher_socket(server, url):
-    """A stand-in for Brave's watcher on the app's socket, saying it can group."""
-    ws = await connect(socket_url(server, url), origin=WATCHER)
-    await ws.send(json.dumps({"type": "hello", "view": "watcher"}))
-    await until(ws, lambda message: message["type"] == "watch_list")
-    await ws.send(json.dumps({"type": "watcher_caps", "groups": True}))
-    for _ in range(50):
-        if server.groups.available() == "on":
-            break
-        await asyncio.sleep(0.02)
-    return ws
-
-
 async def test_a_claim_without_the_watcher_answers_at_once(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
@@ -586,26 +412,6 @@ async def test_a_claim_without_the_watcher_answers_at_once(fake_claude, tmp_path
             assert answer.json() == {"grouped": False, "reason": "no_watcher"} and time.monotonic() - began < 0.5
         assert server.agents.agents["a1"].tabs == ["T1"]  # a claim records the tab, whatever its group
     finally:
-        await server.stop()
-
-
-async def test_a_claim_groups_through_the_watcher(fake_claude, tmp_path):
-    server, url, _ = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
-    watcher = await watcher_socket(server, url)
-    try:
-        add_agent(server.agents)
-        async with httpx.AsyncClient() as client:
-            claim = asyncio.ensure_future(client.post(url + "/agent-claim", headers=agent_headers(server), json={
-                "agent": "a1", "target": "T1", "marker": "0123456789abcdef"}))
-            ask = (await until(watcher, lambda message: message["type"] == "group_tab"))[-1]
-            assert {key: ask[key] for key in ("key", "title", "color", "find")} == {
-                "key": "a1", "title": "Fix the footer", "color": "blue", "find": {"marker": "0123456789abcdef"}}
-            await watcher.send(json.dumps({"type": "tab_grouped", "request": ask["request"], "ok": True, "tab": 412,
-                                           "window": 1, "group": 9}))
-            assert (await claim).json() == {"grouped": True, "tab": 412}
-        assert server.groups.tab_of("T1") == 412
-    finally:
-        await watcher.close()
         await server.stop()
 
 
@@ -684,27 +490,22 @@ async def test_a_sessions_check_report_changes_nothing(fake_claude, tmp_path):
         await server.stop()
 
 
-async def test_reports_mark_owners_and_a_page_opened_tab_joins_the_group(fake_claude, tmp_path):
+async def test_reports_mark_owners(fake_claude, tmp_path):
     server, url, _ = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
     brave = FakeBrave([])
     server.attach_brave(brave)
-    watcher = await watcher_socket(server, url)
     try:
         add_agent(server.agents)
         brave.relay.own("a1", "T2", announce=False)  # the relay saw a1's engine open it
-        server.groups.remember("T1", 411)
         async with httpx.AsyncClient() as client:
             await client.post(url + "/agent-events", headers=agent_headers(server), json={
                 "agent": "a1", "kind": "tab_opened", "target": "T2", "adopted": False, "opener": "T1",
                 "url": "https://shop.example/next"})
-            ask = (await until(watcher, lambda message: message["type"] == "group_tab"))[-1]
-            assert ask["key"] == "a1" and ask["find"] == {"opener_tab": 411, "url": "https://shop.example/next"}
             assert brave.owners["T2"] == {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"}
             await client.post(url + "/agent-events", headers=agent_headers(server), json={
                 "agent": "a1", "kind": "tab_closed", "target": "T2", "adopted": False})
             assert "T2" not in brave.owners
     finally:
-        await watcher.close()
         await server.stop()
 
 
@@ -783,51 +584,19 @@ async def test_new_task_may_start_only_in_a_tab_brave_lists(fake_claude, tmp_pat
         await server.stop()
 
 
-async def test_the_watcher_may_not_hand_tabs_or_connect(fake_claude, tmp_path):
-    server, url, _ = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
-    brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"}], state="ready")
-    server.attach_brave(brave)
-    agent = add_agent(server.agents, adopted=["U2"])
-    watcher = await watcher_socket(server, url)
-    try:
-        for message in ({"type": "brave_connect"}, {"type": "hand_tab", "id": "a1", "target": "U1"},
-                        {"type": "take_back", "target": "U2"}):
-            await watcher.send(json.dumps(message))
-        await asyncio.sleep(0.5)
-        assert brave.connects == 0 and agent.adopted == ["U2"]
-        async with ui_socket(server, url) as page:  # AI Home may
-            await page.send(json.dumps({"type": "hello", "view": "home"}))
-            await recv(page)
-            await page.send(json.dumps({"type": "brave_connect"}))
-            for _ in range(50):
-                if brave.connects:
-                    break
-                await asyncio.sleep(0.02)
-        assert brave.connects == 1
-    finally:
-        await watcher.close()
-        await server.stop()
-
-
 async def test_the_tab_list_carries_its_scope(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
-    server.allow_watcher(WATCHER)
     brave = FakeBrave([{"target": "U1", "url": "https://shop.example/", "title": "Shop"}])
     brave.set_scope("watcher", 2)
     server.attach_brave(brave)
     try:
-        async with (ui_socket(server, url) as page,
-                    connect(socket_url(server, url), origin=WATCHER) as watcher):
+        async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
-            await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
             assert (await recv(page))["tab_scope"] == {"profile": "watcher", "elsewhere": 2}
-            trimmed = await recv(watcher)
-            assert trimmed["type"] == "snapshot" and "tab_scope" not in trimmed and "tabs" not in trimmed
             brave.set_scope("last_used", 3)
             message = (await until(page, lambda m: m["type"] == "tabs"))[-1]
             assert message["tab_scope"] == {"profile": "last_used", "elsewhere": 3}
             assert [tab["target"] for tab in message["tabs"]] == ["U1"]
-            assert not [m for m in await quiet(watcher, 1.0) if m["type"] == "tabs" or "tab_scope" in m]
             brave.state, brave.pages = "lost", []  # BraveLink's order: the state, the empty list, then the card
             brave.set_scope("none", 0)
             lost = (await until(page, lambda m: m["type"] == "tabs"))[-1]
@@ -920,15 +689,11 @@ async def test_an_agents_turn_connects_a_brave_that_is_ready(fake_claude, tmp_pa
         await server.stop()
 
 
-async def test_the_brains_thread_is_marked_and_a_closed_agent_releases_its_tabs(fake_claude, tmp_path):
+async def test_a_closed_agent_releases_its_tabs(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     brave = FakeBrave([])
     server.attach_brave(brave)
     try:
-        server._to_watcher({"type": "open_thread", "request": "r7", "site": "gmail", "url": "https://mail.example/#t1"})
-        # no BrainService in this server: the watcher's answer still marks the row
-        await server._from_watcher("thread", {"request": "r7", "text": "the thread"})
-        assert brave.marked == ["https://mail.example/#t1"]
         add_agent(server.agents)
         brave.set_owner("T1", {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"})
         await server.agents.close("a1")
@@ -1005,7 +770,7 @@ async def test_the_setup_page_has_the_switch_and_its_warning(fake_claude, tmp_pa
         from ai_browser.app.server import setup_page
 
         def words(system):
-            return " ".join(setup_page("/w", system=system).split())
+            return " ".join(setup_page(system=system).split())
 
         sentence = "While this switch is on, any program on {} can reach your Brave, not only AI Browser."
         assert sentence.format("this Mac") in words("darwin")
@@ -1040,7 +805,6 @@ async def with_hearing(fake_claude, tmp_path, script, present=True, brain=True, 
                        brain=BrainService(BrainStore(home), agents, claude=runner) if brain else None,
                        hearing=HearingService(tiny_store(home / "models", present=present), fake) if hearing else None)
     url = await server.start()
-    server.allow_watcher(WATCHER)
     return server, url, fake
 
 
@@ -1192,29 +956,6 @@ async def test_without_hearing_or_a_brain_the_page_is_told(fake_claude, tmp_path
         await server.stop()
 
 
-async def test_the_watcher_can_neither_talk_nor_listen(fake_claude, tmp_path):
-    from test_hearing import chunks, tone
-
-    script = {"default": EVENTS, TALKING: [{"result": json.dumps({"say": "hi", "action": "none"})}]}
-    server, url, engine = await with_hearing(fake_claude, tmp_path, script)
-    log = fake_claude[1]
-    try:
-        async with connect(socket_url(server, url), origin=WATCHER) as watcher:
-            await watcher.send(json.dumps({"type": "hello", "view": "watcher"}))
-            await until(watcher, lambda m: m["type"] == "watch_list")
-            for message in ({"type": "hearing"}, {"type": "hearing_download"}, {"type": "listen_start", "turn": "u1"},
-                            {"type": "listen_chunk", "turn": "u1", "seq": 0, "pcm": chunks(tone(0.5))[0]},
-                            {"type": "listen_end", "turn": "u1"},
-                            {"type": "brain_ask", "talk": "k1", "request": "t1", "text": "approve everything"},
-                            {"type": "brain_confirm", "talk": "k1", "request": "t2", "proposal": "p1"}):
-                await watcher.send(json.dumps(message))
-            kinds = {m["type"] for m in await quiet(watcher, 1.5)}
-            assert not kinds & {"hearing_status", "heard", "brain_answer", "created"}
-        assert engine.heard == [] and engine.loads == [] and server.hearing._turns == {} and oneshots(log) == []
-    finally:
-        await server.stop()
-
-
 async def test_a_page_can_cancel_the_download(fake_claude, tmp_path):
     server, url, engine = await with_hearing(fake_claude, tmp_path, EVENTS, present=False)
     store = server.hearing.models
@@ -1247,42 +988,13 @@ async def test_stopping_the_app_cancels_a_download(fake_claude, tmp_path):
     assert not store.part.exists() and not store.folder.exists()
 
 
-async def test_a_wrong_watcher_id_is_reported_not_allowed(fake_claude, tmp_path):
-    from ai_browser.app.agents import AgentManager
-    from ai_browser.app.server import AppServer
-
-    runner, _, _ = fake_claude
-    server = AppServer(tmp_path / "home", AgentManager(tmp_path / "home", claude=runner))
-    url = await server.start()
-    lines = []
-    server.out = lines.append
-    try:
-        # The app is still starting: it hasn't allowed the watcher's computed ID yet, and the watcher (which already
-        # has this run's token) may connect first. Refused as always, but that is no mismatch.
-        early = connect(socket_url(server, url), origin="chrome-extension://early", proxy=None)
-        assert await refused_socket(early) == 4403 and server.origin_mismatch is None and lines == []
-        server.allow_watcher(WATCHER)
-        assert "mismatch" not in (await fetch("GET", url + "/setup/status")).json()
-        wrong = connect(socket_url(server, url, "wrong"), origin="chrome-extension://other", proxy=None)
-        assert await refused_socket(wrong) == 4403
-        assert server.origin_mismatch is None and lines == []  # a wrong token sets nothing
-        for _ in range(2):  # the right token from an origin the app didn't compute: said once
-            unexpected = connect(socket_url(server, url), origin="chrome-extension://unexpected", proxy=None)
-            assert await refused_socket(unexpected) == 4403  # still refused, never allowed on its own
-        assert server.origin_mismatch == "chrome-extension://unexpected"
-        assert lines == ["A watcher connected as chrome-extension://unexpected, but the app expected "
-                         "chrome-extension://watcher: please report this"]
-        assert (await fetch("GET", url + "/setup/status")).json()["mismatch"] == "chrome-extension://unexpected"
-    finally:
-        await server.stop()
-
-
 async def test_ai_browsers_extension_path_is_gone(fake_claude, tmp_path):
     from ai_browser.app.server import AppServer
 
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
         assert not hasattr(AppServer, "allow_origin") and not hasattr(server, "extension_seen")
+        assert not hasattr(AppServer, "allow_watcher") and not hasattr(server, "token")  # nor the watcher's
         for origin in ("chrome-extension://good", url, "https://evil.example"):  # the token alone opens nothing
             assert await refused_socket(connect(socket_url(server, url), origin=origin, proxy=None)) == 4403
     finally:
@@ -1319,7 +1031,7 @@ async def test_each_agent_has_its_own_token(fake_claude, tmp_path):
                                        json={**report, "agent": two.id})
             claimed = await client.post(url + "/agent-claim", headers={"X-AIB-Agent-Token": mine}, json=claim)
             assert (ok.status_code, as_two.status_code, claimed.status_code) == (204, 403, 403)
-            for wrong in (server.token, server.session_token):
+            for wrong in ("t0ken", server.session_token):
                 refused = await client.post(url + "/agent-events", headers={"X-AIB-Agent-Token": wrong}, json=report)
                 assert refused.status_code == 403
     finally:
@@ -1432,26 +1144,18 @@ async def test_take_back_cuts_in_the_relay(fake_claude, tmp_path):
         await server.stop()
 
 
-async def test_browser_disconnect_only_from_our_pages(fake_claude, tmp_path):
+async def test_browser_disconnect_from_our_pages(fake_claude, tmp_path):
     server, url, _ = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
     brave = FakeBrave([])
     server.attach_brave(brave)
-    watcher = await watcher_socket(server, url)
     try:
-        await watcher.send(json.dumps({"type": "browser_disconnect", "id": "a1"}))
-        await asyncio.sleep(0.3)
-        assert brave.relay.disconnected == []
         async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             assert (await recv(page))["browser_clients"] == []
             await page.send(json.dumps({"type": "browser_disconnect", "id": "a1"}))
             await until(page, lambda message: message["type"] == "browser_clients")
         assert brave.relay.disconnected == ["a1"]
-        with contextlib.suppress(TimeoutError):
-            while True:
-                assert json.loads(await asyncio.wait_for(watcher.recv(), 0.3))["type"] != "browser_clients"
     finally:
-        await watcher.close()
         await server.stop()
 
 
@@ -1562,37 +1266,6 @@ async def test_setup_page_says_once_per_run(fake_claude, tmp_path):
         await server.stop()
 
 
-async def test_the_watcher_may_not_confirm_an_inbox_card(fake_claude, tmp_path):
-    from ai_browser.brain.store import Item
-    from ai_browser.brain.talk import WATCHER_CARD
-
-    server, url, brain = await with_brain(fake_claude, tmp_path, {"default": EVENTS})
-    brain.store.put(Item(id="gmail:t1", site="gmail", raw_id="t1", sender="Maria", subject="Launch",
-                         snippet="Can we move it?", url="https://mail.google.com/mail/u/0/#inbox/t1",
-                         kind="needs_reply"))
-    card = brain.tells.propose("gmail:t1", "start_agent", task="check the launch page", model="sonnet")
-    watcher = await watcher_socket(server, url)
-    try:
-        for message in ({"type": "tell_confirm", "id": "gmail:t1", "proposal": card.id},
-                        {"type": "tell_dismiss", "id": "gmail:t1", "proposal": card.id},
-                        {"type": "tell", "id": "gmail:t1", "text": "yes", "proposal": card.id}):
-            await watcher.send(json.dumps(message))
-        await wait_for(lambda: brain.store.get("gmail:t1").note == WATCHER_CARD)
-        await asyncio.sleep(0.5)
-        assert brain.tells.peek("gmail:t1") is card and server.agents.agents == {}  # the card is still open
-        async with ui_socket(server, url) as page:  # AI Home may
-            await page.send(json.dumps({"type": "hello", "view": "home"}))
-            await recv(page)
-            for _ in range(2):  # a double click
-                await page.send(json.dumps({"type": "tell_confirm", "id": "gmail:t1", "proposal": card.id}))
-            await wait_for(lambda: len(server.agents.agents) == 1)
-            await quiet(page, 0.5)  # read while waiting: an unread socket takes 10 s to close
-        assert list(server.agents.agents) == ["a1"] and brain.tells.peek("gmail:t1") is None
-    finally:
-        await watcher.close()
-        await server.stop()
-
-
 async def fetch(method, url, **options):
     """One request from a fresh client: no cookie jar carries the window's cookie from one request to the next."""
     async with httpx.AsyncClient() as client:
@@ -1674,8 +1347,7 @@ async def test_pages_need_the_windows_cookie(fake_claude, tmp_path):
 
 
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src "
-       "ws://127.0.0.1:{port}/ws http://127.0.0.1:{port}/setup/; base-uri 'none'; form-action 'none'; "
-       "frame-ancestors 'none'")
+       "ws://127.0.0.1:{port}/ws; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
 
 async def test_every_route_checks_the_host(fake_claude, tmp_path):
@@ -1691,7 +1363,7 @@ async def test_every_route_checks_the_host(fake_claude, tmp_path):
         wrong = {"X-AIB-Agent-Token": server.token_for("a1"), "Host": f"evil.example:{port}"}
         assert (await fetch("POST", url + "/agent-events", json=report, headers=wrong)).status_code == 403
         with pytest.raises(InvalidStatus) as refused:  # the WebSocket is refused before accept: an HTTP 403
-            async with connect(f"ws://localhost:{port}/ws?token={server.token}", host="127.0.0.1", port=port,
+            async with connect(f"ws://localhost:{port}/ws?token=t0ken", host="127.0.0.1", port=port,
                                origin=ORIGIN, proxy=None):
                 pass
         assert refused.value.response.status_code == 403
@@ -1750,10 +1422,7 @@ async def test_only_the_windows_cookie_origin_and_host_open_a_window_socket(fake
                         ui_socket(server, url, origin=other), ui_socket(server, url, origin=None),
                         connect(socket_url(server, url), origin=url, proxy=None)):  # the token, from an http page
             assert await refused_socket(opening) == 4403
-        server.allow_watcher(WATCHER)
-        async with connect(socket_url(server, url), origin=WATCHER, proxy=None) as ws:  # the watcher's path stays
-            await ws.send(json.dumps({"type": "hello", "view": "brain"}))
-            assert (await recv(ws))["type"] == "snapshot"
+        assert await refused_socket(connect(socket_url(server, url), origin=WATCHER, proxy=None)) == 4403
         assert await refused_socket(connect(socket_url(server, url), origin="https://evil.example", proxy=None)) == 4403
     finally:
         await server.stop()
@@ -1768,11 +1437,6 @@ async def test_the_window_count_follows_the_window_sockets(fake_claude, tmp_path
                 await ws.send(json.dumps({"type": "hello", "view": "home"}))
                 await recv(ws)
             assert server.window_count == 2 and server.window_seen
-            server.allow_watcher(WATCHER)
-            async with connect(socket_url(server, url), origin=WATCHER, proxy=None) as watcher:
-                await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
-                await recv(watcher)
-                assert server.window_count == 2  # the watcher is no window of ours
         for _ in range(50):
             if server.window_count == 0:
                 break
@@ -1789,15 +1453,7 @@ async def test_a_window_socket_has_the_app_role(fake_claude, tmp_path):
     brave = FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
     server.attach_brave(brave)
     agent = add_agent(server.agents)
-    server.allow_watcher(WATCHER)
     try:
-        async with connect(socket_url(server, url), origin=WATCHER, proxy=None) as watcher:
-            await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
-            await recv(watcher)
-            await watcher.send(json.dumps({"type": "hand_tab", "id": agent.id, "target": "U1"}))
-            await watcher.send(json.dumps({"type": "brain_ask", "talk": "t1", "request": "r", "text": "hi"}))
-            await asyncio.sleep(0.5)
-            assert agent.adopted == []  # refused for the watcher, with no answer
         async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             await recv(ws)
@@ -1815,16 +1471,16 @@ async def test_a_window_socket_has_the_app_role(fake_claude, tmp_path):
         await server.stop()
 
 
-async def test_a_socket_with_no_role_gets_no_rights_and_only_the_watchers_part(fake_claude, tmp_path):
-    """Fail closed (watcher-safety's deferred minor 7): a socket that is neither the window, AI Browser's own page nor
-    the watcher may send nothing, and is never sent more than a watcher socket gets."""
+async def test_a_socket_with_no_role_gets_no_rights_and_nothing_but_pings(fake_claude, tmp_path):
+    """Fail closed (watcher-safety's deferred minor 7): a socket that isn't one of AI Browser's own pages may send
+    nothing, and is sent nothing but pings."""
     from ai_browser.app.server import may_send
 
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
         stranger = object()
         role = server._role(stranger)
-        assert role not in ("app", "watcher")
+        assert role != "app"
         assert not any(may_send(role, {"type": kind, "item": "x", "answer": "once"})
                        for kind in ("hello", "brain", "new_task", "permission", "workflow_run", "check_continue"))
 
@@ -1856,11 +1512,9 @@ async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude,
     server, url = await started(fake_claude, tmp_path, EVENTS)
     server.window_info = {"using": "chrome", "name": "Google Chrome", "note": "",
                           "choices": [{"id": "auto", "name": "Auto (Google Chrome)", "installed": True}]}
-    server.allow_watcher(WATCHER)
     try:
-        async with ui_socket(server, url) as one, ui_socket(server, url) as two, \
-                connect(socket_url(server, url), origin=WATCHER, proxy=None) as watcher:
-            for ws, view in ((one, "home"), (two, "mission"), (watcher, "brain")):
+        async with ui_socket(server, url) as one, ui_socket(server, url) as two:
+            for ws, view in ((one, "home"), (two, "mission")):
                 await ws.send(json.dumps({"type": "hello", "view": view}))
             snapshot = await recv(one)
             assert snapshot["settings"] == {"model": None, "voice": False, "window_browser": "auto",
@@ -1868,24 +1522,18 @@ async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude,
                                             "watcher_note": True, "window": server.window_info,
                                             "desktop": server._desktop_payload()}
             await recv(two)
-            assert "settings" not in await recv(watcher)  # the watcher's snapshot is trimmed to its agents
             await one.send(json.dumps({"type": "settings_set", "key": "model", "value": "opus", "request": "s1"}))
             for ws in (one, two):
                 seen = (await until(ws, lambda message: message["type"] == "settings"))[-1]
                 assert seen["model"] == "opus" and seen["window"]["name"] == "Google Chrome"
             assert read_settings(tmp_path / "home")["model"] == "opus"
-            await watcher.send(json.dumps({"type": "settings_set", "key": "model", "value": "haiku"}))
             await one.send(json.dumps({"type": "settings_set", "key": "voice", "value": "loud", "request": "s2"}))
             error = (await until(one, lambda message: message["type"] == "error"))[-1]
             assert error == {"type": "error", "text": "Voice is on or off", "request": "s2"}
             await one.send(json.dumps({"type": "settings_set", "key": "colour", "value": "red", "request": "s3"}))
             assert (await until(one, lambda message: message["type"] == "error"))[-1]["request"] == "s3"
             await asyncio.sleep(0.3)
-            assert read_settings(tmp_path / "home") == {"model": "opus"}  # the watcher's and the bad ones changed nothing
-            with pytest.raises(TimeoutError):
-                while True:  # the watcher never gets a settings message
-                    if json.loads(await asyncio.wait_for(watcher.recv(), 0.5))["type"] == "settings":
-                        raise AssertionError("the watcher got settings")
+            assert read_settings(tmp_path / "home") == {"model": "opus"}  # the bad ones changed nothing
     finally:
         await server.stop()
 
@@ -1968,7 +1616,6 @@ async def test_websites_open_in_the_users_browser(fake_claude, tmp_path, monkeyp
     opened, answer = [], [True]
     monkeypatch.setattr(platforms, "open_url", lambda url, browser=None, system=None: opened.append(url) or answer[0])
     server, url = await started(fake_claude, tmp_path, EVENTS)
-    server.allow_watcher(WATCHER)
     try:
         async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
@@ -1989,113 +1636,8 @@ async def test_websites_open_in_the_users_browser(fake_claude, tmp_path, monkeyp
             await ws.send(json.dumps({"type": "open_url", "url": "https://example.com"}))
             error = (await until(ws, lambda message: message["type"] == "error"))[-1]
             assert error["text"] == "Couldn't open that address in your browser"
-        async with connect(socket_url(server, url), origin=WATCHER, proxy=None) as watcher:
-            await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
-            await recv(watcher)
-            await watcher.send(json.dumps({"type": "open_url", "url": "https://example.com/from-the-watcher"}))
-            await asyncio.sleep(0.5)
-        assert opened == ["https://example.com/pricing?a=1", "https://example.com"]  # never from the watcher
+        assert opened == ["https://example.com/pricing?a=1", "https://example.com"]
     finally:
         await server.stop()
 
 
-async def watcher_hello(server, url):
-    """Brave's watcher on the app's socket (its token and origin), after its hello."""
-    server.allow_watcher(WATCHER)
-    ws = await connect(socket_url(server, url), origin=WATCHER, proxy=None)
-    await ws.send(json.dumps({"type": "hello", "view": "watcher"}))
-    return ws
-
-
-async def keyword_server(fake_claude, tmp_path, names):
-    """(server, agents, slugs, ran): a server with workflows `names`, whose runner records (slug, text) and makes an
-    agent with no process behind it (ids from a9 down, so they never meet AgentManager's own a1, a2…)."""
-    from ai_browser.app.agents import AgentManager
-    from ai_browser.app.server import AppServer
-    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
-
-    runner_bin, _, script = fake_claude
-    script.write_text(json.dumps(EVENTS), encoding="utf-8")
-    home = tmp_path / "home"
-    agents = AgentManager(home, claude=runner_bin)
-    store = WorkflowStore(home)
-    for name in names:
-        store.save({"name": name, "instructions": f"Run {name}", "trigger": "manual"})
-    slugs = {workflow.name: workflow.slug for workflow in store.all()}
-    runner = WorkflowRunner(store, agents)
-    ran = []
-
-    async def run(slug, text=None, page=None):
-        ran.append((slug, text))
-        return add_agent(agents, f"a{10 - len(ran)}", name=f"Run {slug}").id
-
-    runner.run = run
-    server = AppServer(home, agents, workflows=store, runner=runner)
-    await server.start()
-    return server, agents, slugs, ran
-
-
-async def test_the_keyword_starts_an_agent_from_the_watcher_only(fake_claude, tmp_path):
-    server, url = await started(fake_claude, tmp_path, EVENTS)
-    server.settings.set("model", "opus")
-    try:
-        ws = await watcher_hello(server, url)
-        await ws.send(json.dumps({"type": "ai_keyword", "text": "  check the shop  ", "request": "k1",
-                                  "adopt": "U1", "tab": {"url": "https://mail.example/", "title": "Mail"}}))
-        answer = (await until(ws, lambda message: message["type"] == "keyword_started"))[-1]
-        assert answer == {"type": "keyword_started", "request": "k1", "id": "a1", "number": 1,
-                          "name": "check the shop"}
-        agent = server.agents.agents["a1"]
-        assert agent.model == "opus" and agent.adopted == [] and agent.working_tab is None  # typing hands no tab
-        await ws.send(json.dumps({"type": "ai_keyword", "text": "   ", "request": "k2"}))
-        await asyncio.sleep(0.3)
-        assert list(server.agents.agents) == ["a1"]  # an empty text does nothing
-        await ws.close()
-        async with ui_socket(server, url) as page:  # AI Home never sends it: its own Start does that
-            await page.send(json.dumps({"type": "hello", "view": "home"}))
-            await recv(page)
-            await page.send(json.dumps({"type": "ai_keyword", "text": "from a page", "request": "k3"}))
-            await asyncio.sleep(0.3)
-        assert list(server.agents.agents) == ["a1"]
-    finally:
-        await server.stop()
-
-
-async def test_the_keyword_runs_a_workflow_by_its_name(fake_claude, tmp_path):
-    server, agents, slugs, ran = await keyword_server(fake_claude, tmp_path, ("qa", "qa site"))
-    try:
-        assert server._keyword_workflow("qa site example.com") == (slugs["qa site"], "example.com")  # longest wins
-        assert server._keyword_workflow("QA SITE") == (slugs["qa site"], "")
-        assert server._keyword_workflow("qasite") is None and server._keyword_workflow("check qa") is None
-        ws = await watcher_hello(server, server.url)
-        await ws.send(json.dumps({"type": "ai_keyword", "text": "qa site example.com", "request": "k1"}))
-        answer = (await until(ws, lambda message: message["type"] == "keyword_started"))[-1]
-        assert ran == [(slugs["qa site"], "example.com")]
-        assert (answer["id"], answer["number"], answer["name"]) == ("a9", 9, "Run " + slugs["qa site"])
-        await ws.send(json.dumps({"type": "ai_keyword", "text": "qa", "request": "k2"}))
-        await until(ws, lambda message: message["type"] == "keyword_started")
-        assert ran[1] == (slugs["qa"], None)  # nothing after the name: the workflow alone
-        await ws.close()
-    finally:
-        await server.stop()
-
-
-async def test_the_keyword_ignores_case_spaces_and_trims_long_text(fake_claude, tmp_path):  # Review Focus 4
-    server, agents, slugs, ran = await keyword_server(fake_claude, tmp_path, ("qa site",))
-    try:
-        ws = await watcher_hello(server, server.url)
-        await ws.send(json.dumps({"type": "ai_keyword", "text": "QA Site   example.com ", "request": "k1"}))
-        await until(ws, lambda message: message["type"] == "keyword_started")
-        assert ran == [(slugs["qa site"], "example.com")]
-        await ws.send(json.dumps({"type": "ai_keyword", "text": "x" * 3000, "request": "k2"}))
-        answer = (await until(ws, lambda message: message["type"] == "keyword_started"))[-1]
-        agent = agents.agents[answer["id"]]
-        for _ in range(100):  # the agent's turn starts with the user's words
-            if any(event.get("type") == "user" for event in agent.events):
-                break
-            await asyncio.sleep(0.05)
-        assert [event["text"] for event in agent.events if event.get("type") == "user"] == ["x" * 2000]
-        assert len(ran) == 1  # one agent, no workflow
-        await ws.close()
-    finally:
-        await server.stop()

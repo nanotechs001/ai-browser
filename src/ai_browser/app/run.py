@@ -5,8 +5,7 @@ it is set up (and with --window), a browser window draws AI Browser instead: an 
 profile of the app's own, with no debugging port (app/window.py). It opens on a one-time code the server swaps for the
 window's cookie. The app ends when the last of its windows has been closed for a few seconds (on macOS the browser
 keeps running with no window, so the windows' sockets tell), or on Ctrl-C, which closes the window too. Agents browse
-in the user's own browser through the app's one connection (the relay); the first start shows the watcher's steps,
-once."""
+in the user's own browser through the app's one connection (the relay)."""
 
 from __future__ import annotations
 
@@ -26,21 +25,19 @@ from ..brain.service import BrainService
 from ..brain.skillwriter import SkillWriter
 from ..brain.store import BrainStore
 from ..brain.tools import ToolsConfig
-from ..brain.watcher import prepare_watcher
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..chrome import inspect_address, own_browser_dir
 from ..desktop import layout
 from ..desktop.assemble import stale
 from ..desktop.launch import default_desktop
 from ..desktop.release import SETUP_COMMAND, asset_for
-from ..extension_id import extension_id_for, extension_path
 from ..hearing.engine import WhisperEngine
 from ..hearing.model import ModelStore
 from ..hearing.service import HearingService
 from ..syncdir import write_atomic
 from .agents import AgentManager
 from .bravelink import BraveLink
-from .server import AppServer, reveal_folder
+from .server import AppServer
 from .window import WINDOW_CHOICES, WindowError, choices, default_launcher
 
 TICK = 30  # seconds between two looks at the scheduled workflows
@@ -57,15 +54,8 @@ NO_APP_PAGE = ("AI Browser's app started, but its page never connected. Try agai
 UPDATING = "Updating AI Browser's app for this version (nothing is downloaded)…"
 
 
-def _goto(folder: str, system: str | None) -> str:
-    return platforms.shortcut(f"press ⌘⇧G, paste {folder} and press Enter",
-                              f"click the address bar at the top of the folder window, paste {folder} and press Enter",
-                              system)
-
-
 def ready_text(system: str | None = None) -> str:
     return ("AI Browser is open in its own window: AI Home shows every agent, tab and skill.\n"
-            "With the watcher in Brave, type ai and a space in Brave's address bar to start a task from there.\n"
             "Close the window, or press Ctrl-C here, to stop.")
 
 
@@ -85,16 +75,6 @@ def setup_hint(home, system: str | None = None, machine: str | None = None) -> s
     return f"\nAI Browser can run as its own app, with a shortcut and notifications: run `{SETUP_COMMAND}` once."
 
 
-def brave_text(folder: str, system: str | None = None) -> str:
-    return f"""The Brain watches your messages (Gmail, Slack, Asana…) in Brave, through a small extension. Once:
-  1. In Brave, open brave://extensions and turn on Developer mode (top right).
-  2. Drag the "watcher" folder onto that page.
-     (Or click Load unpacked, {_goto(folder, system)}.)
-  3. Click the watcher's icon to open the Brain, and switch on the sites to watch.
-  4. Type ai and a space in Brave's address bar to start a task.
-It reads new messages in tabs you have open and never sends anything."""
-
-
 BROWSERS = ("brave",)
 SWITCH = """Agents browse in your {name}, but its remote-debugging switch is off, so nothing reaches it yet. Once:
   1. In {name}, open {inspect}.
@@ -112,7 +92,6 @@ Once the switch is on, AI Home's browser card has a Connect button."""
 LEFT_ASKING = ('{name} is still showing "Allow remote debugging?" from this AI Browser: click Cancel there. AI Browser '
                "has closed, so Allow would connect nothing and keep {name}'s \"controlled by automated test software\" "
                "bar up until {name} restarts.")
-reveal = reveal_folder  # a file manager window with the watcher's folder selected (tests replace it)
 
 
 def _max_agents() -> int:
@@ -283,13 +262,9 @@ async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready
         except RuntimeError as exc:
             out(f"error: {exc}")
             return 1
-        watcher, server.watcher_build = prepare_watcher(home, url, server.token)  # Brave's watcher, updated
-        server.watcher_folder = extension_path(watcher)
-        watcher_id = extension_id_for(watcher)
-        server.allow_watcher(f"chrome-extension://{watcher_id}")
         own = own_browser_dir()  # the user's own browser (Brave first): where agents browse
         cdp = url.replace("http://", "ws://", 1) + "/cdp"
-        brave = BraveLink(own, watcher_id=watcher_id, tokens=server.tokens, app_origin=url)
+        brave = BraveLink(own, tokens=server.tokens, app_origin=url)
         agents.env.update({"AIB_APP_EVENTS": f"{url}/agent-events", "AIB_APP_CDP": cdp, "AIB_APP_ORIGIN": url,
                            **brave_env(own)})
         server.attach_brave(brave)
@@ -321,11 +296,6 @@ async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready
             out(NO_APP_PAGE if server.desktop is not None else NO_WINDOW.format(name=window.name))
             return 1
         out(app_text() if server.desktop is not None else ready_text() + setup_hint(home))
-        if not brain.store.watcher_seen:  # the Brain's watcher isn't in Brave yet: its steps, until it is
-            out(brave_text(server.watcher_folder))
-            if not brain.store.watcher_prompted:  # one folder window, once
-                brain.store.set_watcher_prompted()
-                reveal(server.watcher_folder)
         if brave.state == "off":
             out(SWITCH.format(name=brave.name, inspect=inspect_address(brave.folder)))
         else:
