@@ -55,6 +55,45 @@ and what only the user can check on their own machines. The work ledgers (`.supe
 - **On the user's Mac:** setup has run, and "AI Browser.app" was built and runs (no debugging switch; Brave has one
   connection).
 
+## The all-in-one phase (since 2026-10-05)
+
+The user wants AI Browser to replace the Claude Code app: "an all in one app workflow automation best browsing
+capability for faster navigation and all feature of the claude app". Four projects, in the user's order
+("Powers → Look → Projects → Artifacts"):
+1. **Agent powers:** done, merged as 852cd30.
+   - Agents get Claude Code's own tools behind approval cards, a folder per task, trust, sub-agents and to-do lists.
+   - Spec `docs/superpowers/specs/2026-10-05-agent-powers-design.md`, plan `docs/superpowers/plans/2026-10-05-agent-powers.md`.
+   - **Its hand probe (Task 1) is deferred:** it needs a throwaway Claude login the user signs in by hand
+     (`mkdir -p /tmp/aib-powers-probe/config`, `CLAUDE_CONFIG_DIR=/tmp/aib-powers-probe/config claude`, `/login`,
+     `/exit`), then `uv run python tests/probe_powers.py /tmp/aib-powers-probe`. Until then powers.py uses the safest
+     values: R1 SANDBOX = False, R2 UNTRUSTED_SOURCES = "", R3 ASK_ALL = True, R4 both sub-agent tool names.
+   - Its report isn't written yet (subagents can't write report files); write it from the ledger in
+     `../Ai_Browser-wt/powers/.superpowers/sdd/2026-10-05-agent-powers/progress.md`.
+2. **The new look: PAUSED by the user** ("stop the new look plan for now, create a save point to continue it later").
+   - **The spec is approved:** `docs/superpowers/specs/2026-10-05-new-look-design.md`.
+   - **The save point:** branch `plan-look` (pushed), commit 6152d3e, holding a 16-task draft of
+     `docs/superpowers/plans/2026-10-05-new-look.md`, written on 852cd30.
+   - **The draft's state:** Tasks 1–12 were dry-run against the code; Tasks 13–16 are drafted but not dry-run, and
+     the plan's self-review isn't done.
+   - **To continue:**
+     1. check out `plan-look` and merge `main` into it;
+     2. dry-run Tasks 13–16 and do the self-review;
+     3. show the user the plan;
+     4. build only after the user says so.
+3. **Projects, sessions and chat:** not designed yet. The user wants coding in project folders, sessions and history,
+   and plain chat with Claude.
+4. **Claude artifacts:** not designed yet. Claude Code 2.1.263 carries claude.ai artifact tools (list and read with
+   the user's login).
+
+**The Windows test build:**
+- **The workflow** "Build Windows app" (`.github/workflows/windows-app.yml`) makes AI-Browser-windows.zip. The
+  first build (run 37290385976) opened a white window with "AI Browser's pages open only in its own window".
+- **The cause:** on Windows the app never heard the engine over stdin, so the sign-in never happened.
+- **The fix** is on branch `win-fix`: the line moves to a loopback port, the profile moves to the user's folder,
+  there are AIB_DEBUG_START start logs, and a real start check runs in the workflow.
+- **Still open:** an "appData path" error in the CI's throwaway user folder. Merge `win-fix` once its workflow passes,
+  then send the user the new artifact link.
+
 ## Next
 
 1. **The user's hand checks** (each report lists its own):
