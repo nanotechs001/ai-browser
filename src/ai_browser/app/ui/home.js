@@ -11,6 +11,7 @@ import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
 import { mountWorkflows } from "./workflows.js";
+import { mountFolderPicker } from "./folderpick.js";
 import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
 
 const $ = (id) => document.getElementById(id);
@@ -54,6 +55,8 @@ const tools = mountTools($("tools"), link);
 const workflows = mountWorkflows($("workflows"), link, { skills: () => skills, sites: () => watchSites,
                                                          servers: () => switchedOn });
 const train = mountTrain($("train"), link, { tabs: () => tabs, model: () => $("task-model").value });
+const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
+                                  (message) => link.send(message)); // agent powers: the task's folder
 
 function setStatus(state) {
   $("status").dataset.state = state;
@@ -477,7 +480,7 @@ function finishRequest() {
 }
 
 function handle(message) {
-  for (const part of [brain, tools, workflows, train]) part.onMessage(message);
+  for (const part of [brain, tools, workflows, train, folders]) part.onMessage(message);
   if (message.type === "brain_snapshot" || message.type === "brain_state") {
     watchSites = message.watch_list || [];
     workflows.options();
@@ -510,6 +513,7 @@ function handle(message) {
       renderAccounts();
       link.send({ type: "accounts" }); // each account's status, now
       link.send({ type: "skills" });
+      link.send({ type: "permission_rules" }); // the recent folders, for the picker
       if (chatAgent) link.send({ type: "events", id: chatAgent });
       break;
     case "settings":
@@ -607,11 +611,17 @@ function start() {
     return;
   }
   if (pending) return; // one Start, one agent
+  const why = folders.ready(); // "Trust this folder?" is answered before the first task there
+  if (why) {
+    flash(why);
+    return;
+  }
+  const folder = folders.value();
   pending = `r${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   $("start").disabled = true;
   const account = $("task-account").hidden ? {} : { account: $("task-account").value }; // the picked account
   const sent = link.send({ type: "new_task", text, skills: pickedSkills(), model: $("task-model").value,
-    request: pending, ...account, ...(handing ? { adopt: handing.target } : {}) });
+    request: pending, ...account, ...(folder ? { folder } : {}), ...(handing ? { adopt: handing.target } : {}) });
   if (!sent) {
     finishRequest();
     flash("Not connected: is `ai-browser app` running?");

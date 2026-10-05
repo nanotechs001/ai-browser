@@ -152,3 +152,105 @@ async def test_mission_controls_drawer_lists_the_plan_and_the_sub_agents(stack):
         "No folder: its own scratch folder"
     await mission("document.querySelector('#drawer-body .stop').click(); true")  # Stop stops its sub-agents
     assert await until(mission, "document.querySelector('#drawer-body .subagents li')?.textContent.startsWith('■')")
+
+
+CHOOSE_LAST = ("(() => { const pick = document.getElementById('task-folder');"
+               "pick.value = pick.options[pick.options.length - 1].value;"  # Choose…
+               "pick.dispatchEvent(new Event('change')); return true; })()")
+
+
+@CHROME
+async def test_ai_home_asks_trust_once_and_starts_the_task_in_the_folder(home, user_home, tmp_path):  # Decisions 6, 7
+    js, stack = home
+    project = tmp_path / "project"
+    project.mkdir()
+    box = "document.getElementById('folder-ask')"
+    names = "[...document.getElementById('task-folder').options].map((option) => option.textContent).join('|')"
+    assert await until(js, f"{names} === 'No folder|Choose…'")
+    await js(CHOOSE_LAST)
+    assert await until(js, f"{box}.querySelector('.folder-typed') != null")  # not AI Browser's own app: typed
+    await js(f"{box}.querySelector('.folder-typed').value = {json.dumps(str(project))};"
+             f"{box}.querySelector('.folder-use').click(); true")
+    assert await until(js, f"{box}.querySelector('.trust') != null")
+    assert "Trust project?" in await js(f"{box}.textContent")
+    await js("document.getElementById('task').value = 'fix the footer';"
+             "document.getElementById('start').click(); true")
+    assert await until(js, "document.getElementById('hint').textContent.includes('Trust this folder')")
+    assert stack["server"].agents.agents == {}  # Start waits for the answer
+    await js(f"{box}.querySelector('.trust').click(); true")
+    assert await until(js, f"{box}.textContent.startsWith('Trusted: ')")
+    assert stack["server"].agents.rules.trusted(project) is True
+    await js("document.getElementById('start').click(); true")
+    agents = stack["server"].agents
+    assert await settled(lambda: "a1" in agents.agents)
+    assert agents.agents["a1"].folder == os.path.realpath(project)
+    real = json.dumps(os.path.realpath(project))
+    assert await until(js, f"document.getElementById('task-folder').value === {real}")  # kept for the next task
+
+
+@CHROME
+async def test_a_refused_folder_is_said_and_the_typed_path_stays(home, user_home):  # Decision 6
+    js, stack = home
+    box = "document.getElementById('folder-ask')"
+    await js(CHOOSE_LAST)
+    assert await until(js, f"{box}.querySelector('.folder-typed') != null")
+    await js(f"{box}.querySelector('.folder-typed').value = {json.dumps(str(stack['home']))};"
+             f"{box}.querySelector('.folder-use').click(); true")
+    assert await until(js, f"{box}.textContent.includes(\"AI Browser's own folder\")")
+    assert await js(f"{box}.querySelector('.folder-typed') != null")  # the user can type another
+    assert await js("document.getElementById('task-folder').value") == ""  # still No folder
+
+
+@CHROME
+async def test_the_tab_menu_opens_the_folder_dialog_for_ai_home(stack, user_home, tmp_path):  # plan decision 13
+    from test_tab_menu import frame, in_frame, window_page
+
+    project = tmp_path / "project"
+    project.mkdir()
+    js = await window_page(stack)
+    await js(f"window.aib = {{ chooseFolder: async () => {json.dumps(str(project))} }}; true")  # the app's bridge
+    assert await until(js, f"{frame('/home')}.document.getElementById('task-folder')?.options.length === 2")
+    await in_frame(js, "/home", CHOOSE_LAST)
+    assert await until(js, f"{frame('/home')}.document.querySelector('#folder-ask .trust') != null")
+    await in_frame(js, "/home", "document.querySelector('#folder-ask .trust').click(); true")
+    assert await settled(lambda: stack["server"].agents.rules.trusted(project) is True)
+
+
+@CHROME
+async def test_the_chat_opens_the_folder_dialog_itself_and_starts_there(stack, user_home, tmp_path):  # Decision 6
+    from test_chat_page import open_chat
+
+    project = tmp_path / "project"
+    project.mkdir()
+    stack["server"].agents.rules.trust(project)  # answered before: no question this time
+    chat, _ = await open_chat(stack)
+    await chat(f"window.aib = Object.freeze({{ ...window.aib, chooseFolder: async () => {json.dumps(str(project))} }});"
+               "document.getElementById('new-open').click(); true")
+    await chat(CHOOSE_LAST)
+    assert await until(chat, "document.getElementById('folder-ask').textContent.startsWith('Trusted: ')")
+    await chat("document.getElementById('task').value = 'fix the footer';"
+               "document.getElementById('task-start').click(); true")
+    agents = stack["server"].agents
+    assert await settled(lambda: "a1" in agents.agents and agents.agents["a1"].folder == os.path.realpath(project))
+
+
+@CHROME
+async def test_mission_control_starts_a_task_in_a_recent_folder(stack, user_home, tmp_path):  # Decision 6
+    from test_mission import open_mission
+
+    project = tmp_path / "project"
+    project.mkdir()
+    rules = stack["server"].agents.rules
+    rules.trust(project)
+    rules.note_used(project)
+    mission = await open_mission(stack)
+    pick = "document.getElementById('task-folder')"
+    real = json.dumps(os.path.realpath(project))
+    assert await until(mission, f"[...{pick}.options].some((option) => option.value === {real})")
+    assert await mission(f"[...{pick}.options].find((option) => option.value === {real}).textContent") == "project"
+    await mission(f"{pick}.value = {real}; {pick}.dispatchEvent(new Event('change')); true")
+    assert await until(mission, "document.getElementById('folder-ask').textContent.startsWith('Trusted: ')")
+    await mission("document.getElementById('task').value = 'fix the footer';"
+                  "document.getElementById('start').click(); true")
+    agents = stack["server"].agents
+    assert await settled(lambda: "a1" in agents.agents and agents.agents["a1"].folder == os.path.realpath(project))

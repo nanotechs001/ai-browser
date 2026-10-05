@@ -9,6 +9,7 @@ import { connect } from "./link.js";
 import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
 import { permissionCard } from "./permission.js";
 import { renderPlan, renderSubagents } from "./plan.js";
+import { mountFolderPicker } from "./folderpick.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
 import { mountTalk } from "./talk.js";
 import { mountYourTabs } from "./tablist.js";
@@ -65,6 +66,8 @@ const voice = createVoice({
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
+const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
+                                  (message) => link.send(message)); // agent powers: the task's folder
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 // Shown again (its tab, or the window after the user signed in in a terminal): each account's status, now
@@ -387,10 +390,17 @@ function start() {
     return;
   }
   if (pending) return;
+  const why = folders.ready();
+  if (why) {
+    note(why);
+    return;
+  }
+  const folder = folders.value();
   pending = `m${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   $("start").disabled = true;
   const account = $("task-account").hidden ? {} : { account: $("task-account").value }; // the picked account
-  if (!link.send({ type: "new_task", text, skills: [], model: $("task-model").value, request: pending, ...account })) {
+  if (!link.send({ type: "new_task", text, skills: [], model: $("task-model").value, request: pending, ...account,
+                   ...(folder ? { folder } : {}) })) {
     finishStart();
     note("Not connected: is `ai-browser app` running?");
     return;
@@ -401,6 +411,7 @@ function start() {
 // ---- the line to the app -----------------------------------------------------------------------------------------
 
 function handle(message) {
+  folders.onMessage(message);
   if (message.type?.startsWith("brain_")) drawer.brain?.onMessage(message); // the inbox in the drawer
   switch (message.type) {
     case "brain_snapshot":
@@ -459,6 +470,7 @@ function handle(message) {
       link.send({ type: "thumbs" }); // the latest pictures, for a page opened after they were taken
       link.send({ type: "brain" });
       link.send({ type: "hearing" }); // can this page talk? (asked again after every reconnect)
+      link.send({ type: "permission_rules" });
       break;
     }
     case "agent_event":

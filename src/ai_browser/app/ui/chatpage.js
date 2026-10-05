@@ -12,6 +12,7 @@ import { guardLinks } from "./nav.js";
 import { host, mountPageBar, pickable } from "./pagebar.js";
 import { permissionCard } from "./permission.js";
 import { mountTalk } from "./talk.js";
+import { mountFolderPicker } from "./folderpick.js";
 
 const $ = (id) => document.getElementById(id);
 const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
@@ -25,6 +26,7 @@ let pendingTimer = null;
 let hereTab = null; // the tab This page showed when "Start it in this page" was last looked at
 let talk = null;
 let bar = null;
+let folders = null; // the Folder picker (agent powers)
 
 function setStatus(state) {
   talk?.connection(state); // a lost line ends a turn, or a question, at once
@@ -112,12 +114,18 @@ function start() {
     return;
   }
   if (pending) return; // one Start, one agent
+  const why = folders.ready();
+  if (why) {
+    flash(why);
+    return;
+  }
+  const folder = folders.value();
   const here = $("task-here").checked ? bar.current() : null;
   pending = `c${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   $("task-start").disabled = true;
   const account = $("task-account").hidden ? {} : { account: $("task-account").value };
   const sent = link.send({ type: "new_task", text, skills: [], model: $("task-model").value, request: pending,
-                           ...account, ...(here ? { adopt: here.target } : {}) });
+                           ...account, ...(folder ? { folder } : {}), ...(here ? { adopt: here.target } : {}) });
   if (!sent) {
     finish();
     flash(NOT_CONNECTED);
@@ -131,6 +139,7 @@ function useModel(value) { // the model picked last, in AI Home or Mission Contr
 }
 
 function handle(message) {
+  folders?.onMessage(message);
   switch (message.type) {
     case "snapshot":
       agents.clear();
@@ -140,6 +149,7 @@ function handle(message) {
       useModel(message.settings?.model || message.default_model);
       if (pending) finish(); // a new connection: an unanswered Start can be pressed again
       link.send({ type: "accounts" }); // each account's status, now
+      link.send({ type: "permission_rules" });
       break;
     case "agent":
       agents.set(message.agent.id, message.agent);
@@ -183,6 +193,8 @@ const link = connect({ view: "chat", onMessage: handle, onState: setStatus });
 guardLinks(link, { ours: () => link.send({ type: "show_app" }) }); // a website opens in Brave; our pages, in AI Home
 bar = mountPageBar($("page"), { link, aib: window.aib, agents: ordered, input: $("talk-text"), onSay: flash,
                                 onChange: hereChanged });
+folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
+                            (message) => link.send(message)); // agent powers: the task's folder
 talk = mountTalk({ panel: $("talk"), micButton: $("mic"), link, voice: quiet, hintVoice: false,
                    model: () => $("task-model").value,
                    openAgent: (id) => link.send({ type: "show_app", agent: id }),
