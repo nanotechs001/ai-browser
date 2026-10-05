@@ -46,6 +46,48 @@ def test_frames_go_only_to_our_pages_and_live_views():  # Review Focus 3
                   f" policy.mayNavigate('{OWN}/app', {json.dumps(OWN)}, undefined)];") == [False, False, True]
 
 
+
+@NEEDS_NODE
+def test_the_chats_window_goes_only_to_the_chat_page():  # Plan decision 15
+    cases = [(f"{OWN}/chat", True, True), (f"{OWN}/chat#ask", True, True), (f"{OWN}/chat?x=1", True, False),
+             (f"{OWN}/home", True, False), (f"{OWN}/app", True, False), (f"{OWN}/open?code=x", True, False),
+             (f"{OWN}/chat", False, False),  # no frame in the chat, not even its own page
+             ("http://127.0.0.1:8770/live?token=abc", False, False), ("https://example.com/chat", True, False),
+             ("http://localhost:8793/chat", True, False), ("http://me:pw@127.0.0.1:8793/chat", True, False),
+             ("javascript:alert(1)", True, False)]
+    got = run_js("return " + json.dumps([[url, main] for url, main, _ in cases])
+                 + f".map(([url, main]) => policy.mayNavigate(url, {json.dumps(OWN)}, main, 'chat'));")
+    assert got == [allowed for _, _, allowed in cases]
+    others = run_js(f"return [policy.mayNavigate('{OWN}/home', {json.dumps(OWN)}, true, 'main'),"
+                    f" policy.mayNavigate('{OWN}/chat', null, true, 'chat'), policy.CHAT_PATH];")
+    assert others == [True, False, "/chat"]
+
+
+@NEEDS_NODE
+def test_the_chat_opens_where_it_was_left_while_a_screen_still_shows_it():
+    got = run_js("""
+      const screens = [{ x: 0, y: 0, width: 1440, height: 875 }, { x: 1440, y: -200, width: 1920, height: 1080 }];
+      return [
+        policy.chatBounds(null, screens),
+        policy.chatBounds({ x: 100.4, y: 120, width: 420, height: 640 }, screens),
+        policy.chatBounds({ x: 2000, y: -150, width: 400, height: 500 }, screens),
+        policy.chatBounds({ x: 5000, y: 5000, width: 400, height: 500 }, screens),
+        policy.chatBounds({ x: 100, y: -400, width: 400, height: 500 }, screens),
+        policy.chatBounds({ x: 1400, y: 100, width: 400, height: 500 }, [screens[0]]),
+        policy.chatBounds({ x: 10, y: 10, width: 100, height: 9000 }, screens),
+        policy.chatBounds({ x: "a", y: 1 }, screens),
+        policy.chatBounds(null, []),
+        policy.CHAT_SIZE,
+      ];""")
+    assert got[0] == {"x": 1044, "y": 48, "width": 380, "height": 560}  # the first time: the main screen's right edge
+    assert got[1] == {"x": 100, "y": 120, "width": 420, "height": 640}  # where the user left it
+    assert got[2] == {"x": 2000, "y": -150, "width": 400, "height": 500}  # on the second screen
+    assert got[3] == got[4] == got[5] == got[0]  # a screen that's gone, a title bar off the top, 40 px left on one
+    assert got[6] == {"x": 10, "y": 10, "width": 320, "height": 4000}  # sizes kept within limits
+    assert got[7] == got[0]  # a broken file: the first-time place
+    assert got[8] == {"x": 884, "y": 48, "width": 380, "height": 560}  # no screen known: a 1280 × 800 one
+    assert got[9] == {"width": 380, "height": 560, "minWidth": 320, "minHeight": 360}
+
 @NEEDS_NODE
 def test_only_the_microphone_and_copying_are_allowed_and_only_for_our_pages():
     own = json.dumps(OWN)
