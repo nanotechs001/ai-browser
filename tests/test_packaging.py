@@ -113,3 +113,12 @@ def test_the_windows_build_runs_only_by_hand_with_pinned_actions():
     assert "windows_app.py check" in job["steps"][upload + 1]["run"]  # after the upload: the zip is there either way
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["persist-credentials"] is False
+
+
+def test_the_readme_says_how_to_get_and_start_the_windows_build():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    section = text.split("## Windows test build", 1)[1].split("\n## ", 1)[0]
+    for needed in ("Actions", "Build Windows app", "Run workflow", "Artifacts", "AI-Browser-windows.zip",
+                   "AI Browser.exe", "Windows protected your PC", "More info", "Run anyway", "Claude Code",
+                   "brave://inspect/#remote-debugging", "Docker", "voice"):
+        assert needed in section, needed

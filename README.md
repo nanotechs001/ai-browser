@@ -96,6 +96,29 @@ ai-browser runs natively on Windows 10 (22H2) and Windows 11, 64-bit. In PowerSh
   per-user permissions on your folder: you, SYSTEM and Administrators.
 - **Running inside WSL2** works with the Linux code, but needs Linux Chrome and Brave inside WSL.
 
+## Windows test build (AI Browser.exe, built by GitHub)
+
+A temporary way to try the current version on a Windows PC (64-bit) without Python, uv or the code. It isn't
+signed, and it has no voice input.
+
+1. **Build it:** on GitHub, open the repo's **Actions** tab → **Build Windows app** → **Run workflow** (pick the
+   branch to test). It runs only when you click, and takes a few minutes.
+2. **Download it:** open that run's page. Under **Artifacts**, click **AI-Browser-windows.zip** (kept for 14 days).
+3. **Start it:** unzip it (right-click → **Extract All**) into a folder of yours outside OneDrive, open the
+   `AI Browser` folder and double-click **AI Browser.exe**. The first time, SmartScreen says
+   "Windows protected your PC", because the build isn't signed: click **More info**, then **Run anyway**.
+   - A console window opens with AI Browser's log, then AI Browser's own app. Quitting the app (its icon by the clock
+     → Quit), or closing the console window, stops everything.
+   - Start it from `AI Browser.exe`, not from the Start menu entry the app adds (that one is for its notifications).
+   - With a command, it works as `ai-browser` does. Where AI Browser says `uv run ai-browser …`, run this in
+     PowerShell, in that folder: `& ".\AI Browser.exe" …` (for example `& ".\AI Browser.exe" doctor --setup`).
+4. **The PC needs:**
+   - Claude Code, installed and signed in: `irm https://claude.ai/install.ps1 | iex`, then `claude` once;
+   - Brave, with remote debugging on: open `brave://inspect/#remote-debugging` and tick **Allow remote debugging for
+     this browser instance** (untick it when agents aren't working);
+   - Docker Desktop only for skills and the shell tool, then `& ".\AI Browser.exe" build` once.
+5. **Not in this build:** voice input (talking to the Brain).
+
 ## Use it from Claude Code
 
 Copy `.mcp.json.example` to `.mcp.json` and put this folder's path in it (git ignores your copy). Then open Claude
@@ -732,7 +755,8 @@ Electron.app's `Contents/MacOS/Electron`, or `electron.exe`). They start it unpa
 window shows for a moment. The tests of the app's rules run under Node.js when it is installed. The app itself never
 needs Node.js.
 
-**Tests on Windows (GitHub):** the private repo's Actions tab has one workflow, **tests**. It runs only when you
+**Tests on Windows (GitHub):** the private repo's Actions tab has the workflow **tests** (and **Build Windows app**,
+the [Windows test build](#windows-test-build-ai-browserexe-built-by-github)). It runs only when you
 click **Run workflow**, never on a push. Pick `windows` (the default), `macos` or `both`; tick **voice** to also
 install the voice extra (no model is downloaded). It uses your Actions minutes only then: Windows and macOS minutes
 cost more than Linux ones, macOS the most. The test report is kept for 7 days, inside the private repo. Tests that
