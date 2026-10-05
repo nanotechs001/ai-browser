@@ -11,7 +11,6 @@ import contextlib
 import json
 import logging
 import re
-import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -351,7 +350,8 @@ class ClaudeBridge:
         folder = self.folder
         folder.mkdir(parents=True, exist_ok=True)
         env = {"AIB_HOME": str(self.home), "PYTHONUTF8": "1", "AIB_BROWSER": "chrome", **self.env}
-        servers = {"ai-browser": {"command": sys.executable, "args": ["-m", "ai_browser.cli", "mcp"], "env": env}}
+        command, *args = platforms.self_command("mcp")  # this Python, or the packaged AI Browser.exe
+        servers = {"ai-browser": {"command": command, "args": args, "env": env}}
         for name in sorted(self._allowed_servers()):  # the user's own servers, switched on in AI Home's Tools
             definition = self.tools.definition(name)
             if definition is not None:

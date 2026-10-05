@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import platforms
 
 IMAGE = "ai-browser-sandbox:0.1"
 CDP_PORT = 9223  # socat inside the container, forwarding to Chromium's 127.0.0.1:9222
@@ -36,7 +39,10 @@ def home() -> Path:
 
 
 def project_root() -> Path:
-    """The repository root (holds docker/ and skills/)."""
+    """The repository root (holds docker/ and skills/). In the packaged AI Browser.exe (packaging/): its bundle's
+    folder, where the build put both."""
+    if platforms.frozen():
+        return Path(sys._MEIPASS)
     return Path(__file__).resolve().parents[2]
 
 

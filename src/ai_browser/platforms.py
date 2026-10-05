@@ -258,6 +258,20 @@ def open_url(url: str, browser=None, system: str | None = None) -> bool:
     return True
 
 
+def frozen() -> bool:
+    """Whether this is AI Browser.exe, the packaged build (packaging/, PyInstaller), rather than Python running the
+    code. Read at call time."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def self_command(*args: str) -> list[str]:
+    """The command that starts this AI Browser again with `args` (`self_command("mcp")`): this Python running
+    ai_browser.cli, or the packaged AI Browser.exe itself, which takes the arguments directly and has no -m."""
+    if frozen():
+        return [sys.executable, *args]
+    return [sys.executable, "-m", "ai_browser.cli", *args]
+
+
 API_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")  # never reach Claude Code: it always uses a login
 
 

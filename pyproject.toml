@@ -31,6 +31,9 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=1.0",
 ]
+packaging = [
+    "pyinstaller>=6.16",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

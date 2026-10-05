@@ -10,14 +10,29 @@ import sys
 import time
 from pathlib import Path
 
+from . import platforms
 from .config import IMAGE, home, project_root
 
 # operation, budget in ms (spec §7)
 BUDGETS = [("observe", 100), ("observe heavy page", 300), ("click step", 150), ("type step", 150),
            ("open local page", 500), ("screenshot", 300)]
+STOPPED = "AI Browser stopped (see above). Press Enter to close this window."
 
 
 def main(argv: list[str] | None = None) -> int:
+    """The command in `argv` (else the command line). The packaged AI Browser.exe (packaging/) with no command was
+    double-clicked: it runs `app`, and its console window shows the log. When the app can't start, the window waits
+    for Enter, so the reason can be read."""
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv or not platforms.frozen():
+        return _command(argv)
+    code = _command(["app"])
+    if code not in (0, 130) and _interactive():
+        _ask(STOPPED)
+    return code
+
+
+def _command(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="ai-browser", description="Sandboxed browser, shell and skills for Claude.")
     commands = parser.add_subparsers(dest="command", required=True, metavar="command")
     commands.add_parser("mcp", help="run the MCP server on stdio (Claude Code starts this)")
