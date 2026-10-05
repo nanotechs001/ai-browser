@@ -171,3 +171,27 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .app-command { display: inline-block; font: 12px/1.45 ui-monospace, Menlo, monospace; background: var(--soft);
                border-radius: 8px; padding: 4px 8px; user-select: all; }
 .agent.focus, #brain.focus { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 12px; }
+
+/* Agent powers: each action's badge and time, a sub-agent's lines, and the task's folder on the row. */
+.action .badge { font-size: 11px; border-radius: 999px; padding: 0 6px; margin-right: 6px; background: var(--soft); }
+.action .at { color: var(--muted); margin-left: 6px; font-size: 12px; }
+.action.sub { margin-left: 14px; }
+.agent .chip.folder { background: transparent; border: 1px solid var(--line); max-width: 160px; overflow: hidden;
+                      text-overflow: ellipsis; }
+
+/* Agent powers: the task's folder, the typed path and "Trust this folder?". */
+.folder-ask { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.folder-ask .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.folder-ask .folder-typed { flex: 1; min-width: 200px; }
+.folder-ask p { margin: 0; }
+.folder-ask .folder-path { font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+#task-folder { max-width: 180px; }
+
+/* Settings → Permissions (agent powers): a card per folder, its trust and its rules. */
+.permissions { display: flex; flex-direction: column; gap: 8px; }
+.perm-folder .top-line { display: flex; gap: 8px; align-items: center; }
+.perm-folder .path { margin: 2px 0; font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+.perm-folder .rules { margin: 4px 0; padding-left: 0; list-style: none; display: flex; flex-direction: column;
+                      gap: 4px; }
+.perm-folder .rule { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.perm-folder .row { display: flex; gap: 6px; }

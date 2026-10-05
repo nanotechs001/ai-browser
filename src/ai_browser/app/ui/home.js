@@ -6,10 +6,12 @@ import { checkCard } from "./check.js";
 import { connect } from "./link.js";
 import { agentLabel, createChat, el } from "./chat.js";
 import { permissionCard } from "./permission.js";
+import { folderName, planProgress, subagentCount } from "./plan.js";
 import { mountTabList } from "./tablist.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
 import { mountWorkflows } from "./workflows.js";
+import { mountFolderPicker } from "./folderpick.js";
 import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
 
 const $ = (id) => document.getElementById(id);
@@ -53,6 +55,8 @@ const tools = mountTools($("tools"), link);
 const workflows = mountWorkflows($("workflows"), link, { skills: () => skills, sites: () => watchSites,
                                                          servers: () => switchedOn });
 const train = mountTrain($("train"), link, { tabs: () => tabs, model: () => $("task-model").value });
+const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
+                                  (message) => link.send(message)); // agent powers: the task's folder
 
 function setStatus(state) {
   $("status").dataset.state = state;
@@ -137,8 +141,10 @@ function makeAgentRow(id) {
   const parts = { dot: el("span", "dot"), name: el("span", "name"), state: el("span", "chip"),
                   account: el("span", "chip account"), status: el("div", "status"), moved: el("div", "status moved"),
                   last: el("div", "last"), totals: el("div", "status totals"), thumb: el("img", "thumb"),
+                  folder: el("span", "chip folder"), plan: el("div", "status plan"),
+                  subs: el("div", "status subagents"),
                   ask: null, askKey: "" };
-  head.append(parts.dot, parts.name, parts.state, parts.account);
+  head.append(parts.dot, parts.name, parts.state, parts.account, parts.folder);
   const buttons = el("div", "buttons");
   parts.watch = button("watch", "Watch", () => {
     const agent = agents.get(id);
@@ -149,7 +155,7 @@ function makeAgentRow(id) {
   parts.close = button("close", "Close", () => link.send({ type: "close", id }));
   parts.close.title = "End this agent and close the tabs it opened (your own tabs stay open)";
   buttons.append(parts.watch, parts.chat, parts.stop, parts.close);
-  main.append(head, parts.status, parts.moved, parts.last, parts.totals, buttons);
+  main.append(head, parts.status, parts.plan, parts.subs, parts.moved, parts.last, parts.totals, buttons);
   parts.thumb.alt = "";
   parts.thumb.hidden = true;
   row.append(main, parts.thumb);
@@ -183,6 +189,12 @@ function fillAgentRow(row, agent) {
   }
   setText(parts.status, agent.status || "");
   parts.status.hidden = !agent.status;
+  setText(parts.folder, agent.folder ? folderName(agent.folder) : "No folder"); // agent powers, Decision 6
+  parts.folder.title = agent.folder || "The agent's own scratch folder";
+  setText(parts.plan, planProgress(agent.todos)); // Decision 9: "3 / 5 steps · 60%"
+  parts.plan.hidden = !parts.plan.textContent;
+  setText(parts.subs, subagentCount(agent)); // Decision 8: "2 sub-agents working"
+  parts.subs.hidden = !parts.subs.textContent;
   setText(parts.last, agent.last_action || "");
   parts.last.hidden = !agent.last_action;
   const totals = [`${Math.round(agent.seconds || 0)} s`];
@@ -468,7 +480,7 @@ function finishRequest() {
 }
 
 function handle(message) {
-  for (const part of [brain, tools, workflows, train]) part.onMessage(message);
+  for (const part of [brain, tools, workflows, train, folders]) part.onMessage(message);
   if (message.type === "brain_snapshot" || message.type === "brain_state") {
     watchSites = message.watch_list || [];
     workflows.options();
@@ -501,6 +513,7 @@ function handle(message) {
       renderAccounts();
       link.send({ type: "accounts" }); // each account's status, now
       link.send({ type: "skills" });
+      link.send({ type: "permission_rules" }); // the recent folders, for the picker
       if (chatAgent) link.send({ type: "events", id: chatAgent });
       break;
     case "settings":
@@ -598,11 +611,17 @@ function start() {
     return;
   }
   if (pending) return; // one Start, one agent
+  const why = folders.ready(); // "Trust this folder?" is answered before the first task there
+  if (why) {
+    flash(why);
+    return;
+  }
+  const folder = folders.value();
   pending = `r${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   $("start").disabled = true;
   const account = $("task-account").hidden ? {} : { account: $("task-account").value }; // the picked account
   const sent = link.send({ type: "new_task", text, skills: pickedSkills(), model: $("task-model").value,
-    request: pending, ...account, ...(handing ? { adopt: handing.target } : {}) });
+    request: pending, ...account, ...(folder ? { folder } : {}), ...(handing ? { adopt: handing.target } : {}) });
   if (!sent) {
     finishRequest();
     flash("Not connected: is `ai-browser app` running?");

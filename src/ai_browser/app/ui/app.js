@@ -7,7 +7,8 @@
 // the window closes (app/run.py), never on a switch or a closed tab. The close-tab key (Command-W on a Mac, Ctrl+W
 // elsewhere) closes the tab shown if it has a ×, and never the window: this page and our pages keep it from the
 // browser. The window's title follows the active tab and keeps AI Home's count of agents at work. Every label is set
-// as text.
+// as text. A page of ours may also ask for the system's folder dialog (agent powers): the tab menu asks AI Browser's
+// own app, and answers that page alone.
 import { closeTabKey } from "./nav.js";
 
 const FIXED = [["/home", "AI Home"], ["/mission", "Mission Control"], ["/settings", "Settings"]];
@@ -134,6 +135,20 @@ function openLive({ url, agent, label }) { // an agent's live view: its own clos
 // A page of ours asks for a tab, or passes on the close-tab key. Only our own pages' frames count: never the window's
 // page itself, a live view (another origin), or anything else that can post a message here; and only the page shown
 // passes on the key.
+// A page in a frame asks for the system's folder dialog (agent powers). Only this page, the window's top-level one,
+// may open it: AI Browser's own app answers window.aib.chooseFolder for top-level pages alone. The answer goes back to
+// that frame only: the path picked, null when cancelled, or typed: true where there is no dialog (a browser's window).
+async function chooseFolder(from, id) {
+  let path;
+  try {
+    path = typeof window.aib?.chooseFolder === "function" ? await window.aib.chooseFolder() : undefined;
+  } catch {
+    path = null;
+  }
+  from.frame?.contentWindow?.postMessage({ type: "folder-chosen", id, path: typeof path === "string" ? path : null,
+                                           typed: path === undefined }, location.origin);
+}
+
 addEventListener("message", (event) => {
   if (event.origin !== location.origin) return;
   const from = [...tabs.values()].find((tab) => tab.frame && tab.frame.contentWindow === event.source);
@@ -141,6 +156,9 @@ addEventListener("message", (event) => {
   const message = event.data;
   if (message?.type === "tab") openPage(message.path);
   else if (message?.type === "live") openLive(message);
+  else if (message?.type === "choose-folder" && typeof message.id === "string" && message.id.length <= 80) {
+    chooseFolder(from, message.id);
+  }
   else if (message?.type === "close-tab" && from.key === active) closeShown();
 });
 

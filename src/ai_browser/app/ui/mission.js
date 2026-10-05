@@ -8,6 +8,8 @@ import { agentLabel, createChat } from "./chat.js";
 import { connect } from "./link.js";
 import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
 import { permissionCard } from "./permission.js";
+import { renderPlan, renderSubagents } from "./plan.js";
+import { mountFolderPicker } from "./folderpick.js";
 import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
 import { mountTalk } from "./talk.js";
 import { mountYourTabs } from "./tablist.js";
@@ -64,6 +66,8 @@ const voice = createVoice({
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
+const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
+                                  (message) => link.send(message)); // agent powers: the task's folder
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 // Shown again (its tab, or the window after the user signed in in a terminal): each account's status, now
@@ -165,7 +169,8 @@ function told(before, agent) { // an agent's change worth a word from the Brain 
   }
   else if (now === "needs_you") {
     voice.say(brief(agent.check ? `${agent.name} hit a bot check on ${agent.check.site}. It's waiting for you`
-      : `${agent.name} wants to use ${toolLabel(agent.permission)}. It's waiting for you`));
+      : `${agent.name} wants to ${agent.permission?.card ? "" : "use "}${toolLabel(agent.permission)}. `
+        + "It's waiting for you"));
   }
 }
 
@@ -255,7 +260,9 @@ function openAgent(id, { tabs: showTabs = false } = {}) {
                   messages: el("div", "messages"),
                   composer: el("div", "composer"), input: el("textarea"), card: null,
                   account: el("span", "chip account"), moved: el("div", "status muted moved"),
-                  askSlot: el("div", "ask-slot"), ask: null, askKey: "" };
+                  askSlot: el("div", "ask-slot"), ask: null, askKey: "",
+                  folder: el("div", "status muted folder"), plan: el("section", "plan"),
+                  subs: el("section", "subagents") };
   parts.watch = button("watch", "Watch", () => {
     const current = agents.get(id);
     if (current?.working_tab) link.send({ type: "watch", target: current.working_tab });
@@ -278,8 +285,9 @@ function openAgent(id, { tabs: showTabs = false } = {}) {
   });
   drawer.yourTabs = mountYourTabs(parts.yourTabs, { send: (message) => link.send(message), agentId: () => id });
   parts.yourTabs.open = showTabs; // folded, unless the Brain pointed here to hand a tab over
-  $("drawer-body").replaceChildren(parts.status, parts.moved, parts.buttons, parts.permission, parts.askSlot,
-                                   parts.yourTabs, parts.messages, parts.composer);
+  $("drawer-body").replaceChildren(parts.status, parts.moved, parts.folder, parts.buttons, parts.permission,
+                                   parts.askSlot, parts.plan, parts.subs, parts.yourTabs, parts.messages,
+                                   parts.composer);
   showList(false); // the drawer takes the List's place
   drawer.parts = parts;
   drawer.chat = createChat(parts.messages);
@@ -311,6 +319,9 @@ function fillDrawer(agent) { // the drawer's agent changed: its parts are update
   }
   setText(parts.status, agent.status || agent.last_action || "");
   parts.status.hidden = !parts.status.textContent;
+  setText(parts.folder, agent.folder ? `Folder: ${agent.folder}` : "No folder: its own scratch folder");
+  renderPlan(parts.plan, agent.todos); // Decision 9: the agent's plan, live
+  renderSubagents(parts.subs, agent.subagents); // Decision 8: each sub-agent, its task and its current action
   parts.watch.disabled = !agent.working_tab;
   parts.stop.hidden = !(agent.state === "working" || agent.state === "waiting" || agent.check);
   const check = agent.check; // a bot check waiting for the user: the same card as AI Home's
@@ -379,10 +390,17 @@ function start() {
     return;
   }
   if (pending) return;
+  const why = folders.ready();
+  if (why) {
+    note(why);
+    return;
+  }
+  const folder = folders.value();
   pending = `m${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   $("start").disabled = true;
   const account = $("task-account").hidden ? {} : { account: $("task-account").value }; // the picked account
-  if (!link.send({ type: "new_task", text, skills: [], model: $("task-model").value, request: pending, ...account })) {
+  if (!link.send({ type: "new_task", text, skills: [], model: $("task-model").value, request: pending, ...account,
+                   ...(folder ? { folder } : {}) })) {
     finishStart();
     note("Not connected: is `ai-browser app` running?");
     return;
@@ -393,6 +411,7 @@ function start() {
 // ---- the line to the app -----------------------------------------------------------------------------------------
 
 function handle(message) {
+  folders.onMessage(message);
   if (message.type?.startsWith("brain_")) drawer.brain?.onMessage(message); // the inbox in the drawer
   switch (message.type) {
     case "brain_snapshot":
@@ -451,6 +470,7 @@ function handle(message) {
       link.send({ type: "thumbs" }); // the latest pictures, for a page opened after they were taken
       link.send({ type: "brain" });
       link.send({ type: "hearing" }); // can this page talk? (asked again after every reconnect)
+      link.send({ type: "permission_rules" });
       break;
     }
     case "agent_event":

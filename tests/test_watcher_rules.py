@@ -13,8 +13,8 @@ from test_app_server import CHECK_REPORT, WATCHER, recv, refused_socket, socket_
 from test_bridge import EVENTS
 from ui_socket import ui_socket
 
-# The table of watcher-safety's spec, plus cdp-relay's, brain-delegation's, app-window's and AI accounts' rows, every
-# one for AI Browser's own pages. A row added to MESSAGE_RULES fails here until this copy says the same.
+# The table of watcher-safety's spec, plus cdp-relay's, brain-delegation's, app-window's, AI accounts' and agent powers'
+# rows, every one for AI Browser's own pages. A row added to MESSAGE_RULES fails here until this copy says the same.
 SENDS = {
     "hello", "brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "style", "watch_pick",
     "workflow_run", "workflows", "workflow_save", "workflow_delete", "permission",
@@ -26,6 +26,7 @@ SENDS = {
     "accounts", "account_add", "account_add_existing", "account_remove", "account_default", "account_brain",
     "account_signin", "account_move",  # AI accounts
     "this_page", "show_app",  # the floating chat (native-app part c)
+    "folder_choose", "folder_trust", "permission_rules", "permission_rule_remove",  # agent powers
 }
 RETIRED = {"items", "replied", "thread", "filled", "reader_status", "watcher_caps", "tab_grouped", "pause",
            "ai_keyword"}  # the watcher's own: gone with it

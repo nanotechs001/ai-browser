@@ -211,8 +211,9 @@ def record_creates(stack):
     """AgentManager.create, recorded: each call's words, model, tab and account. Its agent has no process behind it."""
     agents, made = stack["server"].agents, []
 
-    async def create(text, skills=(), model="sonnet", adopt=None, tab=None, servers=None, account=None):
-        made.append({"text": text, "model": model, "adopt": adopt, "account": account})
+    async def create(text, skills=(), model="sonnet", adopt=None, tab=None, servers=None, account=None,
+                     folder=None):
+        made.append({"text": text, "model": model, "adopt": adopt, "account": account, "folder": folder})
         agent = add_agent(agents, f"a{len(made)}", text)
         if adopt:
             agent.adopted.append(adopt)
@@ -240,7 +241,7 @@ async def test_new_task_starts_an_agent_with_the_model_and_account_picked(stack)
              "document.getElementById('task-account').value = 'work';"
              "document.getElementById('task-start').click(); true")
     assert await eventually(lambda: made == [{"text": "find flights to Manila", "model": "haiku", "adopt": None,
-                                              "account": "work"}])
+                                              "account": "work", "folder": None}])
     assert await until(js, "document.getElementById('new').hidden"
                            " && document.getElementById('hint').textContent.startsWith('Started ')")
     assert await js("document.getElementById('task').value") == ""

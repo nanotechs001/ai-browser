@@ -4,8 +4,9 @@
 // - The floating chat: a small window above the others, beside Brave, that shows /chat and nothing else. The shortcut
 //   picked in Settings (⌥Space) shows and hides it from any app, and so does the menu-bar icon's Show chat. It opens
 //   where the user left it, at the size they left it (chat.json, in the profile).
-// - Its pages may ask it for two things (preload.js): to show or hide the chat; and, from the chat alone while it
+// - Its pages may ask it for three things (preload.js): to show or hide the chat; and, from the chat alone while it
 //   shows, which Brave tab the user is on (thispage.js: the tab's address and title, nothing else).
+//   And the system's folder dialog, for a task's folder (chooseFolder), from the main window's page or the chat's.
 // - It keeps an icon in the menu bar (by the clock on Windows).
 // - It shows the notifications the engine writes, word for word.
 // Closing a window hides it. Quit ends the app and tells the engine, which stops too. When the engine goes, the app
@@ -52,7 +53,7 @@ const WEB = Object.freeze({ // every window's webPreferences (makeWindow)
 });
 // What a page may ask the app for, by name (preload.js lists the same names, in the same order). Each handler gets the
 // asking page's webContents first: answerActions has checked it is AI Browser's own top-level page.
-const ACTIONS = new Map([["chat", chatAction], ["thisPage", thisPageAction]]);
+const ACTIONS = new Map([["chat", chatAction], ["thisPage", thisPageAction], ["chooseFolder", chooseFolderAction]]);
 
 const windows = new Map(); // "main", and "chat" once the floating chat has shown
 const notes = new Map(); // id -> Notification, kept so a click still reaches us
@@ -69,6 +70,7 @@ let chatLoaded = false; // the chat's window shows /chat now (the engine answere
 let chatFrom = false; // another app was in front when the chat came: on a Mac, hiding the chat goes back to it
 let saving = null; // the timer that keeps the chat's place
 let looking = null; // a look at Brave's front tab under way: one at a time
+let choosing = null; // the folder dialog open now: one at a time
 
 function profileFolder() { // <home>/desktop/profile, beside the app (a test's unpackaged Electron: its own)
   const given = process.argv.find((arg) => arg.startsWith(PROFILE));
@@ -240,6 +242,23 @@ function thisPageAction(sender) {
   if (!chat || sender !== chat.webContents || !chat.isVisible()) return { state: "hidden" };
   if (!looking) looking = thispage.read(process.platform, pageRunner()).finally(() => { looking = null; });
   return looking;
+}
+
+// The bridge's "chooseFolder": the system's folder dialog, over the window that asked, for a task's folder (agent
+// powers). The user's pick as a path, or null when they cancel. answerActions has checked that the page is one of AI
+// Browser's own top-level pages; only the tab menu (which asks for AI Home and Mission Control in its frames) and the
+// floating chat get a dialog. One at a time: an ask while one is open gets its answer.
+function chooseFolderAction(sender) {
+  const win = BrowserWindow.fromWebContents(sender);
+  if (!win || (win !== windows.get("main") && win !== windows.get("chat"))) return null;
+  if (!choosing) {
+    choosing = dialog.showOpenDialog(win, { title: "Choose a folder for this task", buttonLabel: "Choose",
+                                            properties: ["openDirectory", "createDirectory"] })
+      .then((result) => (!result.canceled && typeof result.filePaths?.[0] === "string" ? result.filePaths[0] : null))
+      .catch(() => null)
+      .finally(() => { choosing = null; });
+  }
+  return choosing;
 }
 
 // The real osascript or PowerShell. A test's unpackaged Electron alone may name a file (--aib-fake-page) whose text

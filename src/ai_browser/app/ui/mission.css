@@ -349,3 +349,24 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .account-ask p { margin: 0; }
 .account-ask-head { font-weight: 600; }
 .account-ask-buttons, .account-move { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* Agent powers: the drawer's plan and sub-agents, and each action's badge and time. */
+#drawer-body .plan h3, #drawer-body .subagents h3 { font-size: 12px; font-weight: 600; margin: 0 0 4px;
+                                                     color: var(--muted); }
+#drawer-body .plan-items, #drawer-body .subagent-items { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+#drawer-body .plan-items .completed, #drawer-body .subagent-items .done { color: var(--muted); }
+#drawer-body .plan-items .in_progress, #drawer-body .subagent-items .working { font-weight: 600; }
+#drawer-body .plan-progress { margin: 0 0 4px; }
+.action .badge { font-size: 11px; border-radius: 999px; padding: 0 6px; margin-right: 6px; background: var(--soft); }
+.action .at { color: var(--muted); margin-left: 6px; font-size: 12px; }
+.action.sub { margin-left: 14px; }
+
+/* Agent powers: the task's folder, the typed path and "Trust this folder?". */
+.folder-ask { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.folder-ask .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.folder-ask .folder-typed { flex: 1; min-width: 200px; }
+.folder-ask p { margin: 0; }
+.folder-ask .folder-path { font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+#task-folder { max-width: 180px; }
+.task-bar { flex-wrap: wrap; }
+.task-bar .folder-ask { flex: 1 0 100%; order: 10; }

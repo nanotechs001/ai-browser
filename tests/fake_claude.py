@@ -7,7 +7,7 @@ or a dict {"default": [...], "<word>": [...]} where the first key found in the u
 requests get a success response at once, even mid-answer. An interrupt ends the answer in progress the way Claude Code
 2.1.263 does (a result with subtype error_during_execution), unless the script starts with {"ignore_interrupt": true}.
 {"ask_permission": {"tool_name", "input"}} asks for a tool the way Claude Code does (a can_use_tool control request)
-and waits for the app's answer. Without --input-format (a probe), the prompt comes from the command line.
+(its request may name the tool use it is for: `tool_use_id`) and waits for the app's answer. Without --input-format (a probe), the prompt comes from the command line.
 
 AI accounts (tests/fake_accounts.py):
 - `auth status` answers per CLAUDE_CONFIG_DIR: a folder holding SIGNED_IN is signed in, and the answer then has the
@@ -171,7 +171,7 @@ def ask_permission(request: dict) -> str:
     asked += 1
     request_id = f"perm-{asked}"
     emit({"type": "control_request", "request_id": request_id,
-          "request": {"subtype": "can_use_tool", **request, "tool_use_id": f"toolu_{asked}"}})
+          "request": {"subtype": "can_use_tool", "tool_use_id": f"toolu_{asked}", **request}})
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:

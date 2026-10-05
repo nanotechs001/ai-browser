@@ -83,3 +83,28 @@ select { border: 1px solid var(--line); background: var(--card); border-radius: 
                     background: var(--soft); font: 12px ui-monospace, Menlo, monospace; white-space: pre-wrap; }
 .bot-check-how, .bot-check-skip { margin: 0; }
 .chip { font-size: 11px; border-radius: 999px; padding: 1px 6px; background: var(--soft); }
+
+/* Agent powers' card (permission.js): the command or the path, the clipped diff (removed red, added green), its size,
+   and Deny's note. */
+.permission-text { margin: 0; max-height: 120px; overflow: auto; background: var(--soft); border-radius: 8px;
+                   padding: 8px 10px; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap;
+                   overflow-wrap: anywhere; }  /* wrapped: nothing of a command scrolls off to the side */
+.permission .diff { max-height: 180px; overflow: auto; background: var(--soft); border-radius: 8px; padding: 6px 0;
+                    font: 12px/1.45 ui-monospace, Menlo, monospace; }
+.permission .diff > div { padding: 0 10px; white-space: pre-wrap; word-break: break-word; }
+.permission .diff .del { background: color-mix(in srgb, var(--fail) 18%, transparent); }
+.permission .diff .add { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.permission .diff .gap { color: var(--muted); }
+.permission-where, .permission-size, .permission-sandbox { font-size: 12px; }
+.permission-why { font-size: 13px; }
+.permission-answer { display: flex; flex-direction: column; gap: 6px; }
+.permission .deny-note { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
+                         background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+
+/* Agent powers: the task's folder, the typed path and "Trust this folder?". */
+.folder-ask { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.folder-ask .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.folder-ask .folder-typed { flex: 1; min-width: 200px; }
+.folder-ask p { margin: 0; }
+.folder-ask .folder-path { font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+#task-folder { max-width: 180px; }

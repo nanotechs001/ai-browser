@@ -43,6 +43,18 @@ def symlink_or_skip(target, link) -> None:
         pytest.skip(f"this system can't make symbolic links: {exc}")
 
 
+@pytest.fixture
+def user_home(tmp_path, monkeypatch):
+    """A throwaway home folder for agent powers (app/powers.py's user_home): its Library and .claude are refused there,
+    and no test names the user's own. HOME itself stays: a test that needs ~ to mean this folder sets HOME too."""
+    from ai_browser.app import powers
+
+    folder = tmp_path / "user-home"
+    folder.mkdir()
+    monkeypatch.setattr(powers, "user_home", lambda: folder)
+    return folder
+
+
 def file_mode(path) -> int | None:
     """A file's permission bits, or None on Windows: there chmod only toggles read-only, and the token files keep
     Windows' per-user folder permissions instead (the spec's Safety section)."""

@@ -168,7 +168,9 @@ async def test_enabled_servers_reach_the_agents_mcp_config(fake_claude, tmp_path
     servers = json.loads(config_file.read_text(encoding="utf-8"))["mcpServers"]
     assert set(servers) == {"ai-browser", "figma"} and file_mode(config_file) in (0o600, None)
     argv = commands(log)[-1]
-    assert "--strict-mcp-config" in argv and argv[argv.index("--tools") + 1] == ""
+    from ai_browser.app.powers import TOOLS
+
+    assert "--strict-mcp-config" in argv and argv[argv.index("--tools") + 1] == ",".join(TOOLS)
     workflow = await agents.create("only canvas", servers=["canvas"])  # a workflow's own list: still only if on
     assert await settled(agents, workflow.id) == "your_turn"
     servers = json.loads(

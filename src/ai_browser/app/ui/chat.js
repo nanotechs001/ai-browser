@@ -35,10 +35,19 @@ export function renderText(node, text) {
   if (last < text.length) node.append(document.createTextNode(text.slice(last)));
 }
 
-function actionRow(name, summary) {
-  const row = el("div", "action pending");
-  row.append(el("span", "icon", "•"), el("span", "name", name || "action"), el("span", "summary", summary || ""),
-    el("span", "ms", ""));
+function clock(seconds) { // "14:05", this computer's time; "" without one
+  const when = new Date(Number(seconds) * 1000);
+  if (!seconds || Number.isNaN(when.getTime())) return "";
+  return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+}
+
+// One tool use: its badge (Bash, Edit, Web Fetch, Browser Agent, Sub-agent, Skill…), its name and summary, and its
+// time (agent powers, Decision 10). A sub-agent's own lines are marked "sub".
+function actionRow(event) {
+  const row = el("div", `action pending${event.sub ? " sub" : ""}`);
+  row.append(el("span", "icon", "•"), el("span", "badge", event.badge || "Tool"),
+    el("span", "name", event.name || "action"), el("span", "summary", event.summary || ""), el("span", "ms", ""),
+    el("span", "at", clock(event.at)));
   return row;
 }
 
@@ -75,10 +84,10 @@ export function createChat(container, { onPage = () => {} } = {}) {
         bubble = null;
         break;
       case "tool":
-        rows.set(event.id || `row${rows.size}`, add(actionRow(event.name, event.summary)));
+        rows.set(event.id || `row${rows.size}`, add(actionRow(event)));
         break;
       case "tool_result": {
-        const row = rows.get(event.id) || add(actionRow(event.name, ""));
+        const row = rows.get(event.id) || add(actionRow({ name: event.name, sub: event.sub }));
         row.classList.remove("pending");
         row.classList.add(event.is_error ? "fail" : "ok");
         row.querySelector(".icon").textContent = event.is_error ? "✗" : "✓";

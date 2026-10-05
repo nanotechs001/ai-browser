@@ -60,6 +60,7 @@ from ..settings import Settings
 from ..skills import Catalog
 from ..syncdir import write_atomic
 from . import pagematch
+from . import powers
 from .agents import Agent, AgentManager
 from .bravelink import NOT_CONNECTED, PlaceError
 from .inworld import WorldError
@@ -116,6 +117,7 @@ AGENT_ID = re.compile(r"^a[0-9]{1,9}$")  # an agent's id (a<number>)
 SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
 ACCOUNT_MESSAGES = {"accounts", "account_add", "account_add_existing", "account_remove", "account_default",
                     "account_brain", "account_signin", "account_move"}  # AI accounts: AI Browser's own pages only
+POWERS_MESSAGES = {"folder_choose", "folder_trust", "permission_rules", "permission_rule_remove"}  # agent powers
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
@@ -163,6 +165,10 @@ MESSAGE_RULES: dict[str, Rule] = {
     # choose or move (the spec's Safety)
     "accounts": APP_ONLY, "account_add": APP_ONLY, "account_add_existing": APP_ONLY, "account_remove": APP_ONLY,
     "account_default": APP_ONLY, "account_brain": APP_ONLY, "account_signin": APP_ONLY, "account_move": APP_ONLY,
+    # agent powers: the Folder picker's check and "Trust this folder?", and Settings → Permissions (its list, Remove).
+    # A trust answer or a rule's removal is the user's click on one of our pages: never the Brain or voice
+    "folder_choose": APP_ONLY, "folder_trust": APP_ONLY, "permission_rules": APP_ONLY,
+    "permission_rule_remove": APP_ONLY,
 }
 
 
@@ -1287,6 +1293,8 @@ class AppServer:
             self._talk_command(queue, kind, message)
         elif kind in ACCOUNT_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             await self._account_command(queue, kind, message)
+        elif kind in POWERS_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            self._powers_command(queue, kind, message)
         elif kind == "hello":
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
@@ -1314,8 +1322,11 @@ class AppServer:
                 return
             model = message.get("model") if message.get("model") in MODELS else self.default_model
             account = message.get("account") if isinstance(message.get("account"), str) else None
+            folder = message.get("folder") if isinstance(message.get("folder"), str) and message.get("folder") \
+                else None  # agent powers: the task's folder; none is the agent's own scratch folder
             try:  # an account that isn't listed any more is said, never swapped for another
-                agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account)
+                agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
+                                            folder=folder)
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
@@ -1460,7 +1471,8 @@ class AppServer:
     def _tools_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
         if kind == "permission":  # only a click in one of our pages answers a tool request
             if all(isinstance(message.get(key), str) for key in ("agent", "request", "answer")):
-                self.agents.answer_permission(message["agent"], message["request"], message["answer"])
+                note = message.get("note") if isinstance(message.get("note"), str) else ""
+                self.agents.answer_permission(message["agent"], message["request"], message["answer"], note)
             return
         account = message.get("account") if isinstance(message.get("account"), str) else "default"
         tools = self._tools_of(account)  # one account's tools at a time (AI accounts); Default when none is named
@@ -1489,6 +1501,55 @@ class AppServer:
             return self.tools
         accounts = self.agents.accounts
         return self.agents.tools_for(account) if accounts is not None and accounts.get(account) is not None else None
+
+    # ---- agent powers: the Folder picker, "Trust this folder?" and Settings → Permissions (our pages only) ---------
+
+    def _powers_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        rules, path = self.agents.rules, message.get("path")
+        try:
+            if kind == "folder_choose":
+                why = self.agents.folder_problem(path)
+                queue.put_nowait({"type": "error", "text": why, "request": request} if why else
+                                 {"type": "folder", "request": request, "folder": self._folder_row(path)})
+                return
+            if kind == "permission_rules":
+                queue.put_nowait(self._permissions())
+                return
+            if kind == "folder_trust":
+                if message.get("trust") is True:  # trusting checks the folder; Remove works on one that has gone
+                    why = self.agents.folder_problem(path)
+                    if why:
+                        queue.put_nowait({"type": "error", "text": why, "request": request})
+                        return
+                    rules.trust(path)
+                elif message.get("trust") is False and isinstance(path, str) and path:
+                    rules.untrust(path)
+                else:
+                    return
+                queue.put_nowait({"type": "folder", "request": request, "folder": self._folder_row(path)})
+            elif kind == "permission_rule_remove":
+                folder = message.get("folder")
+                if not isinstance(folder, str) or not folder:
+                    return
+                if message.get("all") is True:
+                    rules.forget(folder)
+                elif isinstance(message.get("rule"), str):
+                    rules.remove(folder, message["rule"])
+                else:
+                    return
+        except OSError as exc:  # a read-only home, a full disk: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't save that: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._send_all(self._permissions())
+
+    def _folder_row(self, path: str) -> dict:
+        real = powers.real_path(path)
+        return {"path": real, "name": Path(real).name or real, "trusted": self.agents.rules.trusted(real)}
+
+    def _permissions(self) -> dict:
+        return {"type": "permissions", "folders": self.agents.rules.folders()}
 
     async def probe_tools(self, account: str = "default") -> None:
         """Which claude.ai connectors Claude Code loads for that account now (and their tools)."""

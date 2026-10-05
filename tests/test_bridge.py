@@ -31,13 +31,18 @@ async def test_bridge_streams_text_tools_and_results(fake_claude, tmp_path):
     events = [event async for event in bridge.send("click it", "https://s.com/", "Shop")]
     kinds = [event["type"] for event in events]
     assert kinds == ["status", "delta", "delta", "tool", "message_end", "tool_result", "done"]
-    assert events[3] == {"type": "tool", "id": "u1", "name": "act", "summary": 'click e5 · type e7 "hi"'}
+    tool = events[3]
+    assert {key: tool[key] for key in ("type", "id", "name", "summary")} == {
+        "type": "tool", "id": "u1", "name": "act", "summary": 'click e5 · type e7 "hi"'}
+    assert tool["badge"] == "Browser Agent" and isinstance(tool["at"], float) and "sub" not in tool  # agent powers
     assert events[5]["lines"][0] == "✓ click e5 41 ms" and not events[5]["is_error"]
     assert bridge.session_id == "s-1"
     argv = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
-    for flag in ("--tools", "--strict-mcp-config", "--permission-mode", "--setting-sources"):
+    for flag in ("--tools", "--strict-mcp-config", "--permission-prompt-tool", "--setting-sources"):
         assert flag in argv
-    assert argv[argv.index("--allowedTools") + 1] == "mcp__ai-browser__*" and "--bare" not in argv
+    from ai_browser.app.powers import FREE
+
+    assert argv[argv.index("--allowedTools") + 1] == ",".join(["mcp__ai-browser__*", *FREE]) and "--bare" not in argv
     sent = json.loads(log.read_text(encoding="utf-8").splitlines()[1])
     assert sent["message"]["content"].startswith("[Tab beside the panel") and \
         'title "Shop", address https://s.com/]\nclick it' in sent["message"]["content"]
@@ -190,7 +195,7 @@ async def test_each_agent_has_its_own_settings_and_cannot_switch_browsers(fake_c
     assert json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["ai-browser"]["env"]["AIB_APP_AGENT"] == "a7"
     assert argv[argv.index("--disallowedTools") + 1] == "mcp__ai-browser__sandbox_start"
     cwd = json.loads((tmp_path / "fake-claude.log.env").read_text(encoding="utf-8"))["cwd"]
-    assert cwd == str((tmp_path / "home" / "app" / "agents" / "a7" / "chat").resolve())
+    assert cwd == str((tmp_path / "home" / "app" / "agents" / "a7" / "work").resolve())  # its scratch folder
 
 
 async def test_picked_skills_are_asked_for_in_the_first_message(fake_claude, tmp_path):

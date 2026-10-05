@@ -501,3 +501,23 @@ def test_a_tests_electron_reads_a_file_instead_of_brave(tmp_path):
     calls = run_main(tmp_path, f"--aib-fake-page={answer}", feed=START, pause=1.5,
                      steps=[[300, "tray", "Show chat"], [600, "invoke", "chat", "thisPage"]])
     assert ["answer", "thisPage", {"state": "denied"}] in calls and "execFile" not in names(calls)
+
+
+@NEEDS_NODE
+def test_only_our_top_level_pages_open_the_folder_dialog(tmp_path):  # agent powers: the preload's chooseFolder
+    calls = run_main(tmp_path, feed=START, pause=2.0, folder="/Users/me/code/project", steps=[
+        [300, "invoke", "main", "chooseFolder"],  # the tab menu, for AI Home and Mission Control in its frames
+        [500, "invoke_framed", "main", "chooseFolder"],  # a frame gets nothing: it asks the tab menu
+        [700, "tray", "Show chat"],
+        [1000, "invoke", "chat", "chooseFolder"]])  # the floating chat asks for itself
+    assert [call[1:] for call in calls if call[0] == "answer"] == [
+        ["chooseFolder", "/Users/me/code/project"], ["chooseFolder", None],
+        ["chooseFolder", "/Users/me/code/project"]]
+    assert [call[1:] for call in calls if call[0] == "dialog.showOpenDialog"] == [
+        ["AI Browser", ["openDirectory", "createDirectory"]], ["AI Browser chat", ["openDirectory", "createDirectory"]]]
+
+
+@NEEDS_NODE
+def test_a_cancelled_folder_dialog_answers_null(tmp_path):
+    calls = run_main(tmp_path, feed=START, pause=1.0, steps=[[300, "invoke", "main", "chooseFolder"]])
+    assert ["answer", "chooseFolder", None] in calls
