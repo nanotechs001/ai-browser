@@ -97,6 +97,13 @@ class TabWatch:
         if self._pages.pop(target, None) is not None:
             self._changed()
 
+    async def read_default(self) -> str | None:
+        """Brave's profile used last, read now (the list reads it only every REFRESH seconds); a change redraws the
+        list. A failed read keeps the last value."""
+        if await self._read_default():
+            self._changed()
+        return self.default_context
+
     async def _read_default(self) -> bool:
         """Read defaultBrowserContextId; True when it changed. A failed read keeps the last value."""
         try:

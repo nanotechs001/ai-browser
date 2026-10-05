@@ -403,6 +403,7 @@ class Relay:
         self._clients: list = []  # _Socket and LocalClient, in the order they came
         self._targets: dict[str, dict] = {}  # target id -> its latest targetInfo
         self._grants: dict[str, tuple[str, str]] = {}  # target id -> (identity, "own" | "popup")
+        self._app_made: set[str] = set()  # tabs the app's own client opened (a Brain thread, an AI tab): it closes them
         self._sessions: dict[str, _Session] = {}
         self._pending: dict[int, tuple] = {}  # upstream id -> (client | None, client id, method, params, session)
         self._waiting: dict[int, asyncio.Future] = {}  # upstream id -> the relay's own command's future
@@ -720,8 +721,9 @@ class Relay:
             session = self._sessions.get(params.get("sessionId"))
             return None if session is not None and session.client is client else NO_SESSION
         if method == "Target.closeTarget":
-            if client.app:  # closing an agent's tabs, Skip this site: only a tab someone owns here
-                return None if isinstance(target, str) and target in self._grants else NOT_FOUND
+            if client.app:  # closing an agent's tabs, Skip this site: only a tab someone owns here, or one it opened
+                return None if isinstance(target, str) and (target in self._grants or target in self._app_made) \
+                    else NOT_FOUND
             if isinstance(target, str) and target in self.handed(identity):
                 return HANDED_CLOSE
             return None if self.grants(identity, target) else NOT_FOUND
@@ -876,7 +878,9 @@ class Relay:
             if client.identity in self._forgotten:  # its agent closed while the tab was being made: nobody's
                 self._job(self._quietly("Target.closeTarget", {"targetId": target}))
                 return result
-            if not client.app:
+            if client.app:
+                self._app_made.add(target)
+            else:
                 self._grant(client.identity, target, "own")
             info = self._targets.get(target)
             if info is not None:
@@ -956,6 +960,7 @@ class Relay:
                     if client.discover and not client.closed and self.visible(client.identity, target)]
         if method == "Target.targetDestroyed":
             self._targets.pop(target, None)
+            self._app_made.discard(target)
             if self._grants.pop(target, None) is not None:
                 self._changed()
         for client in watching:
@@ -1105,6 +1110,7 @@ class Relay:
         self._sessions.clear()
         self._unbound.clear()
         self._targets.clear()
+        self._app_made.clear()
         for client in list(self._clients):
             self._end(client, GONE)
         if not self._quitting:

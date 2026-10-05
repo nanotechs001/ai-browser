@@ -34,6 +34,7 @@ WEB = ("http://", "https://")
 BRAIN = {"kind": "brain", "name": "Brain", "color": "purple"}  # a tab AI Browser opened for the Brain: still the user's
 OPEN_WAIT = 10.0  # seconds for a tab AI Browser opened to show in the tab list
 NOT_CONNECTED = "Brave isn't connected: connect it in AI Home"
+DIDNT_OPEN = "Brave didn't open the tab"
 OTHER_PROFILE = ("Brave's last window is in another profile: click a window of the profile where agents browse, then "
                  "try again")
 NOT_OPEN = ("The profile where agents browse isn't open in Brave yet: open a window of it and click in it once, then "
@@ -54,6 +55,7 @@ class BraveLink:
         self.app_origin = app_origin  # AI Browser's own pages: a copy opened in Brave is never one of the user's tabs
         self.place = ProfilePlace(self.folder, settle=settle)  # Settings → Where agents browse
         self._placing: asyncio.Task | None = None  # its looks, while Brave is connected
+        self._closing: set[asyncio.Task] = set()  # tabs being closed once Brave has made them
         self.relay = Relay(self.folder, tokens if tokens is not None else Tokens(), allow_wait=allow_wait,
                            every=every)
         self.name = self.relay.name
@@ -261,23 +263,20 @@ class BraveLink:
                     and tab["url"].startswith(WEB))
         return False
 
-    async def open_user_tab(self, url: str, background: bool = True) -> str:
+    async def open_user_tab(self, url: str, background: bool = True, opened: list | None = None) -> str:
         """A page the Brain needs (a thread, for a draft or Use draft), opened as a tab of the user's in the profile
         where agents browse: its row says "Brain". Brave opens a new tab only in the profile it used last (CDP can't
-        name one), so it opens only when that is the agents' profile; else PlaceError says what to do. It waits until
-        the tab list shows the tab, so the readers may run there."""
+        name one), so it opens only when that is the agents' profile, read just before, and stays only if it landed
+        there; else PlaceError says what to do. The new tab goes in `opened` at once, so a caller stopped at any
+        later await closes it. It waits until the tab list shows the tab, so the readers may run there."""
         watch = self._watch
         if watch is None or watch.closed:
             raise PlaceError(NOT_CONNECTED)
-        context, _ = self.agents_context()
-        if context is None or watch.default_context != context:
+        context, source = self.agents_context()
+        if context is None:
             raise PlaceError(OTHER_PROFILE)
-        try:
-            answer = await watch.cdp.send("Target.createTarget", {"url": url, "background": background}, timeout=10)
-            target = answer["targetId"]
-        except (CDPError, KeyError, TypeError):
-            raise PlaceError("Brave didn't open the tab") from None
-        self.set_owner(target, BRAIN)
+        expected = await self._expected(watch, context, source)
+        target = await self._create(watch, {"url": url, "background": background}, expected, opened, BRAIN)
         for _ in range(int(OPEN_WAIT * 10)):
             if any(tab["target"] == target for tab in self.tabs()):
                 break
@@ -286,24 +285,76 @@ class BraveLink:
 
     async def open_ai_tab(self, identity: str) -> str:
         """A new blank tab for an agent or a Claude Code session (POST /agent-tab): opened by the app's own client in
-        the profile where agents browse, in a window of its own (never one of the user's windows), and theirs at once
-        (Relay.assign), before any other client can see it. PlaceError says why not, in words that name no profile:
-        they reach Claude."""
+        the profile where agents browse (read just before, and checked where the tab landed), in a window of its own
+        (never one of the user's windows), and theirs at once (Relay.assign), before any other client can see it.
+        PlaceError says why not, in words that name no profile: they reach Claude."""
         watch = self._watch
         if watch is None or watch.closed:
             raise PlaceError(NOT_CONNECTED)
         context, source = self.agents_context()
         if context is None:
             raise PlaceError(NOT_OPEN if source == "not_open" else NOT_CONNECTED)
-        if watch.default_context != context:
-            raise PlaceError(OTHER_PROFILE)
-        params = {"url": "about:blank", "newWindow": True, "background": True}
-        try:
-            target = (await watch.cdp.send("Target.createTarget", params, timeout=10))["targetId"]
-        except (CDPError, KeyError, TypeError):
-            raise PlaceError("Brave didn't open the tab") from None
+        expected = await self._expected(watch, context, source)
+        target = await self._create(watch, {"url": "about:blank", "newWindow": True, "background": True}, expected)
         self.relay.assign(target, identity)
         return target
+
+    async def _expected(self, watch: TabWatch, context: str, source: str) -> str:
+        """The profile a new tab must land in. The tab list reads Brave's profile used last only every few seconds,
+        so it is read again now: the chosen profile's context must be it (else OTHER_PROFILE); with none chosen, the
+        profile used last is whatever it is now."""
+        fresh = await watch.read_default()
+        expected = context if source == "chosen" else fresh
+        if expected is None or fresh != expected:
+            raise PlaceError(OTHER_PROFILE)
+        return expected
+
+    async def _create(self, watch: TabWatch, params: dict, expected: str, opened: list | None = None,
+                      owner: dict | None = None) -> str:
+        """Target.createTarget through the app's own client, then where Brave put the tab: one that landed in another
+        profile (the user switched windows in between) is closed again and OTHER_PROFILE raised. A stop while Brave
+        makes the tab, or later, never leaves it open: it goes in `opened` for the caller to close, or (made after
+        the stop, or with no caller list) is closed here. The relay lets the app close a tab it opened."""
+        making = asyncio.ensure_future(watch.cdp.send("Target.createTarget", params, timeout=10))
+        try:
+            answer = await asyncio.shield(making)
+        except asyncio.CancelledError:
+            self._close_when_made(making)
+            raise
+        except CDPError:
+            raise PlaceError(DIDNT_OPEN) from None
+        target = answer.get("targetId") if isinstance(answer, dict) else None
+        if not isinstance(target, str) or not target:
+            raise PlaceError(DIDNT_OPEN)
+        if opened is not None:
+            opened.append(target)
+        if owner is not None:
+            self.set_owner(target, owner)
+        try:
+            try:
+                info = await watch.cdp.send("Target.getTargetInfo", {"targetId": target}, timeout=5)
+                landed = info["targetInfo"].get("browserContextId")
+            except (CDPError, KeyError, TypeError):
+                landed = None
+            if landed != expected:
+                await self.close_targets([target])
+                raise PlaceError(OTHER_PROFILE if landed else DIDNT_OPEN)
+        except asyncio.CancelledError:
+            if opened is None:
+                self._close_soon([target])
+            raise
+        return target
+
+    def _close_when_made(self, making: asyncio.Future) -> None:
+        async def close() -> None:
+            with contextlib.suppress(Exception):
+                await self.close_targets([(await making)["targetId"]])
+        self._close_soon(None, close())
+
+    def _close_soon(self, targets: list | None, job=None) -> None:
+        closing = asyncio.ensure_future(job if job is not None else self.close_targets(list(targets or [])))
+        self._closing.add(closing)
+        closing.add_done_callback(self._closing.discard)
 
     async def end_pick(self, target: str) -> None:
         """A pick nobody finished (the wait ran out, or reading went off): AI Browser's outline leaves the page. It

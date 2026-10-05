@@ -55,11 +55,13 @@ class ReadingBrave(FakeBrave):
             raise answer
         return answer(*args) if callable(answer) else answer
 
-    async def open_user_tab(self, url, background=True):
+    async def open_user_tab(self, url, background=True, opened=None):
         if self.open_error is not None:
             raise self.open_error
         self.opened.append((url, background))
         target = f"B{len(self.opened)}"
+        if opened is not None:
+            opened.append(target)
         self.listed.append({"target": target, "url": url, "site": self.brain_site(url)})
         self.set_owner(target, {"kind": "brain", "name": "Brain", "color": "purple"})
         return target

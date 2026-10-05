@@ -261,6 +261,7 @@ async def test_a_draft_reads_the_thread_in_its_tab_and_use_draft_fills_that_tab(
         assert await until(lambda: item(brain).state == "filled")
         fill = brave.reads("fill")[0]
         assert fill[:3] == ("U5", "brain", "fill") and fill[3][:2] == ("gmail", "Monday works for us.")
+        assert fill[3][2]["url"] == THREAD  # the reader checks the tab still shows this thread
         assert brave.watched == ["U5"]  # Use draft: the thread's tab comes forward, where the user presses Send
         assert "press Send" in item(brain).note
     finally:
@@ -327,6 +328,21 @@ async def test_turning_reading_off_while_a_thread_opens_keeps_nothing(fake_claud
         await reader.stop()
 
 
+async def test_a_link_off_the_items_site_opens_nothing_and_says_why(fake_claude, tmp_path):  # the review's F6
+    from ai_browser.brain import sites
+    from ai_browser.brain.inbox import OFF_SITE
+
+    brain, brave, reader = await drafting(fake_claude, tmp_path)
+    brave.brain_site = sites.inbox_site  # as the server's: by the address alone
+    brain.store.get("gmail:t1").url = "https://evil.example/0/1/task/2"  # a link someone wrote, not Gmail's own
+    try:
+        await brain.draft("gmail:t1")
+        assert brave.opened == [] and brave.calls == []  # nothing opened, nothing read
+        assert OFF_SITE in item(brain).note and item(brain).state == "open"
+    finally:
+        await reader.stop()
+
+
 async def test_with_reading_off_or_brave_away_a_draft_says_why_and_nothing_opens(fake_claude, tmp_path):
     from ai_browser.app.bravelink import NOT_CONNECTED
     from ai_browser.brain.inbox import OFF_NOTE
@@ -354,3 +370,68 @@ async def test_a_tab_that_cant_open_says_so_in_the_items_note(fake_claude, tmp_p
         assert item(brain).note == f"Couldn't read the thread: {OTHER_PROFILE}" and item(brain).state == "open"
     finally:
         await reader.stop()
+
+
+# ---- through the real relay: what the app opened for a thread is closed in Brave (the coordinator's review, F2) ---
+
+async def relayed(fake_claude, tmp_path):
+    """(brain, link, port, reader): an item gmail:t1 that needs a reply, reading on, and BraveLink's real relay over
+    a fake Brave debugging port with no tabs open (none chosen: the profile used last)."""
+    from ai_browser.brain import sites
+    from ai_browser.brain.inbox import InboxReader
+    from ai_browser.brain.service import BrainService
+    from ai_browser.brain.store import BrainStore
+    from fake_brave import FakePort
+    from test_bravelink import connected
+    from test_brain_service import dict_script, raw
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(dict_script(NEEDS)), encoding="utf-8")
+    brain = BrainService(BrainStore(tmp_path / "home"), claude=runner, batch_wait=0.05)
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder)
+    await port.start()
+    link = await connected(folder)
+    reader = InboxReader(brain, link, every=60)
+    link.brain_reading, link.brain_site = (lambda: reader.on), sites.inbox_site
+    brain.outbox, brain.closed_note = reader.handle, reader.why_closed
+    reader.set_on(True)
+    await brain.on_items("gmail", [raw("t1")])
+    await brain.settle()
+    assert brain.store.get("gmail:t1").state == "open"
+    return brain, link, port, reader
+
+
+async def test_reading_off_while_a_thread_is_read_closes_its_tab_in_brave(fake_claude, tmp_path):  # Review Focus 2
+    brain, link, port, reader = await relayed(fake_claude, tmp_path)
+    try:
+        drafting_task = asyncio.ensure_future(brain.draft("gmail:t1"))  # the fake page never shows the thread
+        assert await until(lambda: any(page["url"] == THREAD for page in port.pages)
+                           and "Runtime.evaluate" in port.methods)
+        target = next(page["target"] for page in port.pages if page["url"] == THREAD)
+        assert next(tab for tab in link.tabs() if tab["target"] == target)["owner"]["kind"] == "brain"
+        reader.set_on(False)  # the user turns the switch off while the thread is being read
+        await asyncio.wait_for(drafting_task, 5)
+        assert item(brain).draft == "" and "turned off" in item(brain).note
+        assert await until(lambda: port.page(target) is None)  # the tab AI Browser opened is gone from Brave
+    finally:
+        await reader.stop()
+        await link.close()
+        await port.stop()
+
+
+async def test_reading_off_while_brave_makes_the_threads_tab_closes_it_once_made(fake_claude, tmp_path):
+    brain, link, port, reader = await relayed(fake_claude, tmp_path)
+    try:
+        port.hold = {"Target.createTarget"}
+        drafting_task = asyncio.ensure_future(brain.draft("gmail:t1"))
+        assert await until(lambda: port.held)  # Brave is making the tab
+        reader.set_on(False)
+        await asyncio.wait_for(drafting_task, 5)
+        port.hold = set()
+        await port.answer_held()  # the tab exists now: AI Browser closes it at once
+        assert await until(lambda: port.pages == [] and "Target.closeTarget" in port.methods)
+    finally:
+        await reader.stop()
+        await link.close()
+        await port.stop()

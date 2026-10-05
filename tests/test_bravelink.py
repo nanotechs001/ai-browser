@@ -300,6 +300,44 @@ async def test_a_thread_never_opens_in_another_profile(tmp_path):  # Review Focu
     assert str(gone.value) == NOT_CONNECTED
 
 
+async def test_a_tab_never_opens_in_another_profile_even_right_after_a_switch(tmp_path):  # Review Focus 5
+    """The tab list reads Brave's profile used last every REFRESH seconds: a tab is checked against a read made just
+    before it opens, and against the profile it landed in. One that landed in another profile is closed in Brave."""
+    from ai_browser.app.bravelink import OTHER_PROFILE, PlaceError
+
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    local_state(folder, last_used="Default")
+    port = FakePort(folder, pages=PROFILES, default="W")
+    await port.start()
+    link = await connected(folder, chosen="Default")
+    try:
+        assert await until(lambda: link.agents_context() == ("W", "chosen"))
+        new_tabs = lambda: [page for page in port.pages if page["target"].startswith("T")]  # noqa: E731
+        port.set_default("P")  # the user clicks a window of the other profile: the list hasn't read it yet
+        assert link._watch.default_context == "W"
+        for opening in (link.open_ai_tab("a1"), link.open_user_tab("https://mail.google.com/mail/u/0/#inbox/t1")):
+            with pytest.raises(PlaceError) as refused:
+                await opening
+            assert str(refused.value) == OTHER_PROFILE
+        assert new_tabs() == []  # nothing opened in P
+        port.set_default("W")
+        for open_one in (lambda: link.open_ai_tab("a1"), lambda: link.open_user_tab("https://mail.google.com/")):
+            port.hold = {"Target.createTarget"}
+            opening = asyncio.ensure_future(open_one())
+            assert await until(lambda: port.held)
+            port.set_default("P")  # Brave's last window changes between the read and the new tab
+            port.hold = set()
+            await port.answer_held()
+            with pytest.raises(PlaceError) as refused:
+                await asyncio.wait_for(opening, 5)
+            assert str(refused.value) == OTHER_PROFILE
+            assert await until(lambda: new_tabs() == [])  # the tab that landed in P is closed in Brave
+            port.set_default("W")
+    finally:
+        await link.close()
+        await port.stop()
+
+
 async def test_with_no_profile_known_no_tab_of_the_users_is_listed(tmp_path):
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
     port = FakePort(folder, pages=PROFILES, default=None)  # Target.getBrowserContexts answers an error

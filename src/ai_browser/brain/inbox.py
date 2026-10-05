@@ -25,6 +25,7 @@ STALE = "reader needs an update"
 ELSEWHERE = "open the page to watch in this tab"
 OFF_NOTE = "Reading your tabs is off: turn it on in Settings → Brain"
 TURNED_OFF = "reading your tabs was turned off"
+OFF_SITE = "its link leads off its site, and AI Browser opens only the site's own pages"
 SHOW_WAIT = 20.0  # seconds for a thread's tab to show the thread
 
 
@@ -215,7 +216,7 @@ class InboxReader:
     async def _open_thread(self, message: dict) -> None:
         request, opened = message.get("request"), []
         try:
-            target = await self._thread_tab(message["url"], opened)
+            target = await self._thread_tab(message["url"], message["site"], opened)
             text = await self._thread_text(target, message["site"])
         except asyncio.CancelledError:  # the switch went off: nothing of this read is kept, nor the tab it opened
             self._close(opened)
@@ -231,11 +232,12 @@ class InboxReader:
         reply box. The readers never click Send."""
         request, site = message.get("request"), message["site"]
         try:
-            target = await self._thread_tab(message["url"], [], background=False)
+            target = await self._thread_tab(message["url"], site, [], background=False)
             await self.brave.watch(target)
             await self._thread_text(target, site)  # the thread showing: its reply box can open
             text = str(message.get("text") or "")
-            answer = await self.brave.run_reader(target, "brain", "fill", self._kind(site), text, self._config(site))
+            config = {**self._config(site), "url": message["url"]}  # the reader checks the tab still shows it
+            answer = await self.brave.run_reader(target, "brain", "fill", self._kind(site), text, config)
         except asyncio.CancelledError:
             self.brain.on_filled(request, False, TURNED_OFF)
             raise
@@ -247,14 +249,15 @@ class InboxReader:
         ok = answer.get("ok") is True
         self.brain.on_filled(request, ok, reason if ok or reason else "the reply box didn't answer")
 
-    async def _thread_tab(self, url: str, opened: list, background: bool = True) -> str:
-        """The user's tab that shows this thread, or a new one (its row says "Brain")."""
+    async def _thread_tab(self, url: str, site: str, opened: list, background: bool = True) -> str:
+        """The user's tab that shows this thread, or a new one (its row says "Brain", and it goes in `opened` as soon
+        as Brave made it). Only an address on the item's own site: a link someone wrote in a message opens nothing."""
+        if self.brave.brain_site(url) != site:
+            raise PlaceError(OFF_SITE)
         for tab in self.brave.brain_tabs():
             if tab["url"] == url:
                 return tab["target"]
-        target = await self.brave.open_user_tab(url, background=background)
-        opened.append(target)
-        return target
+        return await self.brave.open_user_tab(url, background=background, opened=opened)
 
     async def _thread_text(self, target: str, site: str) -> str:
         """The thread's text once its tab shows it ("" if it never does in SHOW_WAIT)."""
