@@ -20,7 +20,8 @@ def row(raw_id, **fields):
 class ReadingBrave(FakeBrave):
     """`listed`: what brain_tabs() lists while reading is on and Brave is connected ([{"target", "url", "site"}]).
     `answers`: (target, call name) -> an answer, a function of the call's arguments, or an Exception to raise.
-    `hold`: while set to an Event, a read waits for it (a read under way)."""
+    `hold`: while set to an Event, a read waits for it (a read under way). open_user_tab lists the tab it opens (B1,
+    B2, …) and records (url, background) in `opened`; `open_error` makes it raise instead."""
 
     def __init__(self, listed=(), state="connected"):
         super().__init__([], state=state)
@@ -29,6 +30,9 @@ class ReadingBrave(FakeBrave):
         self.calls: list[tuple] = []  # (target, purpose, name, args)
         self.hold: asyncio.Event | None = None
         self.brain_reading = lambda: True  # the server sets its own (Settings → Brain's switch)
+        self.brain_site = lambda url: "gmail"  # the server sets its own
+        self.opened: list[tuple[str, bool]] = []
+        self.open_error: Exception | None = None
 
     def brain_tabs(self):
         if self.state != "connected" or not self.brain_reading():
@@ -50,6 +54,15 @@ class ReadingBrave(FakeBrave):
         if isinstance(answer, Exception):
             raise answer
         return answer(*args) if callable(answer) else answer
+
+    async def open_user_tab(self, url, background=True):
+        if self.open_error is not None:
+            raise self.open_error
+        self.opened.append((url, background))
+        target = f"B{len(self.opened)}"
+        self.listed.append({"target": target, "url": url, "site": self.brain_site(url)})
+        self.set_owner(target, {"kind": "brain", "name": "Brain", "color": "purple"})
+        return target
 
     def reads(self, name="read"):
         return [call for call in self.calls if call[2] == name]

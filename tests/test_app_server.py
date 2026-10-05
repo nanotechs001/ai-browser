@@ -252,7 +252,7 @@ async def with_brain(fake_claude, tmp_path, answers):
 
 
 async def test_a_draft_that_cant_open_its_thread_says_why(fake_claude, tmp_path):
-    from ai_browser.brain.service import CLOSED
+    from ai_browser.app.bravelink import NOT_CONNECTED
     from ai_browser.brain.store import Item
 
     server, url, brain = await with_brain(fake_claude, tmp_path, [{"result": "[]"}])
@@ -262,7 +262,7 @@ async def test_a_draft_that_cant_open_its_thread_says_why(fake_claude, tmp_path)
         async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
             await page.send(json.dumps({"type": "draft", "id": "gmail:t1"}))
-            seen = await until(page, lambda m: m["type"] == "brain_item" and m["item"]["note"] == CLOSED)
+            seen = await until(page, lambda m: m["type"] == "brain_item" and m["item"]["note"] == NOT_CONNECTED)
             assert seen[-1]["item"]["state"] == "open"  # nothing took it: the item is as it was, and says why
     finally:
         await server.stop()

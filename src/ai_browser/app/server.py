@@ -60,6 +60,7 @@ from ..settings import Settings
 from ..skills import Catalog
 from ..syncdir import write_atomic
 from .agents import Agent, AgentManager
+from .bravelink import NOT_CONNECTED
 from .cdprelay import Tokens
 from .groups import GroupKeeper
 
@@ -331,6 +332,7 @@ class AppServer:
         if brain is not None:
             brain.broadcast = self._send_all
             brain.outbox = self._brain_out
+            brain.closed_note = self._brain_closed
         self.default_model = default_model if default_model in MODELS else "sonnet"  # ai-browser app --model
         self.host = host
         self.ports = ports
@@ -1122,9 +1124,16 @@ class AppServer:
     def _brain_out(self, message: dict) -> bool:
         """What the Brain asks of the app: its new notes, notified by AI Browser's own app in fixed words; or a
         thread to open and a reply box to fill, in the user's tabs. False when nothing took it: the Brain says why."""
-        if message.get("type") == "notify":
+        kind = message.get("type")
+        if kind == "notify":
             return self._notify_desktop(message)
+        if kind in ("open_thread", "fill_reply") and self.inbox is not None:
+            return self.inbox.handle(message)  # in the user's tabs, only while reading is on
         return False
+
+    def _brain_closed(self) -> str:
+        """Why the Brain's outbox took a thread or a reply box nowhere, for the item's note."""
+        return self.inbox.why_closed() if self.inbox is not None else NOT_CONNECTED
 
     async def _forward(self) -> None:
         while True:

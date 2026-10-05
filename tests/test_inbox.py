@@ -216,3 +216,141 @@ async def test_a_picked_part_is_read_only_where_it_was_picked_and_while_it_is_on
         assert server._brain_site("https://shop.example/orders/42") is None  # switched off
     finally:
         await server.stop()
+
+
+# ---- drafts: a thread to read, and Use draft (Task 8) ------------------------------------------------------------
+
+THREAD = "https://mail.google.com/mail/u/0/#inbox/t1"  # test_brain_service.raw("t1")'s address
+NEEDS = [{"id": "gmail:t1", "kind": "needs_reply", "summary": "Maria asks to move the launch", "why": "a client",
+          "suggest": "draft"}]
+
+
+async def drafting(fake_claude, tmp_path, listed=()):
+    """(brain, brave, reader): an item gmail:t1 that needs a reply, reading on, the user's tabs as `listed`."""
+    from ai_browser.brain.inbox import InboxReader
+    from ai_browser.brain.service import BrainService
+    from ai_browser.brain.store import BrainStore
+    from test_brain_service import dict_script, raw
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(dict_script(NEEDS)), encoding="utf-8")
+    brain = BrainService(BrainStore(tmp_path / "home"), claude=runner, batch_wait=0.05)
+    brave = ReadingBrave(listed)
+    reader = InboxReader(brain, brave, every=60)  # no read rounds: these tests draft
+    brain.outbox, brain.closed_note = reader.handle, reader.why_closed
+    reader.set_on(True)
+    await brain.on_items("gmail", [raw("t1")])
+    await brain.settle()
+    assert brain.store.get("gmail:t1").state == "open"
+    return brain, brave, reader
+
+
+def item(brain):
+    return brain.store.get("gmail:t1")
+
+
+async def test_a_draft_reads_the_thread_in_its_tab_and_use_draft_fills_that_tab(fake_claude, tmp_path):
+    brain, brave, reader = await drafting(fake_claude, tmp_path, [{"target": "U5", "url": THREAD, "site": "gmail"}])
+    brave.answers[("U5", "thread")] = {"text": "Maria: can we move the launch to Monday?"}
+    brave.answers[("U5", "fill")] = {"ok": True, "reason": ""}
+    try:
+        await brain.draft("gmail:t1")
+        assert item(brain).state == "draft_ready" and item(brain).draft == "Monday works for us."
+        assert brave.opened == [] and brave.reads("thread")[0][:3] == ("U5", "brain", "thread")  # the user's tab
+        await brain.approve("gmail:t1", "Monday works for us.", item(brain).draft_version)
+        assert await until(lambda: item(brain).state == "filled")
+        fill = brave.reads("fill")[0]
+        assert fill[:3] == ("U5", "brain", "fill") and fill[3][:2] == ("gmail", "Monday works for us.")
+        assert brave.watched == ["U5"]  # Use draft: the thread's tab comes forward, where the user presses Send
+        assert "press Send" in item(brain).note
+    finally:
+        await reader.stop()
+
+
+async def test_a_thread_nobody_has_open_opens_in_a_background_tab_marked_brain(fake_claude, tmp_path):
+    brain, brave, reader = await drafting(fake_claude, tmp_path)
+    brave.answers[("B1", "thread")] = {"text": "Maria: can we move the launch to Monday?"}
+    try:
+        await brain.draft("gmail:t1")
+        assert item(brain).state == "draft_ready" and brave.opened == [(THREAD, True)]
+        assert brave.owners["B1"] == {"kind": "brain", "name": "Brain", "color": "purple"}
+    finally:
+        await reader.stop()
+
+
+async def test_use_draft_after_the_tab_closed_opens_it_again(fake_claude, tmp_path):  # Review Focus 4
+    brain, brave, reader = await drafting(fake_claude, tmp_path, [{"target": "U5", "url": THREAD, "site": "gmail"}])
+    brave.answers[("U5", "thread")] = {"text": "Maria: can we move the launch to Monday?"}
+    brave.answers[("B1", "thread")] = {"text": "Maria: can we move the launch to Monday?"}
+    brave.answers[("B1", "fill")] = {"ok": True, "reason": ""}
+    try:
+        await brain.draft("gmail:t1")
+        brave.listed = []  # the user closed the thread's tab
+        await brain.approve("gmail:t1", "Monday works for us.", item(brain).draft_version)
+        assert await until(lambda: item(brain).state == "filled")
+        assert brave.opened == [(THREAD, False)] and brave.watched == ["B1"]  # opened again, in front
+        assert [call[0] for call in brave.reads("fill")] == ["B1"]  # typed there, nowhere else
+    finally:
+        await reader.stop()
+
+
+async def test_a_reply_box_that_isnt_there_keeps_the_draft_and_says_why(fake_claude, tmp_path):  # Review Focus 4
+    brain, brave, reader = await drafting(fake_claude, tmp_path, [{"target": "U5", "url": THREAD, "site": "gmail"}])
+    brave.answers[("U5", "thread")] = {"text": "Maria: can we move the launch to Monday?"}
+    brave.answers[("U5", "fill")] = {"ok": False, "reason": "no Reply button on this page"}  # a layout it doesn't know
+    try:
+        await brain.draft("gmail:t1")
+        await brain.approve("gmail:t1", "Monday works for us.", item(brain).draft_version)
+        assert await until(lambda: "no Reply button" in item(brain).note)
+        assert item(brain).state == "draft_ready" and item(brain).draft == "Monday works for us."  # kept
+        assert len(brave.reads("fill")) == 1  # tried once; Use draft can be pressed again
+    finally:
+        await reader.stop()
+
+
+async def test_turning_reading_off_while_a_thread_opens_keeps_nothing(fake_claude, tmp_path):  # Review Focus 2
+    brain, brave, reader = await drafting(fake_claude, tmp_path)
+    brave.answers[("B1", "thread")] = {"text": "Maria: can we move the launch to Monday?"}
+    brave.hold = asyncio.Event()  # the thread's tab opens, and its read waits in the page
+    try:
+        drafting_task = asyncio.ensure_future(brain.draft("gmail:t1"))
+        assert await until(lambda: len(brave.reads("thread")) == 1)
+        reader.set_on(False)  # the user turns the switch off meanwhile
+        await asyncio.wait_for(drafting_task, 5)
+        assert item(brain).draft == "" and item(brain).state == "open"  # no draft from that thread
+        assert "turned off" in item(brain).note
+        assert await until(lambda: brave.closed == ["B1"])  # the tab it opened for the read goes too
+        brave.hold.set()
+        await asyncio.sleep(0.2)
+        assert item(brain).draft == ""
+    finally:
+        await reader.stop()
+
+
+async def test_with_reading_off_or_brave_away_a_draft_says_why_and_nothing_opens(fake_claude, tmp_path):
+    from ai_browser.app.bravelink import NOT_CONNECTED
+    from ai_browser.brain.inbox import OFF_NOTE
+
+    brain, brave, reader = await drafting(fake_claude, tmp_path)
+    try:
+        reader.set_on(False)
+        await brain.draft("gmail:t1")
+        assert item(brain).note == OFF_NOTE and item(brain).state == "open"
+        reader.set_on(True)
+        brave.set_state("lost")
+        await brain.draft("gmail:t1")
+        assert item(brain).note == NOT_CONNECTED and brave.opened == [] and brave.calls == []
+    finally:
+        await reader.stop()
+
+
+async def test_a_tab_that_cant_open_says_so_in_the_items_note(fake_claude, tmp_path):
+    from ai_browser.app.bravelink import OTHER_PROFILE, PlaceError
+
+    brain, brave, reader = await drafting(fake_claude, tmp_path)
+    brave.open_error = PlaceError(OTHER_PROFILE)
+    try:
+        await brain.draft("gmail:t1")
+        assert item(brain).note == f"Couldn't read the thread: {OTHER_PROFILE}" and item(brain).state == "open"
+    finally:
+        await reader.stop()

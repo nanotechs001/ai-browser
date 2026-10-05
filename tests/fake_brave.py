@@ -331,7 +331,7 @@ class FakeBrave:
         self.state = state
         self.pages = [dict(page) for page in pages]  # {"target", "url", "title"}
         self.owners: dict[str, dict] = {}
-        self.watched, self.closed, self.marked = [], [], []
+        self.watched, self.closed = [], []
         self.connects = 0
         self.connect_calls = []  # (why, identity) of each connect
         self.relay = FakeRelay()
@@ -376,9 +376,6 @@ class FakeBrave:
         for target in [target for target, owner in self.owners.items() if owner.get("id") == owner_id]:
             del self.owners[target]
         self.changed()
-
-    def mark_brain(self, url):
-        self.marked.append(url)
 
     async def connect(self, why="connect", identity=""):
         self.connects += 1

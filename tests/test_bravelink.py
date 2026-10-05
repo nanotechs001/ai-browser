@@ -138,28 +138,6 @@ async def test_the_users_tabs_are_listed_but_never_attached(tmp_path):
         assert port.attached == ["A1", "U1"]
         link.release("a1")
         assert link.tabs()[1]["owner"] == {"kind": "you"}
-        link.mark_brain("https://mail.example/")
-        assert link.tabs()[0]["owner"] == {"kind": "brain", "name": "Brain", "color": "purple"}
-    finally:
-        await link.close()
-        await port.stop()
-
-
-async def test_the_brain_is_marked_only_when_one_tab_matches(tmp_path):
-    from ai_browser.app.bravelink import BraveLink
-
-    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    same = "https://mail.example/#t1"
-    port = FakePort(folder, pages=[{"target": "U1", "url": same, "title": "A"}, {"target": "U2", "url": same,
-                                                                                 "title": "B"}])
-    await port.start()
-    link = BraveLink(folder, every=0.1)
-    await link.start()
-    await link.connect()
-    try:
-        assert await until(lambda: len(link.tabs()) == 2)
-        link.mark_brain(same)
-        assert {tab["owner"]["kind"] for tab in link.tabs()} == {"you"}  # two candidates: nobody is guessed
     finally:
         await link.close()
         await port.stop()
@@ -293,7 +271,7 @@ async def test_with_no_profile_known_no_tab_of_the_users_is_listed(tmp_path):
         await port.stop()
 
 
-async def test_a_hidden_tab_cannot_be_read_or_marked(tmp_path):
+async def test_a_hidden_tab_cannot_be_read(tmp_path):
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
     port = FakePort(folder, pages=PROFILES, default="W")
     await port.start()
@@ -302,7 +280,6 @@ async def test_a_hidden_tab_cannot_be_read_or_marked(tmp_path):
         assert await until(lambda: targets(link) == ["H1", "U1"])
         assert await link.page_text("U2", picked=True) == ""  # another profile: not listed, never read
         assert "U2" not in port.attached
-        link.mark_brain("https://bank.example/")  # nothing in the list shows it: nothing is marked
         assert await link.page_text("U1", picked=True) == "page text"  # a listed tab still can be (control)
         assert "U1" in port.attached
         port.set_default("P")

@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import time
 
+from ..app.bravelink import NOT_CONNECTED, PlaceError
 from ..app.inworld import WorldError
 from .store import built_in
 
@@ -22,6 +23,9 @@ FIELDS = ("id", "from", "subject", "snippet", "url", "time")
 NO_TAB = "no open tab"
 STALE = "reader needs an update"
 ELSEWHERE = "open the page to watch in this tab"
+OFF_NOTE = "Reading your tabs is off: turn it on in Settings → Brain"
+TURNED_OFF = "reading your tabs was turned off"
+SHOW_WAIT = 20.0  # seconds for a thread's tab to show the thread
 
 
 class _Tab:
@@ -44,6 +48,8 @@ class InboxReader:
         self._turn = 0  # changed by every set_on: a read that began before it keeps nothing
         self._tabs: dict[str, _Tab] = {}  # target -> what it gave already
         self._said: dict[str, tuple[bool, str]] = {}  # site -> its line, as last said
+        self._jobs: set[asyncio.Task] = set()  # threads being opened, reply boxes being filled
+        self._closing: set[asyncio.Task] = set()  # tabs a stopped job had opened, being closed
         brain.set_reading(self.state())
 
     def state(self) -> str:
@@ -62,6 +68,8 @@ class InboxReader:
             if self._task is not None:
                 self._task.cancel()
                 self._task = None
+            for job in list(self._jobs):  # a thread being opened, a reply box being filled: stopped too
+                job.cancel()
             self._tabs.clear()
             self._said.clear()
             if on:
@@ -73,10 +81,11 @@ class InboxReader:
         task, self._task = self._task, None
         self.on = False
         self._turn += 1
-        if task is not None:
-            task.cancel()
-            with contextlib.suppress(BaseException):
-                await task
+        for job in [task, *self._jobs]:
+            if job is not None:
+                job.cancel()
+                with contextlib.suppress(BaseException):
+                    await job
 
     async def _loop(self) -> None:
         while True:
@@ -182,3 +191,86 @@ class InboxReader:
             self.brain.store.mark_baselined(site, entry.selector)
         if fresh or baseline:
             await self.brain.on_items(site, fresh, baseline=baseline)
+
+    # ---- drafts: a thread to read, and Use draft --------------------------------------------------------------
+
+    def handle(self, message: dict) -> bool:
+        """The Brain's outbox for the user's tabs: open_thread (a thread to read, for a draft) and fill_reply (Use
+        draft: the reply into its reply box). True when taken; the answer comes later, as the Brain's on_thread or
+        on_filled. False while the switch is off or Brave isn't connected: why_closed() says which."""
+        kind = message.get("type")
+        if kind not in ("open_thread", "fill_reply") or self.state() != "on":
+            return False
+        if not isinstance(message.get("url"), str) or not isinstance(message.get("site"), str):
+            return False
+        job = asyncio.ensure_future(self._open_thread(message) if kind == "open_thread" else self._fill_reply(message))
+        self._jobs.add(job)
+        job.add_done_callback(self._jobs.discard)
+        return True
+
+    def why_closed(self) -> str:
+        """Why handle() took nothing, for the item's note."""
+        return OFF_NOTE if not self.on else NOT_CONNECTED
+
+    async def _open_thread(self, message: dict) -> None:
+        request, opened = message.get("request"), []
+        try:
+            target = await self._thread_tab(message["url"], opened)
+            text = await self._thread_text(target, message["site"])
+        except asyncio.CancelledError:  # the switch went off: nothing of this read is kept, nor the tab it opened
+            self._close(opened)
+            self.brain.on_thread(request, "", TURNED_OFF)
+            raise
+        except (WorldError, PlaceError) as exc:
+            self.brain.on_thread(request, "", str(exc))
+            return
+        self.brain.on_thread(request, text, "" if text else "the thread didn't show in its tab")
+
+    async def _fill_reply(self, message: dict) -> None:
+        """Use draft: the thread's tab comes forward (opened again if it was closed), and the reply goes into its
+        reply box. The readers never click Send."""
+        request, site = message.get("request"), message["site"]
+        try:
+            target = await self._thread_tab(message["url"], [], background=False)
+            await self.brave.watch(target)
+            await self._thread_text(target, site)  # the thread showing: its reply box can open
+            text = str(message.get("text") or "")
+            answer = await self.brave.run_reader(target, "brain", "fill", self._kind(site), text, self._config(site))
+        except asyncio.CancelledError:
+            self.brain.on_filled(request, False, TURNED_OFF)
+            raise
+        except (WorldError, PlaceError) as exc:
+            self.brain.on_filled(request, False, str(exc))
+            return
+        answer = answer if isinstance(answer, dict) else {}
+        reason = answer.get("reason") if isinstance(answer.get("reason"), str) else ""
+        ok = answer.get("ok") is True
+        self.brain.on_filled(request, ok, reason if ok or reason else "the reply box didn't answer")
+
+    async def _thread_tab(self, url: str, opened: list, background: bool = True) -> str:
+        """The user's tab that shows this thread, or a new one (its row says "Brain")."""
+        for tab in self.brave.brain_tabs():
+            if tab["url"] == url:
+                return tab["target"]
+        target = await self.brave.open_user_tab(url, background=background)
+        opened.append(target)
+        return target
+
+    async def _thread_text(self, target: str, site: str) -> str:
+        """The thread's text once its tab shows it ("" if it never does in SHOW_WAIT)."""
+        deadline = self.clock() + SHOW_WAIT
+        while True:
+            with contextlib.suppress(WorldError):
+                answer = await self.brave.run_reader(target, "brain", "thread", self._kind(site), self._config(site))
+                text = answer.get("text") if isinstance(answer, dict) else ""
+                if isinstance(text, str) and text.strip():
+                    return text
+            if self.clock() >= deadline:
+                return ""
+            await asyncio.sleep(0.5)
+
+    def _close(self, targets: list) -> None:
+        if targets:
+            closing = asyncio.ensure_future(self.brave.close_targets(list(targets)))
+            self._closing.add(closing)
+            closing.add_done_callback(self._closing.discard)

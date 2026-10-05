@@ -21,6 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ..brain import readers
+from ..cdp import CDPError
 from . import inworld
 from .cdprelay import ALLOW_WAIT, SWITCH_EVERY, Relay, Tokens
 from .tabs import TabWatch
@@ -29,6 +30,17 @@ READABLE = {"agent", "session", "handed"}  # tabs whose picture or text the app 
 YOU = {"kind": "you"}
 USERS = ("you", "brain")  # the user's own tabs (a Brain row is theirs): listed only in the agents' profile
 WEB = ("http://", "https://")
+BRAIN = {"kind": "brain", "name": "Brain", "color": "purple"}  # a tab AI Browser opened for the Brain: still the user's
+OPEN_WAIT = 10.0  # seconds for a tab AI Browser opened to show in the tab list
+NOT_CONNECTED = "Brave isn't connected: connect it in AI Home"
+OTHER_PROFILE = ("Brave's last window is in another profile: click a window of the profile where agents browse, then "
+                 "try again")
+
+
+class PlaceError(RuntimeError):
+    """Why a tab couldn't open where it must, in plain words that name no profile (they may reach Claude)."""
+
+
 __all__ = ["ALLOW_WAIT", "SWITCH_EVERY", "BraveLink"]
 
 
@@ -203,13 +215,6 @@ class BraveLink:
         if gone:
             self._changed()
 
-    def mark_brain(self, url: str) -> None:
-        """A thread the watcher opened for the Brain: when exactly one tab nobody owns shows that address, its row
-        says "Brain". Display only: it stays the user's tab."""
-        found = [tab["target"] for tab in self.tabs() if tab["url"] == url and tab["owner"]["kind"] == "you"]
-        if len(found) == 1:
-            self.set_owner(found[0], {"kind": "brain", "name": "Brain", "color": "purple"})
-
     # ---- the Brain's readers: which tab may be read, and running them there -----------------------------------
 
     def client(self):
@@ -242,6 +247,29 @@ class BraveLink:
             return (tab is not None and self.brain_reading() and tab["owner"]["kind"] in USERS
                     and tab["url"].startswith(WEB))
         return False
+
+    async def open_user_tab(self, url: str, background: bool = True) -> str:
+        """A page the Brain needs (a thread, for a draft or Use draft), opened as a tab of the user's in the profile
+        where agents browse: its row says "Brain". Brave opens a new tab only in the profile it used last (CDP can't
+        name one), so it opens only when that is the agents' profile; else PlaceError says what to do. It waits until
+        the tab list shows the tab, so the readers may run there."""
+        watch = self._watch
+        if watch is None or watch.closed:
+            raise PlaceError(NOT_CONNECTED)
+        context, _ = self.agents_context()
+        if context is None or watch.default_context != context:
+            raise PlaceError(OTHER_PROFILE)
+        try:
+            answer = await watch.cdp.send("Target.createTarget", {"url": url, "background": background}, timeout=10)
+            target = answer["targetId"]
+        except (CDPError, KeyError, TypeError):
+            raise PlaceError("Brave didn't open the tab") from None
+        self.set_owner(target, BRAIN)
+        for _ in range(int(OPEN_WAIT * 10)):
+            if any(tab["target"] == target for tab in self.tabs()):
+                break
+            await asyncio.sleep(0.1)
+        return target
 
     async def run_reader(self, target: str, purpose: str, name: str, *args, timeout: float = inworld.SCRIPT_WAIT):
         """One of the Brain's readers (brain/readers/) in the tab's isolated world, only where may_run says so: its

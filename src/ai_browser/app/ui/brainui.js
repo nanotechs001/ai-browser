@@ -1,6 +1,6 @@
 // The Brain's inbox, in AI Home and Mission Control: only what is new or needs the user, each with what the Brain
-// makes of it and what to do next. Message text is set as text, never as HTML. Approve sends the reply the user sees
-// (and may have edited), once; AI Browser then puts it in the reply box, and the user presses Send.
+// makes of it and what to do next. Message text is set as text, never as HTML. Use draft sends the reply the user
+// sees (and may have edited), once; AI Browser then puts it in the reply box, and the user presses Send.
 "use strict";
 
 const KIND = { needs_reply: "needs your reply", new: "new" };
@@ -73,14 +73,15 @@ export function mountBrain(root, link, { compact = false, openAgent = null } = {
       why: el("div", "why muted"), note: el("div", "note muted"), card: el("div", "brain-card"),
       agent: el(openAgent ? "button" : "div", "agent"),
       draftBox: el("div", "brain-draft"), draft: el("textarea", "draft-text"),
-      approve: el("button", "approve primary", "Approve: put it in the reply box"), copy: el("button", "copy", "Copy"),
+      approve: el("button", "approve primary", "Use draft: put it in the reply box"),
+      copy: el("button", "copy", "Copy"),
       actions: el("div", "brain-actions"), draftButton: el("button", "draft", "Draft reply"), run: el("button", "run"),
       done: el("button", "done ghost", "Done"), say: el("input", "say"), tell: el("button", "tell", "Tell the Brain"),
       hand: el("button", "hand", "Hand to agent"),
     };
     p.draft.rows = 4;
     p.card.hidden = true;
-    p.draft.setAttribute("aria-label", "The reply: edit it before you approve");
+    p.draft.setAttribute("aria-label", "The reply: edit it before you use it");
     p.say.placeholder = "What should happen? For example: draft a polite no, or check the page";
     p.say.setAttribute("aria-label", "Tell the Brain, or what the agent should do");
     p.line.append(p.site, p.kind, p.sender, p.subject);
