@@ -5,6 +5,7 @@ and yes or no only. AI Browser's own app keeps its side in its profile (main.js,
 
 import asyncio
 import contextlib
+import json
 
 import pytest
 
@@ -81,11 +82,13 @@ async def test_the_engine_says_each_step_of_the_apps_start(tmp_path, monkeypatch
     err = capsys.readouterr().err
     lines = start_lines(err)
     assert lines[0].startswith("[start] app: starting ") and "fake_electron.py" in lines[0]
-    assert lines[1:3] == ["[start] app: start sent (http://127.0.0.1:8793/open?code=…)",
+    assert lines[1].startswith("[start] app: the line is 127.0.0.1:")
+    assert lines[2] == "[start] app: the app joined the line"
+    assert lines[3:5] == ["[start] app: start sent (http://127.0.0.1:8793/open?code=…)",
                           f"[start] app: hello from pid {pid}"]
     assert lines[-1].startswith("[start] app: its line or its process ended")
     assert "the-one-time-code" not in err
-    assert log.read_text(encoding="utf-8").splitlines()[0] == '{"argv": [], "electron_logging": "1"}'  # Chromium's log
+    assert json.loads(log.read_text(encoding="utf-8").splitlines()[0])["electron_logging"] == "1"  # Chromium's log
 
 
 async def test_an_app_that_never_says_hello_is_said_in_the_start_log(tmp_path, monkeypatch, capsys):

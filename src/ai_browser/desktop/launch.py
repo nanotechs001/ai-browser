@@ -7,21 +7,27 @@ The line carries JSON, one object per line, both ways (desktop/electron/line.js 
   quit (the user's Quit).
 
 How it starts:
-- Windows: its own program, AI Browser.exe, with the line on its stdin and stdout.
+- Windows: its own program, AI Browser.exe. The line is a port on 127.0.0.1, the app's one argument
+  (--aib-line=tcp:<port>), and the app joins it by sending first a key that only its environment holds (AIB_LINE_KEY):
+  a connection without the key gets nothing and is closed, and only the first with it is taken. The line can't be
+  the app's stdin and stdout there: the packaged Electron's stdin ends as it starts, so it never read the start (it
+  showed its double-click box, and after START_WAIT the run fell back to a browser window; Windows run 37310229032).
 - macOS: through LaunchServices (`open -n -W -a`), so macOS treats it as an app of its own: its Dock icon, and the
   microphone and Brave permissions it asks for are its own (a program started from a terminal would ask as the
   terminal). LaunchServices gives it no pipe. So the line is a socket in a new folder only this user can open. Its
   path is the app's one argument, only the first connection is taken, and the socket goes at once.
 
-The start code never goes on a command line, and nothing here passes a debugging switch."""
+The start code and the key never go on a command line, and nothing here passes a debugging switch."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import itertools
 import json
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -38,6 +44,8 @@ START_WAIT = 20.0  # seconds for the app to start and say hello
 ANSWER_WAIT = 5.0  # seconds for its answer about a shortcut
 QUIT_WAIT = 10.0  # seconds it gets to quit before it is ended
 LINE_LIMIT = 64 * 1024  # bytes in one line
+LINE_KEY = "AIB_LINE_KEY"  # Windows: the line's key, in the app's environment only (line.js reads it, then drops it)
+KEY_WAIT = 5.0  # seconds a connection to the Windows line has to give the key
 UPDATED = ("AI Browser's app was updated for this version: macOS may ask for the microphone, and to control Brave, "
            "once more.")
 
@@ -104,7 +112,7 @@ class DesktopWindow:
             self.note = UPDATED if self.system == "darwin" else ""
         self._hello = asyncio.get_running_loop().create_future()
         try:
-            await (self._start_mac() if self.system == "darwin" else self._start_direct())
+            await (self._start_mac() if self.system == "darwin" else self._start_windows())
             start = url() if callable(url) else url
             sent = self.send({"type": "start", "open": start, "shortcut": self.start_shortcut})
             debugstart.say(f"app: start sent ({debugstart.address(start)})" if sent
@@ -126,17 +134,57 @@ class DesktopWindow:
         pid = hello.get("pid")
         self.pid = pid if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 else None
 
-    async def _start_direct(self) -> None:
-        debugstart.say(f"app: starting {subprocess.list2cmdline(self.program)}")
-        logging = debugstart.on()  # the start log: the app's stderr, with Chromium's own log, on the engine's
+    async def _start_windows(self) -> None:
+        key = secrets.token_urlsafe(32)
+        joined = asyncio.get_running_loop().create_future()
+
+        async def accept(reader, writer) -> None:
+            try:
+                given = await asyncio.wait_for(reader.readline(), KEY_WAIT)
+            except (TimeoutError, ValueError, OSError):
+                given = b""
+            if not joined.done() and hmac.compare_digest(given.rstrip(b"\r\n"), key.encode("ascii")):
+                debugstart.say("app: the app joined the line")
+                joined.set_result((reader, writer))
+                return
+            debugstart.say("app: a connection to the line without its key was closed")
+            writer.close()  # it is told nothing
+
+        server = await asyncio.start_server(accept, "127.0.0.1", 0, limit=LINE_LIMIT)
         try:
-            self._process = await asyncio.create_subprocess_exec(
-                *self.program, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=None if logging else asyncio.subprocess.DEVNULL, limit=LINE_LIMIT,
-                env={**os.environ, "ELECTRON_ENABLE_LOGGING": "1"} if logging else None)
-        except OSError as exc:
-            raise DesktopError(f"AI Browser's app could not start: {exc.strerror or exc}") from None
-        self._listen(self._process.stdout, self._process.stdin)
+            port = server.sockets[0].getsockname()[1]
+            command = [*self.program, f"--aib-line=tcp:{port}"]
+            debugstart.say(f"app: starting {subprocess.list2cmdline(command)}")
+            debugstart.say(f"app: the line is 127.0.0.1:{port}")
+            logging = debugstart.on()  # the start log: the app's stderr, with Chromium's own log, on the engine's
+            env = {**os.environ, LINE_KEY: key, **({"ELECTRON_ENABLE_LOGGING": "1"} if logging else {})}
+            try:
+                self._process = await asyncio.create_subprocess_exec(
+                    *command, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
+                    stderr=None if logging else asyncio.subprocess.DEVNULL, env=env)
+            except OSError as exc:
+                raise DesktopError(f"AI Browser's app could not start: {exc.strerror or exc}") from None
+            await self._until_joined(joined, "AI Browser's app ended as it started (exit code {code})")
+        finally:
+            server.close()  # no other connection is taken; the app's stays open
+        reader, writer = joined.result()
+        self._listen(reader, writer)
+
+    async def _until_joined(self, joined: asyncio.Future, ended: str) -> None:
+        """Until the app has joined its line (DesktopError when its process ends first, or after START_WAIT). `ended`
+        says why when its process ended with an error ({code})."""
+        exited = asyncio.ensure_future(self._process.wait())
+        try:
+            await asyncio.wait({joined, exited}, timeout=START_WAIT, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            exited.cancel()
+        if not joined.done():
+            if self._process.returncode == 0:  # it opened, and its new copy quit at once: one may hold its profile
+                raise DesktopError("AI Browser's app closed as it started: another copy of it may still be open, "
+                                   "or closing")
+            if self._process.returncode is not None:
+                raise DesktopError(ended.format(code=self._process.returncode))
+            raise DesktopError("AI Browser's app didn't answer as it started")
 
     async def _start_mac(self) -> None:
         if not self.app.is_dir():
@@ -166,19 +214,7 @@ class DesktopWindow:
                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
             except OSError as exc:
                 raise DesktopError(f"macOS couldn't open AI Browser's app: {exc.strerror or exc}") from None
-            exited = asyncio.ensure_future(self._process.wait())
-            try:
-                await asyncio.wait({joined, exited}, timeout=START_WAIT, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                exited.cancel()
-            if not joined.done():
-                if self._process.returncode == 0:  # it opened, and its new copy quit at once: one may hold its profile
-                    raise DesktopError("AI Browser's app closed as it started: another copy of it may still be open, "
-                                       "or closing")
-                if self._process.returncode is not None:
-                    raise DesktopError(f"macOS couldn't open AI Browser's app (open ended with "
-                                       f"{self._process.returncode})")
-                raise DesktopError("AI Browser's app didn't answer as it started")
+            await self._until_joined(joined, "macOS couldn't open AI Browser's app (open ended with {code})")
         finally:
             server.close()
             with contextlib.suppress(OSError):

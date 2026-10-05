@@ -21,7 +21,7 @@ const os = require("node:os");
 const path = require("node:path");
 const policy = require("./policy.js");
 const thispage = require("./thispage.js");
-const { encode, lineOption, splitter } = require("./line.js");
+const { LINE_KEY, encode, lineOption, lineTarget, splitter } = require("./line.js");
 
 const APP_ID = "io.github.nanotechs001.ai-browser"; // desktop/layout.py's BUNDLE_ID, and Windows' AppUserModelID
 const TOAST_CLSID = "{52E8D68C-5CAC-4680-848A-E80657E0B4D5}"; // Windows: the Start menu entry's toast activator
@@ -131,15 +131,27 @@ function openLine(onMessage, onEnd) {
     }
   };
   const where = lineOption(process.argv);
-  if (where) { // macOS: the socket the engine named
-    const socket = net.createConnection({ path: where });
+  if (where) { // the line the engine named: the Mac's socket, or Windows' port on 127.0.0.1 with its key
+    const target = lineTarget(where, process.env);
+    delete process.env[LINE_KEY]; // the key goes no further: no process the app starts inherits it
+    if (!target) {
+      debug("line: none it can join");
+      end();
+      return;
+    }
+    debug(`line: ${target.path ? "socket" : `${target.host}:${target.port}`}`);
+    const socket = target.path ? net.createConnection({ path: target.path })
+      : net.createConnection({ host: target.host, port: target.port });
+    if (!target.path) socket.write(`${target.key}\n`); // first of all: the engine takes no line without its key
     socket.setEncoding("utf8");
+    socket.on("connect", () => debug("line: joined"));
     socket.on("data", feed);
     socket.on("close", end);
-    socket.on("error", () => {}); // "close" follows
+    socket.on("error", (error) => debug(`line: ${error && error.code}`)); // "close" follows
     send = (message) => !socket.destroyed && socket.write(encode(message));
     return;
   }
+  debug("line: stdin");
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", feed);
   process.stdin.on("end", end);
@@ -484,7 +496,6 @@ function main() {
   app.on("window-all-closed", () => {}); // only Quit ends the app
   app.on("web-contents-created", (event, contents) => lockContents(contents));
   const waiting = setTimeout(noEngine, START_WAIT);
-  debug(`line: ${lineOption(process.argv) ? "socket" : "stdin"}`);
   openLine((message) => {
     if (message.type === "start" && !starting) {
       debug("start received");

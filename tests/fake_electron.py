@@ -7,10 +7,14 @@ does:
 - "start_status": {...}: right after hello, the state of the shortcut it was started with;
 - "shortcuts": {value: {"ok", "why"}}: its answer to a shortcut request (any other value: ok);
 - "click": true: it clicks each notification it gets;
-- "quit_after": seconds: the user's Quit, that long after the start."""
+- "quit_after": seconds: the user's Quit, that long after the start;
+- "intruder": true: before it joins a loopback line, another connection gives a wrong key, and logs what it got;
+- "exit_at_once": code: it exits with that code before joining the line.
+A loopback line (--aib-line=tcp:<port>, Windows) is joined with the key in AIB_LINE_KEY, sent first."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import socket
@@ -29,9 +33,27 @@ def main(argv: list[str]) -> int:
             log.flush()
 
     logging = os.environ.get("ELECTRON_ENABLE_LOGGING")  # Chromium's log on stderr: the start log asks for it
-    note({"argv": argv, **({"electron_logging": logging} if logging else {})})
+    key = os.environ.get("AIB_LINE_KEY")
+    note({"argv": argv, **({"key": True} if key else {}), **({"electron_logging": logging} if logging else {})})
+    if "exit_at_once" in plan:
+        return plan["exit_at_once"]
     path = next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--aib-line=")), None)
-    if path:
+    if path and path.startswith("tcp:"):
+        port = int(path.removeprefix("tcp:"))
+        if plan.get("intruder"):
+            intruder = socket.create_connection(("127.0.0.1", port))
+            intruder.sendall(b"not-the-key\n")
+            intruder.settimeout(10)
+            got = b""
+            with contextlib.suppress(OSError):
+                while chunk := intruder.recv(4096):
+                    got += chunk
+            note({"intruder_got": got.decode("utf-8", "replace")})
+            intruder.close()
+        line = socket.create_connection(("127.0.0.1", port))
+        line.sendall((key or "").encode("utf-8") + b"\n")
+        reader, writer = line.makefile("rb"), line.makefile("wb")
+    elif path:
         line = socket.socket(socket.AF_UNIX)
         line.connect(path)
         reader, writer = line.makefile("rb"), line.makefile("wb")

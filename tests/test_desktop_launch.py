@@ -1,6 +1,8 @@
 """Starting AI Browser's own app and its private line (desktop/launch.py). The app is a fake
 (tests/fake_electron.py), and on macOS so is `open` (tests/fake_open.py), whose arguments are checked as
-LaunchServices would get them. The one-time code goes over the line, never on a command line."""
+LaunchServices would get them. The one-time code goes over the line, never on a command line. On Windows the line is
+a loopback port the app joins with a key from its environment: the packaged Electron's stdin ends as it starts there
+(Windows run 37310229032), so the line is never its stdin and stdout."""
 
 import asyncio
 import json
@@ -27,7 +29,8 @@ def plan(tmp_path, monkeypatch, **steps) -> Path:
 
 
 def windows_app(tmp_path, monkeypatch, **steps):
-    """(the app as Windows starts it: its own program, the line on its stdin and stdout; the fake's log)."""
+    """(the app as Windows starts it: its own program, joining a loopback line with the key in its environment; the
+    fake's log)."""
     from ai_browser.desktop.launch import DesktopWindow
 
     log = plan(tmp_path, monkeypatch, **steps)
@@ -36,8 +39,9 @@ def windows_app(tmp_path, monkeypatch, **steps):
     return app, log
 
 
-async def test_on_windows_the_line_is_the_apps_stdin_and_the_code_stays_off_every_command_line(tmp_path,
-                                                                                                 monkeypatch):
+async def test_on_windows_the_line_is_a_loopback_port_the_app_joins_with_its_key(tmp_path, monkeypatch):
+    import re
+
     app, log = windows_app(tmp_path, monkeypatch, shortcuts={"Alt+Shift+Space": {"ok": False, "why": "taken"}})
     await app.launch(URL)
     try:
@@ -51,13 +55,36 @@ async def test_on_windows_the_line_is_the_apps_stdin_and_the_code_stays_off_ever
         assert await app.close() == ""
     assert app.ended.is_set() and not app.quit_by_user and not app.running
     seen = entries(log)
-    assert seen[0] == {"argv": []}  # its command line: the program alone
+    assert re.fullmatch(r"--aib-line=tcp:\d{1,5}", seen[0]["argv"][0]) and len(seen[0]["argv"]) == 1  # a port
+    assert seen[0]["key"] is True  # its key came in its environment: neither key nor code is on its command line
     got = [entry["got"] for entry in seen[1:]]
     assert got[0] == {"type": "start", "open": URL, "shortcut": "Alt+Space"}  # the code: over the line only
     assert [message["type"] for message in got] == ["start", "shortcut", "shortcut", "notify", "quit"]
 
 
-@pytest.mark.posix_only  # macOS's line is a socket in a folder; Windows' is stdin
+async def test_a_connection_without_the_key_gets_nothing_and_the_app_still_joins(tmp_path, monkeypatch):
+    app, log = windows_app(tmp_path, monkeypatch, intruder=True)  # someone else connects first, with a wrong key
+    await app.launch(URL)
+    try:
+        assert app.pid is not None
+    finally:
+        await app.close()
+    seen = entries(log)
+    assert {"intruder_got": ""} in seen  # closed, and never sent a word: no start code
+    start = next(entry["got"] for entry in seen if "got" in entry)
+    assert start == {"type": "start", "open": URL, "shortcut": "Alt+Space"}  # the app, joined after it
+
+
+async def test_an_app_that_ends_as_it_starts_is_said_plainly(tmp_path, monkeypatch):
+    from ai_browser.desktop import launch
+
+    app, _ = windows_app(tmp_path, monkeypatch, exit_at_once=0)  # another copy holds its profile: it quits at once
+    with pytest.raises(launch.DesktopError, match="^AI Browser's app closed as it started: another copy of it may "):
+        await app.launch(URL)
+    assert app.ended.is_set() and not app.running
+
+
+@pytest.mark.posix_only  # macOS's line is a socket in a folder; Windows' is a loopback port
 async def test_on_macos_launchservices_starts_it_and_the_line_is_a_private_socket(tmp_path, monkeypatch):
     from ai_browser.desktop import layout
     from ai_browser.desktop.launch import DesktopWindow

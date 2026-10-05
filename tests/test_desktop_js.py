@@ -448,6 +448,50 @@ def test_the_start_log_follows_the_window_and_never_holds_a_code_or_a_cookie(tmp
 
 
 @NEEDS_NODE
+def test_the_line_is_a_sockets_path_or_a_loopback_port_with_its_key():
+    got = run_js("""return [
+      line.lineTarget("/tmp/aib-x/line", {}),
+      line.lineTarget("tcp:51234", { AIB_LINE_KEY: "k3y" }),
+      line.lineTarget("tcp:51234", {}),
+      line.lineTarget("tcp:0", { AIB_LINE_KEY: "k" }),
+      line.lineTarget("tcp:70000", { AIB_LINE_KEY: "k" }),
+      line.lineTarget("tcp:12ab", { AIB_LINE_KEY: "k" }),
+      line.lineTarget(null, {}),
+      line.LINE_KEY,
+    ];""")
+    assert got == [{"path": "/tmp/aib-x/line"}, {"host": "127.0.0.1", "port": 51234, "key": "k3y"},
+                   {"host": "127.0.0.1", "port": 51234, "key": ""}, None, None, None, None, "AIB_LINE_KEY"]
+
+
+@NEEDS_NODE
+def test_on_windows_the_app_joins_the_engines_loopback_line_with_its_key_first(tmp_path):
+    import socket
+    import threading
+
+    server = socket.create_server(("127.0.0.1", 0))
+    heard = []
+
+    def engine():  # the key, then the start; the hello; then the engine goes
+        connection, _ = server.accept()
+        with connection, connection.makefile("rwb") as line:
+            heard.append(line.readline())
+            line.write(START)
+            line.flush()
+            heard.append(line.readline())
+
+    thread = threading.Thread(target=engine, daemon=True)
+    thread.start()
+    try:
+        calls = run_main(tmp_path, f"--aib-line=tcp:{server.getsockname()[1]}", env={"AIB_LINE_KEY": "the-key"})
+    finally:
+        thread.join(10)
+        server.close()
+    assert heard[0] == b"the-key\n" and json.loads(heard[1])["type"] == "hello"
+    assert ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"] in calls
+    assert "dialog.showMessageBox" not in names(calls) and calls[-1] == ["app.quit"]  # the engine gone: it quits
+
+
+@NEEDS_NODE
 def test_without_the_switch_the_app_keeps_no_start_log(tmp_path):
     calls = run_main(tmp_path, feed=START, pause=0.5)
     assert ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"] in calls
