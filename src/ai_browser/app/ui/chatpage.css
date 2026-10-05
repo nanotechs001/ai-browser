@@ -64,3 +64,22 @@ select { border: 1px solid var(--line); background: var(--card); border-radius: 
 .mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 .talk-note { margin: 0; font-size: 11px; }
 .hint { margin: 0 10px 8px; min-height: 1em; }
+/* New task, the open agents by number, and the card of an agent that waits for you */
+.new-task { margin: 4px 10px; padding: 8px 10px; background: var(--card); border: 1px solid var(--line);
+            border-radius: 10px; display: flex; flex-direction: column; gap: 6px; }
+.new-task textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 8px;
+                     padding: 6px 8px; background: var(--bg); }
+.new-task .check { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.agents { display: flex; gap: 6px; overflow-x: auto; margin: 2px 10px; padding-bottom: 2px; }
+.agent-chip { display: flex; flex-direction: column; align-items: flex-start; flex: none; max-width: 180px;
+              text-align: left; }
+.agent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.needs-you { margin: 2px 10px; }
+.needs-you:empty { display: none; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+        display: flex; flex-direction: column; gap: 6px; }
+.permission-head, .bot-check-head { font-weight: 600; }
+.permission-input { max-height: 160px; overflow: auto; margin: 0; padding: 6px; border-radius: 6px;
+                    background: var(--soft); font: 12px ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+.bot-check-how, .bot-check-skip { margin: 0; }
+.chip { font-size: 11px; border-radius: 999px; padding: 1px 6px; background: var(--soft); }

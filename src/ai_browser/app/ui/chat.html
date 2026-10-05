@@ -11,7 +11,10 @@
 <header class="bar">
   <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
     <h1>AI Browser</h1></div>
-  <button id="hide" class="ghost" type="button" title="Hide the chat (Esc)" aria-label="Hide the chat">✕</button>
+  <div class="row">
+    <button id="new-open" type="button" aria-expanded="false" aria-controls="new">New task</button>
+    <button id="hide" class="ghost" type="button" title="Hide the chat (Esc)" aria-label="Hide the chat">✕</button>
+  </div>
 </header>
 <section id="page" class="page-bar" aria-label="This page">
   <div class="page-line"><span class="page-label muted">This page</span>
@@ -28,6 +31,24 @@
   </div>
   <select id="page-picker" aria-label="Pick the tab you mean" hidden></select>
 </section>
+<section id="new" class="new-task" hidden aria-label="New task">
+  <textarea id="task" rows="3" maxlength="20000" placeholder="What should the agent do?"
+            aria-label="What the agent should do"></textarea>
+  <div class="row">
+    <select id="task-model" aria-label="Model">
+      <option value="sonnet">Sonnet · balanced</option>
+      <option value="opus">Opus · best</option>
+      <option value="haiku">Haiku · fastest</option>
+    </select>
+    <select id="task-account" aria-label="Account" hidden></select>
+  </div>
+  <label class="check"><input id="task-here" type="checkbox" disabled> Start it in this page (it's handed
+    over)</label>
+  <div class="row"><button id="task-start" class="primary" type="button">Start</button>
+    <button id="task-cancel" class="ghost" type="button">Cancel</button></div>
+</section>
+<nav id="agents" class="agents" aria-label="Open agents" hidden></nav>
+<section id="needs-you" class="needs-you" aria-live="assertive"></section>
 <section id="talk" class="talk" data-state="idle" aria-label="Talk to the Brain">
   <ol id="talk-log" class="talk-log" aria-live="polite"></ol>
   <div id="talk-status" class="talk-status muted"></div>

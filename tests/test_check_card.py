@@ -1,5 +1,5 @@
-"""A bot check in AI Browser: the card on AI Home's row, in the chat panel and in Mission Control, with Show me,
-Continue and Skip this site. Names, sites and words stay text; the buttons send only our own fixed messages."""
+"""A bot check in AI Browser: the card on AI Home's row, in the floating chat and in Mission Control, with Show
+me, Continue and Skip this site. Names, sites and words stay text; the buttons send only our own fixed messages."""
 
 import asyncio
 import json
@@ -9,7 +9,6 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from test_home import HOSTILE, home, post_tab, stack, until  # noqa: F401  (fixtures)
 from test_mission import WORKING, open_mission, station
-from test_panel import panel  # noqa: F401  (fixture)
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 REPORT = {"kind": "check", "check": "google", "site": "www.google.com", "target": "T1", "adopted": False}
@@ -105,21 +104,6 @@ async def test_skip_is_offered_only_for_the_agents_own_tab(home):
     assert ("watch", "Q1") not in seen
     await js(f"{row_card(own)}.querySelector('.skip-site').click(); true")
     assert await heard(seen, ("check_skip", own.id))
-
-
-@pytest.mark.skip(reason="AI Browser's side panel retired in wave B; the side-chat plan (wave D) moves this test")
-@CHROME
-async def test_the_panel_shows_the_same_card_for_the_users_own_tab(panel):
-    js, user_tab, stack = panel
-    seen = recorded(stack)
-    agent = await checked(stack, target=user_tab, adopted=True)
-    await post_tab(stack, agent.id, "working_tab", user_tab)
-    card = "document.querySelector('#check-slot .bot-check')"
-    assert await until(js, f"{card} !== null")
-    assert "It's in your own tab" in await js(f"{card}.textContent")
-    assert await js(f"{card}.querySelector('.skip-site') === null")
-    await js(f"{card}.querySelector('.continue').click(); true")
-    assert await heard(seen, ("check_continue", agent.id))
 
 
 @CHROME

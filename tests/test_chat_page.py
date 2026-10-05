@@ -9,7 +9,7 @@ import json
 import pytest
 
 from ai_browser.chrome import chrome_binary
-from fake_brave import FakeBrave
+from fake_brave import FakeBrave, add_agent
 from fake_desktop import FakeDesktop
 from test_home import HOSTILE, evaluate, stack, until  # noqa: F401  (stack is a fixture)
 from test_talk import ask_typed, talk_calls, talk_script
@@ -205,3 +205,121 @@ async def test_escape_hides_the_chat_and_our_own_links_bring_ai_home_forward(sta
              "document.body.append(link); link.click(); true")
     assert await eventually(lambda: {"type": "show"} in desktop.sent)
     assert await js("location.pathname") == "/chat"  # the chat's window never leaves its page
+
+
+def record_creates(stack):
+    """AgentManager.create, recorded: each call's words, model, tab and account. Its agent has no process behind it."""
+    agents, made = stack["server"].agents, []
+
+    async def create(text, skills=(), model="sonnet", adopt=None, tab=None, servers=None, account=None):
+        made.append({"text": text, "model": model, "adopt": adopt, "account": account})
+        agent = add_agent(agents, f"a{len(made)}", text)
+        if adopt:
+            agent.adopted.append(adopt)
+        agents._changed(agent)
+        return agent
+
+    agents.create = create
+    return made
+
+
+TWO_ACCOUNTS = [{"id": "default", "name": "Personal", "default": True, "signed_in": True, "checked": True},
+                {"id": "work", "name": "Work", "default": False, "signed_in": True, "checked": True}]
+
+
+@CHROME
+async def test_new_task_starts_an_agent_with_the_model_and_account_picked(stack):  # New task replaces `ai`
+    stack["server"]._account_rows = lambda: [dict(row) for row in TWO_ACCOUNTS]
+    made = record_creates(stack)
+    js, _ = await open_chat(stack)
+    await js("document.getElementById('new-open').click(); true")
+    assert await js("document.getElementById('new').hidden") is False
+    assert await until(js, "!document.getElementById('task-account').hidden")  # two accounts: the picker shows
+    await js("document.getElementById('task').value = 'find flights to Manila';"
+             "document.getElementById('task-model').value = 'haiku';"
+             "document.getElementById('task-account').value = 'work';"
+             "document.getElementById('task-start').click(); true")
+    assert await eventually(lambda: made == [{"text": "find flights to Manila", "model": "haiku", "adopt": None,
+                                              "account": "work"}])
+    assert await until(js, "document.getElementById('new').hidden"
+                           " && document.getElementById('hint').textContent.startsWith('Started ')")
+    assert await js("document.getElementById('task').value") == ""
+
+
+@CHROME
+async def test_start_it_in_this_page_hands_the_tab_over_with_the_start(stack):  # Plan decision 13
+    made = record_creates(stack)
+    js, brave = await open_chat(stack)
+    assert await until(js, f"{bar('title')}.textContent === 'Cart'")
+    await js("document.getElementById('new-open').click(); true")
+    assert await until(js, "document.getElementById('task-here').disabled === false")
+    await js("document.getElementById('task').value = 'compare prices';"
+             "document.getElementById('task-here').click(); document.getElementById('task-start').click(); true")
+    assert await eventually(lambda: made and made[0]["adopt"] == "U1")
+    assert await eventually(lambda: brave.owners.get("U1", {}).get("kind") == "handed")
+
+
+@CHROME
+async def test_hand_over_gives_this_page_to_an_open_agent_on_the_click_only(stack):  # Plan decision 13
+    agent = add_agent(stack["server"].agents, "a1", "Fix the footer")
+    talk_script(stack, {"say": "Only you can hand a tab over: use Hand over.", "action": "none"})
+    js, _ = await open_chat(stack)
+    assert await until(js, f"{bar('title')}.textContent === 'Cart'")
+    options = f"[...{bar('hand')}.options].map((option) => option.textContent).join('|')"
+    assert await until(js, f"{options} === 'Hand over…|1 · Fix the footer'")
+    await ask_typed(js, "hand this page to agent 1")  # words never hand a tab over
+    assert await until(js, "document.querySelectorAll('#talk-log li.brain').length === 1")
+    assert agent.adopted == []
+    await js(f"{bar('hand')}.value = 'a1'; {bar('hand')}.dispatchEvent(new Event('change')); true")
+    assert await eventually(lambda: agent.adopted == ["U1"])
+    assert await until(js, f"{bar('host')}.textContent === 'shop.example · handed to 1 · Fix the footer'")
+    assert await js(f"{bar('hand')}.disabled") is True  # handed: not the user's to hand over again
+
+
+@CHROME
+async def test_the_open_agents_show_by_number_and_a_click_opens_ai_home_there(stack):
+    desktop = FakeDesktop()
+    stack["server"].attach_desktop(desktop)
+    add_agent(stack["server"].agents, "a1", "Fix the footer")
+    add_agent(stack["server"].agents, "a2", "Check flights")
+    told = []
+    real = stack["server"]._send_all
+    stack["server"]._send_all = lambda message: (told.append(message), real(message))[1]
+    js, _ = await open_chat(stack)
+    names = "[...document.querySelectorAll('#agents .agent-chip .agent-name')].map((one) => one.textContent)"
+    assert await until(js, f"{names}.join('|') === '1 · Fix the footer|2 · Check flights'")
+    await js("document.querySelector('#agents .agent-chip[data-id=\"a2\"]').click(); true")
+    assert await eventually(lambda: {"type": "focus", "agent": "a2"} in told and {"type": "show"} in desktop.sent)
+
+
+@CHROME
+async def test_the_chat_shows_the_same_permission_card(stack, tmp_path):  # moved from test_ai_home_phase2
+    from test_ai_home_phase2 import answered, ask_for_clickup
+
+    js, _ = await open_chat(stack)
+    ask_for_clickup(stack, tmp_path)
+    await stack["server"].agents.create("make a ClickUp task")
+    card = "document.querySelector('#needs-you .permission')"
+    assert await until(js, f"{card} !== null")
+    assert "1 · make a ClickUp task wants to use a tool" in await js(f"{card}.textContent")
+    state = "document.querySelector('#agents .agent-chip .agent-state')?.textContent"
+    assert await until(js, f"{state} === 'needs you'")
+    await js(f"{card}.querySelector('.deny').click(); true")
+    assert [answer["behavior"] for answer in await answered(stack["log"])] == ["deny"]
+
+
+@CHROME
+async def test_the_chat_shows_the_same_bot_check_card_for_the_users_own_tab(stack):  # moved from test_check_card
+    from test_check_card import checked, heard, recorded
+
+    js, _ = await open_chat(stack)
+    seen = recorded(stack)
+    agent = await checked(stack, target="U1", adopted=True)
+    card = "document.querySelector('#needs-you .bot-check')"
+    assert await until(js, f"{card} !== null")
+    assert "It's in your own tab" in await js(f"{card}.textContent")
+    assert await js(f"{card}.querySelector('.skip-site') === null")
+    await js(f"{card}.querySelector('.show-me').click(); true")
+    assert await heard(seen, ("watch", "U1"))
+    await js(f"{card}.querySelector('.continue').click(); true")
+    assert await heard(seen, ("check_continue", agent.id))

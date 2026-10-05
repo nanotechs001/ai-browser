@@ -1,5 +1,5 @@
 """AI Home's phase-2 sections against a real app server (agents on the fake claude): the permission card (also in the
-chat panel and Mission Control), Tools, Workflows, and Train a new agent."""
+floating chat and Mission Control), Tools, Workflows, and Train a new agent."""
 
 import asyncio
 import json
@@ -9,7 +9,6 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from test_bridge import EVENTS
 from test_home import HOSTILE, evaluate, home, open_page, post_tab, stack, until  # noqa: F401  (fixtures)
-from test_panel import panel  # noqa: F401  (fixture)
 from test_tools import answers, asking, user_config
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
@@ -51,18 +50,6 @@ async def test_a_permission_prompt_is_answered_from_ai_home(home, tmp_path):
     await js(f"{row}.querySelector('.permission .allow-once').click(); true")
     assert await answered(stack["log"]) == [{"behavior": "allow", "updatedInput": {"name": "Fix footer"}}]
     assert await until(js, f"{row}.querySelector('.permission') === null")
-
-
-@pytest.mark.skip(reason="AI Browser's side panel retired in wave B; the side-chat plan (wave D) moves this test")
-@CHROME
-async def test_the_panel_shows_the_same_card(panel, tmp_path):
-    js, user_tab, stack = panel
-    ask_for_clickup(stack, tmp_path)
-    agent = await stack["server"].agents.create("make a ClickUp task")
-    await post_tab(stack, agent.id, "working_tab", user_tab)
-    assert await until(js, "document.querySelector('#permission-slot .permission') !== null")
-    await js("document.querySelector('#permission-slot .deny').click(); true")
-    assert [answer["behavior"] for answer in await answered(stack["log"])] == ["deny"]
 
 
 @CHROME
