@@ -46,7 +46,7 @@ const WAIT = 20000; // ms for one look: the first time, macOS asks the user, and
 const OUT_LIMIT = 64 * 1024; // characters a look may print
 const URL_LIMIT = 2000;
 const TITLE_LIMIT = 300;
-const STATES = Object.freeze(["ok", "closed", "nowindow", "private", "denied", "failed"]);
+const STATES = Object.freeze(["ok", "closed", "nowindow", "private", "unknown", "denied", "failed"]);
 const CONTROL = /[\u0000-\u001f\u007f]/g;
 const SYSTEM_ROOT = /^[A-Za-z]:\\[A-Za-z0-9_-]+$/; // C:\Windows, or another single folder on a drive
 
@@ -94,7 +94,8 @@ function run(file, args, wait = WAIT) {
 }
 
 // The Brave tab the user is on: {state: "ok", url, title}, or a state alone: "closed" (Brave isn't running),
-// "nowindow", "denied" (macOS doesn't let AI Browser control Brave), "slow", "failed", or "unsupported" (this system).
+// "nowindow", "private" (a private window: nothing of it is read), "unknown" (Windows: no address bar of Brave's
+// own), "denied" (macOS doesn't let AI Browser control Brave), "slow", "failed", or "unsupported" (this system).
 // `runner` is run's stand-in in the tests.
 async function read(platform, runner = run, folder = __dirname) {
   const given = command(platform, folder);

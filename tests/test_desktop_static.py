@@ -95,8 +95,14 @@ def test_the_windows_script_only_reads_the_front_brave_window():  # Safety: UI A
     script = text("thispage.ps1")
     for needed in ("Get-Process -Name 'brave'", "MainWindowHandle", "AutomationElement]::FromHandle",
                    "ControlType]::Edit", "ValuePattern]::Pattern", ".Current.Name", "LastIndexOf(' - Brave')",
-                   "ConvertTo-Json", "state = 'ok'", "state = 'closed'", "state = 'nowindow'", "state = 'failed'"):
+                   "ConvertTo-Json", "state = 'ok'", "state = 'closed'", "state = 'nowindow'", "state = 'failed'",
+                   "-eq 'OmniboxViewViews'", "ControlType]::Document", "state = 'unknown'", "ControlViewWalker"):
         assert needed in script, needed
+    # the address bar is Chromium's own edit box, found in the window's frame: nothing under a page (a Document),
+    # whose fields could carry any name, is ever searched or read (fix pass 2, I5)
+    for never in ("FindFirst(", "FindAll(", "TreeScope]::Descendants", "TreeScope]::Subtree"):
+        assert never not in script, never
+    assert script.index("ControlType]::Document") < script.index("-eq 'OmniboxViewViews'")
     for never in ("InvokePattern", "SendKeys", "SetFocus", "SetValue", "Start-Process", "Invoke-Expression", "iex ",
                   "Invoke-WebRequest", "DownloadString", "-TypeDefinition", "Stop-Process", "Click", "param(",
                   "$args", "$env:", "Read-Host", "Set-Item", "New-Item", "Remove-Item", "Out-File"):

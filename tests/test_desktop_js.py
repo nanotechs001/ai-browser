@@ -294,6 +294,8 @@ def test_brave_closed_denied_slow_and_broken_answers_are_plain_states():  # Revi
     assert got[0] == ["closed", "denied", "denied", "slow", "failed", "failed", "unsupported"]
     private = run_js("""return [thispage.parse('{"state":"private"}'), thispage.STATES.includes("private")];""")
     assert private == [{"state": "private"}, True]  # a private window: its address and title never leave the app
+    unknown = run_js("""return thispage.parse('{"state":"unknown"}');""")
+    assert unknown == {"state": "unknown"}  # Windows: no address bar of Brave's own (an installed app, full screen)
     assert got[1] == [["/usr/bin/osascript", 4]] * 5  # Linux: nothing runs at all
 
 

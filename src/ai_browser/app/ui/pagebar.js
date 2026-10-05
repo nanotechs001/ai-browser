@@ -16,7 +16,8 @@ const MARKS = /[‎‏‪-‮⁦-⁩]/g; // direction marks: a title can't turn 
 const CONTROL = /[\u0000-\u001f\u007f]/g;
 const WEB = /^https?:\/\//i;
 const OWN = new Set(["you", "brain"]); // the user's own tabs (one the Brain opened is still theirs)
-const PICK = new Set(["denied", "slow", "failed", "unsupported", "outside", "choose", "gone", "private"]); // pick
+const PICK = new Set(["denied", "slow", "failed", "unsupported", "outside", "choose", "gone", "private",
+                      "unknown"]); // the picker helps
 const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
 
 export const SAYS = {
@@ -30,6 +31,7 @@ export const SAYS = {
   choose: "Pick the tab you mean: AI Browser couldn't tell which one it is.",
   gone: "That tab has closed.",
   private: "That's a private window: AI Browser doesn't read those. Pick the tab you mean.",
+  unknown: "AI Browser can't see this window's address: pick the tab you mean.",
   not_connected: "Brave isn't connected to AI Browser: connect it in AI Home.",
   asking: "Brave is asking whether AI Browser may connect: answer it in Brave.",
 };

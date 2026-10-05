@@ -399,3 +399,11 @@ async def test_a_question_never_reads_another_site_the_tab_went_to_meanwhile(sta
     assert await eventually(lambda: len(brave.read_pages) == 1)
     assert await until(js, f"document.getElementById('talk').textContent.includes({json.dumps(CHAT_PAGE_CHANGED)})")
     assert not any("BANK-WORDS" in call for call in talk_calls(stack))  # nothing of the bank reached Claude
+
+
+@CHROME
+async def test_a_window_without_an_address_bar_offers_your_tabs(stack):  # fix pass 2, I5 (Windows)
+    js, _ = await open_chat(stack, answer={"state": "unknown"})
+    unknown = "AI Browser can't see this window's address: pick the tab you mean."
+    assert await until(js, f"{bar('says')}.textContent === {json.dumps(unknown)}")
+    assert await js(f"{bar('picker')}.hidden") is False
