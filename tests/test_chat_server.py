@@ -71,3 +71,23 @@ async def test_open_ai_home_brings_the_window_forward_at_the_agent(fake_claude, 
         assert desktop.sent == [{"type": "show"}] * len(asked)
     finally:
         await server.stop()
+
+
+async def test_the_chat_page_needs_the_windows_cookie_and_nothing_frames_it(fake_claude, tmp_path):
+    import httpx
+
+    from ui_socket import ui_cookie
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        async with httpx.AsyncClient() as client:
+            refused = await client.get(url + "/chat")
+            page = await client.get(url + "/chat", headers=ui_cookie(server))
+            script = await client.get(url + "/pagebar.js", headers=ui_cookie(server))
+        assert refused.status_code == 403 and "open only in its own window" in refused.text
+        assert page.status_code == 200 and '<script type="module" src="chatpage.js"></script>' in page.text
+        policy = page.headers["content-security-policy"]
+        assert "frame-ancestors 'none'" in policy and "script-src 'self'" in policy  # a top-level page of its own
+        assert script.status_code == 200 and "export function mountPageBar(" in script.text
+    finally:
+        await server.stop()

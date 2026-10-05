@@ -1,7 +1,8 @@
 // Tabs, never windows. AI Browser's pages are tabs of its one window (app.js, the tab menu at /app): a page asks the
 // window for a tab with a message to our own origin, and never opens a window of its own. A link to a website goes to
 // the user's own browser through the app (open_url), so the window never leaves its own pages. The close-tab key
-// closes a tab with a ×, never the window. Only AI Home, Mission Control, Settings and the tab menu import this file.
+// closes a tab with a ×, never the window. AI Home, Mission Control, Settings and the tab menu import this file; the
+// floating chat, which is a window of its own, takes guardLinks only.
 "use strict";
 
 const PAGES = ["/home", "/mission", "/settings", "/setup"]; // the pages the window shows as tabs
@@ -49,9 +50,10 @@ function ourPage(url) { // the page and its #section, if the window shows it as 
   return url.pathname + url.search + url.hash;
 }
 
-// Every link click on the page (any button, any modifier): a page of ours becomes its tab, a website goes to the
-// user's browser, and anything else is dropped. The click itself never navigates and never opens a window.
-export function guardLinks(link) {
+// Every link click on the page (any button, any modifier): a page of ours becomes its tab (`ours`: the floating chat,
+// which has no tabs, brings AI Browser's window forward instead), a website goes to the user's browser, and anything
+// else is dropped. The click itself never navigates and never opens a window.
+export function guardLinks(link, { ours = openTab } = {}) {
   const follow = (event) => {
     const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
     if (!anchor) return;
@@ -63,7 +65,7 @@ export function guardLinks(link) {
       return;
     }
     const page = ourPage(url);
-    if (page) openTab(page);
+    if (page) ours(page);
     else if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== location.origin) {
       link.send({ type: "open_url", url: url.href });
     }

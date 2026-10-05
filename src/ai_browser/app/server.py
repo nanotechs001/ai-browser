@@ -90,7 +90,8 @@ WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabl
 UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
 SETUP_PAGE = UI / "setup.html"
 SHELL = "/app"  # the window's own page: the tab menu, which shows the others in frames
-PAGES = {SHELL: "app.html", "/home": "home.html", "/mission": "mission.html", "/settings": "settings.html"}
+PAGES = {SHELL: "app.html", "/home": "home.html", "/mission": "mission.html", "/settings": "settings.html",
+         "/chat": "chat.html"}  # /chat: the floating chat, in a window of its own (nothing frames it)
 FRAMED = frozenset({"/home", "/mission", "/settings", "/setup"})  # the pages the tab menu shows: only it frames them
 LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an engine's live view binds one of these
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
@@ -663,7 +664,7 @@ class AppServer:
     async def start(self) -> str:
         app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open), Route(SHELL, self._page),
                                        Route("/home", self._page), Route("/mission", self._page),
-                                       Route("/settings", self._page),
+                                       Route("/settings", self._page), Route("/chat", self._page),
                                        Route("/health", self._health), Route("/setup", self._setup),
                                        Route("/agent-events", self._agent_events, methods=["POST"]),
                                        Route("/agent-tab", self._agent_tab, methods=["POST"]),
