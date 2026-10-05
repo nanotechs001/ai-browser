@@ -117,7 +117,7 @@ async def test_the_text_of_a_tab_for_a_skill_draft(pages):
         await watch.close()
 
 
-async def test_contexts_workers_and_the_default_on_a_fake_port(tmp_path):
+async def test_contexts_and_the_default_on_a_fake_port(tmp_path):
     from ai_browser.app.tabs import TabWatch
     from ai_browser.chrome import find_ws_url
     from fake_brave import FakePort
@@ -134,8 +134,6 @@ async def test_contexts_workers_and_the_default_on_a_fake_port(tmp_path):
     try:
         assert await until(lambda: watch.pages() == [page])
         assert watch.tabs() == [{"target": "U1", "url": "https://mail.example/", "title": "Mail"}]
-        assert watch.worker_contexts("abc") == {"W"}
-        assert watch.worker_contexts("") == set() and watch.worker_contexts("other") == set()
         assert watch.default_context == "P"
         port.set_default("C2")  # the user used another profile last
         assert await until(lambda: watch.default_context == "C2")
@@ -144,21 +142,14 @@ async def test_contexts_workers_and_the_default_on_a_fake_port(tmp_path):
         assert watch.default_context == "C2"
         await port.destroy("U1")
         assert await until(lambda: watch.pages() == [])
-        assert watch.tabs() == []  # a worker is never a page
-        assert watch.worker_contexts("abc") == {"W"}
-        await port.destroy("SW1")  # the worker sleeps
-        assert await until(lambda: watch.worker_contexts("abc") == set())
-        seen = len(changes)
-        await port.add_worker(worker)  # it wakes
-        assert await until(lambda: watch.worker_contexts("abc") == {"W"})
-        assert await until(lambda: len(changes) > seen)  # on_change fires for workers too
+        assert watch.tabs() == []  # a service worker is never a page
     finally:
         await watch.close()
         await port.stop()
 
 
 @CHROME
-async def test_pages_carry_their_context_and_workers_are_seen(pages):
+async def test_pages_carry_their_context(pages):
     from ai_browser.app.tabs import TabWatch
     from ai_browser.cdp import CDP
 

@@ -1,8 +1,10 @@
 // Slack's reader: direct messages and @mentions, from the sidebar's unread entries and badges (Slack shows them
-// whichever conversation is open). Each unread spell of a conversation is one item, kept across reloads; the open
+// whichever conversation is open). Each unread spell of a conversation is one item: the engine keeps the spells
+// (config.memory, given back as `memory`), so a spell is the same item across reads and restarts. The open
 // conversation's messages give the text, and the user's own message there means they have answered.
 "use strict";
 (() => {
+  if (globalThis.AIB.readers.slack) return;
   const S = {
     entry: "[data-qa-channel-sidebar-channel-id]", channelId: "data-qa-channel-sidebar-channel-id",
     type: "data-qa-channel-sidebar-channel-type", unread: "p-channel_sidebar__channel--unread",
@@ -11,8 +13,7 @@
     composer: '[data-qa="message_input"] [contenteditable="true"]',
   };
   const DIRECT = new Set(["im", "mpim"]);
-  const KEY = "slackEpisodes";
-  const { start, text, typeInto } = globalThis.AIB_WATCH;
+  const { text, typeInto } = globalThis.AIB;
   let episodes = {}; // channel -> {id, read}: one item per unread spell
 
   function place() { // /client/<team>/<channel> (Slack's address)
@@ -41,19 +42,25 @@
     });
   }
 
-  start({
-    kind: "slack",
-    async init() {
-      episodes = (await chrome.storage.local.get(KEY))[KEY] || {};
-    },
+  function remembered(memory) { // the engine's copy of the spells: only well-formed entries
+    const out = {};
+    for (const [channel, episode] of Object.entries(memory && typeof memory === "object" ? memory : {})) {
+      if (typeof episode?.id === "string" && /^[a-z0-9]{1,20}$/.test(episode.id)) {
+        out[channel] = { id: episode.id, read: episode.read === true };
+      }
+    }
+    return out;
+  }
+
+  globalThis.AIB.readers.slack = {
     check: () => Boolean(document.querySelector(S.entry)),
-    items() {
+    items(config) {
+      episodes = remembered(config.memory);
       const here = place();
       const me = here ? self(here.team) : "";
       const conversation = here ? messages() : [];
       const last = conversation[conversation.length - 1];
       const out = [];
-      let changed = false;
       for (const entry of document.querySelectorAll(S.entry)) {
         const channel = entry.getAttribute(S.channelId);
         const direct = DIRECT.has(entry.getAttribute(S.type));
@@ -62,10 +69,8 @@
         const episode = episodes[channel];
         if (unread && (!episode || episode.read)) {
           episodes[channel] = { id: Date.now().toString(36), read: false };
-          changed = true;
         } else if (!unread && episode && !episode.read) {
           episode.read = true;
-          changed = true;
         }
         const open = Boolean(here && here.channel === channel);
         if (open && me && last && last.sender === me) {
@@ -84,9 +89,9 @@
           time: "",
         });
       }
-      if (changed) chrome.storage.local.set({ [KEY]: episodes }).catch(() => {});
       return out;
     },
+    memory: () => episodes,
     thread() {
       return messages().slice(-30).map((message) => `${message.name}: ${message.text}`).join("\n");
     },
@@ -97,5 +102,5 @@
       typeInto(box, line);
       return { ok: true, reason: line === value.trim() ? "" : "on one line, since Enter sends in Slack" };
     },
-  });
+  };
 })();

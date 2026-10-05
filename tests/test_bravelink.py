@@ -14,9 +14,8 @@ CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is no
 
 AGENT = {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"}
 HANDED = {"kind": "handed", "id": "a1", "name": "Fix the footer", "color": "blue"}
-WATCHER_ID = "abcdefghijklmnopabcdefghijklmnop"  # the watcher's extension id (run.py computes it from its folder)
-WORKER = {"target": "SW1", "url": f"chrome-extension://{WATCHER_ID}/worker.js", "context": "W"}
-PROFILES = [  # W: the watcher's profile; P: another profile, the one used last; X: a private window
+# W: the profile chosen in Settings (Default); P: another (Profile 1), the one used last; X: a private window
+PROFILES = [
     {"target": "U1", "url": "https://mail.example/", "title": "SECRET-W", "context": "W"},
     {"target": "U2", "url": "https://bank.example/", "title": "SECRET-P", "context": "P"},
     {"target": "U3", "url": "https://private.example/", "title": "SECRET-X", "context": "X"},
@@ -29,10 +28,11 @@ def targets(link):
     return sorted(tab["target"] for tab in link.tabs())
 
 
-async def connected(folder, watcher_id=WATCHER_ID):
+async def connected(folder, chosen=None):
     from ai_browser.app.bravelink import BraveLink
 
-    link = BraveLink(folder, watcher_id=watcher_id, every=0.1)
+    link = BraveLink(folder, every=0.1, settle=0.3)
+    link.set_place(chosen)
     await link.start()
     await link.connect()
     assert link.state == "connected"
@@ -138,28 +138,6 @@ async def test_the_users_tabs_are_listed_but_never_attached(tmp_path):
         assert port.attached == ["A1", "U1"]
         link.release("a1")
         assert link.tabs()[1]["owner"] == {"kind": "you"}
-        link.mark_brain("https://mail.example/")
-        assert link.tabs()[0]["owner"] == {"kind": "brain", "name": "Brain", "color": "purple"}
-    finally:
-        await link.close()
-        await port.stop()
-
-
-async def test_the_brain_is_marked_only_when_one_tab_matches(tmp_path):
-    from ai_browser.app.bravelink import BraveLink
-
-    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    same = "https://mail.example/#t1"
-    port = FakePort(folder, pages=[{"target": "U1", "url": same, "title": "A"}, {"target": "U2", "url": same,
-                                                                                 "title": "B"}])
-    await port.start()
-    link = BraveLink(folder, every=0.1)
-    await link.start()
-    await link.connect()
-    try:
-        assert await until(lambda: len(link.tabs()) == 2)
-        link.mark_brain(same)
-        assert {tab["owner"]["kind"] for tab in link.tabs()} == {"you"}  # two candidates: nobody is guessed
     finally:
         await link.close()
         await port.stop()
@@ -214,27 +192,70 @@ async def test_a_session_that_connects_first_starts_the_tab_list_too(tmp_path):
         await port.stop()
 
 
-async def test_only_the_agents_profile_is_listed_and_the_rest_is_counted(tmp_path):
+def local_state(folder, last_used="Profile 1"):
+    """Brave's Local State with two profiles, Default (W, Work) and Profile 1 (P, Home), and the one it used last."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("Default", "Profile 1"):
+        (folder / name).mkdir(exist_ok=True)
+    (folder / "Local State").write_text(json.dumps({"profile": {"last_used": last_used, "info_cache": {
+        "Default": {"name": "Work", "user_name": "me@work.example", "profile_highlight_color": -16744448},
+        "Profile 1": {"name": "Home", "user_name": "me@home.example"}}}}), encoding="utf-8")
+
+
+async def test_only_the_chosen_profile_is_listed_once_brave_has_shown_it(tmp_path):
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    port = FakePort(folder, pages=PROFILES, workers=[WORKER], default="P")
+    local_state(folder, last_used="Profile 1")
+    port = FakePort(folder, pages=PROFILES, default="P")
     await port.start()
-    link = await connected(folder)
+    link = await connected(folder, chosen="Default")
     try:
         link.set_owner("A1", AGENT)
         link.set_owner("H1", HANDED)
-        assert await until(lambda: link.scope()["profile"] == "watcher")
-        assert targets(link) == ["A1", "H1", "U1"]  # the watcher's profile, and the AI's tabs wherever they are
+        assert await until(lambda: link.scope() == {"profile": "not_open", "elsewhere": 3})  # Brave hasn't shown it
+        assert targets(link) == ["A1", "H1"]  # only the AI's tabs, wherever they are
+        port.set_default("W")  # the user clicks in a window of Work: Brave's live record says so at once...
+        await asyncio.sleep(1)
+        assert link.scope()["profile"] == "not_open"  # ...but its file doesn't yet: nothing is learned from half
+        local_state(folder, last_used="Default")  # Brave writes Local State a few seconds later
+        assert await until(lambda: link.scope()["profile"] == "chosen")
+        assert targets(link) == ["A1", "H1", "U1"] and link.agents_context() == ("W", "chosen")
         listed = json.dumps(link.tabs())
         assert "context" not in listed and "SECRET-P" not in listed and "SECRET-X" not in listed
-        assert link.scope() == {"profile": "watcher", "elsewhere": 2}  # U2 (another profile), U3 (a private window)
-        assert link.agents_context() == ("W", "watcher")
-        assert port.sessions == 1  # no new connection to Brave
+        assert link.scope() == {"profile": "chosen", "elsewhere": 2}  # U2 (another profile), U3 (a private window)
+        port.set_default("P")  # the user goes back to Home: Work stays known on this connection
+        local_state(folder, last_used="Profile 1")
+        await asyncio.sleep(1)
+        assert link.agents_context() == ("W", "chosen") and targets(link) == ["A1", "H1", "U1"]
+        link.set_place("Profile 1")  # the user picks Home in Settings
+        assert await until(lambda: link.agents_context() == ("P", "chosen"))
+        assert port.sessions == 1  # no new connection: Brave asked nothing
     finally:
         await link.close()
         await port.stop()
 
 
-async def test_without_the_watcher_the_profile_used_last_is_listed(tmp_path):
+async def test_what_was_learned_ends_with_the_connection(tmp_path):
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    local_state(folder, last_used="Default")
+    port = FakePort(folder, pages=PROFILES, default="W")
+    await port.start()
+    link = await connected(folder, chosen="Default")
+    try:
+        assert await until(lambda: link.agents_context() == ("W", "chosen"))
+        await port.stop()  # Brave quits
+        assert await until(lambda: link.state == "lost")
+        assert link.agents_context() == (None, "none") and link.tabs() == []
+        port = FakePort(folder, pages=PROFILES, default="W")  # Brave again: its contexts are new ids
+        await port.start()
+        await link.connect()
+        assert link.scope() is None or link.scope()["profile"] in ("not_open", "chosen")
+        assert await until(lambda: link.agents_context() == ("W", "chosen"))  # learned again, not kept
+    finally:
+        await link.close()
+        await port.stop()
+
+
+async def test_with_none_chosen_the_profile_used_last_is_listed(tmp_path):
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
     port = FakePort(folder, pages=PROFILES, default="P")
     await port.start()
@@ -245,35 +266,73 @@ async def test_without_the_watcher_the_profile_used_last_is_listed(tmp_path):
         port.set_default("W")  # the user used the other profile last
         assert await until(lambda: targets(link) == ["H1", "U1"])
         assert link.scope() == {"profile": "last_used", "elsewhere": 3}
-        await port.add_worker(WORKER)
-        assert await until(lambda: link.scope()["profile"] == "watcher")
-        await port.add_worker({**WORKER, "target": "SW2", "context": "X"})  # one watcher folder in two profiles
-        assert await until(lambda: link.scope()["profile"] == "last_used")  # which one groups? the fallback
     finally:
         await link.close()
         await port.stop()
 
 
-async def test_the_watchers_profile_outlives_its_sleeping_worker_but_not_the_connection(tmp_path):
+async def test_a_thread_never_opens_in_another_profile(tmp_path):  # Review Focus 5
+    from ai_browser.app.bravelink import NOT_CONNECTED, OTHER_PROFILE, PlaceError
+
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    port = FakePort(folder, pages=PROFILES, workers=[WORKER], default="P")
+    local_state(folder, last_used="Default")
+    port = FakePort(folder, pages=PROFILES, default="W")
     await port.start()
-    link = await connected(folder)
+    link = await connected(folder, chosen="Default")
     try:
-        assert await until(lambda: link.scope()["profile"] == "watcher")
-        await port.destroy("SW1")  # the worker sleeps
-        await asyncio.sleep(2)  # past a refresh round
-        assert link.agents_context() == ("W", "watcher") and targets(link) == ["H1", "U1"]
-        await port.stop()  # Brave quits
-        assert await until(lambda: link.state == "lost")
-        port = FakePort(folder, pages=PROFILES, default="P")  # Brave again: the worker hasn't woken yet
-        await port.start()
-        await link.connect()
-        assert link.state == "connected"
-        assert await until(lambda: link.scope()["profile"] == "last_used")
-        assert await until(lambda: targets(link) == ["A1", "U2"])
-        await port.add_worker(WORKER)  # it wakes within half a minute (its reconnect alarm)
-        assert await until(lambda: link.scope()["profile"] == "watcher")
+        assert await until(lambda: link.agents_context() == ("W", "chosen"))
+        port.set_default("P")  # Brave's last window is now Home's
+        assert await until(lambda: link._watch.default_context == "P")
+        before = len(port.received)
+        with pytest.raises(PlaceError, match="another profile") as refused:
+            await link.open_user_tab("https://mail.google.com/mail/u/0/#inbox/t1")
+        assert str(refused.value) == OTHER_PROFILE and "Work" not in OTHER_PROFILE and "Home" not in OTHER_PROFILE
+        assert "Target.createTarget" not in [method for method, *_ in port.received[before:]]  # nothing opened
+        port.set_default("W")
+        assert await until(lambda: link._watch.default_context == "W")
+        target = await link.open_user_tab("https://mail.google.com/mail/u/0/#inbox/t1")
+        assert next(tab for tab in link.tabs() if tab["target"] == target)["owner"]["kind"] == "brain"
+    finally:
+        await link.close()
+        await port.stop()
+    with pytest.raises(PlaceError) as gone:
+        await link.open_user_tab("https://mail.google.com/")
+    assert str(gone.value) == NOT_CONNECTED
+
+
+async def test_a_tab_never_opens_in_another_profile_even_right_after_a_switch(tmp_path):  # Review Focus 5
+    """The tab list reads Brave's profile used last every REFRESH seconds: a tab is checked against a read made just
+    before it opens, and against the profile it landed in. One that landed in another profile is closed in Brave."""
+    from ai_browser.app.bravelink import OTHER_PROFILE, PlaceError
+
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    local_state(folder, last_used="Default")
+    port = FakePort(folder, pages=PROFILES, default="W")
+    await port.start()
+    link = await connected(folder, chosen="Default")
+    try:
+        assert await until(lambda: link.agents_context() == ("W", "chosen"))
+        new_tabs = lambda: [page for page in port.pages if page["target"].startswith("T")]  # noqa: E731
+        port.set_default("P")  # the user clicks a window of the other profile: the list hasn't read it yet
+        assert link._watch.default_context == "W"
+        for opening in (link.open_ai_tab("a1"), link.open_user_tab("https://mail.google.com/mail/u/0/#inbox/t1")):
+            with pytest.raises(PlaceError) as refused:
+                await opening
+            assert str(refused.value) == OTHER_PROFILE
+        assert new_tabs() == []  # nothing opened in P
+        port.set_default("W")
+        for open_one in (lambda: link.open_ai_tab("a1"), lambda: link.open_user_tab("https://mail.google.com/")):
+            port.hold = {"Target.createTarget"}
+            opening = asyncio.ensure_future(open_one())
+            assert await until(lambda: port.held)
+            port.set_default("P")  # Brave's last window changes between the read and the new tab
+            port.hold = set()
+            await port.answer_held()
+            with pytest.raises(PlaceError) as refused:
+                await asyncio.wait_for(opening, 5)
+            assert str(refused.value) == OTHER_PROFILE
+            assert await until(lambda: new_tabs() == [])  # the tab that landed in P is closed in Brave
+            port.set_default("W")
     finally:
         await link.close()
         await port.stop()
@@ -293,16 +352,15 @@ async def test_with_no_profile_known_no_tab_of_the_users_is_listed(tmp_path):
         await port.stop()
 
 
-async def test_a_hidden_tab_cannot_be_read_or_marked(tmp_path):
+async def test_a_hidden_tab_cannot_be_read(tmp_path):
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
     port = FakePort(folder, pages=PROFILES, default="W")
     await port.start()
-    link = await connected(folder, watcher_id="")
+    link = await connected(folder)
     try:
         assert await until(lambda: targets(link) == ["H1", "U1"])
         assert await link.page_text("U2", picked=True) == ""  # another profile: not listed, never read
         assert "U2" not in port.attached
-        link.mark_brain("https://bank.example/")  # nothing in the list shows it: nothing is marked
         assert await link.page_text("U1", picked=True) == "page text"  # a listed tab still can be (control)
         assert "U1" in port.attached
         port.set_default("P")
@@ -313,34 +371,11 @@ async def test_a_hidden_tab_cannot_be_read_or_marked(tmp_path):
         await port.stop()
 
 
-async def test_a_waking_and_sleeping_worker_doesnt_resend_the_list(tmp_path):  # Review Focus 3
-    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    port = FakePort(folder, pages=PROFILES, workers=[WORKER], default="P")
-    await port.start()
-    link = await connected(folder)
-    changes = []
-    link.on_change(changes.append)
-    try:
-        assert await until(lambda: link.scope()["profile"] == "watcher")
-        await asyncio.sleep(2)  # settled, past a refresh round
-        settled = len(changes)
-        for _ in range(3):
-            await port.destroy("SW1")
-            await asyncio.sleep(0.3)
-            await port.add_worker(WORKER)
-            await asyncio.sleep(0.3)
-        await asyncio.sleep(2)
-        assert len(changes) == settled  # neither the rows nor the scope changed
-    finally:
-        await link.close()
-        await port.stop()
-
-
 async def test_a_tab_let_go_in_another_profile_leaves_the_list_for_the_count(tmp_path):  # Review Focus 4
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
-    port = FakePort(folder, pages=PROFILES, default="P")  # no watcher: the profile used last, P
+    port = FakePort(folder, pages=PROFILES, default="P")  # none chosen: the profile used last, P
     await port.start()
-    link = await connected(folder, watcher_id="")
+    link = await connected(folder)
     try:
         assert await until(lambda: link.scope() == {"profile": "last_used", "elsewhere": 3})
         link.set_owner("H1", HANDED)  # handed to a1, in profile W
@@ -394,7 +429,7 @@ async def test_a_private_window_is_never_listed_in_a_throwaway_chrome(tmp_path):
     base, _, stop_pages = testpages.serve_host()
     folder = tmp_path / "private-profile"
     process = launch(folder, headless=True, extra_args=("--incognito",))  # its only window: private
-    link = BraveLink(folder, every=0.1)  # no watcher: the profile used last
+    link = BraveLink(folder, every=0.1)  # none chosen: the profile used last
     try:
         ws_url = find_ws_url(folder, timeout=20)
         watch = TabWatch(ws_url, "")

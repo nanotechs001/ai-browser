@@ -181,7 +181,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
   function summary(workflow) {
     if (workflow.trigger === "message") return `${workflow.run === "auto" ? "Runs" : "Offered"} when: ${workflow.when}`;
     if (workflow.trigger === "schedule") return `On a schedule: ${workflow.schedule}`;
-    return "By hand, or type ai and its name in the address bar";
+    return "By hand: press Run";
   }
 
   function render(snapshot) {

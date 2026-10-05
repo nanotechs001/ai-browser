@@ -12,14 +12,12 @@ def test_the_relay_and_wave_a_have_the_names_this_plan_uses():
     from ai_browser.app.cdprelay import Relay, Tokens
     from ai_browser.app.tabs import TabWatch
 
-    # watcher-safety: what a page may send, by role, and what a watcher socket may get
-    assert callable(server.may_send) and callable(server.for_watcher) and callable(server.AppServer._role)
+    # watcher-safety: what a page may send, by role (the watcher's role retired with its extension)
+    assert callable(server.may_send) and callable(server.AppServer._role)
     assert {"hello", "new_task", "hand_tab", "brave_connect", "check_show", "browser_disconnect",
             "tell_confirm"} <= set(server.MESSAGE_RULES)
-    assert {"snapshot", "error", "check_request"} <= set(server.WATCHER_RECEIVES)
-    assert "browser_clients" not in server.WATCHER_RECEIVES and "tabs" not in server.WATCHER_RECEIVES
     # the relay: one connection to the browser, a token per agent, BraveLink and TabWatch on it
-    assert {"tokens", "watcher_id"} <= set(inspect.signature(BraveLink).parameters)
+    assert "tokens" in inspect.signature(BraveLink).parameters  # the watcher's id went with Where agents browse
     assert "cdp" in inspect.signature(TabWatch).parameters
     assert callable(Tokens.mint) and callable(Relay.serve) and callable(server.AppServer.token_for)
     assert list(inspect.signature(server.AppServer.connect_brave).parameters)[:2] == ["self", "why"]

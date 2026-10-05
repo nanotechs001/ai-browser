@@ -1,9 +1,10 @@
 // Gmail's reader: unread inbox rows found by their structure (classes and attributes, never English words, so any
 // language works), the open thread for a draft, and the reply box. It reads the inbox and its category tabs only (the
-// view is in the address): never Spam, Sent, a label or a search. To place an approved reply it may click Reply, which
-// only opens the box, and puts the reply at the top, above the user's signature; it never touches Send.
+// view is in the address): never Spam, Sent, a label or a search. To place the reply the user chose it may click
+// Reply, which only opens the box, and puts the reply at the top, above the user's signature; it never touches Send.
 "use strict";
 (() => {
+  if (globalThis.AIB.readers.gmail) return;
   const S = {
     row: "tr.zA", unread: "zE", sender: ".yW [email]", subject: ".bog", snippet: ".y2", time: ".xW span[title]",
     threadId: "[data-legacy-thread-id]", threadIdAlt: "[data-thread-id]",
@@ -11,8 +12,8 @@
     replyBox: 'div[contenteditable="true"][role="textbox"]', reply: ".ams.bkH", main: '[role="main"]',
   };
   const INBOX = new Set(["", "inbox", "category"]);
-  const { start, text, waitFor, ownEmail } = globalThis.AIB_WATCH;
-  let own = null; // the block the watcher put in the reply box, and its text
+  const { text, waitFor, ownEmail } = globalThis.AIB;
+  let own = null; // the block AI Browser put in the reply box, and its text
 
   function view() { // "inbox", "category", "spam", "label"…, from the address: the same in every language
     return location.hash.replace(/^#/, "").split(/[/?]/)[0];
@@ -22,12 +23,18 @@
     return Boolean(node && node.getClientRects().length);
   }
 
-  function replyBox() {
-    return [...document.querySelectorAll(S.replyBox)].find(shown) || null;
+  function replyBox() { // the thread's own reply box: in the main region, never a New message window or a dialog
+    return [...document.querySelectorAll(`${S.main} ${S.replyBox}`)].find((box) => shown(box)
+      && !box.closest('[role="dialog"]')) || null;
   }
 
-  // The approved reply goes in a block of its own at the top of the reply box, above the signature and the quoted
-  // text. A newer approved draft replaces that block; the same text again changes nothing.
+  function threadIn(url) { // "t1" from ".../#all/t1": the thread an address names
+    const hash = String(url || "").split("#")[1] || "";
+    return hash.split(/[/?]/).filter(Boolean).pop() || "";
+  }
+
+  // The reply goes in a block of its own at the top of the reply box, above the signature and the quoted text. A newer
+  // draft used replaces that block; the same text again changes nothing.
   function place(box, value) {
     if (own && own.block.isConnected && box.contains(own.block)) {
       if (own.value === value) return;
@@ -57,8 +64,7 @@
     return node ? node.getAttribute("name") || text(node) : "";
   }
 
-  start({
-    kind: "gmail",
+  globalThis.AIB.readers.gmail = {
     elsewhere: "open the inbox: this tab shows another view",
     check() {
       const where = view();
@@ -94,7 +100,11 @@
       });
       return [text(document.querySelector(S.threadSubject)), ...parts].filter(Boolean).join("\n\n");
     },
-    async fill(value) {
+    async fill(value, config = {}) {
+      const want = threadIn(config.url);
+      if (config.url && (!want || !location.hash.replace(/^#/, "").split(/[/?]/).includes(want))) {
+        return { ok: false, reason: "the thread isn't open in this tab" }; // the draft stays; nothing is typed
+      }
       let box = replyBox();
       if (!box) {
         const buttons = [...document.querySelectorAll(S.reply)];
@@ -107,5 +117,5 @@
       place(box, value);
       return { ok: true };
     },
-  });
+  };
 })();

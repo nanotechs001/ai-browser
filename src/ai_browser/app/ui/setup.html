@@ -10,28 +10,12 @@
 <body>
 <main>
   <h1>Set up AI Browser</h1>
-  <p class="lead">Two one-time steps, both in Brave, your everyday browser. AI Browser's own window needs nothing.</p>
-  <p id="mismatch" class="alt" hidden></p>
-
-  <h2 id="brave">The Brain's watcher, in Brave</h2>
-  <p class="lead">Once: the Brain watches the sites you pick (Gmail, Slack, Asana…) in Brave, through a small
-    extension. It reads new messages and never sends anything.</p>
-  <ol>
-    <li>In Brave, open <strong>brave://extensions</strong> and turn on <strong>Developer mode</strong>.</li>
-    <li>Drag the <strong>watcher</strong> folder onto that page.
-      <div class="path"><button id="reveal-watcher" type="button" data-manager="{{FILE_MANAGER}}">Show the folder in {{FILE_MANAGER}}</button></div>
-      <p class="alt">Or click <strong>Load unpacked</strong>, {{GOTO}}, then <strong>Select</strong>. The folder:</p>
-      <div class="path"><code id="watcher-folder">{{WATCHER}}</code><button id="copy" type="button">Copy</button></div>
-    </li>
-    <li>Click the watcher's icon to open the Brain, and switch on the sites to watch.</li>
-    <li>Type <strong>ai</strong> and a space in Brave's address bar to start a task from there.</li>
-  </ol>
-  <p id="watcher-status">Waiting for the watcher…</p>
+  <p class="lead">One step, once, in Brave, your everyday browser. AI Browser's own window needs nothing.</p>
 
   <h2 id="switch">Let agents use your Brave</h2>
-  <p class="lead">Agents browse in Brave, your everyday browser, where you are already signed in: in background tabs of
-    their own, grouped and named after their task. Brave's own remote-debugging switch lets them in. You turn it on
-    yourself, and Brave asks before it lets a connection in.</p>
+  <p class="lead">Agents browse in Brave, your everyday browser, where you are already signed in: in tabs of their own,
+    never among yours. Brave's own remote-debugging switch lets them in. You turn it on yourself, and Brave asks before
+    it lets a connection in.</p>
   <ol>
     <li>In Brave, open <strong>brave://inspect/#remote-debugging</strong>.</li>
     <li>Tick <strong>Allow remote debugging for this browser instance</strong>.</li>

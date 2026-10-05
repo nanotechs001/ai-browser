@@ -119,6 +119,10 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .browser-card .line { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
 .browser-card ol { margin: 8px 0 0 18px; padding: 0; }
 .browser-card[data-state="connected"] #browser-title { color: var(--ok); }
+.old-watcher { max-width: 1180px; margin: 12px auto 0; display: flex; gap: 12px; align-items: center;
+               justify-content: space-between; }
+.old-watcher[hidden] { display: none; }
+.old-watcher p { margin: 0; }
 .tab { position: relative; flex-wrap: wrap; }
 .tab .actions { display: flex; gap: 4px; }
 .tab .actions button { font-size: 12px; padding: 1px 8px; }
@@ -136,6 +140,11 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .settings .choices label { display: flex; align-items: center; gap: 8px; }
 .settings .choices label:has(input:disabled) { color: var(--muted); }
 .settings .card + .card { margin-top: 16px; }
+.settings .swatch { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--line); }
+.settings .brain-sites { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.settings .brain-site { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.settings .brain-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.settings h3 { font-size: 15px; margin: 14px 0 4px; }
 .settings .accounts { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 .settings .account .top-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .settings .account .row { margin-top: 6px; }

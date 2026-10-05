@@ -255,20 +255,15 @@ async def test_a_website_link_goes_to_the_users_browser(shell, monkeypatch):
 async def test_the_setup_steps_open_as_one_closable_tab(shell):
     js, stack = shell
     home = frame("/home")
-    assert await until(js, f"{home}.document.querySelector('#brain .brain-setup') !== null")  # no watcher yet
-    await click_in(js, "/home", "#brain .brain-setup")  # the Brain's "Set it up"
-    assert await until(js, f"{active_is('/setup')} && {frame('/setup')}?.location.hash === '#brave'")
+    stack["brave"].set_state("off")
+    assert await until(js, f"{home}.document.getElementById('browser-action').textContent === 'Show me how'")
+    await click_in(js, "/home", "#browser-action")  # Brave's switch: its steps, in a closable tab
+    assert await until(js, f"{active_is('/setup')} && {frame('/setup')}?.location.hash === '#switch'")
     assert await js(f"{tab('/setup')}.querySelector('.tab-label').textContent") == "Setup"
     assert await js(f"{tab('/setup')}.querySelector('.tab-close').getAttribute('aria-label')") == "Close Setup"
     assert await until(js, "document.title === 'Setup · AI Browser'")
-    assert await until(js, f"{frame('/setup')}.document.getElementById('watcher-folder').textContent !== ''")
-    await click_in(js, "/setup", "#reveal-watcher")  # needs the window's cookie and our exact Origin: a tab has both
-    assert await until(js, f"{frame('/setup')}.document.getElementById('reveal-watcher').textContent"
-                           ".startsWith('Shown in ')")
     await pick(js, "/home")
-    stack["brave"].set_state("off")
-    assert await until(js, f"{home}.document.getElementById('browser-action').textContent === 'Show me how'")
-    await click_in(js, "/home", "#browser-action")  # Brave's switch: the same tab, at the switch's steps
+    await click_in(js, "/home", "#browser-action")  # again: the same tab
     assert await until(js, f"{active_is('/setup')} && {frame('/setup')}.location.hash === '#switch'")
     assert await js(keys()) == ["/home", "/mission", "/settings", "/setup"]
     assert await js("document.querySelectorAll('#views .view').length") == 2  # AI Home's and the setup's
@@ -374,13 +369,15 @@ async def close_key(js) -> None:
 @CHROME
 async def test_the_close_tab_key_closes_the_tab_shown_if_it_has_a_close_button(shell):
     js, stack = shell
-    assert await until(js, f"{frame('/home')}.document.querySelector('#brain .brain-setup') !== null")
-    await click_in(js, "/home", "#brain .brain-setup")
+    stack["brave"].set_state("off")
+    assert await until(js, f"{frame('/home')}.document.getElementById('browser-action')?.textContent === "
+                           "'Show me how'")
+    await click_in(js, "/home", "#browser-action")  # Brave's switch: its steps, in a closable tab
     assert await until(js, f"{active_is('/setup')} && {ready_for_keys('/setup')}")
     windows = stack["server"].window_count
     await close_key(js)  # the focus is in the setup steps' page, the tab shown
     assert await until(js, f"{tab('/setup')} === null && {view('/setup')} === null && {active_is('/home')}")
-    await click_in(js, "/home", "#brain .brain-setup")
+    await click_in(js, "/home", "#browser-action")
     assert await until(js, active_is("/setup"))
     await js(f"{tab('/setup')}.querySelector('.tab-label').focus(); true")  # the focus on the window's row of tabs
     await close_key(js)

@@ -324,23 +324,23 @@ async def test_take_back_and_close_let_go_of_handed_tabs(fake_claude, tmp_path):
 
     runner, _, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
-    closed, ungrouped = [], []
+    closed, let_go = [], []
 
     async def close_tabs(targets):
         closed.append(list(targets))
 
     manager = AgentManager(tmp_path / "home", claude=runner, close_tabs=close_tabs)
-    manager.ungroup = ungrouped.append
+    manager.let_go = let_go.append
     try:
         agent = await manager.create("one")
         assert await settle(manager, lambda agents: state(agents, "a1") == "your_turn")
         manager.tab_event("a1", "tab_opened", "T1")
         for target in ("U1", "U2"):
             await manager.hand_tab("a1", target, {"url": f"https://s.example/{target}", "title": target})
-        assert manager.take_back("U1") == "a1" and agent.adopted == ["U2"] and ungrouped == [["U1"]]
+        assert manager.take_back("U1") == "a1" and agent.adopted == ["U2"] and let_go == [["U1"]]
         assert manager.take_back("U1") is None  # nobody has it now
         await manager.close("a1")
-        assert closed == [["T1"]] and ungrouped == [["U1"], ["U2"]]  # the handed tab: let go, ungrouped, never closed
+        assert closed == [["T1"]] and let_go == [["U1"], ["U2"]]  # the handed tab: let go, never closed
     finally:
         await manager.close_all()
 

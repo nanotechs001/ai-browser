@@ -1,4 +1,5 @@
-"""Where the AI's tabs go in the user's Brave (the marker and the Placer), and an engine's link to ai-browser app."""
+"""Where the AI's tabs go in the user's Brave (the Placer: through the app, or a window of their own), and an engine's
+link to ai-browser app."""
 
 import asyncio
 import json
@@ -6,9 +7,10 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import pytest
 
 
 class App:
@@ -45,72 +47,65 @@ class App:
 
 
 class FakeLink:
-    def __init__(self, groups=True, claim_wait=0.0):
-        self.groups, self.claim_wait, self.claims, self.reports, self.hellos = groups, claim_wait, [], [], 0
+    """AgentLink's surface for the Placer: open_tab answers what a test sets."""
+
+    def __init__(self, answer=None):
+        self.answer, self.opened, self.hellos = answer if answer is not None else {"target": "N1"}, 0, 0
         self.url, self.token, self.agent = "http://127.0.0.1:1/agent-events", "t", "a1"
 
-    async def status(self, max_age=1.0):
-        return {"groups": self.groups, "handed": []}
-
-    async def claim(self, target, marker=None, opener=None, url=""):
-        self.claims.append((target, marker))
-        await asyncio.sleep(self.claim_wait)
-        return {"grouped": True, "tab": 1}
+    async def open_tab(self):
+        self.opened += 1
+        return self.answer
 
     async def hello(self):
         self.hellos += 1
 
-    def report(self, kind, target, adopted=False, **extra):
-        self.reports.append((kind, target, adopted, extra))
+
+class FakeCDP:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, method, params=None, **kwargs):
+        self.sent.append((method, params))
+        return {"targetId": "W1"}
 
 
-def test_markers_are_secret_and_random():
-    from ai_browser.grouping import MARKER, marker_url, new_marker
+async def test_open_tab_asks_the_app_for_the_agent_and_waits_longer():
+    from ai_browser.agentlink import TAB_WAIT, AgentLink
 
-    markers = {new_marker() for _ in range(50)}
-    assert len(markers) == 50 and all(MARKER.match(marker) for marker in markers)
-    assert marker_url("0123456789abcdef") == "about:blank#aib-0123456789abcdef"
-
-
-async def test_claim_sends_the_agent_the_target_and_the_marker():
-    from ai_browser.agentlink import AgentLink
-
-    app = App({"/agent-claim": {"grouped": True, "tab": 412}})
+    app = App({"/agent-tab": {"target": "N7"}})
     try:
         link = AgentLink(app.url + "/agent-events", "tok", "a3")
-        assert link.base == app.url
-        assert await link.claim("T1", marker="0123456789abcdef") == {"grouped": True, "tab": 412}
-        assert app.requests == [("POST", "/agent-claim", {"agent": "a3", "target": "T1",
-                                                          "marker": "0123456789abcdef"}, "tok")]
+        assert link.base == app.url and TAB_WAIT > 2
+        assert await link.open_tab() == {"target": "N7"}
+        assert app.requests == [("POST", "/agent-tab", {"agent": "a3"}, "tok")]
     finally:
         app.stop()
 
 
-async def test_a_claim_with_no_app_says_so():
+async def test_with_no_app_open_tab_and_status_say_nothing():
     from ai_browser.agentlink import AgentLink
 
     app = App()
     url = app.url
     app.stop()
     link = AgentLink(url + "/agent-events", "tok", "a3")
-    assert await link.claim("T1", marker="0123456789abcdef") == {"grouped": False, "reason": "no_app"}
-    assert await link.status() == {"groups": False, "handed": []}
+    assert await link.open_tab() is None
+    assert await link.status() == {"handed": []}
 
 
 async def test_status_is_cached():
-    from ai_browser.agentlink import GROUPS_TTL, AgentLink
-
     handed = [{"target": "U1", "title": "Shop", "url": "https://s.com/"}]
-    app = App({"/agent-status": {"groups": True, "handed": handed}})
+    app = App({"/agent-status": {"handed": handed}})
     try:
+        from ai_browser.agentlink import AgentLink
+
         link = AgentLink(app.url + "/agent-events", "tok", "a3")
-        assert await link.status() == await link.status() == {"groups": True, "handed": handed}
+        assert await link.status() == await link.status() == {"handed": handed}
         assert [path for _, path, _, _ in app.requests] == ["/agent-status?agent=a3"]
         await asyncio.sleep(1.1)
-        await link.status(GROUPS_TTL)
-        assert len(app.requests) == 1  # whether groups are on may be ten seconds old...
         await link.status()
-        assert len(app.requests) == 2  # ...the handed tabs at most one
+        assert len(app.requests) == 2  # the handed tabs are at most a second old
         app.answers.clear()  # the app answers nothing for a moment: the last answer stands
         await asyncio.sleep(1.1)
         assert (await link.status())["handed"] == handed
@@ -123,7 +118,7 @@ async def test_status_reads_handed_ttl_when_called(monkeypatch):
     to show that only the relay's cut tells an engine about Take back)."""
     import ai_browser.agentlink as agentlink
 
-    app = App({"/agent-status": {"groups": True, "handed": []}})
+    app = App({"/agent-status": {"handed": []}})
     try:
         monkeypatch.setattr(agentlink, "HANDED_TTL", 60)
         link = agentlink.AgentLink(app.url + "/agent-events", "tok", "a3")
@@ -156,48 +151,43 @@ def test_discover_needs_a_link_file_a_live_app_and_this_computer(tmp_path):
         assert AgentLink.discover(tmp_path, "t1") is None, elsewhere  # only ever the app on this computer
 
 
-async def test_with_groups_a_new_tab_carries_a_marker():
-    from ai_browser.grouping import MARKER_PREFIX, Placer
-
-    params, marker = await Placer(FakeLink()).create_params()
-    assert params == {"url": MARKER_PREFIX + marker, "background": True}  # no newWindow, no browserContextId
-
-
-async def test_without_the_app_or_its_groups_each_tab_gets_a_window():
+async def test_with_the_app_a_new_tab_is_the_apps_to_open():
     from ai_browser.grouping import Placer
 
-    for placer in (Placer(None), Placer(FakeLink(groups=False))):
-        assert await placer.create_params() == ({"url": "about:blank", "newWindow": True, "background": True}, None)
+    cdp, link = FakeCDP(), FakeLink({"target": "N1"})
+    assert await Placer(link).open_tab(cdp) == "N1" and link.opened == 1
+    assert cdp.sent == []  # the engine never makes the tab itself: the app places it
 
 
-async def test_placed_waits_at_most_claim_wait_and_never_raises():
-    from ai_browser.grouping import CLAIM_WAIT, Placer
+async def test_the_apps_words_reach_the_agent_and_silence_is_said_too():
+    from ai_browser.grouping import NO_ANSWER, PlaceError, Placer
 
-    link = FakeLink(claim_wait=10)  # the app never answers
-    started = time.monotonic()
-    await Placer(link).placed("T1", "0123456789abcdef")
-    assert time.monotonic() - started < CLAIM_WAIT + 0.3 and link.claims == [("T1", "0123456789abcdef")]
-    await Placer(link).placed("T2", None)  # a tab in its own window: nothing to claim
-    assert len(link.claims) == 1
+    words = "Brave's last window is in another profile: click a window of the profile where agents browse"
+    for answer, said in (({"error": words}, words), ({}, NO_ANSWER), (None, NO_ANSWER)):
+        link = FakeLink(answer)
+        link.answer = answer
+        with pytest.raises(PlaceError) as refused:
+            await Placer(link).open_tab(FakeCDP())
+        assert str(refused.value) == said
 
 
-def test_a_page_opened_tab_is_reported_with_its_opener():
+async def test_without_the_app_each_tab_gets_a_window_of_its_own():
     from ai_browser.grouping import Placer
 
-    link = FakeLink()
-    Placer(link).popup("T2", "T1", "https://s.com/next")
-    assert link.reports == [("tab_opened", "T2", False, {"opener": "T1", "url": "https://s.com/next"})]
+    cdp = FakeCDP()
+    assert await Placer(None).open_tab(cdp) == "W1"
+    assert cdp.sent == [("Target.createTarget", {"url": "about:blank", "newWindow": True, "background": True})]
 
 
 async def test_a_session_reads_link_json_again_when_the_app_comes_and_goes(monkeypatch):
     from ai_browser import grouping
 
     monkeypatch.setattr(grouping, "REREAD_EVERY", 0)
-    joined = FakeLink()
+    joined = FakeLink({"target": "N1"})
     found = [joined, None]
     placer = grouping.Placer(None, rediscover=lambda: found.pop(0))
-    assert (await placer.create_params())[1] is not None and placer.link is joined and joined.hellos == 1
-    assert (await placer.create_params())[1] is None and placer.link is None  # link.json gone: a window of its own
+    assert await placer.open_tab(FakeCDP()) == "N1" and placer.link is joined and joined.hellos == 1
+    assert await placer.open_tab(FakeCDP()) == "W1" and placer.link is None  # link.json gone: a window of its own
 
 
 def test_discover_reads_a_local_cdp_only(tmp_path):

@@ -23,9 +23,9 @@ button { font: inherit; font-size: 14px; border: 1px solid var(--line); backgrou
          border-radius: 8px; padding: 4px 12px; cursor: pointer; white-space: nowrap; }
 kbd { font: 13px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; }
 h2 { font-size: 20px; font-weight: 600; margin: 44px 0 6px; }
-#status, #watcher-status { margin-top: 22px; color: var(--muted); }
+#status { margin-top: 22px; color: var(--muted); }
 .alt { color: var(--muted); font-size: 14px; margin: 10px 0 0; }
-#status.done, #watcher-status.done { color: var(--ok); font-weight: 600; }
+#status.done { color: var(--ok); font-weight: 600; }
 .warning { margin: 12px 0 0; }
 .warning strong { color: var(--accent); }
 #copy { margin-left: 4px; }

@@ -1027,7 +1027,7 @@ def test_the_readme_says_what_detection_reads():
     assert 'so it never makes your browser ask "Allow remote debugging?"' in development
     assert ("It never opens cookies, saved passwords or history; it reads only what it needs, and never keeps or shows "
             "your account's email.") in development
-    assert "browsers.public(browsers.detect({extension_id_for(w): w})" in development
+    assert "browsers.public(browsers.detect())" in development
 
 
 # The files of this track (final review)

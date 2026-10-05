@@ -18,17 +18,13 @@ SRC = ROOT / "src" / "ai_browser"
 def test_platform_markers_skip_with_their_reason():
     import tomllib
 
-    from conftest import PIPE_FIXTURES, POSIX_ONLY, WINDOWS_ONLY, platform_skip
+    from conftest import POSIX_ONLY, WINDOWS_ONLY, platform_skip
 
     def item(*markers, fixtures=()):
         return SimpleNamespace(keywords={name: True for name in markers}, fixturenames=list(fixtures))
 
-    assert PIPE_FIXTURES == {"watcher"}
     assert platform_skip(item("posix_only"), windows=True) == POSIX_ONLY
     assert platform_skip(item("posix_only"), windows=False) is None
-    for fixture in sorted(PIPE_FIXTURES):  # they launch AI Browser over the DevTools pipe
-        assert platform_skip(item(fixtures=["tmp_path", fixture]), windows=True) == POSIX_ONLY
-        assert platform_skip(item(fixtures=[fixture]), windows=False) is None
     assert platform_skip(item("windows_only"), windows=False) == WINDOWS_ONLY
     assert platform_skip(item("windows_only"), windows=True) is None
     assert platform_skip(item(fixtures=["fake_claude", "tmp_path"]), windows=True) is None
@@ -183,7 +179,7 @@ def _docstrings(tree: ast.AST) -> set[int]:
 
 def test_no_mac_words_where_windows_shows_them():
     found = []
-    pages = [*(SRC / "app" / "ui").rglob("*"), *(SRC / "app" / "watcher").rglob("*")]
+    pages = [*(SRC / "app" / "ui").rglob("*"), *(SRC / "brain" / "readers").rglob("*")]  # and the tabs' scripts
     for path in sorted(pages):
         if path.is_file() and path.suffix in PAGE_SUFFIXES:
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

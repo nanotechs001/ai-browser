@@ -24,13 +24,11 @@ def _docker_unavailable() -> str | None:
 
 POSIX_ONLY = "needs macOS or Linux (file descriptors 3 and 4, or the DevTools pipe)"
 WINDOWS_ONLY = "Windows behaviour (junctions, msvcrt, Win32 APIs)"
-PIPE_FIXTURES = {"watcher"}  # it loads Brave's watcher into a throwaway Chrome over the DevTools pipe
 
 
 def platform_skip(item, windows: bool) -> str | None:
-    """Why this test can't run on this OS, or None. On Windows: a posix_only test, or one that uses a fixture that
-    loads the watcher over the DevTools pipe (item.fixturenames holds every fixture it needs, however deep)."""
-    if windows and ("posix_only" in item.keywords or set(getattr(item, "fixturenames", ())) & PIPE_FIXTURES):
+    """Why this test can't run on this OS, or None: a posix_only test on Windows, a windows_only one elsewhere."""
+    if windows and "posix_only" in item.keywords:
         return POSIX_ONLY
     if not windows and "windows_only" in item.keywords:
         return WINDOWS_ONLY
@@ -98,15 +96,10 @@ def _no_real_desktop(monkeypatch):
     monkeypatch.setattr(run, "default_desktop", lambda home, shortcut=None: None)
 
 
-@pytest.fixture(autouse=True)
-def _no_finder_windows(monkeypatch):
-    """No test may open a file manager window on the machine running the suite, and no terminal window (tests that
-    check it patch it again)."""
-    import ai_browser.app.run as run
+def _no_terminal_windows(monkeypatch):
+    """No test may open a terminal window on the machine running the suite (tests that check it patch it again)."""
     import ai_browser.app.server as server
 
-    monkeypatch.setattr(run, "reveal", lambda path: True)
-    monkeypatch.setattr(server, "reveal_folder", lambda path: True)
     monkeypatch.setattr(server, "open_terminal", lambda *args, **kwargs: True)  # never a real terminal window
 
 

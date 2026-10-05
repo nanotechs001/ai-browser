@@ -311,8 +311,7 @@ async def test_the_tab_list_marks_owners_and_hands_tabs_over(home):
     assert server.agents.agents["a2"].adopted == ["B1"]
 
 
-LAST_USED = ("Showing the Brave profile you used last. With the watcher loaded, this list stays on the watcher's "
-             "profile.")
+LAST_USED = "Showing the Brave profile you used last. Pick the one agents use in Settings → Where agents browse."
 NO_PROFILE = "Your tabs aren't listed: AI Browser can't tell which Brave profile is yours yet."
 
 
@@ -322,7 +321,7 @@ async def test_the_tab_list_counts_what_it_doesnt_show(home):
 
     js, stack = home
     brave = FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
-    brave.set_scope("watcher", 3)
+    brave.set_scope("chosen", 3)
     stack["server"].attach_brave(brave)
     source = "document.querySelector('#tabs p.scope-source')?.textContent ?? null"
     count = "document.querySelector('#tabs p.elsewhere')?.textContent ?? null"
@@ -333,7 +332,7 @@ async def test_the_tab_list_counts_what_it_doesnt_show(home):
 
     assert await shows(count, "3 more tabs in other profiles or private windows: not shown here.")
     assert await js(source) is None
-    brave.set_scope("watcher", 1)
+    brave.set_scope("chosen", 1)
     assert await shows(count, "1 more tab in other profiles or private windows: not shown here.")
     brave.set_scope("last_used", 0)
     assert await shows(source, LAST_USED)
@@ -341,7 +340,7 @@ async def test_the_tab_list_counts_what_it_doesnt_show(home):
     brave.set_scope("none", 2)
     assert await shows(source, NO_PROFILE)
     assert await shows(count, "2 more tabs in other profiles or private windows: not shown here.")
-    brave.set_scope("watcher", 0)
+    brave.set_scope("chosen", 0)
     assert await shows(source, None)
     assert await js(count) is None
     brave.pages = []
@@ -358,7 +357,7 @@ async def test_the_tab_list_counts_what_it_doesnt_show(home):
     brave.changed()  # the new connection's first list brings its own scope
     assert await shows(source, NO_PROFILE)
     assert await shows(count, "4 more tabs in other profiles or private windows: not shown here.")
-    brave.set_scope("watcher", 0)
+    brave.set_scope("chosen", 0)
     assert await shows(source, None)
     await js("window.flashed = []; new MutationObserver(() => { const line = document.querySelector("
              "'#tabs p.scope-source'); if (line) window.flashed.push(line.textContent); }).observe("
@@ -401,7 +400,7 @@ async def test_while_brave_connects_ai_home_claims_no_profile(home, tmp_path):  
         await port.answer_held()
         await connecting
         assert await until(late, "document.querySelector(\"#tabs .tab[data-target='U1']\") !== null")
-        assert await late(source) == LAST_USED  # the first list brings its scope (no watcher here)
+        assert await late(source) == LAST_USED  # the first list brings its scope (none chosen here)
         assert port.sessions == 1  # one connection: Brave asked "Allow remote debugging?" once
     finally:
         connecting.cancel()
@@ -465,9 +464,9 @@ async def test_the_browser_card_follows_brave(home):
         await asyncio.sleep(0.1)
     assert brave.connects == 1
     brave.set_state("connected")
-    assert await until(js, f"{title} === 'Your Brave · connected'")  # no watcher here: groups are off
-    assert (await js("document.getElementById('browser-groups').textContent")).startswith(
-        "Tab groups off: Load the watcher in Brave to group the AI's tabs")
+    assert await until(js, f"{title} === 'Your Brave · connected'")
+    assert await js("document.getElementById('browser-windows').textContent") == (
+        "The AI's tabs open in windows of their own, never among yours.")
 
 
 @CHROME
@@ -593,10 +592,35 @@ async def test_a_browser_that_isnt_installed_is_greyed_out(home):
 @CHROME
 async def test_ai_homes_words_for_the_window(home):
     js, _ = home
-    assert await js("document.querySelector('.new-task .grow').textContent") == (
-        "Or type ai and a space in Brave's address bar")
+    assert await js("document.querySelector('.new-task .grow').textContent") == ""  # the keyword's line is gone
+    assert await js("document.body.textContent.includes('address bar')") is False
     assert await until(js, "document.querySelector('#agents .empty')?.textContent === "
                            "'No agents yet. Start a task above.'")
+
+
+@CHROME
+async def test_ai_home_says_the_old_extension_can_be_removed_until_got_it(home):
+    js, stack = home
+    server, note = stack["server"], "document.getElementById('watcher-note')"
+    assert await js(f"{note}.hidden") is True  # no old folder here: nothing to say
+    folder = stack["home"] / "app" / "watcher"
+    folder.mkdir(parents=True)
+    (folder / "manifest.json").write_text("{}", encoding="utf-8")  # an earlier AI Browser made it
+    server._send_all({"type": "settings", **server._settings_payload()})
+    assert await until(js, f"!{note}.hidden")
+    text = " ".join((await js(f"{note}.textContent")).split())
+    assert 'You can remove "AI Browser Watcher" from Brave' in text and "brave://extensions" in text
+    assert "AI Browser never removes it for you." in text
+    await js("document.getElementById('watcher-note-close').click()")
+    assert await until(js, f"{note}.hidden")
+    for _ in range(50):
+        if server.settings.get()["watcher_note"] is False:
+            break
+        await asyncio.sleep(0.1)
+    assert server.settings.get()["watcher_note"] is False and (folder / "manifest.json").is_file()
+    server._send_all({"type": "settings", **server._settings_payload()})  # the folder is still there: still hidden
+    await asyncio.sleep(0.3)
+    assert await js(f"{note}.hidden") is True
 
 
 @CHROME

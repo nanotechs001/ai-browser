@@ -133,7 +133,8 @@ class FakePort:
             error, result = (missing, {}) if page is None else (None, {"targetInfo": self.info(page)})
         elif method == "Target.createTarget":
             self._targets += 1
-            page = {"target": f"T{self._targets}", "url": params.get("url", ""), "title": ""}
+            page = {"target": f"T{self._targets}", "url": params.get("url", ""), "title": "",
+                    "context": self.default or "C1"}  # as Chromium: in the profile used last
             self.pages.append(page)
             before.append(("Target.targetCreated", {"targetInfo": self.info(page)}, None))  # as Chrome may
             result = {"targetId": page["target"]}
@@ -322,6 +323,17 @@ class FakeRelay:
         self.closed_clients.append(code)
 
 
+class FakePlace:
+    """ProfilePlace's surface: the profiles a test lists ({"folder", "name", "color"})."""
+
+    def __init__(self):
+        self.listed: list[dict] = []
+        self.chosen = None
+
+    def profiles(self):
+        return [dict(profile) for profile in self.listed]
+
+
 class FakeBrave:
     """BraveLink's surface, holding the tabs a test gives it; owners, Watch, closes and connects are recorded."""
 
@@ -331,10 +343,13 @@ class FakeBrave:
         self.state = state
         self.pages = [dict(page) for page in pages]  # {"target", "url", "title"}
         self.owners: dict[str, dict] = {}
-        self.watched, self.closed, self.marked = [], [], []
+        self.watched, self.closed, self.ended = [], [], []  # Watch, closes, picks ended
         self.connects = 0
         self.connect_calls = []  # (why, identity) of each connect
         self.relay = FakeRelay()
+        self.place = FakePlace()  # Settings → Where agents browse
+        self.opened_ai: list[str] = []  # who each tab open_ai_tab opened was for (N1, N2, …)
+        self.ai_tab_error: Exception | None = None  # what open_ai_tab raises instead
         self._changes, self._states = [], []
 
     def on_change(self, callback):
@@ -351,7 +366,7 @@ class FakeBrave:
     def tabs(self):
         return [{**page, "owner": dict(self.owners.get(page["target"], {"kind": "you"}))} for page in self.pages]
 
-    tab_scope = {"profile": "watcher", "elsewhere": 0}  # what BraveLink.scope() answers (watcher-safety)
+    tab_scope = {"profile": "chosen", "elsewhere": 0}  # what BraveLink.scope() answers (watcher-safety)
 
     def scope(self):
         return dict(self.tab_scope)
@@ -377,15 +392,29 @@ class FakeBrave:
             del self.owners[target]
         self.changed()
 
-    def mark_brain(self, url):
-        self.marked.append(url)
-
     async def connect(self, why="connect", identity=""):
         self.connects += 1
         self.connect_calls.append((why, identity))
 
     async def watch(self, target):
         self.watched.append(target)
+
+    async def open_ai_tab(self, identity):
+        if self.ai_tab_error is not None:
+            raise self.ai_tab_error
+        self.opened_ai.append(identity)
+        target = f"N{len(self.opened_ai)}"
+        self.pages.append({"target": target, "url": "about:blank", "title": ""})
+        return target
+
+    def set_place(self, folder):
+        self.place.chosen = folder
+
+    def brain_tabs(self):  # the Brain's reading: nothing here (tests/fake_reading.py fakes it whole)
+        return []
+
+    async def end_pick(self, target):
+        self.ended.append(target)
 
     async def close_targets(self, targets):
         self.closed += list(targets)

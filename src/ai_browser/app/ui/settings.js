@@ -1,10 +1,12 @@
-// Settings, in its tab of AI Browser's window: AI Browser's own app (its state, its shortcut, its setup),
-// which browser draws that window, and the Accounts section (AI accounts; wave C adds where agents browse). The
-// choices come from the app; a change is saved there, and the window's browser applies the next time AI Browser
-// starts. Every name is set as text.
+// Settings, in its tab of AI Browser's window: AI Browser's own app (its state, its shortcut, its setup), which
+// browser draws that window, the Accounts section (AI accounts), where agents browse, and the Brain's reading of the
+// user's tabs. The choices come from the app; a change is saved there, and the window's browser applies the next time
+// AI Browser starts. Every name is set as text.
 import { mountAccounts } from "./accountsettings.js";
+import { mountBrainSettings } from "./brainsettings.js";
 import { connect } from "./link.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
+import { mountPlaceSettings } from "./placesettings.js";
 
 const $ = (id) => document.getElementById(id);
 let current = null; // the app's settings: {model, voice, window_browser, window: {using, name, note, choices}}
@@ -103,6 +105,8 @@ function renderApp() { // AI Browser's own app: running, set up, or offered (its
 }
 
 function handle(message) {
+  brain.onMessage(message); // Settings → Brain
+  place.onMessage(message); // Settings → Where agents browse
   if (message.type === "snapshot") {
     current = message.settings || null;
     renderWindow();
@@ -134,6 +138,12 @@ const accounts = mountAccounts({ // Settings → Accounts (AI accounts)
   existing: $("account-existing"), folder: $("account-folder"), add: $("account-add"), error: $("accounts-error"),
 }, (message) => link.send(message));
 
+const place = mountPlaceSettings({ choices: $("place-choices"), state: $("place-state") },
+                                 (message) => link.send(message));
+const brain = mountBrainSettings({ // Settings → Brain (native app part b)
+  toggle: $("read-tabs"), state: $("reading-state"), sites: $("brain-sites"), watched: $("brain-watched"),
+  pickTab: $("pick-tab"), pickStart: $("pick-start"), pickNote: $("pick-note"),
+}, (message) => link.send(message));
 const link = connect({ view: "settings", onMessage: handle, onState: setStatus });
 guardLinks(link);
 $("app-copy").addEventListener("click", async () => {

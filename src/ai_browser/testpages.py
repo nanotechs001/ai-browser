@@ -44,6 +44,22 @@ def serve_host() -> tuple[str, str, Callable[[], None]]:
     return f"http://localhost:{first}/", f"http://127.0.0.1:{second}/", stop
 
 
+def serve_sites() -> tuple[dict[str, str], Callable[[], None]]:
+    """The pages served on three addresses of their own, one per site the Brain reads (gmail, slack, asana), for a
+    Chrome running on this computer: as Gmail, Slack and Asana each have their own. Returns ({site: base}, stop)."""
+    handler = functools.partial(_handler(), directory=str(PAGES))
+    servers = {site: ThreadingHTTPServer(("127.0.0.1", 0), handler) for site in ("gmail", "slack", "asana")}
+    for server in servers.values():
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def stop() -> None:
+        for server in servers.values():
+            server.shutdown()
+            server.server_close()
+
+    return {site: f"http://localhost:{server.server_address[1]}/" for site, server in servers.items()}, stop
+
+
 def serve(sandboxes: Sandboxes, info: SandboxInfo) -> tuple[str, str]:
     """Copy the pages into /work/_pages and start two static servers. Returns (base, other)."""
     shutil.copytree(PAGES, info.work_host / "_pages", dirs_exist_ok=True)

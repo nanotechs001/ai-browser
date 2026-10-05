@@ -2,8 +2,8 @@
 
 Each agent's engine (in its own `ai-browser mcp` process) posts small reports to the app's /agent-events with the
 agent token; a Claude Code session uses a session token from <home>/app/link.json. Reports go one at a time, in order;
-a lost one only costs AI Home a stale line, never the agent its work. Beside /agent-events sit /agent-claim (group a
-new tab), /agent-status (tab groups on? tabs the user handed over), /agent-hello and /agent-bye (sessions)."""
+a lost one only costs AI Home a stale line, never the agent its work. Beside /agent-events sit /agent-tab (a new tab,
+opened by the app), /agent-status (the tabs the user handed over), /agent-hello and /agent-bye (sessions)."""
 
 from __future__ import annotations
 
@@ -19,8 +19,7 @@ from urllib.parse import quote, urlsplit
 
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # the app is always local: never a proxy
 HANDED_TTL = 1.0  # seconds a status answer serves for the handed tabs
-GROUPS_TTL = 10.0  # ...and for whether tab groups are on
-NO_APP = {"grouped": False, "reason": "no_app"}
+TAB_WAIT = 15.0  # seconds for the app to open a new tab (Brave may be slow to make a window)
 
 
 class AgentLink:
@@ -60,18 +59,14 @@ class AgentLink:
 
     # ---- asking the app ---------------------------------------------------------------------------------------
 
-    async def claim(self, target: str, marker: str | None = None, opener: str | None = None, url: str = "") -> dict:
-        """Ask the app to put a new tab of ours in our tab group; its answer, or {"grouped": False, "reason":
-        "no_app"}."""
-        body = {"agent": self.agent, "target": target}
-        body.update({"marker": marker} if marker else {"opener": opener or "", "url": url})
-        answer = await asyncio.to_thread(self._request, "POST", "/agent-claim", body)
-        return answer if isinstance(answer, dict) and "grouped" in answer else dict(NO_APP)
+    async def open_tab(self) -> dict | None:
+        """A new tab for us, opened by the app (POST /agent-tab): {"target"} or {"error"}; None when it didn't
+        answer."""
+        return await asyncio.to_thread(self._request, "POST", "/agent-tab", {"agent": self.agent}, TAB_WAIT)
 
     async def status(self, max_age: float | None = None) -> dict:
-        """{"groups": tab groups on?, "handed": tabs the user handed us}, no older than `max_age` seconds (by default
-        HANDED_TTL, read now). When the app doesn't answer, the last answer stands (a moment's silence must not take a
-        handed tab away)."""
+        """{"handed": tabs the user handed us}, no older than `max_age` seconds (by default HANDED_TTL, read now). When
+        the app doesn't answer, the last answer stands (a moment's silence must not take a handed tab away)."""
         max_age = HANDED_TTL if max_age is None else max_age
         if self._status is not None and time.monotonic() - self._status_at < max_age:
             return self._status
@@ -79,14 +74,14 @@ class AgentLink:
         if isinstance(answer, dict) and "handed" in answer:
             handed = [item for item in answer.get("handed") or []
                       if isinstance(item, dict) and isinstance(item.get("target"), str)]
-            self._status = {"groups": answer.get("groups") is True, "handed": handed}
+            self._status = {"handed": handed}
         elif self._status is None:
-            self._status = {"groups": False, "handed": []}
+            self._status = {"handed": []}
         self._status_at = time.monotonic()
         return self._status
 
     async def hello(self) -> dict | None:
-        """A Claude Code session joins the running app (its tabs then show in AI Home, grouped "Claude Code"). The
+        """A Claude Code session joins the running app (its tabs then show in AI Home, marked "Claude Code"). The
         app's answer: {"cdp_token": …} when it relays the browser connection, {} without a relay (204), {"cut_off":
         True} when the user disconnected this session in AI Home (410), None when it didn't answer."""
         return await asyncio.to_thread(self._hello)
@@ -113,13 +108,13 @@ class AgentLink:
     async def bye(self) -> None:
         await asyncio.to_thread(self._request, "POST", "/agent-bye", {"agent": self.agent})
 
-    def _request(self, method: str, path: str, body: dict | None) -> dict | None:
-        """One request to the app (2 s at most): its JSON answer, {} for an empty one, None when it failed."""
+    def _request(self, method: str, path: str, body: dict | None, timeout: float = 2) -> dict | None:
+        """One request to the app (2 s unless said): its JSON answer, {} for an empty one, None when it failed."""
         data = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(self.base + path, data=data, method=method, headers={
             "Content-Type": "application/json", "X-AIB-Agent-Token": self.token})
         try:
-            with _DIRECT.open(request, timeout=2) as response:
+            with _DIRECT.open(request, timeout=timeout) as response:
                 raw = response.read()
         except (OSError, ValueError):  # refused, timed out, or an HTTP error (403, 404)
             return None

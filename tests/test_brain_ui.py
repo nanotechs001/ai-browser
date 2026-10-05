@@ -1,5 +1,5 @@
-"""The Brain's pages: its section in AI Home and the watcher's Brain page in Brave (the inbox, the watch list, pause
-and style), against a real app server with the Brain. Page and message text stays text."""
+"""The Brain's section in AI Home (the inbox, its cards and buttons), against a real app server with the Brain. Page
+and message text stays text."""
 
 import asyncio
 import json
@@ -7,8 +7,7 @@ import json
 import pytest
 
 from ai_browser.chrome import chrome_binary
-from test_home import HOSTILE, evaluate, home, open_page, stack, until  # noqa: F401  (fixtures)
-from test_watcher import watcher  # noqa: F401  (fixture)
+from test_home import HOSTILE, home, stack, until  # noqa: F401  (fixtures)
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 
@@ -35,7 +34,6 @@ async def test_ai_home_shows_the_needs_you_items_as_text(home):
     assert "<img" in await js("document.querySelector('#brain .brain-item .summary').textContent")
     assert "<img" in await js("document.querySelector('#brain .brain-item .sender').textContent")
     assert await js("document.querySelectorAll('#brain img').length") == 0 and await js("document.title") != "pwned"
-    assert "isn't connected" in await js("document.querySelector('#brain .brain-watcher').textContent")
     stack["brain"].done("gmail:t1")
     assert await until(js, "document.querySelectorAll('#brain .brain-item').length === 0")
 
@@ -58,50 +56,6 @@ async def test_approve_sends_the_edited_text_once(home):
              "const approve = document.querySelector('#brain .approve'); approve.click(); approve.click(); true")
     await asyncio.sleep(1)
     assert calls == [("gmail:t1", "Monday works. Thanks!", 1)]
-
-
-@CHROME
-async def test_the_watch_list_saves_instructions_and_pause(watcher):
-    _, js = await open_page(watcher.cdp, f"chrome-extension://{watcher.app.extension_id}/brain.html")
-    entry = "document.querySelector('.watch-entry[data-site=\"gmail\"]')"
-    assert await until(js, f"{entry} !== null")
-    await js(f"{entry}.querySelector('.instructions').value = 'Always tell me about clients';"
-             f"{entry}.querySelector('.save').click(); true")
-    assert await watcher.until(lambda: watcher.brain.store.entry("gmail").instructions == "Always tell me about clients")
-    await js(f"{entry}.querySelector('.enabled').click(); true")
-    assert await watcher.until(lambda: watcher.brain.store.entry("gmail").enabled)
-    await js("document.getElementById('style').value = 'Short, sign as Alex';"
-             "document.getElementById('save-style').click(); true")
-    assert await watcher.until(lambda: watcher.brain.store.style == "Short, sign as Alex")
-    await js("document.getElementById('pause').click(); true")
-    assert await watcher.until(lambda: watcher.brain.store.paused)
-    assert await until(js, "document.getElementById('pause').checked === true")
-
-
-@CHROME
-async def test_two_brain_pages_fill_once(watcher):
-    verdicts = [{"id": "gmail:t1", "kind": "needs_reply", "summary": "Maria asks to move the launch",
-                 "why": "a client", "suggest": "draft"}]
-    watcher.script.write_text(json.dumps({"default": [{"result": "[]"}],
-                                          "You sort new messages": [{"result": json.dumps(verdicts)}],
-                                          "You draft a reply": [{"result": "Monday works for us."}]}), encoding="utf-8")
-    await watcher.watch("gmail", "brain/gmail.html")
-    assert await watcher.until(lambda: "t1" in watcher.raw_ids())
-    await watcher.brain.draft("gmail:t1")
-    assert watcher.brain.store.get("gmail:t1").state == "draft_ready"
-    pages = [(await open_page(watcher.cdp, f"chrome-extension://{watcher.app.extension_id}/brain.html"))[1]
-             for _ in range(2)]
-    approve = "document.querySelector('.brain-item[data-id=\"gmail:t1\"] .approve')"
-    for js in pages:
-        assert await until(js, f"{approve} !== null && !{approve}.disabled"), await js("document.body.innerText")
-    await asyncio.gather(*(js(f"{approve}.click(); true") for js in pages))
-    assert await watcher.until(lambda: watcher.brain.store.get("gmail:t1").state == "filled")
-    targets = (await watcher.cdp.send("Target.getTargets"))["targetInfos"]
-    thread = next(t for t in targets if t["type"] == "page" and "gmail.html#" in t["url"])
-    session = (await watcher.cdp.send("Target.attachToTarget", {"targetId": thread["targetId"],
-                                                                 "flatten": True}))["sessionId"]
-    box = await evaluate(watcher.cdp, session, "document.getElementById('box').innerText")
-    assert box.split("-- Alex, Web team")[0].strip() == "Monday works for us."  # once, above the signature
 
 
 @CHROME
@@ -162,21 +116,3 @@ async def test_tell_the_brain_shows_a_card_and_runs_only_on_start(home):
     assert await until(js, f"{row}.querySelector('.brain-card').hidden === true")
 
 
-@CHROME
-async def test_the_watchers_brain_page_shows_cards_without_buttons(watcher):
-    from ai_browser.brain.talk import WATCHER_CARD
-
-    brain = watcher.brain
-    entry = item()
-    brain.store.put(entry)
-    card = brain.tells.propose(entry.id, "start_agent", task="check the launch page", model="sonnet")
-    _, js = await open_page(watcher.cdp, f"chrome-extension://{watcher.app.extension_id}/brain.html")
-    row = "document.querySelector('.brain-item[data-id=\"gmail:t1\"]')"
-    assert await until(js, f"{row}?.querySelector('.brain-card')?.hidden === false")
-    text = await js(f"{row}.querySelector('.brain-card').textContent")
-    assert "Start a NEW agent with your words:" in text and "check the launch page" in text and WATCHER_CARD in text
-    assert await js(f"{row}.querySelector('.brain-card-go')") is None
-    await js(f"{row}.querySelector('.say').value = 'yes'; {row}.querySelector('.tell').click(); true")
-    assert await watcher.until(lambda: brain.store.get("gmail:t1").note == WATCHER_CARD)
-    await asyncio.sleep(0.5)
-    assert brain.tells.peek("gmail:t1") is card and watcher.server.agents.agents == {}

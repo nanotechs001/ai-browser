@@ -21,8 +21,8 @@ from ..checks import KINDS
 from . import move as moving
 from .bridge import ClaudeBridge
 
-COLORS = ("blue", "green", "cyan", "pink", "yellow", "red", "grey")  # Brave's group colours, minus the Brain's
-# purple and Claude Code's orange, so a group's colour never suggests the wrong owner
+COLORS = ("blue", "green", "cyan", "pink", "yellow", "red", "grey")  # the agents' chip colours, minus the Brain's
+# purple and Claude Code's orange, so a chip's colour never suggests the wrong owner
 HANDED_NOTE = ("The user handed you a tab: call tabs list and switch to it (it is listed as handed to you by the "
                "user)")
 KEEP_EVENTS = 5000  # an agent's conversation kept for the chat views (the newest)
@@ -99,7 +99,7 @@ class Agent:
     # a bot check waiting for the user: {kind, check, what, site, target, adopted, live, since}
     check: dict | None = None
     # AI accounts: the account it runs on, and the usage limit that paused it, if any (public: AI Browser's own pages
-    # show them; WATCHER_AGENT_FIELDS keeps them from the watcher)
+    # show them)
     account: dict = field(default_factory=lambda: {"id": DEFAULT, "name": DEFAULT_NAME})  # {"id", "name"}
     limit: dict | None = None  # {"account": id, "resets_at": seconds since 1970, or None}
     moved: str = ""  # how its last move went: "Moved to Work with its conversation"
@@ -136,7 +136,7 @@ class AgentManager:
         self.env = dict(env or {})  # for every agent's ai-browser server: AIB_APP_PROFILE, AIB_APP_EVENTS...
         self.close_tabs = close_tabs  # set by the app once AI Browser is open
         self.on_action = on_action  # after each action: the app takes a thumbnail
-        self.ungroup: Callable[[list[str]], None] | None = None  # set by the app: take tabs out of their group
+        self.let_go: Callable[[list[str]], None] | None = None  # set by the app: handed tabs are the user's again
         self.on_turn: Callable[[Agent], None] | None = None  # set by the app: an agent starts a turn
         self.mint_token: Callable[[str], str] | None = None  # set by the app: each agent's own token
         self.own_tabs: Callable[[str], list[str]] | None = None  # set by the app in brave mode: the relay's table
@@ -192,7 +192,7 @@ class AgentManager:
         self._seq += 1
         agent_id = f"a{self._seq}"
         env = {**self.env, "AIB_APP_AGENT": agent_id, **({"AIB_APP_ADOPT": adopt} if adopt else {})}
-        if self.mint_token is not None:  # its own token: the app knows who reports, claims and connects
+        if self.mint_token is not None:  # its own token: the app knows who reports, asks for tabs and connects
             env["AIB_APP_AGENT_TOKEN"] = self.mint_token(agent_id)
         bridge = ClaudeBridge(self.home, model=model, claude=self.claude, env=env, agent_id=agent_id,
                               tools=self.tools_for(chosen["id"]), servers=servers,
@@ -300,9 +300,9 @@ class AgentManager:
         if not keep_tabs and own and self.close_tabs is not None:
             with contextlib.suppress(Exception):
                 await self.close_tabs(own)
-        if not keep_tabs and agent.adopted and self.ungroup is not None:  # handed tabs: let go, never closed
+        if not keep_tabs and agent.adopted and self.let_go is not None:  # handed tabs: let go, never closed
             with contextlib.suppress(Exception):
-                self.ungroup(list(agent.adopted))
+                self.let_go(list(agent.adopted))
         self._broadcast({"type": "agent_closed", "id": agent_id})
 
     async def close_all(self) -> None:
@@ -397,9 +397,9 @@ class AgentManager:
                 agent.adopted.remove(target)
                 if agent.working_tab == target:
                     agent.working_tab = None
-                if self.ungroup is not None:
+                if self.let_go is not None:
                     with contextlib.suppress(Exception):
-                        self.ungroup([target])
+                        self.let_go([target])
                 self._changed(agent)
                 return agent.id
         return None
@@ -420,7 +420,7 @@ class AgentManager:
                        "since": time.time() if fresh else agent.check["since"]}
         agent.state = "needs_you"
         self._changed(agent)
-        if fresh:  # once per hold: every page, and Brave's watcher
+        if fresh:  # once per hold: every page, and AI Browser's own app
             self._broadcast({"type": "check_request", "agent": agent.id, "name": agent.name,
                              **{key: agent.check[key] for key in ("site", "what", "target", "live")}})
 

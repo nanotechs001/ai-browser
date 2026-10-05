@@ -1,8 +1,7 @@
 // Tabs, never windows. AI Browser's pages are tabs of its one window (app.js, the tab menu at /app): a page asks the
 // window for a tab with a message to our own origin, and never opens a window of its own. A link to a website goes to
 // the user's own browser through the app (open_url), so the window never leaves its own pages. The close-tab key
-// closes a tab with a ×, never the window. Only AI Home, Mission Control, Settings and the tab menu import this file;
-// the files Brave's watcher shares never do.
+// closes a tab with a ×, never the window. Only AI Home, Mission Control, Settings and the tab menu import this file.
 "use strict";
 
 const PAGES = ["/home", "/mission", "/settings", "/setup"]; // the pages the window shows as tabs

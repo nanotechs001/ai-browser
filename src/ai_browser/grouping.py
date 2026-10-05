@@ -1,65 +1,50 @@
-"""Where the AI's new tabs go in the user's Brave (Decisions 5 and 9 of the everyday-Brave spec).
+"""Where the AI's new tabs go in the user's Brave (native app part b, Decision 7).
 
-With the watcher able to group (the app says so), a new tab opens at about:blank#aib-<marker>, a secret mark of 16
-random hex characters, and the app asks the watcher to put the one tab showing that address in the agent's group; the
-first page loads only after that, or after CLAIM_WAIT. Without it, each new tab gets a window of its own.
-
-Measured in Chrome 154 (2026-10-02): the watcher sees the marked address as the tab's url; the blank entry stays in the
-tab's history, so Back from the first page shows a blank page; the first page loads with no referrer. Tabs never carry
-a browserContextId, so they open in the browser's default profile, never in a private window."""
+With `ai-browser app` running, the app opens each new tab (POST /agent-tab): in the profile where agents browse, never
+among the user's windows, and it gives the tab to this agent or Claude Code session before anything else can see it.
+The app's words, when it can't, name no profile: they reach Claude as a tool error. Without the app (another browser
+than its own), each new tab gets a window of its own. Tabs never carry a browserContextId, so they never open in a
+private window."""
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
-import re
-import secrets
 import time
 from collections.abc import Callable
 
-from .agentlink import GROUPS_TTL, AgentLink
+from .agentlink import AgentLink
+from .browser import BrowserError
 
-MARKER_PREFIX = "about:blank#aib-"
-MARKER = re.compile(r"^[0-9a-f]{16}$")
-CLAIM_WAIT = 1.5  # seconds a new tab waits for its group before its first load
 REREAD_EVERY = 10.0  # seconds between two reads of link.json by a Claude Code session
+NO_ANSWER = "AI Browser didn't open a tab: is `ai-browser app` still running?"
 
 
-def new_marker() -> str:
-    return secrets.token_hex(8)
-
-
-def marker_url(marker: str) -> str:
-    return MARKER_PREFIX + marker
+class PlaceError(BrowserError):
+    """Why the app couldn't open a tab for us, in its plain words."""
 
 
 class Placer:
-    """Picks where each new tab of ours opens, and asks the app to group it."""
+    """Opens each new tab of ours where it belongs: through the app, or (without one) in a window of its own."""
 
-    def __init__(self, link: AgentLink | None, rediscover: Callable[[], AgentLink | None] | None = None):
+    def __init__(self, link: AgentLink | None, rediscover: Callable[[], AgentLink | None] | None = None,
+                 through_app: bool = True):
         self.link = link
+        self.through_app = through_app  # False: a session that browses its own connection (the app relays nothing)
         self.rediscover = rediscover  # a Claude Code session reads link.json again (the app started or restarted)
         self._read_at = time.monotonic()
 
-    async def create_params(self) -> tuple[dict, str | None]:
-        """Target.createTarget's parameters, and the tab's marker (None: a window of its own, nothing to claim)."""
+    async def open_tab(self, cdp) -> str:
+        """A new blank tab's target id; PlaceError when the app couldn't open one where it must."""
         await self._refresh()
-        if self.link is not None and (await self.link.status(GROUPS_TTL))["groups"]:
-            marker = new_marker()
-            return {"url": marker_url(marker), "background": True}, marker
-        return {"url": "about:blank", "newWindow": True, "background": True}, None
-
-    async def placed(self, target: str, marker: str | None) -> None:
-        """Claim the new tab for our group, waiting at most CLAIM_WAIT; whatever happens, the page loads after."""
-        if marker is None or self.link is None:
-            return
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(self.link.claim(target, marker=marker), CLAIM_WAIT)
-
-    def popup(self, target: str, opener: str, url: str, adopted: bool = False) -> None:
-        """A tab one of our pages opened: reported with its opener and address, so it joins the opener's group."""
-        if self.link is not None:
-            self.link.report("tab_opened", target, adopted, opener=opener, url=url)
+        if self.link is None or not self.through_app:
+            params = {"url": "about:blank", "newWindow": True, "background": True}
+            return (await cdp.send("Target.createTarget", params))["targetId"]
+        answer = await self.link.open_tab()
+        if isinstance(answer, dict) and isinstance(answer.get("target"), str) and answer["target"]:
+            return answer["target"]
+        if isinstance(answer, dict) and isinstance(answer.get("error"), str) and answer["error"]:
+            raise PlaceError(answer["error"][:300])
+        raise PlaceError(NO_ANSWER)
 
     async def _refresh(self) -> None:
         if self.rediscover is None or time.monotonic() - self._read_at < REREAD_EVERY:

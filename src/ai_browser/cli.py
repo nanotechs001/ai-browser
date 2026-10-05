@@ -180,8 +180,8 @@ def _doctor_setup() -> int:
     else:
         report("-", "Chrome", "not installed (optional: agents can browse in it)")
     brave = brave_binary()
-    report("✓" if brave else "-", "Brave", brave or "not installed (optional: the Brain's watcher and your everyday "
-                                                    "browser use it)")
+    report("✓" if brave else "-", "Brave", brave or "not installed (optional: your everyday browser, where agents and "
+                                                    "the Brain can work)")
     folder = own_browser_dir()
     name = browser_name(folder)
     if not folder.is_dir():

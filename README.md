@@ -61,9 +61,11 @@ ai-browser runs natively on Windows 10 (22H2) and Windows 11, 64-bit. In PowerSh
 5. **AI Browser:** `uv run ai-browser app`. It opens in a window of its own, drawn by Microsoft Edge (or the
    browser you pick in AI Browser's Settings), with nothing to load by hand. Close the window, or press Ctrl-C in
    the terminal, to stop it.
-6. **Brave, once, after step 5** (the first `ai-browser app` makes the watcher's folder):
-   - open `brave://extensions`, turn on **Developer mode**, click **Load unpacked** and pick
-     `%USERPROFILE%\.ai-browser\app\watcher`;
+6. **Brave, once, after step 5:**
+   - nothing to install in Brave: AI Browser reads your Gmail, Slack and Asana tabs itself, once you turn on Settings →
+     Brain → **Read my Gmail, Slack and Asana tabs**. An earlier AI Browser's extension can be removed: open
+     `brave://extensions` and click **Remove** on "AI Browser Watcher" (`%USERPROFILE%\.ai-browser\app\watcher` is its
+     old folder; AI Browser never removes either);
    - for the everyday-Brave mode, open `brave://inspect/#remote-debugging` and tick **Allow remote debugging for this
      browser instance**. While the switch is on, any program on this PC can reach your Brave, so untick it when
      agents aren't working.
@@ -90,7 +92,7 @@ ai-browser runs natively on Windows 10 (22H2) and Windows 11, 64-bit. In PowerSh
   full path of `claude.exe`.
 - **Chrome in an unusual place:** set `AIB_CHROME_BINARY` to the full path of `chrome.exe`.
 - **`~` in PowerShell:** native programs don't expand it. Use `$HOME` or `$env:USERPROFILE`.
-- **Files that hold tokens** (the watcher's `config.json`, each agent's `mcp.json`, `link.json`) keep Windows'
+- **Files that hold tokens** (each agent's `mcp.json`, `link.json`) keep Windows'
   per-user permissions on your folder: you, SYSTEM and Administrators.
 - **Running inside WSL2** works with the Linux code, but needs Linux Chrome and Brave inside WSL.
 
@@ -156,13 +158,12 @@ in another app never lands in AI Browser's window, and Microsoft Edge on Windows
 shows that browser's icon while AI Browser is open. A change applies at the next start;
 `uv run ai-browser app --window brave` picks one for a single run.
 
-**First start (once):** there is nothing to load in the window. The terminal shows the watcher's steps for Brave,
-and Finder (File Explorer on Windows) shows the watcher's folder. AI Home's browser card and the Brain's **Set it
-up** open the same steps in a tab of their own, with a × to close it.
+**First start (once):** there is nothing to load in the window, and nothing to install in Brave. AI Home's browser
+card opens Brave's one step (its remote-debugging switch) in a tab of its own, with a × to close it. If an earlier AI
+Browser's extension is still in Brave, AI Home says you can remove it, until you click **Got it**.
 
 **AI Home** is the window's first tab.
-- **Start a task:** pick skills and a model if you like. In Brave you can also type `ai`, a space and the task in
-  the address bar: the watcher passes it on, and Brave says "Started 4 · Fix the footer".
+- **Start a task:** pick skills and a model if you like.
 - **Agents:**
   - Up to 3 work at once (`AIB_APP_MAX_AGENTS`); the rest wait in line.
   - Each row shows what the agent is doing now, its last action with timing, a small picture of its tab, and its
@@ -171,8 +172,8 @@ up** open the same steps in a tab of their own, with a × to close it.
   - The window's title counts the agents at work, whichever tab is shown: "(2) AI Home · AI Browser".
 - **Your browser:** a card at the top says where agents browse and whether your Brave is connected. When Brave's
   switch is off, it shows the steps; when Brave asks "Allow remote debugging?", it says so.
-- **Tabs:** the web tabs of the Brave profile the watcher is in (without the watcher, the profile you used last),
-  each marked with whose it is: an agent's, Claude Code's, the Brain's, or yours. Other profiles and private windows
+- **Tabs:** the web tabs of the Brave profile where agents browse (Settings → **Where agents browse**; until you
+  pick one, the profile you used last), each marked with whose it is: an agent's, Claude Code's, the Brain's, or yours. Other profiles and private windows
   are only counted, never listed.
   - A click brings a tab to the front.
   - **Hand over** gives one of your tabs to a new or running agent (it reads that tab and acts in it).
@@ -180,8 +181,9 @@ up** open the same steps in a tab of their own, with a × to close it.
 - **Skills:**
   - every one of Claude's skills (personal, plugins, claude.ai, ai-browser), and which ones each agent loaded;
   - add one to a new task, or ask a running agent to use it.
-- **Settings** (a tab, and a button beside **Mission Control**): which browser draws the window, and your AI
-  accounts. The model you pick and Voice are remembered by AI Browser itself, in every tab and across restarts.
+- **Settings** (a tab, and a button beside **Mission Control**): which browser draws the window, your AI
+  accounts, **Where agents browse** (your Brave profiles, by name and colour) and the **Brain** (reading your
+  Gmail, Slack and Asana tabs). The model you pick and Voice are remembered by AI Browser itself, in every tab and across restarts.
 
 **Tabs and links:** AI Home, Mission Control and Settings are tabs in a row under the title bar, and the window's
 title follows the one shown ("Mission Control · AI Browser"). A tab loads the first time you pick it, and then stays
@@ -189,14 +191,14 @@ as you left it while you look at another: a half-typed message, the scroll and M
 there when you come back. The setup steps and an agent's live view (**Show me** on a bot check in QA's sandbox) open
 as tabs at the end of the row, each with a × to close it; a second **Show me** for the same agent goes to its open
 tab. Nothing opens a window: a link between AI Browser's pages switches tabs, and a link to a website opens in your
-Brave, never in AI Browser's window. Each agent's tabs sit in a coloured tab group in your Brave, named after its
-task. The Brain's watcher makes the groups. Without the watcher, each tab the AI opens gets a window of its own.
+Brave, never in AI Browser's window. The AI's tabs open in windows of their own in your Brave, never among your
+windows, and AI Home and Mission Control say which agent owns each one.
 
 How it works:
 - **Claude:** each agent is Claude Code on this computer (`claude -p`), signed in with one of your Claude accounts
   (AI accounts, below), with no API keys. Its only tools are ai-browser's. Shell commands and skill scripts run in the
   Docker sandbox.
-- **Background agents:** tasks from AI Home, Mission Control or Brave's address bar work in background tabs. They
+- **Background agents:** tasks from AI Home or Mission Control work in background tabs. They
   never take your focus, and they stay at full speed. **Watch** brings one to the front.
 - **Stop and Close:** **Stop** interrupts an agent and keeps its tabs. **Close** ends it and closes the tabs it
   opened; your own tabs stay open.
@@ -241,7 +243,7 @@ apart.
     can't come along, it starts fresh there with a hand-over note: the task, its last steps and its tabs;
   - **Wait for the reset** leaves it paused.
 
-  Nothing moves without your click. The watcher, the Brain and voice never move an agent. When the Brain hits its
+  Nothing moves without your click. The Brain and voice never move an agent. When the Brain hits its
   limit, a card in AI Home's Brain area asks the same.
 - **Per account:** the login, Claude Code's settings, MCP servers and connectors (AI Home → Tools shows one account's
   at a time), and conversations. **Shared:** AI Browser's skills, workflows, the browser and the Brain's inbox.
@@ -286,59 +288,61 @@ it, then the app.
 Brave, and no page opens a window. Pages may use the microphone, and write to the clipboard on a Copy button; nothing
 else. It has no debugging port and no DevTools, and it refuses to start with a debugging switch.
 
-## The Brain (watches your messages, tells you what needs you)
+## The Brain (reads your messages, tells you what needs you)
 
-The Brain runs inside `ai-browser app`. It reads Gmail, Slack, Asana and sites you add in **Brave**, your everyday
-browser, through a small extension called the watcher. It shows you only new messages and the ones that need your
-reply, never your whole inbox. Everything else is only counted ("14 others, nothing needs you").
+The Brain runs inside `ai-browser app`. It reads Gmail, Slack and Asana, and parts of pages you pick, in your open
+tabs in **Brave**, your everyday browser. Nothing is installed in Brave. It shows you only new messages and the ones
+that need your reply, never your whole inbox. Everything else is only counted ("14 others, nothing needs you").
 
-**Setup in Brave (once).** At the first start, a Finder window shows the watcher folder (`~/.ai-browser/app/watcher`)
-and AI Browser opens the setup page:
-1. In Brave, open `brave://extensions` and turn on **Developer mode**.
-2. Drag the **watcher** folder onto that page.
-3. Click the watcher's icon (the orange dot) to open **the Brain**, and switch on the sites to watch.
+**Turn it on (once):** Settings → **Brain** → **Read my Gmail, Slack and Asana tabs**. It is off until you turn it
+on. While it is on, AI Browser reads those sites in your open tabs, in the profile where agents browse, through its
+one connection to Brave. Turning it off stops reading at once, and a read under way keeps nothing. AI Home's Brain
+section says when reading is off, or waiting for Brave.
 
-**The Brain page** (the watcher's icon) and AI Home's Brain section show:
+**Settings → Brain** shows:
+- **The sites:** Gmail, Slack and Asana, each with how reading goes ("no open tab", "reader needs an update").
+- **Parts of pages you watch:** each with **Turn off** and **Remove**. To add one, pick one of your open tabs and
+  click **Pick the part to watch**: that tab comes to the front in Brave, an outline follows your mouse, a click picks
+  the part (for example an orders table), and Escape cancels.
+
+**AI Home's Brain section** shows:
 - **The inbox:** each item has the site, who it's from, the Brain's one-line summary, why it matters and a suggested
   action.
   - A **needs your reply** item stays until you reply, or click **Done**.
   - A **new** item stays a day.
-- **The watch list:** Gmail, Slack, Asana, or **Add a site**. To add one, type its address, allow Brave to read that
-  one site, then click the part of the page to watch (for example an orders table).
-  - Each site has your **instructions** in plain words, for example "Always tell me about clients; skip newsletters
-    and receipts".
-  - Each site has an on/off switch.
-- **Pause watching**, and **How I write** (style notes for drafts).
+- **How I write** (style notes for drafts), and each site's **instructions** in plain words, for example "Always tell
+  me about clients; skip newsletters and receipts".
 
 **What you can do with an item:**
 - **Draft reply:**
-  1. The watcher opens the thread.
+  1. AI Browser reads the thread in your tab (or opens it in a background tab marked "Brain").
   2. The Brain drafts a reply in your style.
-  3. You edit it, then **Approve**.
-  4. The watcher puts the text in the reply box. **You press Send**: the Brain never sends anything.
+  3. You edit it, then click **Use draft**.
+  4. AI Browser puts the text in the reply box and brings that tab to the front. **You press Send**: the Brain never
+     sends anything.
 - **Hand to agent:** an AI Browser agent gets your instruction and the message.
 - **Tell the Brain:** your own words ("draft a polite no", "check the page", "give this to agent 2") become a draft, or
   a card that starts a NEW agent or sends your words to an open one. Press **Start** or **Send** on it (or type yes)
-  in AI Home or Mission Control; the watcher's Brain page shows the card only.
+  in AI Home or Mission Control.
 - **Done.**
 
-Notifications in Brave show the summary with **Draft reply** (or **Hand to agent**) and **Open**. Many items at once
-are one notification ("7 need you").
+AI Browser's own app shows a notification when new items need you ("The Brain has 7 new notes"), never their text.
 
 How it works:
-- **Sorting:** the watcher reports new items in the tabs you have open, and nothing while paused. The Brain sorts them
-  with Claude Code (Haiku), in calls that have **no tools at all**. Message text is passed as page data, never as your
-  words, and isn't kept in Claude Code's history.
+- **Reading:** the readers run in an isolated world of each tab: the page's own scripts can't see or change them, and
+  what they read comes back as plain text, which the Brain treats as page data, never as your words.
+- **Sorting:** the Brain sorts new items with Claude Code (Haiku), in calls that have **no tools at all**. Message
+  text isn't kept in Claude Code's history.
 - **Drafts:** written with Sonnet in the same tool-less way.
-- **Files:** the inbox and the watch list are kept in `~/.ai-browser/brain/` (only you can read them), so they survive
-  a restart.
+- **Files:** the inbox, the watch list and what the readers keep between reads are in `~/.ai-browser/brain/` (only
+  you can read them), so they survive a restart.
 - **Readers:** they find messages by each site's page structure, in any language. If a site changes its layout, the
-  watch list says "reader needs an update" instead of failing silently. A watched site without an open tab says
-  "no open tab", and a tab on another page of the site (Gmail's Settings, an Asana board) says "open the inbox".
+  site says "reader needs an update" instead of failing silently. A site without an open tab says "no open tab", and
+  a tab on another page of the site (Gmail's Settings, an Asana board) says "open the inbox".
   - Gmail is read in the inbox and its category tabs only: never Spam, Sent, labels or searches.
-  - An approved Gmail reply goes at the top of the reply box, above your signature. Slack gets it on one line, since
-    Enter sends there.
-- **When the app is off:** the watcher keeps what it read and sends it once the app is back.
+  - A Gmail reply goes at the top of the reply box, above your signature. Slack gets it on one line, since Enter
+    sends there.
+- **When the app is off:** nothing is read.
 
 ### Tools: your MCP servers for the agents (AI Home → Tools)
 
@@ -354,8 +358,7 @@ and **Always allow** list.
 **Asking first:**
 - The first time an agent wants a tool that isn't allowed always, it waits ("needs you").
 - AI Home's agent row, Mission Control and the chat beside its tab show the tool and its exact input, with **Allow
-  once**, **Always allow** and **Deny**. The watcher's Brain page in Brave shows them with **Allow once** and **Deny**
-  only, because Always allow is kept for AI Home's Tools. Brave also shows a notification (Review / Deny).
+  once**, **Always allow** and **Deny**. AI Browser's own app also shows a notification, in fixed words.
 - **Always allow** is remembered in `~/.ai-browser/tools.json`, for that account. **Forget** removes it.
 - **Stop** or **Close** denies a request that is still waiting.
 - Nothing a page or a message says can answer for you.
@@ -365,7 +368,7 @@ and **Always allow** list.
 A workflow is a name and instructions in your words, for example "Open the site in AI Browser, make the change the
 task asks for, then post what you did in #web-team". It has:
 - **a trigger:**
-  - **by hand:** **Run** in AI Home, or `ai <workflow name> …` in the address bar;
+  - **by hand:** **Run** in AI Home;
   - **a message:** a site from the Brain's watch list and when it applies ("an Asana task tagged website"). The
     matching inbox item offers **Run <name>**, or the workflow starts at once if you chose "Run right away";
   - **a schedule:** `daily 09:00`, `weekdays 09:00`, `mon,wed 17:00`, `every 2h` or `every 30m`. It runs while
@@ -433,7 +436,7 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
     like a heart, in amber, while something needs you, its signals gathering on the side of the agent that waits (the
     count shows under it); each word it speaks sends a ring of light across it;
   - without WebGL it is a dotted brain in the same colours, and on a slower computer it draws fewer points;
-  - click it for its inbox (Draft reply, Approve, Hand to agent…).
+  - click it for its inbox (Draft reply, Use draft, Hand to agent…).
 - **Talking back:** the Brain's updates show in a speech bubble, one at a time: a new message that needs your reply, a
   draft that is ready, an agent that is done, failed, or waits for a permission. More than three at once become one
   summary. Only names and the Brain's one-line summaries are used, never a message's text.
@@ -462,7 +465,7 @@ turn stops by itself at 30 seconds. The **Ask the Brain** box does the same, typ
   or "it"), or **draft a reply** to an inbox item. Nothing happens until you press **Start**, **Send** or **Draft
   it**, or say "yes"; a "yes" with no card open does nothing. A message to a busy agent waits until it finishes what
   it's doing now; one waiting at a bot check isn't sent, and its card's Continue stays yours. Voice never approves or
-  sends a draft, answers a permission card or a bot check, confirms a ⚠ action, marks items Done, pauses watching,
+  sends a draft, answers a permission card or a bot check, confirms a ⚠ action, marks items Done,
   changes a setting, or hands over or takes back a tab: those stay clicks. Words that sound like a password or a code
   are never sent: log in yourself, in the site's own tab.
 - **Setup, once:**
@@ -501,7 +504,7 @@ you are human", a "Press & Hold" check, an Akamai block page), the agent stops a
 - the tab comes to the front (in the sandbox, the agent gives you the live-view link);
 - nothing else runs until you've dealt with it: no reload, no retry, no other tab, browser, profile or tool;
 - in AI Browser the agent shows **needs you** on AI Home, in the chat panel and in Mission Control, with **Show me**,
-  **Continue** and **Skip this site**, and a Brave notification when the watcher is connected.
+  **Continue** and **Skip this site**, and a notification from AI Browser's own app.
 
 Solve it in the tab yourself, then click **Continue** (in Claude Code, tell the agent it's done). If you'd rather not,
 **Skip this site** (or tell the agent "skip it") closes that tab, and the site is off-limits for the rest of the task.
@@ -538,7 +541,8 @@ the sites you are signed in to.
 
 What happens in your Brave:
 - **Background tabs only:**
-  - each agent works in background tabs it opens itself, in a tab group named after its task, in its colour;
+  - each agent works in background tabs AI Browser opens for it, in windows of their own, in the profile where agents
+    browse;
   - nothing comes to the front unless you click **Watch**, or a site shows a bot check (handed to you, see
     "Bot checks");
   - a Claude Code session's tabs go in a group called "Claude Code" while `ai-browser app` runs, and in a window of
@@ -705,14 +709,15 @@ need macOS or Linux (the DevTools pipe) show as skipped, with that reason.
 
 **Browser detection** (`src/ai_browser/browsers.py`): finds which browsers are installed (Brave and Chrome with their
 other channels, and Chromium; Edge, Arc and Vivaldi are listed as not supported yet), whether each one runs with its
-remote-debugging switch on, its profiles by name and colour, and which profile holds the Brain's watcher. It only
+remote-debugging switch on, and its profiles by name and colour. It only
 reads files, and for each browser that runs, or whose lock can't tell, opens a TCP connection to 127.0.0.1 that sends
 nothing, so it never makes your browser ask "Allow remote debugging?". It never opens cookies, saved passwords or
-history; it reads only what it needs, and never keeps or shows your account's email. Nothing in the app uses it yet.
+history; it reads only what it needs, and never keeps or shows your account's email. Settings → Where agents browse
+lists its profiles.
 To see what it finds on your computer (it only reads, and opens no DevTools session):
 
 ```bash
-uv run python -c "import json; from ai_browser import browsers; from ai_browser.appbrowser import extension_id_for; from ai_browser.config import home; w = home() / 'app' / 'watcher'; print(json.dumps(browsers.public(browsers.detect({extension_id_for(w): w})), indent=1))"
+uv run python -c "import json; from ai_browser import browsers; print(json.dumps(browsers.public(browsers.detect()), indent=1))"
 ```
 
 Layout: `src/ai_browser/` (engine), `docker/` (sandbox image), `src/ai_browser/pages/` (local test pages), `tests/`.

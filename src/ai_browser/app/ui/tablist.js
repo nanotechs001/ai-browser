@@ -29,8 +29,8 @@ export function chipText(owner) {
 // The tab list's scope in brave mode (the server's tab_scope): which profile the rows come from, and how many of the
 // user's tabs it leaves out. Only a number reaches this page: never a title, an address or an id of those tabs.
 const SCOPE_SOURCE = {
-  last_used: "Showing the Brave profile you used last. With the watcher loaded, this list stays on the watcher's "
-    + "profile.",
+  last_used: "Showing the Brave profile you used last. Pick the one agents use in Settings → Where agents browse.",
+  not_open: "The profile agents use isn't open in Brave yet: open a window of it, and click in it once.",
   none: "Your tabs aren't listed: AI Browser can't tell which Brave profile is yours yet.",
 };
 

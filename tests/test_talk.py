@@ -734,7 +734,7 @@ async def test_voice_never_approves_or_fills_a_draft(stack):
     entry.state, entry.draft, entry.draft_version = "draft_ready", "Monday works.", 1
     brain.store.put(entry)
     sent, approved = [], []
-    brain.send_watcher = lambda message: sent.append(message) or True
+    brain.outbox = lambda message: sent.append(message) or True
 
     async def approve(*args, **kwargs):
         approved.append(args)
@@ -886,7 +886,7 @@ def test_the_readme_says_how_to_talk_and_the_zero_setup_way():
 def test_the_readme_says_the_brain_can_send_to_an_open_agent():
     text = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
     for words in ('"give this to agent 2"', "Press **Start** or **Send** on it (or type yes) in AI Home or Mission "
-                  "Control; the watcher's Brain page shows the card only", '"1 · Fix the footer"', "**Your tabs**",
+                  "Control.", '"1 · Fix the footer"', "**Your tabs**",
                   "**Give to this agent**", "**send your words to an agent that's already open**",
                   'a "yes" with no card open does nothing', "hands over or takes back a tab"):
         assert words in text, words
@@ -1021,7 +1021,7 @@ async def test_your_tabs_say_what_the_list_leaves_out(stack):
     not_listed = "Your tabs aren't listed: AI Browser can't tell which Brave profile is yours yet."
     assert await until(js, f"{text}.includes({json.dumps(not_listed)})")
     assert not await js(f"{text}.includes('None of your tabs are open')")
-    brave.set_scope("watcher", 3)  # the watcher's profile, with three of the user's tabs in other profiles
+    brave.set_scope("chosen", 3)  # the chosen profile, with three of the user's tabs in other profiles
     brave.changed()
     assert await until(js, f"{text}.includes('3 more tabs in other profiles or private windows: not shown here.')")
     assert await js(f"{text}.includes('None of your tabs are open in this profile.')")

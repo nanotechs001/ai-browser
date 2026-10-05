@@ -60,7 +60,7 @@ def brain_for(fake_claude, tmp_path, answers, **options):
     script.write_text(json.dumps(answers), encoding="utf-8")
     sent, shown = [], []
     brain = BrainService(BrainStore(tmp_path / "home"), claude=runner, batch_wait=0.1, **options)
-    brain.send_watcher = lambda message: sent.append(message) or True
+    brain.outbox = lambda message: sent.append(message) or True
     brain.broadcast = shown.append
     assert brain.set_watch({"site": "gmail", "enabled": True, "url_match": "https://mail.google.com/*"}) == ""
     return brain, sent, shown, log
@@ -122,17 +122,21 @@ async def test_a_failed_call_lists_items_as_new(fake_claude, tmp_path):
     assert item["kind"] == "new" and len(notes(sent)) == 1
 
 
-async def test_pause_stops_everything(fake_claude, tmp_path):
+async def test_reading_off_stops_everything(fake_claude, tmp_path):
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, [{"result": "[]"}])
-    brain.set_paused(True)
-    assert sent[-1]["type"] == "watch_list" and sent[-1]["paused"] is True
+    assert brain.reading == "on"  # a Brain on its own: the app tells it otherwise
+    await brain.on_items("gmail", [raw("t0")])
+    brain.set_reading("off")  # Settings → Brain's switch, while t0 waits to be sorted
+    assert shown[-1]["type"] == "brain_state" and shown[-1]["reading"] == "off"
     await brain.on_items("gmail", [raw("t1")])
     await brain.settle()
     assert oneshots(log) == [] and notes(sent) == [] and brain.snapshot()["items"] == []
-    brain.set_paused(False)
+    brain.set_reading("waiting")  # on again, while Brave isn't connected: what comes in is kept
     await brain.on_items("gmail", [raw("t1")])
     await brain.settle()
     assert len(oneshots(log)) == 1 and len(brain.snapshot()["items"]) == 1
+    brain.set_reading("sideways")  # not a state: nothing changes
+    assert brain.reading == "waiting"
 
 
 async def test_a_reply_or_done_clears_the_item(fake_claude, tmp_path):
@@ -178,7 +182,7 @@ async def test_instructions_reach_the_prompt_as_the_users_words(fake_claude, tmp
 
 async def test_items_for_sites_not_watched_are_ignored(fake_claude, tmp_path):
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, [{"result": "[]"}])
-    await brain.on_items("slack", [raw("t1")])
+    await brain.on_items("custom:nowhere.example", [raw("t1")])  # not watched
     await brain.on_items("gmail", "not a list")
     await brain.on_items("gmail", [{"no": "id"}, "text"])
     await brain.settle()
@@ -197,9 +201,9 @@ def test_watch_entries_are_checked(fake_claude, tmp_path):
     assert entry.label == "shop.example" and entry.selector == "#orders tbody" and entry.enabled
     assert brain.set_watch({"site": "gmail", "label": "Evil", "selector": "body"}) == ""
     assert brain.store.entry("gmail").label == "Gmail" and brain.store.entry("gmail").selector == ""
-    message = brain.watch_message()
-    assert [site["site"] for site in message["sites"]] == ["gmail", "custom:shop.example"]
-    assert message["reader_timeout"] == 120 and message["paused"] is False
+    listed = brain.snapshot()["watch_list"]
+    assert [entry["site"] for entry in listed if entry["enabled"]] == ["gmail", "slack", "asana", "custom:shop.example"]
+    assert brain.reader_timeout == 120
 
 
 async def sorted_items(brain, *ids):
@@ -208,7 +212,7 @@ async def sorted_items(brain, *ids):
 
 
 async def answer_thread(brain, sent, nth=1, text="Maria: can we move the launch to Monday?"):
-    """Wait for the nth open_thread request and answer it as the watcher would."""
+    """Wait for the nth open_thread request and answer it as the thread's tab would."""
     for _ in range(250):
         requests = [message for message in sent if message["type"] == "open_thread"]
         if len(requests) >= nth:
@@ -276,13 +280,18 @@ async def test_a_fill_shows_the_readers_word_on_it(fake_claude, tmp_path):
     assert item.state == "filled" and "it's on one line" in item.note and "press Send" in item.note
 
 
-async def test_without_the_watcher_a_draft_says_so(fake_claude, tmp_path):
+async def test_a_draft_nothing_can_open_says_why(fake_claude, tmp_path):
+    from ai_browser.brain.service import CLOSED
+
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, dict_script(NEEDS))
     await sorted_items(brain)
-    brain.send_watcher = lambda message: False
+    brain.outbox = lambda message: False
     await brain.draft("gmail:t1")
     item = brain.store.get("gmail:t1")
-    assert item.state == "open" and "isn't connected" in item.note
+    assert item.state == "open" and item.note == CLOSED
+    brain.closed_note = lambda: "Reading your tabs is off"  # the app says why
+    await brain.draft("gmail:t1")
+    assert brain.store.get("gmail:t1").note == "Reading your tabs is off"
 
 
 async def test_hand_to_agent_quotes_the_message_as_page_data(fake_claude, tmp_path):
@@ -410,21 +419,6 @@ async def test_tell_yes_runs_the_items_card_and_a_yes_with_no_card_does_nothing(
     assert len([call for call in oneshots(log) if call["oneshot"].startswith(TELL_CALL)]) == 1  # no Claude call
 
 
-async def test_tell_from_the_watcher_never_confirms(fake_claude, tmp_path):
-    from ai_browser.brain.talk import WATCHER_CARD
-
-    agents = FakeAgents([FOOTER_ROW])
-    brain, sent, shown, log = brain_for(fake_claude, tmp_path,
-                                        dict_script(NEEDS, tell={"action": "send", "agent": "a1"}), agents=agents)
-    await sorted_items(brain)
-    await brain.tell("gmail:t1", "give this to the footer agent")
-    card = brain.tells.peek("gmail:t1")
-    for words in ("yes", "Yes, please.", "no"):
-        await brain.tell("gmail:t1", words, proposal=card.id, task="something else", from_watcher=True)
-        assert brain.store.get("gmail:t1").note == WATCHER_CARD and brain.tells.peek("gmail:t1") is card, words
-    assert agents.created == [] and agents.sent == []
-
-
 async def test_tell_never_sends_words_that_sound_like_a_secret(fake_claude, tmp_path):
     from ai_browser.brain.talk import SECRET_ANSWER
 
@@ -450,7 +444,7 @@ async def test_inbox_cards_show_on_the_item_and_are_never_saved(fake_claude, tmp
     assert brain.snapshot()["items"][0]["card"]["id"] == broadcast["card"]["id"]
     saved = json.loads((tmp_path / "home" / "brain" / "inbox.json").read_text(encoding="utf-8"))
     assert all("card" not in entry for entry in saved["items"])  # (guard) the store saves item.public()
-    assert all("card" not in item for note in notes(sent) for item in note["items"])  # nor the watcher's notify
+    assert all("card" not in item for note in notes(sent) for item in note["items"])  # nor a notification
     brain.dismiss_tell("gmail:t1", broadcast["card"]["id"])
     assert brain.snapshot()["items"][0]["card"] is None
     assert [message["item"] for message in shown if message["type"] == "brain_item"][-1]["card"] is None
@@ -523,7 +517,7 @@ async def test_a_late_fill_still_counts(fake_claude, tmp_path, monkeypatch):
     [fill] = [message for message in sent if message["type"] == "fill_reply"]
     await asyncio.sleep(0.4)
     assert brain.store.get("gmail:t1").state == "draft_ready"  # no answer in time
-    brain.on_filled(fill["request"], True)  # the watcher was slow, not wrong
+    brain.on_filled(fill["request"], True)  # the tab was slow, not wrong
     assert brain.store.get("gmail:t1").state == "filled"
 
 

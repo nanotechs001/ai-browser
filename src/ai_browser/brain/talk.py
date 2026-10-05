@@ -58,7 +58,6 @@ TELL_START = "I can start a NEW agent with your words and this message. Press St
 TELL_SEND = "I can send your words and this message to {label}. Press Send, or type yes."
 TELL_WHICH = "Which agent: {choices}? Type its number in Tell the Brain."
 TELL_NO_AGENT = "No agent is open to send it to. " + TELL_START
-WATCHER_CARD = "Press Start or Send on this card in AI Browser: the watcher can't."
 DEFAULT_SAY = {"none": "I don't have an answer for that.", "message_agent": "I can pass that on.",
                "start_agent": "I can start an agent on that.", "draft_reply": "I can draft that reply.",
                "open": "Here it is."}

@@ -1,7 +1,7 @@
-// A stand-in for Gmail's inbox and thread pages, built with the same classes and attributes the watcher's reader
+// A stand-in for Gmail's inbox and thread pages, built with the same classes and attributes the Brain's reader
 // looks for: rows tr.zA (unread .zE), senders .yW [email], subject .bog, snippet .y2, time .xW span[title], thread
 // ids, the open thread's .gD senders and .a3s messages, the Reply button .ams.bkH, the reply box and the Send button
-// .aoO (whose clicks are counted: the watcher must never press it), the main region (role="main") and, in a reply box
+// .aoO (whose clicks are counted: the reader must never press it), the main region (role="main") and, in a reply box
 // Reply opens, the user's signature (.gmail_signature). The words come from window.SAMPLE; ?broken shows a layout no
 // reader knows.
 "use strict";

@@ -3,8 +3,8 @@
 One reader and one writer touch the file: read_settings and write_setting (wave C's places.py uses them too). A
 missing, unreadable, broken or half-written file reads as {} and never raises, so the app always starts. A write is
 atomic, mode 0600, and keeps every key it doesn't set, so a file written by a newer build survives an older one.
-Settings(home) is the typed view on top: the window's browser, the model, Voice and the app's shortcut, each value
-checked."""
+Settings(home) is the typed view on top: the window's browser, the model, Voice, the app's shortcut, reading the
+user's tabs, where agents browse and the old extension's note, each value checked."""
 
 from __future__ import annotations
 
@@ -12,13 +12,15 @@ import json
 from pathlib import Path
 
 from .app.window import NAMES, offered
+from .browsers import plain_folder
 from .desktop.shortcut import DEFAULT as DEFAULT_SHORTCUT
 from .desktop.shortcut import SHORTCUT_ERROR, SHORTCUTS
 from .syncdir import write_atomic
 
 FILE = "settings.json"
 MODELS = ("opus", "sonnet", "haiku")
-DEFAULTS = {"window_browser": "auto", "model": None, "voice": False, "shortcut": DEFAULT_SHORTCUT}
+DEFAULTS = {"window_browser": "auto", "model": None, "voice": False, "shortcut": DEFAULT_SHORTCUT,
+            "read_tabs": False, "agents_profile": None, "watcher_note": True}
 
 
 def _path(home) -> Path:
@@ -68,6 +70,12 @@ class Settings:
         elif key == "shortcut":
             if value is not None and value not in SHORTCUTS:
                 raise ValueError(SHORTCUT_ERROR)
+        elif key in ("read_tabs", "watcher_note"):  # Settings → Brain's switch; AI Home's note about the old extension
+            if not isinstance(value, bool):
+                raise ValueError("That setting is on or off")
+        elif key == "agents_profile":  # Settings → Where agents browse: a profile's folder, or the one used last
+            if value is not None and not plain_folder(value):
+                raise ValueError("Pick one of the profiles listed")
         else:
             raise ValueError(f"There is no setting {key!r}")
 

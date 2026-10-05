@@ -156,7 +156,7 @@ async def test_a_message_workflow_is_offered_or_runs_right_away(fake_claude, tmp
     brain = BrainService(BrainStore(tmp_path / "home"), agents, claude=runner_bin, batch_wait=0.1)
     brain.workflows, brain.runner = workflows, WorkflowRunner(workflows, agents)
     sent = []
-    brain.send_watcher = lambda message: sent.append(message) or True
+    brain.outbox = lambda message: sent.append(message) or True
     brain.set_watch({"site": "asana", "enabled": True, "url_match": "https://app.asana.com/*"})
 
     def raw(raw_id):
@@ -181,6 +181,43 @@ async def test_a_message_workflow_is_offered_or_runs_right_away(fake_claude, tmp
     item = brain.store.get("asana:3")
     assert len(agents.created) == 2 and item.state == "agent" and item.note == "Started Site fix"
     assert [message for message in sent if message["type"] == "notify"][-1]["items"][0]["note"] == "Started Site fix"
+
+
+async def test_reading_turned_off_during_a_sort_keeps_nothing_of_that_batch(fake_claude, tmp_path):  # Review Focus 2
+    """Settings → Brain's switch goes off while Claude sorts a batch: the batch is dropped when the answer comes, so
+    nothing is listed, nothing is notified, and a workflow set to run right away doesn't start."""
+    from ai_browser.brain.oneshot import OneShot
+    from ai_browser.brain.service import BrainService
+    from ai_browser.brain.store import BrainStore
+    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
+
+    runner_bin, _, _ = fake_claude
+    workflows = WorkflowStore(tmp_path / "home")
+    workflows.save({"name": "Site fix", "instructions": "Fix what the task asks on the website", "trigger": "message",
+                    "site": "asana", "when": "a task tagged website", "run": "auto"})
+    agents = FakeAgents()
+    brain = BrainService(BrainStore(tmp_path / "home"), agents, claude=runner_bin, batch_wait=0.05)
+    brain.workflows, brain.runner = workflows, WorkflowRunner(workflows, agents)
+    sent = []
+    brain.outbox = lambda message: sent.append(message) or True
+    brain.set_watch({"site": "asana", "enabled": True, "url_match": "https://app.asana.com/*"})
+    asked, answer = asyncio.Event(), asyncio.Event()
+
+    async def slow_ask(prompt, **options):  # Claude, sorting while the user turns the switch off
+        asked.set()
+        await answer.wait()
+        return OneShot(text=json.dumps([{"id": "asana:1", "kind": "needs_reply", "summary": "A website task",
+                                         "why": "", "suggest": "agent", "workflow": "site-fix"}]))
+
+    brain.ask = slow_ask
+    await brain.on_items("asana", [{"id": "1", "from": "Ana", "subject": "Task 1", "snippet": "Please fix the footer",
+                                    "url": "https://app.asana.com/1/1/task/1"}])
+    await asyncio.wait_for(asked.wait(), 5)
+    brain.set_reading("off")
+    answer.set()
+    await brain.settle()
+    assert brain.snapshot()["items"] == [] and sent == [] and agents.created == []
+    assert brain.store.get("asana:1") is None
 
 
 async def test_run_by_hand_over_the_socket(fake_claude, tmp_path):

@@ -6,10 +6,8 @@ import json
 import os
 import time
 
-from websockets.asyncio.client import connect
-
 from fake_accounts import sign_in
-from test_app_server import WATCHER, quiet, socket_url, until
+from test_app_server import quiet, until
 from test_oneshot import oneshots
 from ui_socket import ui_socket
 
@@ -79,13 +77,10 @@ async def test_the_server_shows_the_brains_card_and_its_click_retries(fake_claud
     brain = BrainAccount(accounts)
     server = AppServer(home, AgentManager(home, claude=runner), accounts=accounts, brain_account=brain)
     url = await server.start()
-    server.allow_watcher(WATCHER)
     try:
-        async with ui_socket(server, url) as page, connect(socket_url(server, url), origin=WATCHER) as watcher:
+        async with ui_socket(server, url) as page:
             await page.send(json.dumps({"type": "hello", "view": "home"}))
-            await watcher.send(json.dumps({"type": "hello", "view": "brain"}))
             assert (await until(page, lambda m: m["type"] == "snapshot"))[-1]["brain_limit"] is None
-            await until(watcher, lambda m: m["type"] == "snapshot")
             call = asyncio.ensure_future(brain("Sort these", claude=runner, cwd=tmp_path / "calls", timeout=20))
             card = (await until(page, lambda m: m["type"] == "brain_limit"))[-1]
             assert card == {"type": "brain_limit", "limit": {"account": "default", "resets_at": None}}
@@ -94,8 +89,6 @@ async def test_the_server_shows_the_brains_card_and_its_click_retries(fake_claud
             gone = await until(page, lambda m: m["type"] == "brain_limit" and m["limit"] is None)
             later = [*gone, *await quiet(page, 0.5)]
             assert any(m["type"] == "accounts" and m["accounts"][1]["brain"] for m in later)
-            seen = await quiet(watcher, 0.5)
-        assert not any(m["type"] in ("brain_limit", "accounts") for m in seen)  # the watcher gets neither
         assert server.brain_limit is None and accounts.brain_id() == work.id
     finally:
         await server.stop()

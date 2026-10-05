@@ -1,5 +1,5 @@
 """AI Home's phase-2 sections against a real app server (agents on the fake claude): the permission card (also in the
-chat panel and on the watcher's Brain page, with a Brave notification), Tools, Workflows, and Train a new agent."""
+chat panel and Mission Control), Tools, Workflows, and Train a new agent."""
 
 import asyncio
 import json
@@ -11,7 +11,6 @@ from test_bridge import EVENTS
 from test_home import HOSTILE, evaluate, home, open_page, post_tab, stack, until  # noqa: F401  (fixtures)
 from test_panel import panel  # noqa: F401  (fixture)
 from test_tools import answers, asking, user_config
-from test_watcher import watcher  # noqa: F401  (fixture)
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 DRAFT = f"""---
@@ -145,25 +144,3 @@ async def test_train_a_new_agent_saves_a_skill_after_review(home, monkeypatch):
                            ".some(node => node.textContent === 'elementor-landing')")
 
 
-@CHROME
-async def test_the_watcher_shows_a_permission_request(watcher, tmp_path):
-    from ai_browser.brain.tools import ToolsConfig
-
-    tools = ToolsConfig(watcher.home, claude_home=user_config(tmp_path))
-    tools.set_enabled("clickup", True)
-    watcher.server.agents.tools = tools
-    watcher.script.write_text(json.dumps(asking()), encoding="utf-8")
-    _, js = await open_page(watcher.cdp, f"chrome-extension://{watcher.app.extension_id}/brain.html")
-    await watcher.server.agents.create("make a ClickUp task")
-    assert await until(watcher.worker_js, "chrome.notifications.getAll().then(all => Object.keys(all).length === 1)")
-    card = "document.querySelector('#permissions .permission')"
-    assert await until(js, f"{card} !== null")
-    assert "create_task" in await js(f"{card}.textContent")
-    assert await js(f"['.allow-once', '.deny', '.allow-always'].map((s) => {card}.querySelector(s) !== null)") == \
-        [True, True, False]  # no lasting allow from Brave
-    assert "Always allow is in AI Home's Tools." in await js(f"{card}.textContent")
-    full = ("import('./permission.js').then(({permissionCard}) => permissionCard({request: 'r9', agent: 'a9', "
-            "server: 'x', tool: 'mcp__x__y', input: {}}, () => true).querySelector('.allow-always') !== null)")
-    assert await js(full) is True  # AI Home's card, with no options, keeps all three buttons
-    await js(f"{card}.querySelector('.deny').click(); true")
-    assert [answer["behavior"] for answer in await answered(watcher.log)] == ["deny"]

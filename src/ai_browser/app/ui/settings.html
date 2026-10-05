@@ -62,6 +62,29 @@
     </div>
     <p id="accounts-error" class="muted" role="status"></p>
   </section>
+  <section id="place-section" class="card" aria-labelledby="place-title">
+    <h2 id="place-title">Where agents browse</h2>
+    <p class="muted">The Brave profile agents work in. AI Home lists its tabs, and only counts the tabs of your other
+      profiles.</p>
+    <div id="place-choices" class="choices" role="radiogroup" aria-labelledby="place-title"></div>
+    <p id="place-state" class="muted" role="status"></p>
+  </section>
+  <section id="brain-section" class="card" aria-labelledby="brain-title">
+    <h2 id="brain-title">Brain</h2>
+    <label class="check"><input id="read-tabs" type="checkbox"> Read my Gmail, Slack and Asana tabs</label>
+    <p class="muted">While this is on, AI Browser reads these sites in your open tabs in Brave, in the profile where
+      agents browse, and the parts of pages you picked to watch. What a page says is treated as data, never as
+      instructions. AI Browser never sends anything: a reply goes into the reply box only when you click Use draft.</p>
+    <p id="reading-state" class="muted" role="status"></p>
+    <div id="brain-sites" class="brain-sites"></div>
+    <h3>Parts of pages you watch</h3>
+    <div id="brain-watched" class="brain-sites"></div>
+    <div class="row brain-pick">
+      <select id="pick-tab" aria-label="One of your open tabs in Brave"></select>
+      <button id="pick-start" type="button">Pick the part to watch</button>
+    </div>
+    <p id="pick-note" class="muted" role="status"></p>
+  </section>
 </main>
 <script type="module" src="settings.js"></script>
 </body>

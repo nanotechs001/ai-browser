@@ -1,9 +1,10 @@
-// The reader for a site the user added: the part of the page they picked (a CSS selector). Each child of that part
-// is an item, known by its own data id or else by its text without times ("5 min ago" changes on its own); the rows
-// already there when watching starts are only remembered, not reported.
+// The reader for a part of a page the user picked to watch (a CSS selector). Each child of that part is an item, known
+// by its own data id or else by its text without times ("5 min ago" changes on its own); the rows already there when
+// watching starts are only remembered, not reported (the engine's baseline).
 "use strict";
 (() => {
-  const { start, text, hash, stableText } = globalThis.AIB_WATCH;
+  if (globalThis.AIB.readers.region) return;
+  const { text, hash, stableText } = globalThis.AIB;
 
   function idOf(row) {
     const own = row.dataset.id || row.dataset.key || row.dataset.itemId || row.dataset.rowKey;
@@ -22,8 +23,7 @@
     }
   }
 
-  start({
-    kind: "region",
+  globalThis.AIB.readers.region = {
     elsewhere: "open the page you picked to read it",
     check(config) { // the picked part missing from the picked page is an alarm; another page of the site isn't
       if (region(config)) return true;
@@ -39,5 +39,5 @@
     },
     thread: (config) => text(region(config)),
     fill: () => ({ ok: false, reason: "no reply box here: copy the draft" }),
-  });
+  };
 })();
