@@ -344,6 +344,8 @@ class BrainService:
                                         cwd=self.store.folder / "calls")
         except Exception as exc:  # the items are listed as new below
             answer = OneShot(error=f"{type(exc).__name__}: {exc}")
+        if self.reading == "off":
+            return  # reading turned off while Claude sorted: nothing of this batch is kept, notified or started
         verdicts = {} if answer.error else _verdicts(answer.text, {item.id for item in batch},
                                                      frozenset(workflow.slug for workflow in workflows))
         kept, skipped = [], 0
