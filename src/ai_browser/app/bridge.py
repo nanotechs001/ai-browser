@@ -136,6 +136,8 @@ class ClaudeBridge:
         self._parents: dict[str, str] = {}  # a sub-agent's tool use id -> its sub-agent tool's id
         self._subagents: dict[str, str] = {}  # the sub-agent tool's id -> its task, as cards and the drawer name it
         self._quiet: set[str] = set()  # TodoWrite's tool use ids: the list is their view, never an action line
+        self._session_rules: set[str] = set()  # Always allow in the scratch folder: this agent's only (plan dec. 10)
+        self._moved = False  # an allowed command may have moved the shell: nothing is harmless (plan decision 8)
         self.loaded_skills: set[str] = set()  # skills Claude loaded in this conversation
         self.model = model  # a change applies from the next message, in the same process (set_model)
         self.claude = claude  # resolved when a process starts (claude_argv): a list too, such as the tests' fake
@@ -264,32 +266,87 @@ class ClaudeBridge:
         log.info("bridge: Claude Code sent %s (keys: %s%s)", kind, _keys(event), inner)
 
     async def _permission(self, event: dict) -> None:
-        """A tool that isn't allowed yet: the user answers (Allow once, Always allow, Deny). A server the user didn't
-        switch on is refused without asking; nothing in a page or a message can answer."""
+        """A tool that isn't allowed yet.
+        - One of Claude Code's own (agent powers): powers.classify decides, a rule the user saved for this folder may
+          answer, else the user's card does: Allow once, Always allow for this folder, or Deny with a note.
+        - One of the user's MCP tools: the user's card, as before. A server the user didn't switch on is refused
+          without asking.
+        Nothing in a page or a message can answer, and after Stop nothing is asked."""
         request = event.get("request") or {}
         tool = str(request.get("tool_name", ""))
         data = request.get("input") if isinstance(request.get("input"), dict) else {}
-        server = server_of(tool)
-        answer, reason = "deny", SWITCHED_OFF
-        if server == "ai-browser" or server in self._allowed_servers():
+        request_id = str(event.get("request_id", ""))
+        if tool in powers.TOOLS or tool in powers.SUBAGENTS:
+            answer, note = await self._power(request_id, request, tool, data)
             reason = DENIED
-            if self.on_permission is not None and not self._stopping:
-                self._asking = asyncio.ensure_future(self.on_permission(
-                    {"request": str(event.get("request_id", "")), "tool": tool, "server": server, "input": data}))
-                try:
-                    answer = await self._asking
-                except asyncio.CancelledError:
-                    if asyncio.current_task().cancelling():
-                        raise
-                    answer = "deny"  # Stop while it waited
-                finally:
-                    self._asking = None
+        else:
+            server = server_of(tool)
+            answer, note, reason = "deny", "", SWITCHED_OFF
+            if server == "ai-browser" or server in self._allowed_servers():
+                reason = DENIED
+                answer, note = await self._ask_user({"request": request_id, "tool": tool, "server": server,
+                                                     "input": data})
+        message = f"{reason}: {note}" if note and answer == "deny" else reason
         body = {"behavior": "allow", "updatedInput": data} if answer in ("once", "always") else \
-            {"behavior": "deny", "message": reason}
+            {"behavior": "deny", "message": message}
         reply = {"type": "control_response",
                  "response": {"subtype": "success", "request_id": event.get("request_id"), "response": body}}
         self._process.stdin.write((json.dumps(reply) + "\n").encode())
         await self._process.stdin.drain()
+
+    async def _ask_user(self, request: dict) -> tuple[str, str]:
+        """The user's answer to one card: ("once" | "always" | "deny", a note for the agent). After Stop nothing is
+        asked, and a card still waiting when Stop comes is a no (Review Focus 3)."""
+        if self.on_permission is None or self._stopping:
+            return "deny", ""
+        self._asking = asyncio.ensure_future(self.on_permission(request))
+        try:
+            answer = await self._asking
+        except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                raise
+            return "deny", ""  # Stop while it waited
+        finally:
+            self._asking = None
+        answer, note = answer if isinstance(answer, tuple) else (answer, "")
+        return (answer if answer in ("once", "always") else "deny"), str(note or "")
+
+    async def _power(self, request_id: str, request: dict, tool: str, data: dict) -> tuple[str, str]:
+        """One of Claude Code's own tools (Decisions 2 to 5): allowed without asking, by a rule the user saved for this
+        folder (only the whole request matches one: plan decision 1), or by the user's card. Always allow saves the
+        rule only where the card offered it (Decision 4)."""
+        decision = powers.classify(tool, data, self.work, moved=self._moved)
+        rule = powers.rule_for(tool, data) if decision == "ask" else None
+        if decision == "allow" or (rule is not None and rule in self._rules()):
+            answer, note = "once", ""
+        else:
+            shown = {**powers.card(tool, data, self.work, moved=self._moved, sandbox=powers.sandbox_on()),
+                     "scratch": not self.chosen}
+            parent = self._parents.get(str(request.get("tool_use_id", "")))
+            sub = self._subagents.get(parent, "") if parent else ""
+            answer, note = await self._ask_user({"request": request_id, "tool": tool, "server": "", "input": data,
+                                                 "card": shown, "sub": sub})
+            if answer == "always" and shown["always"] and rule is not None:
+                self._remember(rule)
+        if answer != "deny" and tool == "Bash" and powers.moves_folder(data.get("command")):
+            self._moved = True  # the shell may be elsewhere now: nothing is harmless until Claude Code starts again
+        return answer, note
+
+    def _rules(self) -> set[str]:
+        """The rules that answer for the user here: the folder's saved ones, and this agent's own."""
+        saved = set(self.rules.allowed(self.work)) if self.rules is not None and self.chosen else set()
+        return saved | self._session_rules
+
+    def _remember(self, rule: str) -> None:
+        """Always allow for this folder: saved for a folder the user chose; in the scratch folder, or when it can't be
+        saved, kept for this agent only (plan decision 10)."""
+        if self.rules is not None and self.chosen:
+            try:
+                self.rules.add(self.work, rule)
+                return
+            except (ValueError, OSError):
+                log.warning("bridge: a rule couldn't be saved; it lasts for this agent only")
+        self._session_rules.add(rule)
 
     def _allowed_servers(self) -> set[str]:
         if self.tools is None:
@@ -462,7 +519,7 @@ class ClaudeBridge:
         if not self.chosen:
             self.work.mkdir(parents=True, exist_ok=True)  # the agent's own scratch folder (Decision 6)
         env = clean_env(self.environment)  # the agent's account (AI accounts); never API credentials
-        self._stderr = []
+        self._stderr, self._moved = [], False  # a new process starts in the task's folder
         self._process = await asyncio.create_subprocess_exec(
             *self._command(), cwd=self.work, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=STDOUT_LIMIT, **spawn_options())

@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from conftest import file_mode
+from conftest import file_mode, symlink_or_skip
 from test_app_server import told
 from test_bridge import EVENTS
-from test_tools import commands
+from test_tools import answers, commands
 
 INIT, RESULT = EVENTS[0], EVENTS[-1]
 PLAN = {"todos": [{"content": "Read the code", "status": "completed", "activeForm": "Reading the code"},
@@ -234,3 +234,149 @@ async def test_sub_agents_start_work_and_end_in_the_stream(fake_claude, tmp_path
     assert not any(event["type"] == "todos" for event in events)  # a sub-agent's own list isn't the agent's
     assert [event["type"] for event in events].count("message_end") == 1  # the agent's own message only
     assert bridge._parents == {"u2": "u1", "t2": "u1"} and bridge._subagents == {"u1": "Research"}
+
+
+@pytest.fixture
+def repo(project):
+    """The project as a Git folder whose settings run nothing: git status is harmless there."""
+    (project / ".git").mkdir()
+    (project / ".git" / "config").write_text("[core]\n\tbare = false\n", encoding="utf-8")
+    return project
+
+
+def behaviors(log):
+    return [answer["behavior"] for answer in answers(log)]
+
+
+async def run(bridge, text="go"):
+    events = [event async for event in bridge.send(text)]
+    await bridge.close()
+    return events
+
+
+async def test_reads_inside_the_list_a_sub_agent_and_harmless_commands_never_show_a_card(  # Decision 3
+        fake_claude, tmp_path, repo):
+    from ai_browser.app.powers import SUBAGENT_TOOL
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Read", {"file_path": str(repo / "src" / "app.py")}),
+                                  ask("TodoWrite", PLAN),
+                                  ask(SUBAGENT_TOOL, {"description": "Research", "prompt": "Find it"}),
+                                  ask("Bash", {"command": "git status"}), ask("Bash", {"command": "ls src"}), RESULT]),
+                      encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, work=repo)
+    await run(bridge, "look")
+    assert shown == [] and behaviors(log) == ["allow"] * 5
+
+
+async def test_a_command_shows_a_card_and_always_saves_a_rule_for_the_folder(  # Decisions 2 and 5, Review Focus 1
+        fake_claude, tmp_path, project):
+    from ai_browser.app.powers import Rules
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "npm test"}),
+                                  ask("Bash", {"command": "npm test --watch"}),
+                                  ask("Bash", {"command": "npm test; rm -rf src"}), RESULT]), encoding="utf-8")
+    rules = Rules(tmp_path / "home")
+    bridge, shown = bridge_for(tmp_path, runner, ["always", "deny"], work=project, rules=rules)
+    await run(bridge, "test it")
+    assert [request["card"]["text"] for request in shown] == ["npm test", "npm test; rm -rf src"]  # --watch: a rule
+    first, last = shown
+    assert (first["tool"], first["server"], first["sub"], first["input"]) == ("Bash", "", "", {"command": "npm test"})
+    assert first["card"]["always"] is True and first["card"]["folder"] == str(project)
+    assert first["card"]["scratch"] is False
+    assert last["card"]["always"] is False  # a rule never covers a second command
+    assert rules.allowed(project) == ["Bash(npm test:*)"]
+    assert behaviors(log) == ["allow", "allow", "deny"]
+
+
+async def test_always_in_the_scratch_folder_lasts_for_this_agent_only(fake_claude, tmp_path):  # plan decision 10
+    from ai_browser.app.powers import Rules
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "make build"}), ask("Bash", {"command": "make build"}),
+                                  RESULT]), encoding="utf-8")
+    rules = Rules(tmp_path / "home")
+    bridge, shown = bridge_for(tmp_path, runner, ["always"], rules=rules)
+    await run(bridge)
+    assert len(shown) == 1 and shown[0]["card"]["scratch"] is True and behaviors(log) == ["allow", "allow"]
+    assert not (tmp_path / "home" / "permissions.json").exists()  # never saved: numbers start at 1 again
+    again, asked_again = bridge_for(tmp_path, runner, ["once", "once"], agent_id="a2", rules=rules)
+    await run(again)
+    assert len(asked_again) == 2  # another agent asks again
+
+
+async def test_a_dangerous_command_never_offers_always_and_a_forged_always_saves_nothing(  # Decision 4
+        fake_claude, tmp_path, project):
+    from ai_browser.app.powers import Rules
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "sudo ls"}), ask("Bash", {"command": "sudo ls"}),
+                                  RESULT]), encoding="utf-8")
+    rules = Rules(tmp_path / "home")
+    bridge, shown = bridge_for(tmp_path, runner, ["always", "deny"], work=project, rules=rules)
+    await run(bridge)
+    assert [request["card"]["always"] for request in shown] == [False, False]
+    assert rules.allowed(project) == [] and behaviors(log) == ["allow", "deny"]  # "always" counted as once
+
+
+async def test_deny_carries_the_users_note_to_the_agent(fake_claude, tmp_path, project):  # Decision 2
+    runner, log, script = fake_claude
+    edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
+    script.write_text(json.dumps([INIT, ask("Edit", edit), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, [("deny", "keep the greeting")], work=project)
+    await run(bridge)
+    assert shown[0]["card"]["lines"] == [["-", "hi"], ["+", "bye"]]
+    assert answers(log) == [{"behavior": "deny", "message": "The user said no: keep the greeting"}]
+
+
+async def test_a_sub_agents_request_names_the_sub_agent(fake_claude, tmp_path):  # Decision 2
+    from ai_browser.app.powers import SUBAGENT_TOOL
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, use("u1", SUBAGENT_TOOL, {"description": "Research", "prompt": "x"}),
+                                  use("u2", "Bash", {"command": "npm install"}, parent="u1"),
+                                  ask("Bash", {"command": "npm install"}, tool_id="u2"), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"])
+    await run(bridge)
+    assert shown[0]["sub"] == "Research" and behaviors(log) == ["allow"]
+
+
+async def test_after_stop_a_sub_agents_request_is_denied_without_a_card(  # Review Focus 3
+        fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import bridge as bridge_module
+    from ai_browser.app.powers import SUBAGENT_TOOL
+
+    monkeypatch.setattr(bridge_module, "STOP_GRACE", 3)
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([{"ignore_interrupt": True}, INIT,
+                                  use("u1", SUBAGENT_TOOL, {"description": "Research", "prompt": "x"}), {"sleep": 1},
+                                  use("u2", "Bash", {"command": "npm install"}, parent="u1"),
+                                  ask("Bash", {"command": "npm install"}, tool_id="u2"), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"])
+    async for event in bridge.send("research it"):
+        if event["type"] == "subagent":
+            await bridge.stop()  # the user's Stop, while the sub-agent works
+    await bridge.close()
+    assert shown == [] and behaviors(log) == ["deny"]  # nothing runs, and no card shows
+
+
+async def test_a_read_through_a_symlink_that_leaves_the_folder_shows_a_card(  # Review Focus 2
+        fake_claude, tmp_path, project):
+    symlink_or_skip(tmp_path / "outside", project / "link")
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Read", {"file_path": str(project / "link" / "secret.txt")}), RESULT]),
+                      encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"], work=project)
+    await run(bridge)
+    assert len(shown) == 1 and shown[0]["card"]["badge"] == "Read" and shown[0]["card"]["always"] is False
+
+
+async def test_after_an_allowed_cd_harmless_commands_ask(fake_claude, tmp_path, project):  # plan decision 8
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "ls"}), ask("Bash", {"command": "cd src"}),
+                                  ask("Bash", {"command": "ls"}), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once", "once"], work=project)
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == ["cd src", "ls"]
+    assert behaviors(log) == ["allow", "allow", "allow"]
