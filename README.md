@@ -219,7 +219,8 @@ windows, and AI Home and Mission Control say which agent owns each one.
 
 How it works:
 - **Claude:** each agent is Claude Code on this computer (`claude -p`), signed in with one of your Claude accounts
-  (AI accounts, below), with no API keys. Its only tools are ai-browser's. Shell commands and skill scripts run in the
+  (AI accounts, below), with no API keys. Besides ai-browser's tools it has Claude Code's own, each asked first
+  ([Agent powers](#agent-powers-commands-file-edits-the-web-sub-agents-and-to-do-lists)). Skill scripts run in the
   Docker sandbox.
 - **Background agents:** tasks from AI Home or Mission Control work in background tabs. They
   never take your focus, and they stay at full speed. **Watch** brings one to the front.
@@ -240,6 +241,53 @@ How it works:
 - **Old folders:** `~/.ai-browser/browser/` (AI Browser's old Chrome profile, which may hold logins you made there)
   and `~/.ai-browser/app/extension/` (its old extension) are no longer used. AI Browser never deletes them; delete
   them by hand if you like.
+
+### Agent powers: commands, file edits, the web, sub-agents and to-do lists
+
+Agents have Claude Code's own tools besides the browser: shell commands, reading and editing files, Web Search and
+Web Fetch, sub-agents, and a to-do list.
+
+- **The folder:** New task's **Folder** picker sits beside the model and the account, in AI Home, Mission Control and
+  the floating chat:
+  - **No folder**, the default: the agent's own scratch folder, `~/.ai-browser/app/agents/<id>/work`;
+  - a folder you used lately;
+  - **Choose…**: the system's folder dialog in AI Browser's own app; in a browser window, you type the path.
+
+  The agent works there, and its row and drawer show it. Some folders are refused: your home folder itself,
+  `~/Library`, the system's folders, Claude Code's folders (`~/.claude` and your accounts' folders) and
+  `~/.ai-browser`.
+- **Trust this folder?** The first time a folder is used, AI Browser asks.
+  - A folder you trust loads its own `CLAUDE.md`, `.claude` agents and settings, as in Claude Code, with their hooks
+    and their rules.
+  - A folder you don't trust loads none of them.
+- **Asked first:** anything that isn't allowed yet shows a card with exactly what will happen:
+  - the command and its folder;
+  - the edit as a diff, removed lines red and added green (a huge or binary file shows its size);
+  - the path, the site or the query.
+
+  A sub-agent's card names the sub-agent. Answer **Allow once**, **Always allow for this folder** or **Deny**, with a
+  note to the agent if you like. In an agent's own scratch folder, Always lasts for that agent only.
+- **Allowed without asking:**
+  - reading inside the folder;
+  - the to-do list;
+  - starting a sub-agent (its own actions still ask);
+  - `ls`, `cat`, `pwd`, `git status`, `git diff` and `git log`.
+- **Asked every time, never "Always":**
+  - `sudo`, `rm`, `chmod`, `chown`, `dd` and `mkfs`;
+  - a download piped into a shell;
+  - anything that reads or writes outside the folder, including edits to its `.git` or `.claude` settings;
+  - anything that is more than one plain command (`;`, `&&`, `|`, `$(…)`, a redirect).
+- **Your answers are kept per folder** in `~/.ai-browser/permissions.json`. **Settings → Permissions** lists each
+  folder with your trust answer and the rules you allowed always, each with **Remove**. A folder that was deleted,
+  renamed or unplugged keeps its rules until you remove them.
+- **Live:**
+  - every action shows a badge (Bash, Edit, Write, Read, Web Search, Web Fetch, Browser Agent, Sub-agent, Skill) and
+    its time;
+  - Mission Control's drawer shows the agent's plan ("3 / 5 steps · 60%") and each sub-agent's task and current
+    action, and AI Home's row says how many sub-agents are working;
+  - **Stop** stops its sub-agents too.
+- **Commands and the sandbox:** commands don't run in a sandbox; the cards are the guard.
+- **Workflows** still run in a scratch folder of their own.
 
 ### AI accounts (Settings → Accounts)
 
@@ -711,6 +759,10 @@ uv run ai-browser build                      # rebuild the image
 - The floating chat reads only the address and title of Brave's front tab, only while it shows, through AppleScript
   (a Mac) or UI Automation (Windows): one fixed command, never built from a page's or your words. It reads a page's
   words only when you ask about that page, and an agent works in your tab only after your Hand over.
+- Agents' own commands, edits and reads ask first, on a card that shows exactly what will happen. Only clicks in AI
+  Browser's own pages answer: never the Brain, voice or a page. The app reads each command without running it. Only
+  one plain command whose paths are all inside the task's folder can be harmless or allowed always. Paths are
+  compared after resolving symlinks and `..`.
 - ⚠ risky buttons are refused unless `confirmed=true`; Claude asks you first. Page dialogs are treated the same way:
   - Alerts are accepted and reported.
   - `confirm()`, `prompt()` and "leave page with unsaved changes?" are dismissed unless the step was confirmed.

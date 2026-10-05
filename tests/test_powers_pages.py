@@ -292,3 +292,15 @@ async def test_settings_lists_folders_and_removes_rules_and_trust(stack, user_ho
     await settings(f"{old}.querySelector('.forget').click(); true")
     assert await until(settings, f"{old} == null")
     assert [row["path"] for row in rules.folders()] == [os.path.realpath(project)]
+
+
+def test_the_readme_explains_agent_powers():  # what the user reads first
+    from pathlib import Path
+
+    readme = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for phrase in ("### Agent powers: commands, file edits, the web, sub-agents and to-do lists",
+                   "**Always allow for this folder**", "**Trust this folder?**", "**Settings → Permissions**",
+                   "`~/.ai-browser/permissions.json`", "**No folder**", "Asked every time, never \"Always\"",
+                   "**Stop** stops its sub-agents too", "Agents' own commands, edits and reads ask first"):
+        assert phrase in readme, phrase
+    assert "Its only tools are ai-browser's" not in readme
