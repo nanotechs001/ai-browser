@@ -330,7 +330,7 @@ async def test_brave_the_relay_and_the_windows_origin_are_wired(fake_claude, tmp
     assert code == 0 and seen["mode"] in (0o600, None)
     assert seen["link"] == {"events": url + "/agent-events", "session_token": seen["link"]["session_token"],
                             "pid": os.getpid(), "cdp": cdp, "browser_dir": str(folder)}
-    assert seen["browser"] == {"kind": "brave", "name": "Brave", "state": "off", "groups": "no_watcher"}
+    assert seen["browser"] == {"kind": "brave", "name": "Brave", "state": "off"}
     env = seen["env"]
     assert (env["AIB_APP_ORIGIN"], env["AIB_APP_CDP"], env["AIB_BROWSER"], env["AIB_CHROME_DIR"]) == (
         url, cdp, "chrome", str(folder))

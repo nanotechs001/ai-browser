@@ -1001,6 +1001,18 @@ class Relay:
         if target not in self._grants and target not in self.handed(identity) and self._popup_of(identity, target):
             self._grant(identity, target, "popup")
 
+    def assign(self, target: str, identity: str) -> None:
+        """A tab the app's own client opened for an agent or a Claude Code session (POST /agent-tab): theirs from now
+        on, as if they had opened it, and announced to their clients that watch targets. Until this, only the app saw
+        it."""
+        if not isinstance(target, str) or not identity or identity == APP or identity in self._forgotten:
+            return
+        self._grant(identity, target, "own")
+        info = self._targets.get(target)
+        for client in [client for client in self._clients if client.identity == identity and not client.closed]:
+            if info is not None:
+                self._announce(client, target, info)
+
     def _grant(self, identity: str, target: str, kind: str) -> None:
         if self._grants.get(target, ("",))[0] == identity:
             return

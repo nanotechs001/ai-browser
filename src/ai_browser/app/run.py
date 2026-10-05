@@ -323,6 +323,6 @@ async def _run(home: Path, model: str, claude: str | Sequence[str] | None, ready
                 platforms.unlink(link_file, missing_ok=True)
         await server.stop()  # every agent's Claude Code process ends, and the relay's clients with them
         if brave is not None:
-            await brave.close()  # the one connection to Brave closes last; the agents' tabs and groups stay there
+            await brave.close()  # the one connection to Brave closes last; the agents' tabs stay there
         if asking:
             out(LEFT_ASKING.format(name=brave.name))

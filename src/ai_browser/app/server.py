@@ -53,17 +53,15 @@ from ..desktop.shortcut import SHORTCUT_ERROR, SHORTCUTS
 from ..desktop.shortcut import label as shortcut_label
 from ..desktop.shortcut import state as shortcut_state
 from ..engine import _alive
-from ..grouping import MARKER
 from ..hearing.service import HearingService, unavailable_status
 from ..live import _bind, _QuietServer, _serve
 from ..settings import Settings
 from ..skills import Catalog
 from ..syncdir import write_atomic
 from .agents import Agent, AgentManager
-from .bravelink import NOT_CONNECTED
+from .bravelink import NOT_CONNECTED, PlaceError
 from .inworld import WorldError
 from .cdprelay import Tokens
-from .groups import GroupKeeper
 
 APP_PORTS = range(8792, 8812)
 MODELS = {"opus", "sonnet", "haiku"}
@@ -343,7 +341,6 @@ class AppServer:
         self.ports = ports
         self.tokens = Tokens()  # each agent's own token (and each session's for /cdp), new every run
         self.session_token = secrets.token_urlsafe(24)  # Claude Code sessions (in <home>/app/link.json, mode 0600)
-        self.groups = GroupKeeper(lambda message: False, on_change=self._browser_changed)  # no watcher: no groups
         self.brave = None  # BraveLink in brave mode (attach_brave): the user's Brave
         self.inbox: InboxReader | None = None  # the Brain's reading of the user's tabs (attach_brave makes it)
         self._picks: set[asyncio.Future] = set()  # Pick the part to watch, waiting for the user's click in Brave
@@ -368,7 +365,7 @@ class AppServer:
         self._server: _QuietServer | None = None
         self._task: asyncio.Task | None = None
         agents.on_action = self._on_action
-        agents.ungroup = self._ungroup  # a handed tab taken back, or let go when its agent closes
+        agents.let_go = self._let_go  # a handed tab taken back, or let go when its agent closes
         agents.on_turn = lambda agent: self.connect_brave("turn", agent.id)  # right after the user's task
         agents.mint_token = self.tokens.mint
         if tabs is not None:
@@ -624,7 +621,7 @@ class AppServer:
                                        Route("/settings", self._page),
                                        Route("/health", self._health), Route("/setup", self._setup),
                                        Route("/agent-events", self._agent_events, methods=["POST"]),
-                                       Route("/agent-claim", self._agent_claim, methods=["POST"]),
+                                       Route("/agent-tab", self._agent_tab, methods=["POST"]),
                                        Route("/agent-status", self._agent_status),
                                        Route("/agent-hello", self._agent_hello, methods=["POST"]),
                                        Route("/agent-bye", self._agent_bye, methods=["POST"]),
@@ -824,7 +821,6 @@ class AppServer:
         if kind in ("tab_opened", "working_tab"):
             self._record_tab(session_id, target)
             self._own(target, self._owner_of(session_id))
-            self._group_opened(session_id, target, report)
         elif kind == "tab_closed":
             if target in session["tabs"]:
                 session["tabs"].remove(target)
@@ -832,55 +828,35 @@ class AppServer:
             self._own(target, None)
 
     def _after_agent_report(self, report: dict) -> None:
-        """AI Home's chips follow an agent's tabs; a tab one of its pages opened joins its group."""
+        """AI Home's chips follow an agent's tabs."""
         agent_id, kind, target = report["agent"], report.get("kind"), report.get("target")
         if not isinstance(target, str) or not target or self.agents.agents.get(agent_id) is None:
             return
         if kind in ("tab_opened", "working_tab"):
             self._own(target, self._owner_of(agent_id, handed=bool(report.get("adopted"))))
-            self._group_opened(agent_id, target, report)
         elif kind == "tab_closed":
             self._own(target, None)
 
-    def _group_opened(self, owner_id: str, target: str, report: dict) -> None:
-        opener, url = report.get("opener"), report.get("url")
-        if report.get("kind") == "tab_opened" and isinstance(opener, str) and isinstance(url, str):
-            owner = self._owner_of(owner_id)
-            opener_tab = self.groups.tab_of(opener)
-            if owner is not None and opener_tab is not None:
-                self._job(self._group(owner_id, owner["name"], owner["color"], target,
-                                      {"opener_tab": opener_tab, "url": url}))
-
-    async def _group(self, key: str, title: str, color: str, target: str, find: dict) -> dict:
-        answer = await self.groups.group(key, title, color, find)
-        if answer.get("grouped") and isinstance(answer.get("tab"), int):
-            self.groups.remember(target, answer["tab"])
-        return answer
-
-    async def _agent_claim(self, request: Request) -> Response:
+    async def _agent_tab(self, request: Request) -> Response:
+        """A new tab for an agent's or a Claude Code session's engine (grouping.Placer): opened by the app in the
+        profile where agents browse, never among the user's windows, and theirs at once. {"target"}, or {"error"} in
+        plain words that name no profile: they reach Claude as a tool error."""
         body, refused = await self._engine_body(request)
         if refused is not None:
             return refused
-        agent_id, target = body["agent"], body.get("target")
-        owner = self._owner_of(agent_id)
+        owner_id = body["agent"]
+        owner = self._owner_of(owner_id)
         if owner is None:
             return Response(status_code=404)
-        if not isinstance(target, str) or not target:
-            return Response(status_code=400)
-        if self.brave is not None and self._granted(agent_id, target) is None:
-            return JSONResponse({"grouped": False, "reason": "not_yours"})
-        self._record_tab(agent_id, target)  # whatever happens to its group, the tab is this agent's or session's
+        if self.brave is None:
+            return JSONResponse({"error": NOT_CONNECTED})
+        try:
+            target = await self.brave.open_ai_tab(owner_id)
+        except PlaceError as exc:
+            return JSONResponse({"error": str(exc)})
+        self._record_tab(owner_id, target)
         self._own(target, owner)
-        if isinstance(body.get("marker"), str) and MARKER.match(body["marker"]):
-            find = {"marker": body["marker"]}
-        elif isinstance(body.get("opener"), str):
-            opener_tab = self.groups.tab_of(body["opener"])
-            if opener_tab is None:
-                return JSONResponse({"grouped": False, "reason": "not_found"})
-            find = {"opener_tab": opener_tab, "url": body["url"] if isinstance(body.get("url"), str) else ""}
-        else:
-            return Response(status_code=400)
-        return JSONResponse(await self._group(agent_id, owner["name"], owner["color"], target, find))
+        return JSONResponse({"target": target})
 
     async def _agent_status(self, request: Request) -> Response:
         agent_id = request.query_params.get("agent", "")
@@ -895,7 +871,7 @@ class AppServer:
             for target in agent.adopted:
                 tab = listed.get(target, {})
                 handed.append({"target": target, "title": tab.get("title", ""), "url": tab.get("url", "")})
-        return JSONResponse({"groups": self.groups.available() == "on", "handed": handed})
+        return JSONResponse({"handed": handed})
 
     async def _agent_hello(self, request: Request) -> Response:
         body, refused = await self._engine_body(request)
@@ -1068,9 +1044,8 @@ class AppServer:
 
     def _browser_info(self) -> dict:
         if self.brave is None:  # no BraveLink attached (a server built alone, in tests): agents can't browse yet
-            return {"kind": "brave", "name": "Brave", "state": "off", "groups": self.groups.available()}
-        return {"kind": "brave", "name": self.brave.name, "state": self.brave.state,
-                "groups": self.groups.available()}
+            return {"kind": "brave", "name": "Brave", "state": "off"}
+        return {"kind": "brave", "name": self.brave.name, "state": self.brave.state}
 
     def _browser_changed(self) -> None:
         if self.inbox is not None:  # Brave connected or went: reading goes on, or waits for it
@@ -1114,12 +1089,10 @@ class AppServer:
             return "That agent has closed"
         self._own(target, self._owner_of(agent_id, handed=True))
         await self.agents.hand_tab(agent_id, target, {"url": tab["url"], "title": tab["title"]})
-        self._job(self._group(agent.id, agent.name, agent.color, target, {"url": tab["url"]}))
         return ""
 
-    def _ungroup(self, targets: list[str]) -> None:
-        """Out of their group (a handed tab taken back, or let go when its agent closes): they're the user's again."""
-        self.groups.ungroup([tab for tab in (self.groups.tab_of(target) for target in targets) if tab is not None])
+    def _let_go(self, targets: list[str]) -> None:
+        """Handed tabs taken back, or let go when their agent closes: they're the user's again."""
         for target in targets:
             self._own(target, None)
 
@@ -1293,7 +1266,6 @@ class AppServer:
                 return
             if handed is not None:
                 self._own(adopt, self._owner_of(agent.id, handed=True))
-                self._job(self._group(agent.id, agent.name, agent.color, adopt, {"url": handed["url"]}))
             queue.put_nowait({"type": "created", "id": agent.id, "request": request})
         elif kind == "send":
             text = _text(message.get("text"))

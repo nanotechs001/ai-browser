@@ -14,7 +14,7 @@ from pathlib import Path
 from websockets.exceptions import InvalidStatus
 
 from . import config, platforms
-from .agentlink import GROUPS_TTL, AgentLink
+from .agentlink import AgentLink
 from .browser import Browser, BrowserError, Tab
 from .cdp import CDP, CDPError
 from .checks import Check, CheckGate
@@ -153,7 +153,7 @@ class Engine:
         self._shell_logs = 0
         self._link: AgentLink | None = None  # in AI Browser, an agent reports its tabs to the app
         self._adopted_start = False  # the user's tab this agent was started in (AIB_APP_ADOPT) is taken on once
-        self._placer: Placer | None = None  # in the user's own browser: where our tabs go (a group, or a window)
+        self._placer: Placer | None = None  # in the user's own browser: it opens our tabs (the app, or a window)
         self._agent_id = ""  # AIB_APP_AGENT: this engine serves an agent of ai-browser app
         self.gate = CheckGate()  # the bot-check hold and the skipped sites: they outlast any browser this session uses
         self._notes: list[str] = []  # a hold that ended between calls (the user closed the tab): the next call says so
@@ -244,14 +244,15 @@ class Engine:
         adopt = os.environ.get("AIB_APP_ADOPT", "") if agent else ""
         self._app_link()  # an agent of ai-browser app reports its tabs to the app
         self._placer = None
-        if mode == "chrome":  # where our tabs go: the app's tab groups (through its watcher), or windows of their own
+        if mode == "chrome":  # where our tabs go: through the app (a window of the AI's own), or windows of their own
             if agent:
                 self._placer = Placer(self._link)
-            elif self._note:  # another browser than the app's: its tabs can't join the app's groups
+            elif self._note:  # another browser than the app's: the app can't open its tabs
                 self._placer = Placer(None)
             else:
                 rediscover = lambda: AgentLink.discover(self.home, self.task_id)  # noqa: E731
-                self._placer = Placer(route.link if route.link is not None else rediscover(), rediscover=rediscover)
+                self._placer = Placer(route.link if route.link is not None else rediscover(), rediscover=rediscover,
+                                      through_app=self._relayed)
         try:
             # the user's own browser: background tabs only, each placed by the placer
             browser = Browser(cdp, work, self.cfg, mode="chrome", placer=self._placer, keep_tabs=bool(agent),
@@ -384,12 +385,11 @@ class Engine:
         """Where this session's tabs go in the user's own browser: the status line's last part."""
         if self._placer is None or self.browser is None or self.browser.mode != "chrome":
             return ""
-        link = self._placer.link
-        if link is None:
+        if self._placer.link is None:
             return "its tabs open in their own window: ai-browser app isn't running"
-        if not (await link.status(GROUPS_TTL))["groups"]:
-            return f"its tabs open in their own window: the watcher isn't connected in your {self._browser_name()}"
-        return "tab group 'Claude Code'" if link.agent.startswith("cc-") else "a tab group named after this task"
+        if not self._placer.through_app:
+            return "its tabs open in their own window"
+        return "its tabs open in windows of the AI's own, in the Brave profile where agents browse"
 
     async def _taken_back(self) -> str:
         """First in every call: let go of handed tabs the user took back. A held tab among them ends the hold as

@@ -298,20 +298,15 @@ async def test_a_tab_that_fails_to_set_up_is_closed_again(chrome_browser, monkey
 
 
 class RecordingPlacer:
-    """Stands in for grouping.Placer: plain background tabs, and a record of what was placed and reported."""
+    """Stands in for grouping.Placer: plain background tabs, and a record of each one it opened."""
 
-    def __init__(self, params=None):
-        self.link, self.placed_calls, self.popups = None, [], []
-        self.params = params or {"url": "about:blank", "background": True}
+    def __init__(self):
+        self.link, self.opened = None, []
 
-    async def create_params(self):
-        return dict(self.params), None
-
-    async def placed(self, target, marker):
-        self.placed_calls.append((target, marker))
-
-    def popup(self, target, opener, url, adopted=False):
-        self.popups.append((target, opener, url, adopted))
+    async def open_tab(self, cdp):
+        target = (await cdp.send("Target.createTarget", {"url": "about:blank", "background": True}))["targetId"]
+        self.opened.append(target)
+        return target
 
 
 async def chrome_pages(cdp) -> set[str]:
@@ -386,8 +381,7 @@ async def test_keep_tabs_lets_go_instead_of_closing(own_browser):
     assert target in await chrome_pages(cdp)
 
 
-@CHROME
-async def test_a_tab_a_page_opens_is_reported_with_its_opener(own_browser):
+async def test_a_tab_a_page_opens_is_followed_and_only_the_first_is_the_placers(own_browser):
     from ai_browser.steps import parse_steps
 
     make, base, _ = own_browser
@@ -395,15 +389,14 @@ async def test_a_tab_a_page_opens_is_reported_with_its_opener(own_browser):
     browser = await make(placer=placer)
     page = await browser.open(base + "popup.html")
     opener = browser.current.target
-    assert placer.placed_calls == [(opener, None)]  # the first tab was placed before its first load
+    assert placer.opened == [opener]  # the first tab came from the placer, before its first load
     link = next(line.split()[0] for line in page.splitlines() if '"Preview in new tab"' in line)
     await browser.act(parse_steps([f"click {link}"]))
     for _ in range(30):
-        if placer.popups:
+        if browser.current.target != opener:
             break
         await asyncio.sleep(0.1)
-    [(target, by, url, adopted)] = placer.popups
-    assert by == opener and url == base + "privacy.html" and not adopted and target == browser.current.target
+    assert browser.current.target != opener and placer.opened == [opener]  # the page's own tab: followed, not placed
 
 
 @CHROME
@@ -708,11 +701,7 @@ async def test_a_tab_the_agent_opens_from_a_handed_tab_is_its_own_and_take_back_
     preview = browser.current
     assert preview.target != user and not preview.adopted and not preview.handed
     assert ("opened", preview.target, False) in reports  # AI Home files it under the agent's own tabs
-    for _ in range(30):
-        if placer.popups:
-            break
-        await asyncio.sleep(0.1)
-    assert placer.popups == [(preview.target, user, base + "privacy.html", False)]  # it joins the agent's group
+    assert placer.opened == []  # a tab a page opened is the page's: the placer opens none
     await browser.tabs("switch", "t1")  # back in the handed tab when the user takes it back
     handed.clear()  # AI Home's Take back
     assert await browser.let_go_of_taken_back() == "(the user took back tab t1)\n"
@@ -855,18 +844,17 @@ async def test_a_session_joins_the_running_app_and_says_goodbye(chrome_engine):
     from test_grouping import App
 
     engine, base, _ = chrome_engine
-    app = App({"/agent-status": {"groups": True, "handed": []}, "/agent-claim": {"grouped": True, "tab": 7}})
+    app = App({"/agent-status": {"handed": []}})  # an app that relays nothing: the session browses on its own
     try:
         (engine.home / "app").mkdir(parents=True)
         (engine.home / "app" / "link.json").write_text(json.dumps({
             "events": app.url + "/agent-events", "session_token": "sess", "pid": os.getpid()}), encoding="utf-8")
-        assert "tab group 'Claude Code'" in (await engine.sandbox_start(chrome=True)).text
+        assert "its tabs open in their own window" in (await engine.sandbox_start(chrome=True)).text
         await engine.open(base + "form.html")
         agent = f"cc-{engine.task_id}"
         sent = [(method, path.split("?")[0], body) for method, path, body, _ in app.requests]
         assert ("POST", "/agent-hello", {"agent": agent, "pid": os.getpid()}) in sent
-        claim = next(body for _, path, body in sent if path == "/agent-claim")
-        assert claim["agent"] == agent and len(claim["marker"]) == 16
+        assert "/agent-tab" not in [path for _, path, _ in sent]  # its own connection: it opens its own tabs
         assert {token for *_, token in app.requests} == {"sess"}  # the session token, never an agent's
         await engine.close()
         assert ("POST", "/agent-bye", {"agent": agent}) in [(m, p, b) for m, p, b, _ in app.requests]

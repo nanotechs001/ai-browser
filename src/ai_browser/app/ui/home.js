@@ -28,7 +28,7 @@ let pending = null; // the new_task request waiting for its "created"
 let pendingTimer = null;
 let chatAgent = null;
 let defaultModel = "sonnet"; // ai-browser app --model, until the user picks one (the app remembers the pick)
-let browser = null; // where agents browse: {kind, name, state, groups}
+let browser = null; // where agents browse: {kind, name, state}
 let browserClients = []; // what uses the user's browser through AI Browser's one connection (the relay)
 let handing = null; // one of the user's tabs the next new task starts in (Hand over → New agent…)
 let accountRows = []; // Settings → Accounts as the app lists them: names and "signed in", never an email
@@ -301,8 +301,7 @@ function renderBrowser() {
   card.dataset.state = browser.state;
   const action = $("browser-action");
   const name = browser.name || "Brave";
-  const on = browser.state === "connected" && browser.groups === "on";
-  $("browser-title").textContent = `Your ${name} · ${SAYS[browser.state] || browser.state}${on ? " · tab groups on" : ""}`;
+  $("browser-title").textContent = `Your ${name} · ${SAYS[browser.state] || browser.state}`;
   const steps = $("browser-steps");
   steps.textContent = "";
   for (const step of STEPS(name)) steps.append(el("li", "", step));
@@ -317,10 +316,8 @@ function renderBrowser() {
     refused: `${name} said no.`,
     lost: `${name} quit or restarted.`,
   }[browser.state]);
-  const why = { no_watcher: `Load the watcher in ${name} to group the AI's tabs; until then they open in a window of `
-                            + `their own.${WINDOWS_TAKE_FOCUS ? " Each new AI window may come to the front." : ""}`,
-                old_watcher: "Update the watcher: reload it in brave://extensions." }[browser.groups];
-  show($("browser-groups"), why ? `Tab groups off: ${why}` : "");
+  show($("browser-windows"), browser.state === "connected" ? `The AI's tabs open in windows of their own, never among `
+    + `yours.${WINDOWS_TAKE_FOCUS ? " Each new AI window may come to the front." : ""}` : "");
   show($("browser-warning"), `While the switch is on, any program on this computer can reach your ${name}, not only `
                              + "AI Browser. Turn it off when agents aren't working.");
   renderClients();
@@ -557,7 +554,7 @@ function handle(message) {
       // A new state forgets the scope: while not connected the app sends none, and the one from before must not show
       // in the moment after Brave connects again. The new connection's first list brings its own.
       if (message.state !== browser?.state) tabScope = null;
-      browser = { kind: message.kind, name: message.name, state: message.state, groups: message.groups };
+      browser = { kind: message.kind, name: message.name, state: message.state };
       renderBrowser();
       renderTabs();
       break;

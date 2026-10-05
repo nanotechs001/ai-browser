@@ -401,43 +401,65 @@ def session_headers(server):
     return {"X-AIB-Agent-Token": server.session_token}
 
 
-async def test_a_claim_without_the_watcher_answers_at_once(fake_claude, tmp_path):
+async def test_a_new_tab_is_the_apps_to_open_and_the_agents_at_once(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
+    brave = FakeBrave([])
+    server.attach_brave(brave)
     try:
         add_agent(server.agents)
         async with httpx.AsyncClient() as client:
-            began = time.monotonic()
-            answer = await client.post(url + "/agent-claim", headers=agent_headers(server),
-                                       json={"agent": "a1", "target": "T1", "marker": "0123456789abcdef"})
-            assert answer.json() == {"grouped": False, "reason": "no_watcher"} and time.monotonic() - began < 0.5
-        assert server.agents.agents["a1"].tabs == ["T1"]  # a claim records the tab, whatever its group
+            answer = await client.post(url + "/agent-tab", headers=agent_headers(server), json={"agent": "a1"})
+            assert answer.json() == {"target": "N1"} and brave.opened_ai == ["a1"]
+        assert server.agents.agents["a1"].tabs == ["N1"]
+        assert brave.owners["N1"]["kind"] == "agent" and brave.owners["N1"]["id"] == "a1"  # AI Home says whose
     finally:
         await server.stop()
 
 
-async def test_each_token_claims_only_for_its_own(fake_claude, tmp_path):
+async def test_a_new_tab_without_brave_says_so_and_never_asks(fake_claude, tmp_path):  # Review Focus 1 and 5
+    from ai_browser.app.bravelink import NOT_CONNECTED, OTHER_PROFILE, PlaceError
+
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
         add_agent(server.agents)
-        claim = {"target": "T1", "marker": "0123456789abcdef"}
+        async with httpx.AsyncClient() as client:
+            async def ask():
+                answer = await client.post(url + "/agent-tab", headers=agent_headers(server), json={"agent": "a1"})
+                return answer.json()
+
+            assert await ask() == {"error": NOT_CONNECTED}  # no Brave attached
+            brave = FakeBrave([], state="lost")
+            brave.ai_tab_error = PlaceError(NOT_CONNECTED)
+            server.attach_brave(brave)
+            assert await ask() == {"error": NOT_CONNECTED} and brave.connects == 0  # said, and Brave never asked
+            brave.ai_tab_error = PlaceError(OTHER_PROFILE)  # Brave's last window is another profile's
+            assert await ask() == {"error": OTHER_PROFILE}  # in words that name no profile: they reach Claude
+        assert server.agents.agents["a1"].tabs == []
+    finally:
+        await server.stop()
+
+
+async def test_each_token_opens_tabs_only_for_its_own(fake_claude, tmp_path):
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    server.attach_brave(FakeBrave([]))
+    try:
+        add_agent(server.agents)
         async with httpx.AsyncClient() as client:
             hello = await client.post(url + "/agent-hello", headers=session_headers(server),
                                       json={"agent": "cc-t1", "pid": os.getpid()})
-            assert hello.status_code == 204 and server.sessions["cc-t1"]["name"] == "Claude Code"
+            assert hello.status_code == 200 and server.sessions["cc-t1"]["name"] == "Claude Code"  # through the relay
             wrong = {"X-AIB-Agent-Token": "wrong"}
-            assert (await client.post(url + "/agent-claim", headers=wrong,
-                                      json={"agent": "a1", **claim})).status_code == 403
-            assert (await client.post(url + "/agent-claim", headers=session_headers(server),
-                                      json={"agent": "a1", **claim})).status_code == 403
-            assert (await client.post(url + "/agent-claim", headers=agent_headers(server),
-                                      json={"agent": "cc-t1", **claim})).status_code == 403
-            assert (await client.post(url + "/agent-claim", headers=agent_headers(server),
-                                      json={"agent": "a9", **claim})).status_code == 403  # a1's token is a1's only
-            assert (await client.post(url + "/agent-claim", headers=agent_headers(server, "a9"),
-                                      json={"agent": "a9", **claim})).status_code == 404
-            assert (await client.post(url + "/agent-claim", headers=session_headers(server),
-                                      json={"agent": "cc-t1", **claim})).status_code == 200
-            assert server.sessions["cc-t1"]["tabs"] == ["T1"]
+            assert (await client.post(url + "/agent-tab", headers=wrong, json={"agent": "a1"})).status_code == 403
+            assert (await client.post(url + "/agent-tab", headers=session_headers(server),
+                                      json={"agent": "a1"})).status_code == 403
+            assert (await client.post(url + "/agent-tab", headers=agent_headers(server),
+                                      json={"agent": "cc-t1"})).status_code == 403
+            assert (await client.post(url + "/agent-tab", headers=agent_headers(server),
+                                      json={"agent": "a9"})).status_code == 403  # a1's token is a1's only
+            assert (await client.post(url + "/agent-tab", headers=agent_headers(server, "a9"),
+                                      json={"agent": "a9"})).status_code == 404
+            opened = await client.post(url + "/agent-tab", headers=session_headers(server), json={"agent": "cc-t1"})
+            assert opened.json() == {"target": "N1"} and server.sessions["cc-t1"]["tabs"] == ["N1"]
             sneaky = {"agent": "a1", "kind": "tab_opened", "target": "T2", "adopted": False}
             assert (await client.post(url + "/agent-events", headers=session_headers(server),
                                       json=sneaky)).status_code == 403  # a session can't report as an app agent
@@ -458,8 +480,7 @@ async def test_agent_status_lists_only_that_agents_handed_tabs(fake_claude, tmp_
         add_agent(server.agents, "a2", "Other", "green", adopted=["U2"])
         async with httpx.AsyncClient() as client:
             answer = await client.get(url + "/agent-status?agent=a1", headers=agent_headers(server))
-            assert answer.json() == {"groups": False,
-                                     "handed": [{"target": "U1", "title": "Shop", "url": "https://shop.example/"}]}
+            assert answer.json() == {"handed": [{"target": "U1", "title": "Shop", "url": "https://shop.example/"}]}
             refused = await client.get(url + "/agent-status?agent=a1", headers=session_headers(server))
             assert refused.status_code == 403
     finally:
@@ -545,8 +566,7 @@ async def test_hand_tab_and_take_back(fake_claude, tmp_path):  # Review Focus 4
         async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             snapshot = await recv(ws)
-            assert snapshot["browser"] == {"kind": "brave", "name": "Brave", "state": "connected",
-                                           "groups": "no_watcher"}
+            assert snapshot["browser"] == {"kind": "brave", "name": "Brave", "state": "connected"}
             assert snapshot["sessions"] == []
             for target in ("NOPE", "T9"):  # not in Brave's list; another agent's
                 await ws.send(json.dumps({"type": "hand_tab", "id": "a1", "target": target}))
@@ -1007,7 +1027,7 @@ async def test_without_brave_nothing_is_handed_and_the_card_says_off(fake_claude
         async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "home"}))
             snapshot = await recv(ws)
-            assert snapshot["browser"] == {"kind": "brave", "name": "Brave", "state": "off", "groups": "no_watcher"}
+            assert snapshot["browser"] == {"kind": "brave", "name": "Brave", "state": "off"}
             await ws.send(json.dumps({"type": "new_task", "text": "reply to it", "adopt": "T1", "request": "r1"}))
             error = (await until(ws, lambda message: message["type"] == "error"))[-1]
             assert error["request"] == "r1" and error["text"].startswith("That tab can't be handed over")
@@ -1024,12 +1044,11 @@ async def test_each_agent_has_its_own_token(fake_claude, tmp_path):
         mine, theirs = one.bridge.env["AIB_APP_AGENT_TOKEN"], two.bridge.env["AIB_APP_AGENT_TOKEN"]
         assert mine and theirs and mine != theirs and mine == server.token_for(one.id)
         report = {"agent": one.id, "kind": "tab_opened", "target": "T1", "adopted": False}
-        claim = {"agent": two.id, "target": "T2", "marker": "0123456789abcdef"}
         async with httpx.AsyncClient() as client:
             ok = await client.post(url + "/agent-events", headers={"X-AIB-Agent-Token": mine}, json=report)
             as_two = await client.post(url + "/agent-events", headers={"X-AIB-Agent-Token": mine},
                                        json={**report, "agent": two.id})
-            claimed = await client.post(url + "/agent-claim", headers={"X-AIB-Agent-Token": mine}, json=claim)
+            claimed = await client.post(url + "/agent-tab", headers={"X-AIB-Agent-Token": mine}, json={"agent": two.id})
             assert (ok.status_code, as_two.status_code, claimed.status_code) == (204, 403, 403)
             for wrong in ("t0ken", server.session_token):
                 refused = await client.post(url + "/agent-events", headers={"X-AIB-Agent-Token": wrong}, json=report)
@@ -1120,9 +1139,6 @@ async def test_a_report_about_a_tab_the_relay_doesnt_grant_is_dropped(fake_claud
             assert brave.owners["T1"] == {"kind": "agent", "id": "a1", "name": "Fix the footer", "color": "blue"}
             await report(client, "working_tab", "U1", False)  # the handed tab, called "not adopted": it is
             assert agent.tabs == ["T1"] and agent.adopted == ["U1"] and agent.working_tab == "U1"
-            claim = await client.post(url + "/agent-claim", headers=agent_headers(server), json={
-                "agent": "a1", "target": "T9", "marker": "0123456789abcdef"})
-            assert claim.json() == {"grouped": False, "reason": "not_yours"}
     finally:
         await server.stop()
 

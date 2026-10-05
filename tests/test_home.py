@@ -464,9 +464,9 @@ async def test_the_browser_card_follows_brave(home):
         await asyncio.sleep(0.1)
     assert brave.connects == 1
     brave.set_state("connected")
-    assert await until(js, f"{title} === 'Your Brave · connected'")  # no watcher here: groups are off
-    assert (await js("document.getElementById('browser-groups').textContent")).startswith(
-        "Tab groups off: Load the watcher in Brave to group the AI's tabs")
+    assert await until(js, f"{title} === 'Your Brave · connected'")
+    assert await js("document.getElementById('browser-windows').textContent") == (
+        "The AI's tabs open in windows of their own, never among yours.")
 
 
 @CHROME

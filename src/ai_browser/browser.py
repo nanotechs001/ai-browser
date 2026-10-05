@@ -160,12 +160,11 @@ class Browser:
         # "sandbox" (Docker Chromium) or "chrome" (the user's own browser: change nothing, only our background tabs)
         self.mode = mode
         self.app_origin = app_origin  # AI Browser's own origin: never opened here (url_problem)
-        self.placer = placer  # grouping.Placer in the user's own browser: where each new tab of ours goes
+        self.placer = placer  # grouping.Placer in the user's own browser: it opens each new tab of ours
         self.keep_tabs = keep_tabs  # an agent of ai-browser app: its tabs outlive this process (the app closes them)
         self.handed = handed  # async () -> the tabs the user handed this agent ([{"target", "title", "url"}])
         self.key_prefix = key_prefix  # "q" for QA's own sandbox browser: its tabs never collide with the session's
         self._handed_keys: dict[str, str] = {}  # listing key (h1...) -> target id, until taken on
-        self._placing: set[asyncio.Future] = set()  # reports of tabs our pages opened, waiting for their address
         self._tab_events: list[Callable[[str, Tab], None]] = []  # ("opened" | "closed", tab)
         self.owned: dict[str, Tab] = {}
         self.current: Tab | None = None
@@ -423,24 +422,20 @@ class Browser:
 
     async def open_worker(self, background: bool | None = None) -> Tab:
         """A new tab of ours (closed with the session) that does not become the working tab: Website QA uses these.
-        In the user's own browser the placer picks its place (the agent's tab group, or a window of its own), and the
-        tab waits for its group before anything loads in it."""
-        marker = None
+        In the user's own browser the placer opens it (through the app, in a window of the AI's own)."""
         if self.placer is not None:
-            params, marker = await self.placer.create_params()
+            target = await self.placer.open_tab(self.cdp)
         else:
             params = {"url": "about:blank"}
             if self.mode == "chrome" if background is None else background:
                 params["background"] = True  # don't steal the user's focus
-        target = (await self.cdp.send("Target.createTarget", params))["targetId"]
+            target = (await self.cdp.send("Target.createTarget", params))["targetId"]
         try:
             tab = await self._setup_tab(target)
         except BaseException:  # never leave a blank tab in the user's browser
             with contextlib.suppress(CDPError):
                 await self.cdp.send("Target.closeTarget", {"targetId": target})
             raise
-        if self.placer is not None:
-            await self.placer.placed(target, marker)
         return tab
 
     async def close_tab(self, tab: Tab) -> None:
@@ -493,7 +488,7 @@ class Browser:
         """Adopt tabs and popups that one of our tabs opened (target=_blank, window.open) while our own steps (or a
         QA run) were running. Any other new tab is the user's, even when it was opened from one of our tabs. In AI
         Browser one opened from the user's (adopted) tab stays theirs too: followed, never closed. In the user's own
-        browser one our steps opened from a handed tab is ours (Decision 4: popups its own steps opened), grouped and
+        browser one our steps opened from a handed tab is ours (Decision 4: popups its own steps opened), and
         closed with us: Take back gives back the handed tab, and no tab of the user's is kept beyond it."""
         info = params.get("targetInfo", {})
         opener = next((tab for tab in self.owned.values() if tab.target == info.get("openerId")), None)
@@ -510,22 +505,6 @@ class Browser:
         except CDPError:
             return  # closed before we could attach
         self._opened.append(tab)
-        if self.placer is not None and opener:  # it joins its opener's group; the step doesn't wait for that
-            placing = asyncio.ensure_future(self._place_opened(tab, opener))
-            self._placing.add(placing)
-            placing.add_done_callback(self._placing.discard)
-
-    async def _place_opened(self, tab: Tab, opener: str) -> None:
-        """Report a tab one of our pages opened, with its opener and its address once it has one (a new tab is
-        announced without one, then shows where its link led; measured)."""
-        url = ""
-        for _ in range(10):
-            with contextlib.suppress(CDPError, KeyError):
-                url = (await self.cdp.send("Target.getTargetInfo", {"targetId": tab.target}))["targetInfo"]["url"]
-            if url and url != "about:blank":
-                break
-            await asyncio.sleep(0.1)
-        self.placer.popup(tab.target, opener, "" if url == "about:blank" else url, tab.adopted)
 
     async def _follow_opened(self) -> str | None:
         """After a step: switch to a tab the page just opened; returns a note for the step line."""

@@ -36,6 +36,8 @@ OPEN_WAIT = 10.0  # seconds for a tab AI Browser opened to show in the tab list
 NOT_CONNECTED = "Brave isn't connected: connect it in AI Home"
 OTHER_PROFILE = ("Brave's last window is in another profile: click a window of the profile where agents browse, then "
                  "try again")
+NOT_OPEN = ("The profile where agents browse isn't open in Brave yet: open a window of it and click in it once, then "
+            "try again")
 
 
 class PlaceError(RuntimeError):
@@ -280,6 +282,27 @@ class BraveLink:
             if any(tab["target"] == target for tab in self.tabs()):
                 break
             await asyncio.sleep(0.1)
+        return target
+
+    async def open_ai_tab(self, identity: str) -> str:
+        """A new blank tab for an agent or a Claude Code session (POST /agent-tab): opened by the app's own client in
+        the profile where agents browse, in a window of its own (never one of the user's windows), and theirs at once
+        (Relay.assign), before any other client can see it. PlaceError says why not, in words that name no profile:
+        they reach Claude."""
+        watch = self._watch
+        if watch is None or watch.closed:
+            raise PlaceError(NOT_CONNECTED)
+        context, source = self.agents_context()
+        if context is None:
+            raise PlaceError(NOT_OPEN if source == "not_open" else NOT_CONNECTED)
+        if watch.default_context != context:
+            raise PlaceError(OTHER_PROFILE)
+        params = {"url": "about:blank", "newWindow": True, "background": True}
+        try:
+            target = (await watch.cdp.send("Target.createTarget", params, timeout=10))["targetId"]
+        except (CDPError, KeyError, TypeError):
+            raise PlaceError("Brave didn't open the tab") from None
+        self.relay.assign(target, identity)
         return target
 
     async def end_pick(self, target: str) -> None:

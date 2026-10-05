@@ -348,6 +348,8 @@ class FakeBrave:
         self.connect_calls = []  # (why, identity) of each connect
         self.relay = FakeRelay()
         self.place = FakePlace()  # Settings → Where agents browse
+        self.opened_ai: list[str] = []  # who each tab open_ai_tab opened was for (N1, N2, …)
+        self.ai_tab_error: Exception | None = None  # what open_ai_tab raises instead
         self._changes, self._states = [], []
 
     def on_change(self, callback):
@@ -396,6 +398,14 @@ class FakeBrave:
 
     async def watch(self, target):
         self.watched.append(target)
+
+    async def open_ai_tab(self, identity):
+        if self.ai_tab_error is not None:
+            raise self.ai_tab_error
+        self.opened_ai.append(identity)
+        target = f"N{len(self.opened_ai)}"
+        self.pages.append({"target": target, "url": "about:blank", "title": ""})
+        return target
 
     def set_place(self, folder):
         self.place.chosen = folder
