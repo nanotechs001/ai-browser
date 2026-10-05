@@ -3,7 +3,8 @@
 One reader and one writer touch the file: read_settings and write_setting (wave C's places.py uses them too). A
 missing, unreadable, broken or half-written file reads as {} and never raises, so the app always starts. A write is
 atomic, mode 0600, and keeps every key it doesn't set, so a file written by a newer build survives an older one.
-Settings(home) is the typed view on top: the window's browser, the model and Voice, each value checked."""
+Settings(home) is the typed view on top: the window's browser, the model, Voice and the app's shortcut, each value
+checked."""
 
 from __future__ import annotations
 
@@ -11,11 +12,13 @@ import json
 from pathlib import Path
 
 from .app.window import NAMES, offered
+from .desktop.shortcut import DEFAULT as DEFAULT_SHORTCUT
+from .desktop.shortcut import SHORTCUT_ERROR, SHORTCUTS
 from .syncdir import write_atomic
 
 FILE = "settings.json"
 MODELS = ("opus", "sonnet", "haiku")
-DEFAULTS = {"window_browser": "auto", "model": None, "voice": False}
+DEFAULTS = {"window_browser": "auto", "model": None, "voice": False, "shortcut": DEFAULT_SHORTCUT}
 
 
 def _path(home) -> Path:
@@ -62,6 +65,9 @@ class Settings:
         elif key == "voice":
             if not isinstance(value, bool):
                 raise ValueError("Voice is on or off")
+        elif key == "shortcut":
+            if value is not None and value not in SHORTCUTS:
+                raise ValueError(SHORTCUT_ERROR)
         else:
             raise ValueError(f"There is no setting {key!r}")
 

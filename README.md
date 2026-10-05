@@ -247,6 +247,45 @@ apart.
   at a time), and conversations. **Shared:** AI Browser's skills, workflows, the browser and the Brain's inbox.
 - **Remove** only makes AI Browser forget an account. Its folder, its conversations and its sign-in stay.
 
+### AI Browser's own app (a menu-bar icon, a shortcut and notifications)
+
+AI Browser can run as an app of its own, built on Electron, instead of in a browser window. It has its own Dock
+icon (a taskbar icon on Windows) and an icon in the menu bar (by the clock on Windows). It also adds a shortcut that
+shows and hides it from any app, and native notifications. The engine stays the same: `uv run ai-browser app` starts
+it, then the app.
+
+**Setting it up (once):** run `uv run ai-browser doctor --setup` in a terminal.
+- It shows what it would download: Electron 44.5.1 for your computer, its size (about 130 MB on a Mac, 158 MB on
+  Windows) and its address on GitHub. Nothing is downloaded until you type `y`.
+- The download is checked against Electron's `SHASUMS256.txt` from the same release. If it doesn't match, or it
+  stops halfway, nothing is kept, the browser window still works, and Settings says what happened.
+- The app is built in `~/.ai-browser/desktop/`: "AI Browser.app" on a Mac, signed on your Mac, ad hoc, so macOS
+  remembers its microphone permission; an "AI Browser" folder on Windows. Running it needs no Node.js and no npm.
+- On Windows it also adds AI Browser to the Start menu: Windows shows an app's notifications only then. AI Browser.exe
+  keeps Electron's icon in File Explorer. Its window, its icon by the clock and its notifications show AI Browser's.
+- When an update of AI Browser changes the app's own files, `ai-browser app` builds the app again before it starts,
+  with no download. macOS may then ask for the microphone once more.
+
+**Using it:**
+- **Closing the window hides it.** The app keeps running in the menu bar (by the clock on Windows), agents keep
+  working, and the shortcut brings it back.
+- **Quit** stops the app and every agent, as Ctrl-C in the terminal does. Quit is in the menu-bar icon's menu, or
+  press ⌘Q on a Mac.
+- **The shortcut** is ⌥Space (Alt+Space on Windows). Settings → AI Browser app offers two others, and Off. If another
+  app already uses it, Settings says so: pick another one. Press it once after a change, to check it.
+- **Notifications** say only what needs you: "An agent is waiting for you", "A bot check on example.com", "The Brain
+  has 2 new notes". Never a message's text or a page's. A click opens AI Home at that agent's row, or brings the
+  agent's tab forward in Brave.
+- The menu-bar icon offers **Open AI Browser**, **Show chat** (the floating chat, coming next) and **Quit**.
+- Until it is set up, or with `--window`, AI Browser opens in a browser window as before, and AI Home offers the
+  setup.
+- Started by a double-click (Finder, or the Start menu), it asks you to start AI Browser from a terminal. A
+  double-click start comes later.
+
+**Locked down:** its pages are AI Browser's own (`http://127.0.0.1:<port>`) and nothing else. A website link opens in
+Brave, and no page opens a window. Pages may use the microphone, and write to the clipboard on a Copy button; nothing
+else. It has no debugging port and no DevTools, and it refuses to start with a debugging switch.
+
 ## The Brain (watches your messages, tells you what needs you)
 
 The Brain runs inside `ai-browser app`. It reads Gmail, Slack, Asana and sites you add in **Brave**, your everyday
@@ -597,9 +636,9 @@ slower, so 30 pages of a typical site take about three minutes.
 ## Commands
 
 ```bash
-uv run ai-browser app [--window auto|chrome|brave|edge]  # AI Browser's window; agents browse in your Brave
+uv run ai-browser app [--window auto|chrome|brave|edge]  # AI Browser's own app, or a browser window; agents browse in your Brave
 uv run ai-browser doctor [--own]             # health check (the sandbox, or your own Brave or Chrome)
-uv run ai-browser doctor --setup             # quick check, no Docker: Python, Claude Code, the window's browser, Brave, ports, config
+uv run ai-browser doctor --setup             # quick check, no Docker; offers AI Browser's own app (asks first)
 uv run ai-browser bench                      # speed vs budgets
 uv run ai-browser live [--profile P]         # watch / log in
 uv run ai-browser stop [P | --all]           # stop containers (logins kept); `stop chrome` = own-Chrome shell
@@ -611,6 +650,9 @@ uv run ai-browser build                      # rebuild the image
 - AI Browser's window has no debugging port, and no agent browses there. Its pages need a cookie only that window
   holds, every request must name `127.0.0.1:<port>` exactly, and a strict content policy runs no script but the
   pages' own.
+- AI Browser's own app has no debugging port and no DevTools, and refuses to start with a debugging switch. Its
+  fuses keep any other program from running it as Node.js or with an inspector. Its pages are AI Browser's own
+  only. They may use the microphone, and write to the clipboard on a Copy button.
 - ⚠ risky buttons are refused unless `confirmed=true`; Claude asks you first. Page dialogs are treated the same way:
   - Alerts are accepted and reported.
   - `confirm()`, `prompt()` and "leave page with unsaved changes?" are dismissed unless the step was confirmed.
@@ -649,6 +691,11 @@ uv run ai-browser build                      # rebuild the image
 ```bash
 uv run pytest        # Docker tests skip themselves when Docker or the image is missing
 ```
+
+Tests that drive a real Electron run only when `AIB_TEST_ELECTRON` names an Electron 44 program you already have (an
+Electron.app's `Contents/MacOS/Electron`, or `electron.exe`). They start it unpackaged, in throwaway folders, and a
+window shows for a moment. The tests of the app's rules run under Node.js when it is installed. The app itself never
+needs Node.js.
 
 **Tests on Windows (GitHub):** the private repo's Actions tab has one workflow, **tests**. It runs only when you
 click **Run workflow**, never on a push. Pick `windows` (the default), `macos` or `both`; tick **voice** to also

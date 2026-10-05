@@ -37,10 +37,12 @@ def test_the_defaults_and_a_bad_value_for_one_key(tmp_path):
 
     settings = Settings(tmp_path, system="darwin")
     assert settings.path == tmp_path / "settings.json"
-    assert settings.get() == DEFAULTS == {"window_browser": "auto", "model": None, "voice": False}
+    assert settings.get() == DEFAULTS == {"window_browser": "auto", "model": None, "voice": False,
+                                       "shortcut": "Alt+Space"}
     (tmp_path / "settings.json").write_text(json.dumps({"model": "gpt", "voice": True, "window_browser": "brave"}),
                                             encoding="utf-8")
-    assert settings.get() == {"window_browser": "brave", "model": None, "voice": True}  # only the model falls back
+    assert settings.get() == {"window_browser": "brave", "model": None, "voice": True,
+                              "shortcut": "Alt+Space"}  # only the model falls back
 
 
 def test_a_broken_file_gives_the_defaults_and_stays_until_the_next_set(tmp_path):
@@ -60,12 +62,14 @@ def test_set_checks_each_value(tmp_path):
 
     mac = Settings(tmp_path, system="darwin")
     for key, value in (("window_browser", "edge"), ("window_browser", 3), ("model", "gpt"), ("voice", "yes"),
-                       ("colour", "red")):
+                       ("colour", "red"), ("shortcut", "F5"), ("shortcut", ["Alt+Space"])):
         with pytest.raises(ValueError):
             mac.set(key, value)
     assert not (tmp_path / "settings.json").exists()  # nothing written for a refused value
     assert Settings(tmp_path, system="win32").set("window_browser", "edge")["window_browser"] == "edge"
     assert mac.set("model", None)["model"] is None and mac.set("voice", True)["voice"] is True
+    assert mac.set("shortcut", None)["shortcut"] is None
+    assert mac.set("shortcut", "Control+Shift+Space")["shortcut"] == "Control+Shift+Space"
 
 
 def test_an_unknown_key_survives_a_set(tmp_path):
@@ -83,7 +87,17 @@ def test_a_file_from_another_computer_falls_back_key_by_key(tmp_path):  # Review
     (tmp_path / "settings.json").write_text(json.dumps({"window_browser": "edge", "model": "opus",
                                                         "agents_browser": {"id": "brave"}}), encoding="utf-8")
     mac = Settings(tmp_path, system="darwin")
-    assert mac.get() == {"window_browser": "auto", "model": "opus", "voice": False}  # Edge draws it on Windows only
+    assert mac.get() == {"window_browser": "auto", "model": "opus", "voice": False,
+                         "shortcut": "Alt+Space"}  # Edge draws it on Windows only
     mac.set("voice", True)
     assert read_settings(tmp_path)["window_browser"] == "edge"  # kept for the Windows computer that wrote it
     assert Settings(tmp_path, system="win32").get()["window_browser"] == "edge"
+
+
+def test_the_apps_shortcut_is_one_of_the_offered_ones_or_off(tmp_path):
+    from ai_browser.settings import Settings
+
+    (tmp_path / "settings.json").write_text(json.dumps({"shortcut": "F5"}), encoding="utf-8")
+    assert Settings(tmp_path, system="darwin").get()["shortcut"] == "Alt+Space"  # not offered: the default
+    (tmp_path / "settings.json").write_text(json.dumps({"shortcut": None}), encoding="utf-8")
+    assert Settings(tmp_path, system="darwin").get()["shortcut"] is None  # Off stays off

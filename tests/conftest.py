@@ -91,6 +91,14 @@ def _no_real_window(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_desktop(monkeypatch):
+    """No test starts AI Browser's own app: run_app's tests pass desktop= (tests/fake_desktop.py)."""
+    import ai_browser.app.run as run
+
+    monkeypatch.setattr(run, "default_desktop", lambda home, shortcut=None: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_finder_windows(monkeypatch):
     """No test may open a file manager window on the machine running the suite, and no terminal window (tests that
     check it patch it again)."""
@@ -126,6 +134,25 @@ def _never_the_users_app_port(monkeypatch):
 
     bind = server._bind
     monkeypatch.setattr(server, "_bind", lambda host, port: None if port == USERS_APP_PORT else bind(host, port))
+
+
+@pytest.fixture(autouse=True)
+def _no_setup_outside_the_test(monkeypatch, tmp_path_factory):
+    """No test reads or writes the user's own ~/.ai-browser (AIB_HOME is a throwaway unless a test sets its own), no
+    test downloads Electron, and no doctor --setup waits for a typed answer or binds 8792 to see if it is free. The
+    setup's tests pass a fake release and say whether someone can answer."""
+    import ai_browser.cli as cli
+    from ai_browser import live
+    from ai_browser.desktop import setup
+
+    def refuse(url):
+        raise AssertionError(f"tests never download Electron ({url})")
+
+    bind = live._bind
+    monkeypatch.setenv("AIB_HOME", str(tmp_path_factory.mktemp("aib-home")))
+    monkeypatch.setattr(setup, "FETCH", refuse)
+    monkeypatch.setattr(cli, "_interactive", lambda: False)
+    monkeypatch.setattr(live, "_bind", lambda host, port: None if port == USERS_APP_PORT else bind(host, port))
 
 
 @pytest.fixture

@@ -65,6 +65,29 @@ function applySettings(settings) { // the model picked last, here or in Mission 
   if (!settings) return;
   const model = settings.model ?? defaultModel;
   if ([...$("task-model").options].some((option) => option.value === model)) $("task-model").value = model;
+  renderAppCard(settings.desktop);
+}
+
+let appCardClosed = false; // Not now: hidden until this page loads again
+
+function renderAppCard(app) { // the offer of AI Browser's own app, while it isn't set up (a browser window draws us)
+  const show = Boolean(app && !app.running && !app.set_up && app.supported && !appCardClosed);
+  $("app-card").hidden = !show;
+  if (!show) return;
+  $("app-card-adds").textContent = `It adds ${app.platform === "mac" ? "a menu-bar icon" : "an icon by the clock"}, `
+    + "a shortcut and notifications.";
+  $("app-card-command").textContent = app.command || "";
+  $("app-card-problem").textContent = app.problem ? `The last try didn't work: ${app.problem}` : "";
+  $("app-card-problem").hidden = !app.problem;
+}
+
+function focusOn(message) { // a notification's click: AI Home's tab, and the agent's row (or the Brain) in view
+  if (window.parent !== window) openTab("/home"); // inside the tab menu: show AI Home's tab
+  const target = message.brain ? $("brain") : rows.get(String(message.agent || ""));
+  if (!target) return;
+  target.scrollIntoView({ block: "center" });
+  target.classList.add("focus");
+  setTimeout(() => target.classList.remove("focus"), 2000);
 }
 
 function flash(text) {
@@ -558,6 +581,9 @@ function handle(message) {
         pickDefault($("task-account"), accountRows);
       }
       break;
+    case "focus":
+      focusOn(message);
+      break;
     case "error":
       if (pending && message.request === pending) finishRequest();
       askError(message); // a refused Continue on can be clicked again
@@ -619,6 +645,18 @@ $("settings").addEventListener("click", () => openTab("/settings"));
 $("start").addEventListener("click", start);
 $("browser-action").addEventListener("click", browserAction);
 $("handing-clear").addEventListener("click", () => setHanding(null));
+$("app-card-close").addEventListener("click", () => {
+  appCardClosed = true;
+  $("app-card").hidden = true;
+});
+$("app-card-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("app-card-command").textContent);
+    $("app-card-copied").textContent = "Copied.";
+  } catch {
+    $("app-card-copied").textContent = "Copy didn't work: select the command and copy it yourself.";
+  }
+});
 $("task").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) start();
 });

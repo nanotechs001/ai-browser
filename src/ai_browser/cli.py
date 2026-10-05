@@ -41,8 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     app.add_argument("--browser", default=None, metavar="{brave}",
                      help="where agents browse: your Brave (the only choice: AI Browser's own Chrome is gone)")
     app.add_argument("--window", choices=["auto", "chrome", "brave", "edge"], default=None,
-                     help="which browser draws AI Browser's window, for this run only (default: the Settings "
-                          "choice)")
+                     help="a browser window for this run, drawn by this browser (default: AI Browser's own app once "
+                          "it is set up, else the Settings choice)")
     args = parser.parse_args(argv)
     if args.command != "mcp":  # the mcp library writes its own UTF-8 stream
         _utf8_console()
@@ -199,8 +199,59 @@ def _doctor_setup() -> int:
     if problem:  # the skills the user blocked would load again, with no other sign
         report("✗", "config", problem, True)
     report("-", "Docker", "not checked here: run `uv run ai-browser doctor`")
+    _desktop_check(report)
     print("some checks failed" if failed else "all good")
     return 1 if failed else 0
+
+
+def _interactive() -> bool:
+    """Whether someone can see a question here and answer it: a terminal both ways, not a pipe or a file."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _ask(question: str) -> str:
+    try:
+        return input(question)
+    except EOFError:
+        return ""
+
+
+def _desktop_check(report) -> None:
+    """AI Browser's own app: set up, or not. While it isn't, or uses an older Electron, and someone can answer: the
+    offer (the version, the size, the address), the question, and after a typed yes, the setup. Nothing is
+    downloaded without that yes."""
+    from .desktop import layout
+    from .desktop.download import SetupError
+    from .desktop.release import SETUP_COMMAND, VERSION, asset_for, offer
+    from .desktop.setup import set_up
+
+    root = home()
+    asset, built = asset_for(), layout.installed(root)
+    if asset is None:
+        report("-", "app", "AI Browser's own app runs on macOS and on Windows (x64): here it opens in a browser window")
+        return
+    if built is not None and built.get("electron") == VERSION:
+        report("✓", "app", f"AI Browser's own app (Electron {VERSION}): {layout.app_path(root)}")
+        return
+    problem = layout.problem(root)
+    if problem:
+        report("-", "app", f"the last setup didn't finish: {problem}")
+    now = (f"AI Browser's own app uses Electron {built.get('electron')}, and {VERSION} is out" if built is not None
+           else "AI Browser's own app isn't set up: AI Browser opens in a browser window")
+    if not _interactive():
+        report("-", "app", f"{now}. To set it up, run `{SETUP_COMMAND}` in a terminal (it asks first)")
+        return
+    report("-", "app", now)
+    print("\n".join(offer(asset, layout.folder(root))))
+    if _ask("Download it now? Type y and press Enter: ").strip().lower() not in ("y", "yes"):
+        print("Skipped: nothing was downloaded.")
+        return
+    try:
+        set_up(root, asset)
+    except SetupError as exc:
+        report("✗", "app", str(exc), True)
+        return
+    report("✓", "app", "AI Browser's own app is ready: start it with `uv run ai-browser app`")
 
 
 async def _doctor() -> int:

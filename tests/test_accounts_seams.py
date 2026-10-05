@@ -12,7 +12,7 @@ def test_wave_b_has_the_names_this_plan_uses():
     from ai_browser.claudecli import claude_argv, spawn_options, track
 
     assert callable(settings.read_settings) and callable(settings.write_setting) and callable(settings.Settings)
-    assert set(settings.DEFAULTS) == {"window_browser", "model", "voice"}
+    assert {"window_browser", "model", "voice"} <= set(settings.DEFAULTS)  # native-app part a adds "shortcut"
     assert callable(server.may_send) and callable(server.for_watcher) and callable(server.AppServer._role)
     assert {"settings_set", "new_task", "model", "open_url", "tools", "tool_set"} <= set(server.MESSAGE_RULES)
     assert "settings" not in server.WATCHER_RECEIVES and "tools_snapshot" not in server.WATCHER_RECEIVES

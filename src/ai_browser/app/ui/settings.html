@@ -14,6 +14,23 @@
   <button id="home-link" class="ghost" type="button" title="Back to AI Home's tab">AI Home</button>
 </header>
 <main class="settings">
+  <section id="app-section" class="card" aria-labelledby="app-title">
+    <h2 id="app-title">AI Browser app</h2>
+    <p id="app-state"></p>
+    <div id="app-shortcut" hidden>
+      <p>The shortcut shows and hides AI Browser from any app.</p>
+      <div id="shortcut-choices" class="choices" role="radiogroup" aria-label="Shortcut"></div>
+      <p id="shortcut-note" class="muted" role="status"></p>
+    </div>
+    <div id="app-setup" hidden>
+      <p id="app-adds"></p>
+      <p>To set it up, run this in a terminal. It shows what it downloads, and asks first.</p>
+      <p><code id="app-command" class="app-command"></code>
+        <button id="app-copy" class="ghost" type="button">Copy</button>
+        <span id="app-copied" class="muted" role="status"></span></p>
+    </div>
+    <p id="app-problem" class="muted" hidden></p>
+  </section>
   <section id="window-section" class="card" aria-labelledby="window-title">
     <h2 id="window-title">App window</h2>
     <p>Which browser draws AI Browser's window</p>
