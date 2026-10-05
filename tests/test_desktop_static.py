@@ -63,8 +63,12 @@ def test_the_bridge_holds_named_actions_only():
     preload, main = text("preload.js"), text("main.js")
     assert preload.count("exposeInMainWorld(") == 1
     assert 'contextBridge.exposeInMainWorld("aib", Object.freeze(bridge));' in preload
-    assert 'const ACTIONS = ["chat", "thisPage"];' in preload
-    assert 'const ACTIONS = new Map([["chat", chatAction], ["thisPage", thisPageAction]]);' in main
+    assert 'const ACTIONS = ["chat", "thisPage", "chooseFolder"];' in preload
+    assert ('const ACTIONS = new Map([["chat", chatAction], ["thisPage", thisPageAction], '
+            '["chooseFolder", chooseFolderAction]]);') in main
+    chooses = re.search(r"function chooseFolderAction\(sender\) \{\n(.*?)\n\}\n", main, re.S).group(1)
+    assert 'if (!win || (win !== windows.get("main") && win !== windows.get("chat"))) return null;' in chooses
+    assert 'properties: ["openDirectory", "createDirectory"]' in chooses  # a folder, never a file
     assert "return handler(event.sender, ...args);" in main
     asks = re.search(r"function thisPageAction\(sender\) \{\n(.*?)\n\}\n", main, re.S).group(1)
     assert 'if (!chat || sender !== chat.webContents || !chat.isVisible()) return { state: "hidden" };' in asks

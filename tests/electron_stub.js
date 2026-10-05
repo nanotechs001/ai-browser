@@ -10,6 +10,7 @@
 // - "statuses": {address: [codes]}: the HTTP status each load of that address gets, in turn (default 200);
 // - "area": the screen's work area (default {x: 0, y: 0, width: 1440, height: 900});
 // - "stdout": what a program run with execFile prints (default "");
+// - "folder": the path the folder dialog (dialog.showOpenDialog) returns; without it, the user cancels;
 // - "steps": [[ms, what, ...args]], done that many ms after the start, as the user or a page would:
 //   - ["press"]: the global shortcut; ["tray", label]: a click on the menu-bar icon's item;
 //   - ["focus", kind] and ["blur"]: a click in one of the app's windows ("main", "chat"), or in another app;
@@ -89,6 +90,7 @@ class WebContents extends Emitter {
 
 class BrowserWindow extends Emitter {
   static getFocusedWindow() { return opened.find((win) => win.focused) || null; }
+  static fromWebContents(contents) { return opened.find((win) => win.webContents === contents) || null; }
 
   constructor(options) {
     super();
@@ -139,6 +141,10 @@ const electron = {
   Menu: { setApplicationMenu: () => {}, buildFromTemplate: (template) => template },
   dialog: {
     showMessageBox: async (options) => { record("dialog.showMessageBox", options.message); return { response: 0 }; },
+    showOpenDialog: async (win, options) => {
+      record("dialog.showOpenDialog", win?.title ?? null, options.properties);
+      return plan.folder ? { canceled: false, filePaths: [plan.folder] } : { canceled: true, filePaths: [] };
+    },
   },
   globalShortcut: {
     register: (accelerator, callback) => {
