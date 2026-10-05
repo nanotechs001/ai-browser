@@ -313,6 +313,39 @@ def test_the_command_runs_without_a_shell_and_a_slow_one_is_stopped():
     assert got[1]["error"] == "slow" and got[2]["error"] == "failed" and got[3]["error"] == "failed"
 
 
+@NEEDS_NODE
+def test_the_apps_profile_is_beside_it_or_for_the_packaged_exe_in_the_users_own_folder():
+    # (where its program is, the system, $AIB_HOME, the files there) -> its profile; the home folder is /u
+    got = run_js("""
+      const there = (...paths) => (file) => paths.includes(file);
+      const exe = "/dl/AI Browser/desktop/AI Browser/AI Browser.exe"; // the zip, unzipped in Downloads
+      const packaged = there("/dl/AI Browser/_internal", "/dl/AI Browser/AI Browser.exe");
+      const own = (execPath, platform, env, exists) =>
+        policy.profileFor({ execPath, platform, env, homedir: "/u", cwd: "/w", exists });
+      return [
+        own(exe, "win32", {}, packaged),
+        own(exe, "win32", { AIB_HOME: "/data/aib" }, packaged),
+        own(exe, "win32", { AIB_HOME: "~/aib" }, packaged),
+        own(exe, "win32", { AIB_HOME: "aib" }, packaged),
+        own("/u/.ai-browser/desktop/AI Browser/AI Browser.exe", "win32", {}, there()),
+        own("/u/.ai-browser/desktop/AI Browser.app/Contents/MacOS/Electron", "darwin", {}, there()),
+        own(exe, "win32", {}, there("/dl/AI Browser/AI Browser.exe")),
+      ];""")
+    assert got == ["/u/.ai-browser/desktop-profile",  # the packaged exe's app: the home the engine uses
+                   "/data/aib/desktop-profile", "/u/aib/desktop-profile", "/w/aib/desktop-profile",
+                   "/u/.ai-browser/desktop/profile",  # an app doctor --setup built: beside it, as before
+                   "/u/.ai-browser/desktop/profile",  # the Mac's, as before
+                   "/dl/AI Browser/desktop/profile"]  # no PyInstaller bundle beside it: not the packaged exe's
+
+
+@NEEDS_NODE
+def test_a_double_click_on_the_packaged_exes_app_says_to_start_ai_browser_exe():
+    got = run_js("return [policy.startHint(false), policy.startHint(true)];")
+    assert got == [{"message": "Start AI Browser from a terminal", "detail": "Run: uv run ai-browser app"},
+                   {"message": "Start AI Browser with AI Browser.exe",
+                    "detail": "Double-click AI Browser.exe, in the folder this app came in: it opens this app."}]
+
+
 # main.js itself, under a stand-in Electron (tests/electron_stub.js) that records every call and ends the run on
 # app.exit or app.quit. Nothing is shown, and nothing registers with the system.
 STUB = Path(__file__).parent / "electron_stub.js"

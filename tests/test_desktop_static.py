@@ -84,8 +84,8 @@ def test_no_npm_package_at_run_time():
     assert not {"dependencies", "devDependencies", "optionalDependencies", "scripts"} & set(package)
     for name in ("main.js", "preload.js", "policy.js", "line.js", "thispage.js"):
         modules = set(re.findall(r'require\("([^"]+)"\)', text(name)))
-        assert modules <= {"electron", "node:fs", "node:net", "node:path", "node:child_process", "./policy.js",
-                           "./line.js", "./thispage.js"}, (name, modules)
+        assert modules <= {"electron", "node:fs", "node:net", "node:os", "node:path", "node:child_process",
+                           "./policy.js", "./line.js", "./thispage.js"}, (name, modules)
     # thispage.js alone runs a program: its one fixed command, with execFile, never through a shell
     assert set(re.findall(r'require\("([^"]+)"\)', text("thispage.js"))) == {"node:child_process", "node:path"}
     assert not [name for name in ("main.js", "preload.js", "policy.js", "line.js") if "child_process" in text(name)]
@@ -111,6 +111,13 @@ def test_the_windows_script_only_reads_the_front_brave_window():  # Safety: UI A
                   "Invoke-WebRequest", "DownloadString", "-TypeDefinition", "Stop-Process", "Click", "param(",
                   "$args", "$env:", "Read-Host", "Set-Item", "New-Item", "Remove-Item", "Out-File"):
         assert never not in script, never
+
+
+def test_the_app_finds_its_profile_and_its_start_hint_as_policy_says():
+    main = text("main.js")
+    assert ("policy.profileFor({ execPath: process.execPath, platform: process.platform, env: process.env,"
+            in main)  # where the packaged exe's app keeps its profile: <home>/desktop-profile (test_desktop_js)
+    assert "policy.startHint(policy.packaged(" in main and "uv run ai-browser" not in main
 
 
 def test_the_menu_bar_icon_closing_and_quitting():  # Review Focus 4

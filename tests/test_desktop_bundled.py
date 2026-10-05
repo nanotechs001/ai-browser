@@ -1,7 +1,9 @@
 """AI Browser's own app, shipped beside the packaged AI Browser.exe (the Windows test build, packaging/): a `desktop`
 folder next to the exe, built there by the build with the same layout as <home>/desktop. The exe finds it first,
-treats it as set up, and never offers the download; Settings and doctor describe it. Python running the code never
-looks there. The apps here are miniatures (tests/fake_electron_zip.py), built with stand-in tools."""
+treats it as set up, and never offers the download; Settings and doctor describe it. Its Electron profile is in the
+user's own folder (<home>/desktop-profile), so it works wherever the zip was unzipped, and a new copy keeps the
+sign-in. Python running the code never looks there. The packaged exe never tells the user to run `uv run ai-browser`:
+it names itself. The apps here are miniatures (tests/fake_electron_zip.py), built with stand-in tools."""
 
 import sys
 
@@ -44,7 +46,7 @@ def test_the_packaged_exe_finds_the_app_beside_it_first(package, tmp_path):
     assert layout.folder(home) == package / "desktop"
     assert layout.app_path(home) == package / "desktop" / layout.app_path(home).name
     assert layout.installed(home) is not None and not assemble.stale(home)  # set up, and built from this code
-    assert layout.profile(home) == package / "desktop" / "profile"  # where its main.js keeps its profile
+    assert layout.profile(home) == home / "desktop-profile"  # the user's own folder: main.js keeps it there too
     assert default_desktop(home).app == layout.app_path(home)
 
 
@@ -75,6 +77,7 @@ def test_doctor_says_the_bundled_app_is_ready_and_offers_no_download(doctor, pac
     out = capsys.readouterr().out
     assert f"✓ app         AI Browser's own app (Electron {VERSION}): {layout.app_path(doctor['home'])}" in out
     assert str(package / "desktop") in out and "Download it now?" not in out
+    assert "uv run" not in out and '- Docker      not checked here: run `"AI Browser.exe" doctor`' in out
     assert doctor["fetch"].urls == [] and doctor["answers"] == ["y"]
 
 
@@ -89,3 +92,64 @@ async def test_settings_and_the_terminal_say_the_bundled_app_is_set_up(fake_clau
     finally:
         await server.stop()
     assert setup_hint(tmp_path / "home") == ""  # the browser window's "run doctor --setup once" line: not shown
+
+
+@APP_SYSTEMS
+def test_the_app_built_in_the_home_keeps_its_profile_beside_it(tmp_path, monkeypatch):
+    from ai_browser.desktop import layout
+
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert layout.profile(tmp_path / "home") == tmp_path / "home" / "desktop" / "profile"  # as before (macOS too)
+
+
+@APP_SYSTEMS
+async def test_a_page_without_the_cookie_says_to_double_click_the_exe(fake_claude, package, tmp_path):
+    from test_app_server import fetch
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        answer = await fetch("GET", url + "/app")
+    finally:
+        await server.stop()
+    assert answer.status_code == 403
+    assert "AI Browser's pages open only in its own window. Start it by double-clicking AI Browser.exe." in answer.text
+    assert "uv run" not in answer.text
+
+
+@APP_SYSTEMS
+def test_every_command_the_packaged_exe_names_is_its_own(package):
+    from ai_browser import platforms
+    from ai_browser.app import run
+    from ai_browser.app.server import not_here
+    from ai_browser.desktop.release import setup_command
+
+    assert platforms.command("build") == '"AI Browser.exe" build'
+    assert setup_command() == '"AI Browser.exe" doctor --setup'
+    assert platforms.start_words() == "by double-clicking AI Browser.exe"
+    assert "`\"AI Browser.exe\" app --window chrome`" in run.no_app_page() and "uv run" not in run.no_app_page()
+    assert not_here() == "AI Browser's pages open only in its own window. Start it by double-clicking AI Browser.exe."
+
+
+def test_python_running_the_code_names_uv_run_as_before(monkeypatch):
+    from ai_browser import platforms
+    from ai_browser.app import run
+    from ai_browser.app.server import not_here
+    from ai_browser.desktop.release import SETUP_COMMAND, setup_command
+
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert platforms.command("build") == "uv run ai-browser build" and setup_command() == SETUP_COMMAND
+    assert platforms.start_words() == "with `uv run ai-browser app`"
+    assert not_here() == "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
+    assert run.no_app_page() == ("AI Browser's app started, but its page never connected. Try again, or use a "
+                                 "browser window: `uv run ai-browser app --window chrome`")
+
+
+def test_only_one_place_spells_uv_run_for_the_user():
+    """Every message that names a command gets it from platforms.command or start_words, so the packaged exe names
+    itself: the words `uv run ai-browser` are in platforms.py and release.py's SETUP_COMMAND only."""
+    from pathlib import Path
+
+    source = Path(__file__).parents[1] / "src" / "ai_browser"
+    found = sorted(str(path.relative_to(source)) for path in source.rglob("*.py")
+                   if "uv run ai-browser" in path.read_text(encoding="utf-8"))
+    assert found == ["desktop/release.py", "platforms.py"]

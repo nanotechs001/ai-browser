@@ -48,7 +48,7 @@ from ..claudecli import claude_argv
 from ..config import LIVE_PORTS, load_config, project_root
 from ..desktop import layout
 from ..desktop.notes import note_for
-from ..desktop.release import SETUP_COMMAND, asset_for
+from ..desktop.release import asset_for, setup_command
 from ..desktop.release import VERSION as ELECTRON_VERSION
 from ..desktop.shortcut import SHORTCUT_ERROR, SHORTCUTS
 from ..desktop.shortcut import label as shortcut_label
@@ -109,7 +109,7 @@ APP_SILENT = "AI Browser's app didn't answer: try again"
 CHAT_NOT_CONNECTED = "Brave isn't connected to AI Browser, so the chat can't read that page: connect it in AI Home"
 CHAT_PAGE_CHANGED = "That tab went to another site before AI Browser read it, so nothing was sent: ask again"
 URL_LIMIT = 2000  # characters of a website address a page may ask the user's browser to open
-NOT_HERE = "AI Browser's pages open only in its own window. Start it with `uv run ai-browser app`."
+NOT_HERE = "AI Browser's pages open only in its own window. Start it {how}."  # not_here()
 USED_CODE = "This start link was used already or has expired. Start AI Browser again."
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
 SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (cc-<task id>)
@@ -214,6 +214,12 @@ def _valid_check(report: dict) -> bool:
 
 def _clock() -> float:
     return time.monotonic()  # its own function, so a test moves the start codes' clock and nothing else
+
+
+def not_here() -> str:
+    """A page asked for without the window's cookie: it opens only in AI Browser's own window, and how to start that
+    (the packaged AI Browser.exe names itself)."""
+    return NOT_HERE.format(how=platforms.start_words())
 
 
 def _refused_page(text: str) -> HTMLResponse:
@@ -493,7 +499,7 @@ class AppServer:
         said = self.desktop.shortcut if self.desktop is not None else {}
         return {"running": self.desktop is not None, "supported": asset_for() is not None,
                 "set_up": layout.installed(self.home) is not None, "version": ELECTRON_VERSION,
-                "platform": PLATFORM_WORDS.get(sys.platform, "other"), "command": SETUP_COMMAND,
+                "platform": PLATFORM_WORDS.get(sys.platform, "other"), "command": setup_command(),
                 "problem": layout.problem(self.home),
                 "shortcut": {"value": value, "label": shortcut_label(value),
                              "state": shortcut_state(value, said, self.desktop is not None)},
@@ -775,7 +781,7 @@ class AppServer:
         ok = self._cookie_ok(request)
         self._say_cookie(request, ok)
         if not ok:
-            return _refused_page(NOT_HERE)
+            return _refused_page(not_here())
         path = UI / PAGES[request.url.path]
         if not path.is_file():
             return Response(status_code=404)
@@ -788,7 +794,7 @@ class AppServer:
             return Response(status_code=404)
         if name not in OPEN_ANYWHERE and not self._cookie_ok(request):
             self._say_cookie(request, False)
-            return _refused_page(NOT_HERE)
+            return _refused_page(not_here())
         return Response((UI / name).read_bytes(), media_type=FILE_TYPES[Path(name).suffix])
 
     async def _setup(self, request: Request) -> HTMLResponse:

@@ -9,10 +9,17 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import platforms
+
 VERSION = "44.5.1"  # the newest stable Electron on 2026-10-04 (45 was still an alpha)
 RELEASE = f"https://github.com/electron/electron/releases/download/v{VERSION}"
 SHASUMS = f"{RELEASE}/SHASUMS256.txt"
-SETUP_COMMAND = "uv run ai-browser doctor --setup"
+SETUP_COMMAND = "uv run ai-browser doctor --setup"  # from the code; setup_command() says it for this program
+
+
+def setup_command() -> str:
+    """The command that sets AI Browser's own app up, for this program (the packaged AI Browser.exe names itself)."""
+    return platforms.command("doctor --setup")
 
 
 @dataclass(frozen=True)

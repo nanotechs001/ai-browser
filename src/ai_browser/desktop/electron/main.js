@@ -17,6 +17,7 @@ const { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, ip
         shell } = require("electron");
 const fs = require("node:fs");
 const net = require("node:net");
+const os = require("node:os");
 const path = require("node:path");
 const policy = require("./policy.js");
 const thispage = require("./thispage.js");
@@ -110,11 +111,13 @@ function watchContents(contents) { // the start log: where each page and frame w
   });
 }
 
-function profileFolder() { // <home>/desktop/profile, beside the app (a test's unpackaged Electron: its own)
+// <home>/desktop/profile, beside the app; the packaged AI Browser.exe's app: <home>/desktop-profile, in the user's own
+// folder (policy.profileFor). A test's unpackaged Electron: its own.
+function profileFolder() {
   const given = process.argv.find((arg) => arg.startsWith(PROFILE));
   if (given && UNPACKAGED) return given.slice(PROFILE.length);
-  const up = process.platform === "darwin" ? ["..", "..", "..", ".."] : ["..", ".."]; // out of the .app, or the folder
-  return path.join(path.resolve(process.execPath, ...up), "profile");
+  return policy.profileFor({ execPath: process.execPath, platform: process.platform, env: process.env,
+                             homedir: os.homedir(), cwd: process.cwd(), exists: fs.existsSync });
 }
 
 function openLine(onMessage, onEnd) {
@@ -153,7 +156,8 @@ function openLine(onMessage, onEnd) {
 
 // No engine behind the app: its line ended, or no start came in time. When an `ai-browser app` started it and went
 // away, the app quits quietly, before any window or menu-bar icon. Started by a double-click, it says how to start AI
-// Browser, after letting go of the single-instance lock: while the box is up, a real start is never blocked.
+// Browser (the packaged AI Browser.exe's app names that exe), after letting go of the single-instance lock: while the
+// box is up, a real start is never blocked.
 function noEngine() {
   const verdict = policy.withoutEngine({ line: lineOption(process.argv) !== null, start: starting });
   debug(`no engine: ${verdict}`);
@@ -165,9 +169,10 @@ function noEngine() {
   }
   starting = true; // a start message coming now is too late
   app.releaseSingleInstanceLock();
+  const hint = policy.startHint(policy.packaged({ execPath: process.execPath, platform: process.platform,
+                                                   exists: fs.existsSync }));
   app.whenReady().then(async () => {
-    await dialog.showMessageBox({ type: "info", message: "Start AI Browser from a terminal",
-                                  detail: "Run: uv run ai-browser app", buttons: ["OK"] });
+    await dialog.showMessageBox({ type: "info", message: hint.message, detail: hint.detail, buttons: ["OK"] });
     app.exit(0);
   });
 }
