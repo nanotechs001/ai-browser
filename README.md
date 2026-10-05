@@ -110,8 +110,10 @@ signed, and it has no voice input.
    - A console window opens with AI Browser's log, then AI Browser's own app. Quitting the app (its icon by the clock
      → Quit), or closing the console window, stops everything.
    - Start it from `AI Browser.exe`, not from the Start menu entry the app adds (that one is for its notifications).
-   - With a command, it works as `ai-browser` does. Where AI Browser says `uv run ai-browser …`, run this in
-     PowerShell, in that folder: `& ".\AI Browser.exe" …` (for example `& ".\AI Browser.exe" doctor --setup`).
+   - The app keeps its sign-in and settings in your own folder (`%USERPROFILE%\.ai-browser\desktop-profile`), so it
+     works wherever you unzip it, and a newer zip keeps them.
+   - With a command, it works as `ai-browser` does: in PowerShell, in that folder, `& ".\AI Browser.exe" …` (for
+     example `& ".\AI Browser.exe" doctor --setup`). AI Browser's messages name its commands that way.
 4. **The PC needs:**
    - Claude Code, installed and signed in: `irm https://claude.ai/install.ps1 | iex`, then `claude` once;
    - Brave, with remote debugging on: open `brave://inspect/#remote-debugging` and tick **Allow remote debugging for

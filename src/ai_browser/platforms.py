@@ -266,9 +266,10 @@ def frozen() -> bool:
 
 def command(args: str) -> str:
     """AI Browser's command line with `args`, as a message names it for the user to type: `uv run ai-browser <args>`
-    from the code, or the packaged program itself ("AI Browser.exe" <args>), which has no uv."""
+    from the code; from the packaged program, which has no uv, the program itself as PowerShell runs it in its folder
+    (& ".\\AI Browser.exe" <args>, as the README says)."""
     if frozen():
-        return f'"{Path(sys.executable).name}" {args}'
+        return f'& ".\\{Path(sys.executable).name}" {args}'
     return f"uv run ai-browser {args}"
 
 

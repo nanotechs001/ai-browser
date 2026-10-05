@@ -182,5 +182,6 @@ def test_the_readme_says_how_to_get_and_start_the_windows_build():
     section = text.split("## Windows test build", 1)[1].split("\n## ", 1)[0]
     for needed in ("Actions", "Build Windows app", "Run workflow", "Artifacts", "AI-Browser-windows.zip",
                    "AI Browser.exe", "Windows protected your PC", "More info", "Run anyway", "Claude Code",
-                   "brave://inspect/#remote-debugging", "Docker", "voice"):
+                   "brave://inspect/#remote-debugging", "Docker", "voice", "desktop-profile",
+                   '& ".\\AI Browser.exe" doctor --setup'):
         assert needed in section, needed

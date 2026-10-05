@@ -77,7 +77,7 @@ def test_doctor_says_the_bundled_app_is_ready_and_offers_no_download(doctor, pac
     out = capsys.readouterr().out
     assert f"✓ app         AI Browser's own app (Electron {VERSION}): {layout.app_path(doctor['home'])}" in out
     assert str(package / "desktop") in out and "Download it now?" not in out
-    assert "uv run" not in out and '- Docker      not checked here: run `"AI Browser.exe" doctor`' in out
+    assert "uv run" not in out and '- Docker      not checked here: run `& ".\\AI Browser.exe" doctor`' in out
     assert doctor["fetch"].urls == [] and doctor["answers"] == ["y"]
 
 
@@ -123,10 +123,10 @@ def test_every_command_the_packaged_exe_names_is_its_own(package):
     from ai_browser.app.server import not_here
     from ai_browser.desktop.release import setup_command
 
-    assert platforms.command("build") == '"AI Browser.exe" build'
-    assert setup_command() == '"AI Browser.exe" doctor --setup'
+    assert platforms.command("build") == '& ".\\AI Browser.exe" build'  # PowerShell, in the exe's folder (README)
+    assert setup_command() == '& ".\\AI Browser.exe" doctor --setup'
     assert platforms.start_words() == "by double-clicking AI Browser.exe"
-    assert "`\"AI Browser.exe\" app --window chrome`" in run.no_app_page() and "uv run" not in run.no_app_page()
+    assert '`& ".\\AI Browser.exe" app --window chrome`' in run.no_app_page() and "uv run" not in run.no_app_page()
     assert not_here() == "AI Browser's pages open only in its own window. Start it by double-clicking AI Browser.exe."
 
 
