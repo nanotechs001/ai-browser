@@ -143,3 +143,15 @@ def test_the_commands_are_exactly_these(tmp_path):
     assert sign_command(Tools(), app) == ["codesign", "--force", "--deep", "--sign", "-", str(app)]
     assert icon_command(Tools(), tmp_path / "icon.png", tmp_path / "AI Browser.icns") == [
         "sips", "-s", "format", "icns", str(tmp_path / "icon.png"), "--out", str(tmp_path / "AI Browser.icns")]
+
+
+def test_the_mac_app_says_why_it_asks_for_the_microphone_and_for_brave():  # Plan decision 5
+    from ai_browser.desktop import assemble, launch
+
+    assert assemble.PLIST["NSAppleEventsUsageDescription"] == (
+        "AI Browser's chat reads the address and title of the Brave tab you're on, and nothing else. It never types, "
+        "clicks or opens anything in Brave.")
+    assert assemble.PLIST["NSMicrophoneUsageDescription"] == (
+        "AI Browser listens only while you hold its talk button, in Mission Control or the chat.")
+    assert launch.UPDATED == ("AI Browser's app was updated for this version: macOS may ask for the microphone, and "
+                              "to control Brave, once more.")

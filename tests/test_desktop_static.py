@@ -63,7 +63,12 @@ def test_the_bridge_holds_named_actions_only():
     preload, main = text("preload.js"), text("main.js")
     assert preload.count("exposeInMainWorld(") == 1
     assert 'contextBridge.exposeInMainWorld("aib", Object.freeze(bridge));' in preload
-    assert "const ACTIONS = [];" in preload and "const ACTIONS = new Map();" in main  # part c adds chat, thisPage
+    assert 'const ACTIONS = ["chat", "thisPage"];' in preload
+    assert 'const ACTIONS = new Map([["chat", chatAction], ["thisPage", thisPageAction]]);' in main
+    assert "return handler(event.sender, ...args);" in main
+    asks = re.search(r"function thisPageAction\(sender\) \{\n(.*?)\n\}\n", main, re.S).group(1)
+    assert 'if (!chat || sender !== chat.webContents || !chat.isVisible()) return { state: "hidden" };' in asks
+    assert "if (!given || !UNPACKAGED) return thispage.run;" in main  # the fake page: a test's Electron only
     assert "ipcRenderer.invoke(`aib:${name}`, ...args)" in preload
     assert re.findall(r'require\("([^"]+)"\)', preload) == ["electron"]  # a sandboxed preload: the bridge alone
     assert "frame !== event.sender.mainFrame || policy.originOf(frame.url) !== own" in main
@@ -134,11 +139,11 @@ def test_the_product_never_passes_a_debugging_switch():
                    f"--aib-line={Path('/t/aib-1/line')}"]
     assert windows == [str(Path("/x/AI Browser/AI Browser.exe"))]
     banned = ("--remote-debugging", "--inspect", "--remote-allow-origins", "--js-flags", "--enable-logging",
-              "--auto-open-devtools", "--user-data-dir", "--load-extension")
+              "--auto-open-devtools", "--user-data-dir", "--load-extension", "--aib-fake-page", "--aib-profile")
     assert not [arg for arg in mac + windows if arg.startswith(banned)]
     for path in sorted((SRC / "desktop").glob("*.py")):
         source = path.read_text(encoding="utf-8")
-        for word in ("remote-debugging", "--inspect", "ELECTRON_RUN_AS_NODE", "openDevTools"):
+        for word in ("remote-debugging", "--inspect", "ELECTRON_RUN_AS_NODE", "openDevTools", "aib-fake-page"):
             assert word not in source, (path.name, word)
 
 

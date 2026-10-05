@@ -465,3 +465,33 @@ def test_the_chat_opens_where_it_was_left(tmp_path):  # Decision 4: it remembers
     gone = run_main(tmp_path, feed=START, pause=1.0, steps=[[300, "tray", "Show chat"]])
     assert chat_made(gone)[0][2] == {"x": 1044, "y": 48, "width": 380, "height": 560, "alwaysOnTop": True,
                                      "skipTaskbar": True}
+
+
+@NEEDS_NODE
+def test_only_the_shown_chat_learns_which_tab_and_one_fixed_command_runs(tmp_path):  # Plan decision 7
+    page = json.dumps({"state": "ok", "url": "https://shop.example/", "title": "Shop"})
+    calls = run_main(tmp_path, feed=START, pause=2.0, stdout=page, steps=[
+        [300, "invoke", "main", "thisPage"],  # AI Browser's window never learns it
+        [400, "invoke", "main", "chat", "show"],  # but it may show the chat
+        [700, "invoke", "chat", "thisPage"],
+        [800, "invoke_framed", "chat", "thisPage"],  # a frame inside the chat gets nothing at all
+        [1000, "invoke", "chat", "chat", "hide"],
+        [1200, "invoke", "chat", "thisPage"],  # hidden: Brave isn't read
+        [1300, "invoke", "main", "chat", "sideways"]])
+    expected = run_js(f"return thispage.command(process.platform, {json.dumps(str(ELECTRON_DIR))});")
+    seen = {"state": "ok", "url": "https://shop.example/", "title": "Shop"} if expected else {"state": "unsupported"}
+    assert [call[1:] for call in calls if call[0] == "answer"] == [
+        ["thisPage", {"state": "hidden"}], ["chat", None], ["thisPage", seen], ["thisPage", None], ["chat", None],
+        ["thisPage", {"state": "hidden"}], ["chat", None]]
+    runs = [call[1:] for call in calls if call[0] == "execFile"]
+    assert runs == ([[expected["file"], expected["args"]]] if expected else [])  # once, exactly the fixed command
+    assert shown(calls).count(["win.show", "AI Browser chat"]) == 1  # "sideways" showed nothing
+
+
+@NEEDS_NODE
+def test_a_tests_electron_reads_a_file_instead_of_brave(tmp_path):
+    answer = tmp_path / "page.json"
+    answer.write_text(json.dumps({"state": "denied"}), encoding="utf-8")
+    calls = run_main(tmp_path, f"--aib-fake-page={answer}", feed=START, pause=1.5,
+                     steps=[[300, "tray", "Show chat"], [600, "invoke", "chat", "thisPage"]])
+    assert ["answer", "thisPage", {"state": "denied"}] in calls and "execFile" not in names(calls)

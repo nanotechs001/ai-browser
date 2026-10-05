@@ -36,7 +36,8 @@ START_WAIT = 20.0  # seconds for the app to start and say hello
 ANSWER_WAIT = 5.0  # seconds for its answer about a shortcut
 QUIT_WAIT = 10.0  # seconds it gets to quit before it is ended
 LINE_LIMIT = 64 * 1024  # bytes in one line
-UPDATED = "AI Browser's app was updated for this version: macOS may ask for the microphone once more."
+UPDATED = ("AI Browser's app was updated for this version: macOS may ask for the microphone, and to control Brave, "
+           "once more.")
 
 
 class DesktopError(WindowError):

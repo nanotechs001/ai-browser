@@ -4,6 +4,8 @@
 // - The floating chat: a small window above the others, beside Brave, that shows /chat and nothing else. The shortcut
 //   picked in Settings (⌥Space) shows and hides it from any app, and so does the menu-bar icon's Show chat. It opens
 //   where the user left it, at the size they left it (chat.json, in the profile).
+// - Its pages may ask it for two things (preload.js): to show or hide the chat; and, from the chat alone while it
+//   shows, which Brave tab the user is on (thispage.js: the tab's address and title, nothing else).
 // - It keeps an icon in the menu bar (by the clock on Windows).
 // - It shows the notifications the engine writes, word for word.
 // Closing a window hides it. Quit ends the app and tells the engine, which stops too. When the engine goes, the app
@@ -16,11 +18,13 @@ const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 const policy = require("./policy.js");
+const thispage = require("./thispage.js");
 const { encode, lineOption, splitter } = require("./line.js");
 
 const APP_ID = "io.github.nanotechs001.ai-browser"; // desktop/layout.py's BUNDLE_ID, and Windows' AppUserModelID
 const TOAST_CLSID = "{52E8D68C-5CAC-4680-848A-E80657E0B4D5}"; // Windows: the Start menu entry's toast activator
 const PROFILE = "--aib-profile="; // an unpackaged Electron only (the tests'): its throwaway profile
+const FAKE_PAGE = "--aib-fake-page="; // an unpackaged Electron only (the tests'): a file that stands in for Brave
 // A test's Electron, started on this folder: Electron's own default app loaded it, and its program has Electron's
 // name. Never AI Browser's app, whose Electron loads resources/app and has no default app left. app.isPackaged alone
 // isn't enough: it only compares the program's name, and the Mac app's program keeps Electron's (Contents/MacOS).
@@ -46,7 +50,9 @@ const WEB = Object.freeze({ // every window's webPreferences (makeWindow)
   autoplayPolicy: "no-user-gesture-required", // Mission Control speaks without a click first
   preload: path.join(__dirname, "preload.js"),
 });
-const ACTIONS = new Map(); // name -> handler: what a page may ask the app for (preload.js lists the same names)
+// What a page may ask the app for, by name (preload.js lists the same names, in the same order). Each handler gets the
+// asking page's webContents first: answerActions has checked it is AI Browser's own top-level page.
+const ACTIONS = new Map([["chat", chatAction], ["thisPage", thisPageAction]]);
 
 const windows = new Map(); // "main", and "chat" once the floating chat has shown
 const notes = new Map(); // id -> Notification, kept so a click still reaches us
@@ -62,6 +68,7 @@ let tray = null;
 let chatLoaded = false; // the chat's window shows /chat now (the engine answered it with 200)
 let chatFrom = false; // another app was in front when the chat came: on a Mac, hiding the chat goes back to it
 let saving = null; // the timer that keeps the chat's place
+let looking = null; // a look at Brave's front tab under way: one at a time
 
 function profileFolder() { // <home>/desktop/profile, beside the app (a test's unpackaged Electron: its own)
   const given = process.argv.find((arg) => arg.startsWith(PROFILE));
@@ -218,6 +225,32 @@ function toggleChat() { // the shortcut: the floating chat comes forward, or hid
   else showChat();
 }
 
+// The bridge's "chat": AI Browser's pages may show the chat, and the chat hides itself.
+function chatAction(sender, what) {
+  if (what === "show") showChat();
+  else if (what === "hide") hideChat();
+  return null;
+}
+
+// The bridge's "thisPage": which Brave tab the user is on. Only the chat's own page gets an answer, and only while
+// the chat shows: nothing reads Brave's tab in the background. One look at a time: an ask while one runs gets its
+// answer.
+function thisPageAction(sender) {
+  const chat = windows.get("chat");
+  if (!chat || sender !== chat.webContents || !chat.isVisible()) return { state: "hidden" };
+  if (!looking) looking = thispage.read(process.platform, pageRunner()).finally(() => { looking = null; });
+  return looking;
+}
+
+// The real osascript or PowerShell. A test's unpackaged Electron alone may name a file (--aib-fake-page) whose text
+// stands in for what they would print: the packaged app never reads one, and no test reads the user's Brave.
+function pageRunner() {
+  const given = process.argv.find((arg) => arg.startsWith(FAKE_PAGE));
+  if (!given || !UNPACKAGED) return thispage.run;
+  const file = given.slice(FAKE_PAGE.length);
+  return async () => ({ error: "", stdout: fs.readFileSync(file, "utf8"), stderr: "" });
+}
+
 function useShortcut(value, request) { // move the global shortcut, and tell the engine how it went
   const result = policy.moveShortcut(globalShortcut, shortcut, value, toggleChat);
   if (result.registered !== shortcut) pressed = false;
@@ -315,7 +348,7 @@ function answerActions() { // each named action, for AI Browser's own top-level 
     ipcMain.handle(`aib:${name}`, (event, ...args) => {
       const frame = event.senderFrame;
       if (!frame || frame !== event.sender.mainFrame || policy.originOf(frame.url) !== own) return null;
-      return handler(...args);
+      return handler(event.sender, ...args);
     });
   }
 }

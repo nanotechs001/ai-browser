@@ -1,7 +1,8 @@
 """AI Browser's own app, built in <home>/desktop/ from Electron as it was unpacked (layout.py says where).
 - macOS: Electron.app becomes "AI Browser.app".
-  - Its Info.plist gets AI Browser's name, bundle id and microphone text, and its icon (an .icns that sips makes from
-    app/ui/icon.png). Electron's CFBundleIconName goes, or macOS would show Electron's icon from its asset catalog.
+  - Its Info.plist gets AI Browser's name, bundle id, and why it asks for the microphone and for Brave, and its icon
+    (an .icns that sips makes from app/ui/icon.png). Electron's CFBundleIconName goes, or macOS would show Electron's
+    icon from its asset catalog.
   - AI Browser's JavaScript goes in Contents/Resources/app/, and Electron's default app goes.
   - The fuses that would run it as Node.js or with an inspector are turned off (fuses.py).
   - Then it is signed on this computer, ad hoc (codesign --force --deep --sign -). macOS then keeps one identity for
@@ -33,7 +34,11 @@ from .stage import ICON, part_hash, stage_app
 
 PLIST = {"CFBundleName": layout.APP_NAME, "CFBundleDisplayName": layout.APP_NAME,
          "CFBundleIdentifier": layout.BUNDLE_ID, "CFBundleIconFile": "AI Browser.icns",
-         "NSMicrophoneUsageDescription": "AI Browser listens only while you hold the talk button in Mission Control."}
+         "NSMicrophoneUsageDescription": "AI Browser listens only while you hold its talk button, in Mission Control "
+                                         "or the chat.",
+         # macOS shows it when it asks, once, whether AI Browser may control Brave (the chat's "This page")
+         "NSAppleEventsUsageDescription": "AI Browser's chat reads the address and title of the Brave tab you're on, "
+                                          "and nothing else. It never types, clicks or opens anything in Brave."}
 TOOL_WAIT = 300  # seconds codesign or sips may take
 
 
