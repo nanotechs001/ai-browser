@@ -79,6 +79,7 @@ function place(node, point) {
 }
 
 export function toolLabel(permission) { // "ClickUp: create task", for a station's ticker and the Brain's words
+  if (permission?.card) return String(permission.card.title || "use a tool"); // agent powers: "run a command"
   const server = String(permission?.server || "a tool").replace(/^claude_ai_/, "").replaceAll("_", " ");
   const tool = String(permission?.tool || "").split("__").slice(2).join("__").replaceAll("_", " ");
   return tool ? `${server}: ${tool}` : server;
@@ -86,7 +87,9 @@ export function toolLabel(permission) { // "ClickUp: create task", for a station
 
 function tickerOf(agent, state) {
   if (state === "needs_you" && agent.check) return `bot check · ${agent.check.site}`;
-  if (state === "needs_you" && agent.permission) return `wants ${toolLabel(agent.permission)}`;
+  if (state === "needs_you" && agent.permission) {
+    return `wants ${agent.permission.card ? "to " : ""}${toolLabel(agent.permission)}`;
+  }
   if (state === "failed") return agent.status || "failed";
   return agent.last_action || agent.status || STATES[state] || state;
 }

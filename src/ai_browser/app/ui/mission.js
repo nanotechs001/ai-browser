@@ -165,7 +165,8 @@ function told(before, agent) { // an agent's change worth a word from the Brain 
   }
   else if (now === "needs_you") {
     voice.say(brief(agent.check ? `${agent.name} hit a bot check on ${agent.check.site}. It's waiting for you`
-      : `${agent.name} wants to use ${toolLabel(agent.permission)}. It's waiting for you`));
+      : `${agent.name} wants to ${agent.permission?.card ? "" : "use "}${toolLabel(agent.permission)}. `
+        + "It's waiting for you"));
   }
 }
 

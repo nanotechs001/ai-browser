@@ -51,3 +51,20 @@
 .bot-check button { font-size: 13px; padding: 2px 10px; }
 .brain-setup.link { border: none; background: none; padding: 0; color: inherit; text-decoration: underline;
                     font: inherit; cursor: pointer; }
+
+/* Agent powers' card (permission.js): the command or the path, the clipped diff (removed red, added green), its size,
+   and Deny's note. */
+.permission-text { margin: 0; max-height: 160px; overflow: auto; background: var(--soft); border-radius: 8px;
+                   padding: 8px 10px; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap;
+                   word-break: break-word; }
+.permission .diff { max-height: 260px; overflow: auto; background: var(--soft); border-radius: 8px; padding: 6px 0;
+                    font: 12px/1.45 ui-monospace, Menlo, monospace; }
+.permission .diff > div { padding: 0 10px; white-space: pre-wrap; word-break: break-word; }
+.permission .diff .del { background: color-mix(in srgb, var(--fail) 18%, transparent); }
+.permission .diff .add { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.permission .diff .gap { color: var(--muted); }
+.permission-where, .permission-size, .permission-sandbox { font-size: 12px; }
+.permission-why { font-size: 13px; }
+.permission-answer { display: flex; flex-direction: column; gap: 6px; }
+.permission .deny-note { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
+                         background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
