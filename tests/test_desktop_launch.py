@@ -220,3 +220,27 @@ async def test_the_start_code_is_made_after_a_slow_rebuild(fake_claude, tmp_path
     finally:
         await app.close()
         await server.stop()
+
+
+@pytest.mark.posix_only  # LaunchServices: macOS
+async def test_a_copy_that_closes_as_it_starts_falls_back_with_the_plain_reason(fake_claude, tmp_path, monkeypatch):
+    from ai_browser.app import run
+    from ai_browser.desktop import launch, layout
+    from test_app_server import started
+    from test_bridge import EVENTS
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    plan(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_OPEN_LOG", str(tmp_path / "open.log"))
+    monkeypatch.setenv("FAKE_OPEN_EXIT", "0")  # the new copy quits at once: another one still holds the profile
+    layout.app_path(server.home, "darwin").mkdir(parents=True)
+    app = launch.DesktopWindow(server.home, None, system="darwin", opener=[fake_python(), str(TESTS / "fake_open.py")])
+    lines = []
+    try:
+        assert await run._open_app(server.home, server, url, lambda home, shortcut: app, None, lines.append) is None
+    finally:
+        await server.stop()
+    said = "AI Browser's app closed as it started: another copy of it may still be open, or closing"
+    assert layout.problem(server.home) == said  # what Settings shows: never "open ended with 0"
+    assert lines == [f"{said}. AI Browser opens in a browser window this time."]
+    assert app.ended.is_set() and not app.running and server.desktop is None

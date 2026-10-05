@@ -158,6 +158,9 @@ class DesktopWindow:
             finally:
                 exited.cancel()
             if not joined.done():
+                if self._process.returncode == 0:  # it opened, and its new copy quit at once: one may hold its profile
+                    raise DesktopError("AI Browser's app closed as it started: another copy of it may still be open, "
+                                       "or closing")
                 if self._process.returncode is not None:
                     raise DesktopError(f"macOS couldn't open AI Browser's app (open ended with "
                                        f"{self._process.returncode})")

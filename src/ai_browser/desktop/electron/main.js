@@ -96,9 +96,18 @@ function openLine(onMessage, onEnd) {
   };
 }
 
-function noEngine() { // started by a double-click (Finder, the Start menu), with no `ai-browser app` behind it
-  if (started) return;
+// No engine behind the app: its line ended, or no start came in time. When an `ai-browser app` started it and went
+// away, the app quits quietly, before any window or menu-bar icon. Started by a double-click, it says how to start AI
+// Browser, after letting go of the single-instance lock: while the box is up, a real start is never blocked.
+function noEngine() {
+  if (policy.withoutEngine({ line: lineOption(process.argv) !== null, start: starting }) === "quit") {
+    engineQuit = true; // there is no one to tell
+    if (started) app.quit();
+    else app.exit(0);
+    return;
+  }
   starting = true; // a start message coming now is too late
+  app.releaseSingleInstanceLock();
   app.whenReady().then(async () => {
     await dialog.showMessageBox({ type: "info", message: "Start AI Browser from a terminal",
                                   detail: "Run: uv run ai-browser app", buttons: ["OK"] });
@@ -297,12 +306,7 @@ function main() {
     }
   }, () => {
     clearTimeout(waiting);
-    if (started) {
-      engineQuit = true;
-      app.quit();
-    } else {
-      noEngine();
-    }
+    noEngine(); // the engine is gone: quit (test_desktop_js runs these under a stand-in Electron)
   });
   app.whenReady().then(() => {
     lockSession(session.defaultSession);

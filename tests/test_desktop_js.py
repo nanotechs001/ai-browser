@@ -167,3 +167,94 @@ def test_shortcuts_are_written_the_way_each_keyboard_says_them():
     assert state("Alt+Space", {**said, "value": "Alt+Shift+Space"}, True) == "unknown"  # it said about another one
     assert state("Alt+Space", {}, True) == "unknown"  # it hasn't said yet
     assert state(None, said, True) == "off"
+
+
+@NEEDS_NODE
+def test_without_an_engine_only_a_double_click_hears_how_to_start():
+    got = run_js("return [[true, false], [false, true], [true, true], [false, false]].map(([line, start]) => "
+                 "policy.withoutEngine({ line, start }));")
+    assert got == ["quit", "quit", "quit", "box"]  # the engine went away: quit quietly; nobody started us: say how
+
+
+# main.js itself, under a stand-in Electron (tests/electron_stub.js) that records every call and ends the run on
+# app.exit or app.quit. Nothing is shown, and nothing registers with the system.
+STUB = Path(__file__).parent / "electron_stub.js"
+START = b'{"type": "start", "open": "http://127.0.0.1:8793/open?code=the-code", "shortcut": null}\n'
+
+
+def run_main(tmp_path, *switches, feed=None, pause=0.0, **plan) -> list:
+    """main.js on the stand-in: the calls it made, in order. `feed` goes to its stdin (the line, when no
+    --aib-line names one), and the line ends `pause` seconds later; with no feed, stdin is empty."""
+    import os
+    import time
+
+    out = tmp_path / "calls.json"
+    env = {**os.environ, "STUB_PLAN": json.dumps(plan), "STUB_OUT": str(out)}
+    process = subprocess.Popen([NODE, str(STUB), str(ELECTRON_DIR / "main.js"),
+                                f"--aib-profile={tmp_path / 'profile'}", *switches],
+                               stdin=subprocess.PIPE if feed is not None else subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env)
+    if feed is not None:
+        process.stdin.write(feed)
+        process.stdin.flush()
+        time.sleep(pause)
+        process.stdin.close()
+    process.wait(timeout=60)
+    assert process.returncode == 0, process.stderr.read().decode("utf-8", "replace")
+    process.stderr.close()
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
+def names(calls: list) -> list[str]:
+    return [call[0] for call in calls]
+
+
+@NEEDS_NODE
+def test_a_double_click_start_lets_go_of_the_lock_before_it_says_how(tmp_path):  # F2 (b)
+    calls = run_main(tmp_path)  # no line, and nothing on stdin: nobody started it
+    said = names(calls)
+    assert ["dialog.showMessageBox", "Start AI Browser from a terminal"] in calls
+    assert said.index("app.releaseSingleInstanceLock") < said.index("dialog.showMessageBox")  # a real start can begin
+    assert "new BrowserWindow" not in said and calls[-1] == ["app.exit", 0]
+
+
+@NEEDS_NODE
+@pytest.mark.posix_only  # the Mac's line is a socket
+def test_an_engine_gone_before_its_start_quits_quietly(tmp_path):  # F2 (a)
+    import socket
+    import tempfile
+    import threading
+
+    folder = Path(tempfile.mkdtemp(prefix="aib-"))  # a short path: a socket's is limited
+    server = socket.socket(socket.AF_UNIX)
+    try:
+        server.bind(str(folder / "line"))
+        server.listen()
+
+        def engine_goes():  # it takes the app's connection, then ends without a start (Ctrl-C, a crash)
+            connection, _ = server.accept()
+            connection.close()
+
+        threading.Thread(target=engine_goes, daemon=True).start()
+        calls = run_main(tmp_path, f"--aib-line={folder / 'line'}")
+    finally:
+        server.close()
+        (folder / "line").unlink(missing_ok=True)
+        folder.rmdir()
+    assert "dialog.showMessageBox" not in names(calls) and "new BrowserWindow" not in names(calls)
+    assert calls[-1] == ["app.exit", 0]
+
+
+@NEEDS_NODE
+def test_once_the_start_has_come_there_is_never_a_box(tmp_path):  # F2 (c)
+    calls = run_main(tmp_path, feed=START, ready_after=1000)  # the line ends before Electron is ready
+    assert "dialog.showMessageBox" not in names(calls) and "new BrowserWindow" not in names(calls)
+    assert calls[-1] == ["app.exit", 0]
+
+
+@NEEDS_NODE
+def test_the_engine_gone_after_the_start_quits_the_app(tmp_path):  # Review Focus 4
+    calls = run_main(tmp_path, feed=START, pause=0.5)
+    said = names(calls)
+    assert ["win.loadURL", "http://127.0.0.1:8793/open?code=the-code"] in calls and "new Tray" in said
+    assert "dialog.showMessageBox" not in said and calls[-1] == ["app.quit"]

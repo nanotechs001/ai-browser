@@ -81,8 +81,8 @@ def test_the_menu_bar_icon_closing_and_quitting():  # Review Focus 4
         assert item in main, item
     assert 'win.on("close", (event) => {' in main and "win.hide();" in main  # closing hides it
     assert 'send({ type: "quit" })' in main  # Quit tells the engine
-    assert re.search(r"\}, \(\) => \{\n    clearTimeout\(waiting\);\n    if \(started\) \{\n      engineQuit = true;\n"
-                     r"      app\.quit\(\);", main)  # the line's end (the engine gone) quits the app
+    assert re.search(r"\}, \(\) => \{\n    clearTimeout\(waiting\);\n    noEngine\(\);",
+                     main)  # the line's end (the engine gone) quits the app: test_desktop_js runs it
     assert main.count("new Notification(") == 1 and "policy.notice(message)" in main  # the engine's words only
     assert "if (UNPACKAGED) return;" in main  # a test's Electron never adds a Start menu entry
 

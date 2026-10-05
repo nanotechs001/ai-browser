@@ -101,7 +101,14 @@ function notice(message) {
   return title ? { id: message.id, title, body: text(message.body, BODY_LIMIT) } : null;
 }
 
+// The app with no engine behind it (its line ended, or no start came in time). An `ai-browser app` started it (it
+// named a line, or sent its start) and went away: "quit", quietly, with no box and no window. Nothing started it (a
+// double-click in Finder or the Start menu): "box", which says to start AI Browser from a terminal.
+function withoutEngine({ line, start }) {
+  return line || start ? "quit" : "box";
+}
+
 module.exports = {
   DEBUG_SWITCHES, LIVE_PORTS, SHORTCUTS, isLiveView, mayCheck, mayNavigate, mayRequest, moveShortcut, notice,
-  originOf, shortcutOk, startOrigin,
+  originOf, shortcutOk, startOrigin, withoutEngine,
 };
