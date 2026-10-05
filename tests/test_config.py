@@ -59,3 +59,11 @@ def test_a_config_that_cant_be_used_is_reported(tmp_path):
 
 def test_project_root_points_at_repo():
     assert (config.project_root() / "pyproject.toml").exists()
+
+
+def test_project_root_is_the_bundle_in_the_packaged_exe(monkeypatch, tmp_path):
+    import sys
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)  # AI Browser.exe: docker/ and skills/ are in its bundle
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert config.project_root() == tmp_path

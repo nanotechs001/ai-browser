@@ -224,3 +224,51 @@ def test_app_hands_its_choices_to_run_app(monkeypatch):
     monkeypatch.setattr(run, "run_app", fake_run_app)
     assert main(["app", "--model", "haiku", "--window", "brave", "--browser", "brave"]) == 0
     assert seen == {"model": "haiku", "browser": "brave", "window_browser": "brave"}
+
+
+@pytest.fixture
+def double_clicked(monkeypatch):
+    """AI Browser.exe, the packaged Windows build (packaging/), started by a double-click: no command. `ended` is
+    what its app run returns; `runs` and `asked` record the runs and the questions asked at the console."""
+    import sys
+
+    import ai_browser.app.run as run
+    import ai_browser.cli as cli
+
+    world = {"ended": 0, "runs": [], "asked": []}
+
+    async def fake_run_app(home, model="sonnet", **options):
+        world["runs"].append({"model": model, **options})
+        return world["ended"]
+
+    monkeypatch.setattr(run, "run_app", fake_run_app)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    monkeypatch.setattr(cli, "_ask", lambda question: world["asked"].append(question) or "")
+    return world
+
+
+def test_the_packaged_exe_with_no_command_opens_the_app(double_clicked):
+    assert main([]) == 0
+    assert double_clicked["runs"] == [{"model": "sonnet", "browser": None, "window_browser": None}]
+    assert double_clicked["asked"] == []  # the app's own Quit closes the console window with it
+
+
+def test_the_packaged_exe_keeps_its_window_open_when_the_app_cant_start(double_clicked):
+    double_clicked["ended"] = 1  # for example: AI Browser is already running
+    assert main([]) == 1
+    assert double_clicked["asked"] == ["AI Browser stopped (see above). Press Enter to close this window."]
+
+
+def test_the_packaged_exe_runs_the_command_it_is_given(double_clicked, capsys):
+    assert main(["stop", "Bad Name!"]) == 2
+    assert "profile" in capsys.readouterr().err and double_clicked["runs"] == []
+
+
+def test_without_a_command_python_still_asks_for_one(monkeypatch, capsys):
+    import sys
+
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    with pytest.raises(SystemExit) as exited:
+        main([])
+    assert exited.value.code == 2 and "command" in capsys.readouterr().err
