@@ -337,3 +337,23 @@ def test_the_readme_explains_the_floating_chat():
                    "and for Brave, once more", "The old side panel is gone"):
         assert needed in text, needed
     assert "(the floating chat, coming next)" not in text
+
+
+@CHROME
+async def test_ask_about_it_goes_off_when_the_tab_goes_to_another_site(stack):  # final review: the mark is per site
+    js, brave = await open_chat(stack)
+    assert await until(js, f"{bar('title')}.textContent === 'Cart'")
+    await js(f"{bar('ask')}.click(); true")
+    assert await js("document.getElementById('talk-text').placeholder") == "Ask about shop.example"
+
+    async def go(url, title):  # the user goes elsewhere in the same tab: the list and Brave's front tab agree
+        await js(f"window.aibAnswer = {json.dumps({'state': 'ok', 'url': url, 'title': title})}; true")
+        brave.pages[0].update(url=url, title=title)
+        brave.changed()
+        assert await until(js, f"{bar('title')}.textContent === {json.dumps(title)}")
+
+    await go("https://shop.example/checkout", "Checkout")  # the same site: the mark holds
+    assert await js(f"{bar('ask')}.getAttribute('aria-pressed')") == "true"
+    await go("https://bank.example/", "Bank")  # another site: the user never marked it
+    assert await js(f"{bar('ask')}.getAttribute('aria-pressed')") == "false"
+    assert await js("document.getElementById('talk-text').placeholder") == "Ask the Brain"

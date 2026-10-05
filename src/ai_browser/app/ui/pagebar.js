@@ -130,7 +130,8 @@ export function mountPageBar(root, { link, aib, agents, input, onSay = () => {},
   }
 
   function show(next) { // this page is now `next`, a row of the tab list
-    if (tab?.target !== next.target) setAsk(false); // Ask about it belongs to one tab
+    // Ask about it belongs to one tab, on the site the user marked ("Ask about <site>"): another site turns it off
+    if (tab?.target !== next.target || host(tab?.url) !== host(next.url)) setAsk(false);
     tab = next;
     state = "";
     render();
