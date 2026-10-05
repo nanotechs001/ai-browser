@@ -5,7 +5,8 @@ agent and every Claude Code session share, so Brave asks "Allow remote debugging
 That connection opens only right after something the user did (the app starting, Connect or Try again in AI Home, an
 agent starting a turn, a session's browser call). While it isn't connected the relay looks at the switch every few
 seconds with a TCP check alone, which never opens a debugging session. The app never attaches to, reads or pictures a
-tab of the user's: only the AI's tabs, a tab handed over, or the page the user picked in the Train form; and, while
+tab of the user's: only the AI's tabs, a tab handed over, the page the user picked in the Train form, or the one they
+asked about in the floating chat; and, while
 Settings → Brain's switch is on, the user's Gmail, Slack and Asana tabs and the parts of pages they picked to watch,
 where the Brain's readers run in an isolated world (may_run decides; app/inworld.py runs).
 
@@ -253,14 +254,19 @@ class BraveLink:
     def may_run(self, target: str, purpose: str) -> bool:
         """Whether one of AI Browser's page scripts may run in this tab, for this purpose. "brain": a tab brain_tabs()
         lists. "pick": one of the user's listed web tabs, while Settings → Brain's switch is on (the user clicked
-        Pick the part to watch there). Never another profile's tab or a private window's, never an agent's for the
-        Brain, and nothing while Brave isn't connected."""
+        Pick the part to watch there). "chat": a web tab the list shows (the user's, or the AI's), which the user asked
+        about in the floating chat: the switch doesn't matter, since nothing reads in the background. Never another
+        profile's tab or a private window's, never an agent's for the Brain, and nothing while Brave isn't
+        connected."""
         if purpose == "brain":
             return any(tab["target"] == target for tab in self.brain_tabs())
         if purpose == "pick":
             tab = next((tab for tab in self.tabs() if tab["target"] == target), None)
             return (tab is not None and self.brain_reading() and tab["owner"]["kind"] in USERS
                     and tab["url"].startswith(WEB))
+        if purpose == "chat":
+            tab = next((tab for tab in self.tabs() if tab["target"] == target), None)
+            return tab is not None and tab["url"].startswith(WEB)
         return False
 
     async def open_user_tab(self, url: str, background: bool = True, opened: list | None = None) -> str:
@@ -373,6 +379,18 @@ class BraveLink:
             raise inworld.WorldError("AI Browser doesn't read that tab")
         return await inworld.run(self.client(), target, readers.call(name, *args), install=readers.BUNDLE,
                                  missing=readers.MISSING, timeout=timeout)
+
+    async def read_page(self, target: str, limit: int) -> dict:
+        """The page the user asked about in the floating chat, read now, on that ask (native-app Decision 4): its
+        title, address and words (by textContent, at most `limit` characters), and whether the words went on. Only a
+        tab may_run allows for "chat"; inworld.WorldError says why not, in plain words."""
+        answer = await self.run_reader(target, "chat", "page", int(limit))
+        if not isinstance(answer, dict) or not isinstance(answer.get("text"), str):
+            raise inworld.WorldError("the page didn't answer")
+        title, url = answer.get("title"), answer.get("url")
+        return {"title": title[:300] if isinstance(title, str) else "",
+                "url": url[:2000] if isinstance(url, str) else "",
+                "text": answer["text"][:limit], "cut": answer.get("cut") is True}
 
     # ---- actions ---------------------------------------------------------------------------------------------
 
