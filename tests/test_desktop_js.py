@@ -339,6 +339,39 @@ def test_the_apps_profile_is_beside_it_or_for_the_packaged_exe_in_the_users_own_
 
 
 @NEEDS_NODE
+def test_the_start_menu_entry_is_made_or_kept_and_never_stops_the_start():
+    got = run_js("""
+      const done = [];
+      const app = (appData) => ({
+        setAppUserModelId: (id) => done.push(["id", id]),
+        getPath: (name) => {
+          if (appData === null) throw new Error("Failed to get 'appData' path"); // Windows run 37311955729
+          return appData;
+        },
+      });
+      const shell = (have) => ({
+        readShortcutLink: () => { if (!have) throw new Error("no such link"); return have; },
+        writeShortcutLink: (link, how, want) => {
+          done.push([how, link, want.target, want.appUserModelId]);
+          return true;
+        },
+      });
+      const exe = "/x/AI Browser.exe";
+      const ours = { target: exe, appUserModelId: "io.github.nanotechs001.ai-browser" };
+      return [
+        policy.startMenuEntry(app(null), shell(null), exe),
+        policy.startMenuEntry(app("/r"), shell(null), exe),
+        policy.startMenuEntry(app("/r"), shell(ours), exe),
+        policy.startMenuEntry(app("/r"), shell({ ...ours, target: "/old/AI Browser.exe" }), exe),
+        done.filter((step) => step[0] !== "id"),
+      ];""")
+    link = "/r/Microsoft/Windows/Start Menu/Programs/AI Browser.lnk"
+    assert got == ["failed: Failed to get 'appData' path", "made", "kept", "made",
+                   [["create", link, "/x/AI Browser.exe", "io.github.nanotechs001.ai-browser"],
+                    ["replace", link, "/x/AI Browser.exe", "io.github.nanotechs001.ai-browser"]]]
+
+
+@NEEDS_NODE
 def test_a_double_click_on_the_packaged_exes_app_says_to_start_ai_browser_exe():
     got = run_js("return [policy.startHint(false), policy.startHint(true)];")
     assert got == [{"message": "Start AI Browser from a terminal", "detail": "Run: uv run ai-browser app"},

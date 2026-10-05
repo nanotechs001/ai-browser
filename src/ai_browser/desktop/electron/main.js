@@ -23,8 +23,6 @@ const policy = require("./policy.js");
 const thispage = require("./thispage.js");
 const { LINE_KEY, encode, lineOption, lineTarget, splitter } = require("./line.js");
 
-const APP_ID = "io.github.nanotechs001.ai-browser"; // desktop/layout.py's BUNDLE_ID, and Windows' AppUserModelID
-const TOAST_CLSID = "{52E8D68C-5CAC-4680-848A-E80657E0B4D5}"; // Windows: the Start menu entry's toast activator
 const PROFILE = "--aib-profile="; // an unpackaged Electron only (the tests'): its throwaway profile
 const FAKE_PAGE = "--aib-fake-page="; // an unpackaged Electron only (the tests'): a file that stands in for Brave
 // A test's Electron, started on this folder: Electron's own default app loaded it, and its program has Electron's
@@ -386,27 +384,11 @@ function makeTray() { // the menu-bar icon (by the clock on Windows)
   if (process.platform === "win32") tray.on("click", () => showWindow("main"));
 }
 
-// Windows shows an app's notifications only when the Start menu has a shortcut to it with the same AppUserModelID and
-// toast activator (setup's offer says so). Started from that entry, the app says to start AI Browser from a terminal.
+// Windows: the Start menu entry its notifications need (policy.startMenuEntry, which never throws). Started from that
+// entry, the app says how to start AI Browser.
 function startMenuEntry() {
   if (UNPACKAGED) return;
-  app.setAppUserModelId(APP_ID);
-  if (typeof app.setToastActivatorCLSID === "function") app.setToastActivatorCLSID(TOAST_CLSID); // where it exists
-  const link = path.join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs", "AI Browser.lnk");
-  const want = { target: process.execPath, appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID,
-                 description: "AI Browser" };
-  let have = null;
-  try {
-    have = shell.readShortcutLink(link);
-  } catch {
-    have = null;
-  }
-  if (have && have.target === want.target && have.appUserModelId === APP_ID) return;
-  try {
-    shell.writeShortcutLink(link, have ? "replace" : "create", want);
-  } catch {
-    // without it Windows may not show the notifications; everything else works
-  }
+  debug(`Start menu entry: ${policy.startMenuEntry(app, shell, process.execPath)}`);
 }
 
 function notify(message) { // the engine's words, as written (policy.notice keeps text only, cut to length)

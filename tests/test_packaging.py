@@ -123,6 +123,7 @@ def test_the_start_check_runs_the_program_with_the_start_log_on_and_stops_it(win
     package = tmp_path / "AI Browser"
     fake_program(package, "assert sys.argv[1:] == ['app'] and os.environ['AIB_DEBUG_START'] == '1'\n"
                           "home = os.environ['AIB_HOME']\n"
+                          "assert os.path.isdir(os.path.join(os.environ['USERPROFILE'], 'AppData', 'Roaming'))\n"
                           "assert home.startswith(os.environ['USERPROFILE']) and home.startswith(os.environ['HOME'])\n"
                           "profile = os.path.join(home, 'desktop-profile')\n"
                           "os.makedirs(profile)\n"

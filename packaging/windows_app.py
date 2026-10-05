@@ -199,6 +199,8 @@ def start(package: Path, seconds: float = START_SECONDS, after: float = AFTER_CO
     wrong: [] when it works."""
     package = Path(package).resolve()
     with tempfile.TemporaryDirectory(prefix="aib-start-", ignore_cleanup_errors=True) as folder:
+        for kept in ("Roaming", "Local"):  # a user's folder as Windows lays it out: the app's Start menu entry is there
+            (Path(folder) / "AppData" / kept).mkdir(parents=True)
         env = {**os.environ, "HOME": folder, "USERPROFILE": folder, "AIB_HOME": str(Path(folder) / "aib-home"),
                "AIB_DEBUG_START": "1", "PYTHONUNBUFFERED": "1"}
         said = Path(folder) / "start.log"

@@ -1,12 +1,15 @@
 // What AI Browser's own app allows, as small functions main.js calls (and the tests run under Node.js): where a frame
 // may go, which permission a page may have, which global shortcuts there are and how one is moved, what a
-// notification may say, which switches the packaged app refuses, where the floating chat opens, and where the app keeps
-// its profile. Nothing here touches Electron, the network or the disk (profileFor is given its look at the disk).
+// notification may say, which switches the packaged app refuses, where the floating chat opens, where the app keeps
+// its profile, and its Start menu entry. Nothing here touches Electron, the network or the disk, except through what
+// main.js hands over (profileFor's look at the disk, startMenuEntry's app and shell).
 "use strict";
 
 const path = require("node:path");
 
 const LIVE_PORTS = [8770, 8790]; // an engine's live view binds one of these (config.LIVE_PORTS)
+const APP_ID = "io.github.nanotechs001.ai-browser"; // desktop/layout.py's BUNDLE_ID, and Windows' AppUserModelID
+const TOAST_CLSID = "{52E8D68C-5CAC-4680-848A-E80657E0B4D5}"; // Windows: the Start menu entry's toast activator
 const LIVE = /^http:\/\/127\.0\.0\.1:(\d{4})\/live\?token=[A-Za-z0-9_-]{1,64}$/;
 const SHORTCUTS = ["Alt+Space", "Alt+Shift+Space", "Control+Shift+Space"]; // desktop/shortcut.py's, in its order
 const DEBUG_SWITCHES = ["remote-debugging-port", "remote-debugging-pipe", "remote-debugging-address",
@@ -187,6 +190,31 @@ function profileFor({ execPath, platform, env, homedir, cwd, exists }) {
   return path.join(path.resolve(cwd, home), "desktop-profile");
 }
 
+// Windows shows an app's notifications only when the Start menu has a shortcut to it with the same AppUserModelID and
+// toast activator (setup's offer says so). The entry, made or mended with Electron's `app` and `shell`: "made",
+// "kept", or why not ("failed: …"). It never throws: begin() makes it first, and a Start menu that can't be found or
+// written costs only the notifications, never the start (an AppData Windows couldn't find: run 37311955729).
+function startMenuEntry(app, shell, execPath) {
+  try {
+    app.setAppUserModelId(APP_ID);
+    if (typeof app.setToastActivatorCLSID === "function") app.setToastActivatorCLSID(TOAST_CLSID); // where it exists
+    const link = path.join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs",
+                           "AI Browser.lnk");
+    const want = { target: execPath, appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID,
+                   description: "AI Browser" };
+    let have = null;
+    try {
+      have = shell.readShortcutLink(link);
+    } catch {
+      have = null; // none yet
+    }
+    if (have && have.target === want.target && have.appUserModelId === APP_ID) return "kept";
+    return shell.writeShortcutLink(link, have ? "replace" : "create", want) ? "made" : "failed: not written";
+  } catch (error) {
+    return `failed: ${error && error.message}`;
+  }
+}
+
 // What a double-click on the app itself says (no engine started it): how to start AI Browser.
 function startHint(fromPackagedExe) {
   return fromPackagedExe
@@ -197,5 +225,6 @@ function startHint(fromPackagedExe) {
 
 module.exports = {
   CHAT_PATH, CHAT_SIZE, DEBUG_SWITCHES, LIVE_PORTS, SHORTCUTS, chatBounds, isLiveView, mayCheck, mayNavigate,
-  mayRequest, moveShortcut, notice, originOf, packaged, profileFor, shortcutOk, startHint, startOrigin, withoutEngine,
+  mayRequest, moveShortcut, notice, originOf, packaged, profileFor, shortcutOk, startHint, startMenuEntry, startOrigin,
+  withoutEngine,
 };
