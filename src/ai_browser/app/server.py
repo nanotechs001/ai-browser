@@ -58,6 +58,7 @@ from ..live import _bind, _QuietServer, _serve
 from ..settings import Settings
 from ..skills import Catalog
 from ..syncdir import write_atomic
+from . import pagematch
 from .agents import Agent, AgentManager
 from .bravelink import NOT_CONNECTED, PlaceError
 from .inworld import WorldError
@@ -152,6 +153,8 @@ MESSAGE_RULES: dict[str, Rule] = {
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
     "settings_set": APP_ONLY,  # the window's Settings, AI Home's and Mission Control's picks
     "open_url": APP_ONLY,  # a website link in one of our pages
+    # the floating chat (native-app part c): "This page" as AI Browser's own app read it, and Open AI Home
+    "this_page": APP_ONLY, "show_app": APP_ONLY,
     # AI accounts: Settings → Accounts, the Account pickers and Continue on. The Brain and voice never add, sign in,
     # choose or move (the spec's Safety)
     "accounts": APP_ONLY, "account_add": APP_ONLY, "account_add_existing": APP_ONLY, "account_remove": APP_ONLY,
@@ -568,6 +571,35 @@ class AppServer:
         browser = await asyncio.to_thread(self._agents_browser)
         if not await asyncio.to_thread(platforms.open_url, url, browser):
             queue.put_nowait({"type": "error", "text": "Couldn't open that address in your browser"})
+
+    def _this_page(self, queue: asyncio.Queue, message: dict) -> None:
+        """The floating chat's "This page" (native-app Decision 4): the address and title AI Browser's own app read
+        from Brave's front tab, matched to the tab list (pagematch). The answer, to the asking page only: "found" with
+        the tab's row, "choose" (the user picks), or "not_connected" with Brave's state. It never connects to Brave,
+        so Brave asks nothing new (Review Focus 2)."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        answer = {"type": "this_page", "request": request}
+        if self.brave is None or self.brave.state != "connected":
+            queue.put_nowait({**answer, "state": "not_connected",
+                              "browser": self.brave.state if self.brave is not None else "off"})
+            return
+        found = pagematch.seen(message)
+        tabs = self.brave.tabs()
+        target = pagematch.match(found, tabs) if found is not None else None
+        tab = next((row for row in tabs if row["target"] == target), None)
+        queue.put_nowait({**answer, "state": "found", "tab": tab} if tab is not None else {**answer, "state": "choose"})
+
+    def _show_app(self, message: dict) -> None:
+        """The floating chat's Open AI Home (or an agent's number in it): AI Browser's window comes forward on AI Home,
+        at that agent's row, or the Brain's. A view only: nothing runs."""
+        agent = message.get("agent")
+        if isinstance(agent, str) and AGENT_ID.match(agent):
+            focus = {"agent": agent}
+        else:
+            focus = {"brain": True} if message.get("brain") is True else {}
+        if self.desktop is not None:
+            self.desktop.send({"type": "show"})
+        self._send_all({"type": "focus", **focus})
 
     def _saved_port(self) -> int | None:
         """The port this home used before (the microphone grant belongs to that address), if it is one of ours."""
@@ -1244,6 +1276,10 @@ class AppServer:
             self._settings_set(queue, message)
         elif kind == "open_url":
             self._job(self._open_url(queue, message))
+        elif kind == "this_page":  # the floating chat: which listed tab the user is on
+            self._this_page(queue, message)
+        elif kind == "show_app":  # the floating chat's Open AI Home, or an agent's number in it
+            self._show_app(message)
         elif kind == "new_task":
             request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
             text = _text(message.get("text"))

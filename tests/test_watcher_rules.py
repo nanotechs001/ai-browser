@@ -25,6 +25,7 @@ SENDS = {
     "new_task", "send", "stop", "close", "model", "watch", "events", "thumbs", "settings_set", "open_url",
     "accounts", "account_add", "account_add_existing", "account_remove", "account_default", "account_brain",
     "account_signin", "account_move",  # AI accounts
+    "this_page", "show_app",  # the floating chat (native-app part c)
 }
 RETIRED = {"items", "replied", "thread", "filled", "reader_status", "watcher_caps", "tab_grouped", "pause",
            "ai_keyword"}  # the watcher's own: gone with it
