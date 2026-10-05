@@ -1554,8 +1554,6 @@ async def test_the_old_extensions_note_follows_its_folder_and_got_it(fake_claude
         await server.stop()
 
 
-
-
 async def test_a_setting_that_cant_be_saved_is_said_and_changes_nothing(fake_claude, tmp_path):  # Review Focus 3
     server, url = await started(fake_claude, tmp_path, EVENTS)
     (tmp_path / "home" / "settings.json").mkdir(parents=True)  # a folder where the file should be

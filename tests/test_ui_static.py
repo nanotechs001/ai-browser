@@ -15,8 +15,6 @@ def test_the_pages_live_in_app_ui():
         "panel.css", "panel.html", "panel.js"]  # the old side panel: part c keeps, ports or deletes it
 
 
-
-
 INLINE_SCRIPT = re.compile(r"<script(?![^>]*\ssrc=)[^>]*>", re.IGNORECASE)
 
 
@@ -61,8 +59,6 @@ def test_no_page_of_ours_opens_a_window():
     for name in ("home.js", "mission.js", "settings.js"):
         text = (UI / name).read_text(encoding="utf-8")
         assert "openWindow" not in text and "focusHome" not in text and "openTab" in text, name
-
-
 
 
 def test_ai_browser_mode_is_gone_from_the_pages():

@@ -122,17 +122,21 @@ async def test_a_failed_call_lists_items_as_new(fake_claude, tmp_path):
     assert item["kind"] == "new" and len(notes(sent)) == 1
 
 
-async def test_pause_stops_everything(fake_claude, tmp_path):
+async def test_reading_off_stops_everything(fake_claude, tmp_path):
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, [{"result": "[]"}])
-    brain.set_paused(True)
-    assert shown[-1]["type"] == "brain_state" and shown[-1]["paused"] is True
+    assert brain.reading == "on"  # a Brain on its own: the app tells it otherwise
+    await brain.on_items("gmail", [raw("t0")])
+    brain.set_reading("off")  # Settings → Brain's switch, while t0 waits to be sorted
+    assert shown[-1]["type"] == "brain_state" and shown[-1]["reading"] == "off"
     await brain.on_items("gmail", [raw("t1")])
     await brain.settle()
     assert oneshots(log) == [] and notes(sent) == [] and brain.snapshot()["items"] == []
-    brain.set_paused(False)
+    brain.set_reading("waiting")  # on again, while Brave isn't connected: what comes in is kept
     await brain.on_items("gmail", [raw("t1")])
     await brain.settle()
     assert len(oneshots(log)) == 1 and len(brain.snapshot()["items"]) == 1
+    brain.set_reading("sideways")  # not a state: nothing changes
+    assert brain.reading == "waiting"
 
 
 async def test_a_reply_or_done_clears_the_item(fake_claude, tmp_path):
@@ -178,7 +182,7 @@ async def test_instructions_reach_the_prompt_as_the_users_words(fake_claude, tmp
 
 async def test_items_for_sites_not_watched_are_ignored(fake_claude, tmp_path):
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, [{"result": "[]"}])
-    await brain.on_items("slack", [raw("t1")])
+    await brain.on_items("custom:nowhere.example", [raw("t1")])  # not watched
     await brain.on_items("gmail", "not a list")
     await brain.on_items("gmail", [{"no": "id"}, "text"])
     await brain.settle()
@@ -198,7 +202,7 @@ def test_watch_entries_are_checked(fake_claude, tmp_path):
     assert brain.set_watch({"site": "gmail", "label": "Evil", "selector": "body"}) == ""
     assert brain.store.entry("gmail").label == "Gmail" and brain.store.entry("gmail").selector == ""
     listed = brain.snapshot()["watch_list"]
-    assert [entry["site"] for entry in listed if entry["enabled"]] == ["gmail", "custom:shop.example"]
+    assert [entry["site"] for entry in listed if entry["enabled"]] == ["gmail", "slack", "asana", "custom:shop.example"]
     assert brain.reader_timeout == 120
 
 

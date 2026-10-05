@@ -154,6 +154,9 @@ class BrainService:
         self.broadcast: Callable[[dict], None] = lambda message: None
         self.workflows = None  # the user's workflows (WorkflowStore) and their runner, set by the app (phase 2)
         self.runner = None
+        # How reading the user's tabs stands, as the app tells it (set_reading): "on", "off" (Settings → Brain's switch)
+        # or "waiting" (Brave isn't connected). A Brain on its own, before the app says, takes what it is given: "on".
+        self.reading = "on"
         self._queues: dict[str, list[Item]] = {}  # per site: items waiting to be sorted
         self._pending: set[str] = set()  # ids queued or being sorted
         self._batches: dict[str, asyncio.Task] = {}
@@ -224,7 +227,7 @@ class BrainService:
 
     def _settings(self) -> dict:
         return {"others": self.store.others, "watch_list": [entry.public() for entry in self.store.watch()],
-                "paused": self.store.paused, "style": self.store.style,
+                "reading": self.reading, "style": self.store.style,
                 "activity": self._working[-1] if self._working else ""}
 
     @contextlib.contextmanager
@@ -263,8 +266,8 @@ class BrainService:
         """New items from a site's reader: queued, then sorted in a batch. A baseline (what an added site already
         showed when watching started) is only remembered."""
         entry = self.store.entry(site) if isinstance(site, str) else None
-        if self.store.paused or entry is None or not entry.enabled or not isinstance(raw_items, list):
-            return
+        if self.reading == "off" or entry is None or not entry.enabled or not isinstance(raw_items, list):
+            return  # reading is off: nothing a read found is kept
         fresh = []
         for raw in raw_items:
             item = self._item(site, raw)
@@ -332,8 +335,8 @@ class BrainService:
 
     async def _sort(self, site: str, batch: list[Item]) -> None:
         entry = self.store.entry(site)
-        if self.store.paused or entry is None or not entry.enabled:
-            return  # paused or switched off while waiting: nothing reaches Claude
+        if self.reading == "off" or entry is None or not entry.enabled:
+            return  # reading turned off, or the site switched off, while waiting: nothing reaches Claude
         workflows = self._message_workflows(site)
         try:
             with self._busy(f"Sorting {len(batch)} new message{'' if len(batch) == 1 else 's'} from {entry.label}"):
@@ -938,9 +941,13 @@ class BrainService:
     def done(self, item_id: str) -> None:
         self._gone(str(item_id))
 
-    def set_paused(self, on: bool) -> None:
-        self.store.set_paused(bool(on))
-        if on:  # what was waiting to be sorted is dropped (not marked seen: it comes back when reported again)
+    def set_reading(self, state: str) -> None:
+        """How reading the user's tabs stands now (the app's InboxReader says): "on", "off" or "waiting". Off drops
+        what waits to be sorted, unsorted and unseen: a read under way keeps nothing."""
+        if state not in ("on", "off", "waiting") or state == self.reading:
+            return
+        self.reading = state
+        if state == "off":
             for queue in self._queues.values():
                 self._pending.difference_update(item.id for item in queue)
             self._queues.clear()
@@ -964,8 +971,8 @@ class BrainService:
         if not isinstance(instructions, str) or len(instructions) > 2000:
             return "Instructions must be text, at most 2000 characters"
         enabled = bool(fields.get("enabled", old.enabled if old else False))
-        if built_in(site):
-            entry = WatchEntry(site, old.label, url_match, "", instructions.strip(), enabled)
+        if built_in(site):  # the three sites: always on, at their own addresses (Settings → Brain's switch reads them)
+            entry = WatchEntry(site, old.label, old.url_match, "", instructions.strip(), True)
         else:
             selector = fields.get("selector", old.selector if old else "")
             if not isinstance(selector, str) or not selector.strip() or len(selector) > 500:

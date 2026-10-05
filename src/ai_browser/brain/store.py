@@ -1,8 +1,9 @@
 """The Brain's memory: the inbox (only what is new or needs the user), the ids already seen, and the watch list.
 
-Two files under <home>/brain, mode 0600 because they hold message snippets: inbox.json and watch.json. Every change
-is saved at once, atomically, by the one `ai-browser app` that holds <home>/app/lock. A damaged file is kept beside
-as <name>.bad and that part starts empty."""
+Three files under <home>/brain, mode 0600 because they hold message snippets: inbox.json, watch.json and
+readers.json (what the readers keep between reads: Slack's unread spells, and which picked parts had their first rows
+remembered). Every change is saved at once, atomically, by the one `ai-browser app` that holds <home>/app/lock. A
+damaged file is kept beside as <name>.bad and that part starts empty."""
 
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from ..syncdir import write_atomic
 
 SEEN_LIMIT = 5000  # ids remembered so nothing is sorted twice (the oldest are forgotten first)
 NEW_FOR = 24 * 3600  # a "new" item stays this long unless the user marks it Done; skips are counted this long
+MEMORY_LIMIT = 500  # entries a reader may keep for one site (the oldest are forgotten first)
 BUILT_IN = (("gmail", "Gmail", "https://mail.google.com/*"), ("slack", "Slack", "https://app.slack.com/*"),
             ("asana", "Asana", "https://app.asana.com/*"))
 
@@ -57,7 +59,7 @@ class WatchEntry:
     url_match: str  # a match pattern: where its reader runs
     selector: str = ""  # added sites: the part of the page the user picked
     instructions: str = ""  # the user's own words for this site
-    enabled: bool = False
+    enabled: bool = False  # the three sites are always on: Settings → Brain's switch reads all three
     status: str = ""  # the reading's latest note ("reader needs an update", "no open tab"); not saved
 
     def public(self) -> dict:
@@ -86,11 +88,13 @@ class BrainStore:
         self._items: dict[str, Item] = {}  # in arrival order
         self._seen: dict[str, None] = {}  # an ordered set
         self._skips: list[float] = []
-        self._watch = [WatchEntry(site, label, match) for site, label, match in BUILT_IN]
-        self.paused = False
+        self._watch = [WatchEntry(site, label, match, enabled=True) for site, label, match in BUILT_IN]
         self.style = ""
+        self._memory: dict[str, dict] = {}  # site -> what its reader keeps between reads (Slack's spells)
+        self._baselined: list[str] = []  # "<site>|<selector>": picked parts whose first rows were remembered
         self._read_inbox()
         self._read_watch()
+        self._read_readers()
 
     # ---- the inbox ----------------------------------------------------------------------------------------
 
@@ -159,25 +163,40 @@ class BrainStore:
         self._save_watch()
 
     def remove_watch(self, site: str) -> None:
-        """An added site goes; a built-in one is switched off."""
+        """An added site goes; the three sites stay (Settings → Brain's switch reads them)."""
         entry = self.entry(site)
-        if entry is None:
+        if entry is None or built_in(site):
             return
-        if built_in(site):
-            entry.enabled = False
-        else:
-            self._watch.remove(entry)
-        self._save_watch()
-
-    def set_paused(self, on: bool) -> None:
-        self.paused = bool(on)
+        self._watch.remove(entry)
         self._save_watch()
 
     def set_style(self, text: str) -> None:
         self.style = str(text)
         self._save_watch()
 
+    # ---- what the readers keep between reads ------------------------------------------------------------------
 
+    def memory(self, site: str) -> dict:
+        """What the site's reader keeps between reads (Slack: its unread spells), as it gave it back last."""
+        return dict(self._memory.get(site) or {})
+
+    def set_memory(self, site: str, value: dict) -> None:
+        if not isinstance(value, dict):
+            return
+        kept = dict(list(value.items())[-MEMORY_LIMIT:])
+        if kept != self._memory.get(site):
+            self._memory[site] = kept
+            self._save_readers()
+
+    def baselined(self, site: str, selector: str) -> bool:
+        """Whether this picked part's first rows were remembered already (they are never reported)."""
+        return f"{site}|{selector}" in self._baselined
+
+    def mark_baselined(self, site: str, selector: str) -> None:
+        key = f"{site}|{selector}"
+        watched = {f"{entry.site}|{entry.selector}" for entry in self._watch}
+        self._baselined = [one for one in self._baselined if one in watched and one != key] + [key]
+        self._save_readers()
 
     # ---- files --------------------------------------------------------------------------------------------
 
@@ -202,8 +221,18 @@ class BrainStore:
         self._watch += [entry for entry in saved if not built_in(entry.site)]
         for entry in self._watch:
             entry.status = ""
-        self.paused = bool(data.get("paused"))
+            if built_in(entry.site):
+                entry.enabled = True  # Settings → Brain's switch reads all three (an older file may say off)
         self.style = str(data.get("style") or "")
+
+    def _read_readers(self) -> None:
+        data = self._read("readers.json")
+        if data is None:
+            return
+        memory = data.get("memory")
+        self._memory = {site: value for site, value in memory.items() if isinstance(site, str)
+                        and isinstance(value, dict)} if isinstance(memory, dict) else {}
+        self._baselined = [key for key in data.get("baselined") or [] if isinstance(key, str)]
 
     def _read(self, name: str) -> dict | None:
         path = self.folder / name
@@ -227,7 +256,10 @@ class BrainStore:
 
     def _save_watch(self) -> None:
         watch = [{key: value for key, value in entry.public().items() if key != "status"} for entry in self._watch]
-        self._write("watch.json", {"watch": watch, "paused": self.paused, "style": self.style})
+        self._write("watch.json", {"watch": watch, "style": self.style})
+
+    def _save_readers(self) -> None:
+        self._write("readers.json", {"memory": self._memory, "baselined": self._baselined})
 
     def _write(self, name: str, data: dict) -> None:
         write_atomic(self.folder / name, json.dumps(data).encode("utf-8"), 0o600)

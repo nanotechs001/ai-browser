@@ -34,8 +34,11 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .. import browsers, platforms
 from ..accounts import Accounts
+from ..brain import sites
+from ..brain.inbox import InboxReader
 from ..brain.service import BrainService
 from ..brain.skillwriter import SkillError, SkillWriter
+from ..brain.store import built_in
 from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
@@ -91,7 +94,8 @@ LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an e
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
 CODE_TTL = 60  # seconds a one-time start code is good for
-SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note")  # watcher_note: AI Home's Got it
+# watcher_note: AI Home's Got it; read_tabs: Settings → Brain's switch
+SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs")
 NOTES_KEPT = 50  # the app's notifications whose click is still answered
 PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
 APP_SILENT = "AI Browser's app didn't answer: try again"
@@ -334,6 +338,7 @@ class AppServer:
         self.session_token = secrets.token_urlsafe(24)  # Claude Code sessions (in <home>/app/link.json, mode 0600)
         self.groups = GroupKeeper(lambda message: False, on_change=self._browser_changed)  # no watcher: no groups
         self.brave = None  # BraveLink in brave mode (attach_brave): the user's Brave
+        self.inbox: InboxReader | None = None  # the Brain's reading of the user's tabs (attach_brave makes it)
         self.sessions: dict[str, dict] = {}  # Claude Code sessions browsing in Brave while the app runs
         self._sweeper: asyncio.Task | None = None
         self.url: str | None = None
@@ -434,6 +439,8 @@ class AppServer:
             queue.put_nowait({"type": "error", "text": f"Couldn't save that setting: {exc.strerror or exc}",
                               "request": request})
             return
+        if key == "read_tabs" and self.inbox is not None:  # Settings → Brain: reading starts or stops at once
+            self.inbox.set_on(self.settings.get()["read_tabs"])
         self._send_all({"type": "settings", **self._settings_payload()})
 
     def attach_desktop(self, desktop) -> None:
@@ -633,6 +640,8 @@ class AppServer:
     async def stop(self) -> None:
         if self.hearing is not None:
             await self.hearing.stop()  # a download in progress is cancelled, and nothing half-written is kept
+        if self.inbox is not None:
+            await self.inbox.stop()  # no tab of the user's is read any more
         if self.brain is not None:
             await self.brain.stop()
         await self.agents.close_all()  # every agent's Claude Code process ends with the app
@@ -928,8 +937,25 @@ class AppServer:
         relay.on_grant(lambda identity, target: self._own(target, self._owner_of(identity)))
         relay.on_change(self._clients_changed)
         brave.on_state(lambda state: self._browser_changed())
+        brave.brain_reading = lambda: self.settings.get()["read_tabs"]  # BraveLink's gate asks: Settings → Brain
+        brave.brain_site = self._brain_site
+        if self.inbox is not None:
+            self.inbox.set_on(False)  # a tab source replaced (tests): its reading ends
+            self.inbox = None
+        if self.brain is not None:
+            self.inbox = InboxReader(self.brain, brave)
+            self.inbox.set_on(self.settings.get()["read_tabs"])
         self._browser_changed()
         self._send_all(self._tabs_message(brave.tabs()))  # pages already open see Brave's list at once
+
+    def _brain_site(self, url: str) -> str | None:
+        """Which site the Brain reads at this address, for BraveLink's gate: one of the three, or a part of a page the
+        user picked to watch (switched on), by the address it was picked on. None for any other."""
+        site = sites.inbox_site(url)
+        if site is not None or self.brain is None:
+            return site
+        return next((entry.site for entry in self.brain.store.watch() if not built_in(entry.site) and entry.enabled
+                     and entry.selector and sites.matches(entry.url_match, url)), None)
 
     def _handed_to(self, identity: str) -> set[str]:
         """The tabs the user handed this agent now (Hand over, or a task started in a tab): read live."""
@@ -976,6 +1002,8 @@ class AppServer:
                 "groups": self.groups.available()}
 
     def _browser_changed(self) -> None:
+        if self.inbox is not None:  # Brave connected or went: reading goes on, or waits for it
+            self.brain.set_reading(self.inbox.state())
         self._send_all({"type": "browser", **self._browser_info()})
 
     def _handable(self, target: str | None) -> dict | None:

@@ -627,7 +627,7 @@ async def test_no_path_to_any_other_command(fake_claude, tmp_path, monkeypatch):
     brain, sent, shown, log = brain_for(fake_claude, tmp_path, *SHAPES, agents=agents)
     needs_reply(brain)
     effects, kinds = [], []
-    for name in ("approve", "hand", "done", "tell", "set_paused", "set_watch", "remove_watch", "set_style",
+    for name in ("approve", "hand", "done", "tell", "set_reading", "set_watch", "remove_watch", "set_style",
                  "run_workflow"):
         monkeypatch.setattr(brain, name, lambda *args, name=name, **kwargs: effects.append(name))
     try:

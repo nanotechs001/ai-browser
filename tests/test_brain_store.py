@@ -25,11 +25,10 @@ def test_the_store_survives_a_restart_and_keeps_only_what_matters(tmp_path):
     store.add_others(1)
     store.set_watch(WatchEntry(site="gmail", label="Gmail", url_match="https://mail.google.com/*",
                                instructions="Always tell me about clients", enabled=True))
-    store.set_paused(True)
     again = BrainStore(tmp_path, clock=lambda: clock[0])
     assert [i.id for i in again.items()] == ["gmail:t2", "gmail:t1"]
     assert again.get("gmail:t1").summary == "Move the launch to Monday?" and again.seen("gmail:t3")
-    assert again.others == 1 and again.paused
+    assert again.others == 1
     assert [e.site for e in again.watch()] == ["gmail", "slack", "asana"]
     assert again.entry("gmail").instructions == "Always tell me about clients" and again.entry("gmail").enabled
     for name in ("inbox.json", "watch.json"):
@@ -57,14 +56,14 @@ def test_a_damaged_file_starts_fresh_and_is_kept(tmp_path):
     store = BrainStore(tmp_path)
     assert store.items() == [] and (tmp_path / "brain" / "inbox.json.bad").read_text(encoding="utf-8") == "not json"
     store.remove_watch("gmail")
-    assert store.entry("gmail") is not None and not store.entry("gmail").enabled
+    assert store.entry("gmail") is not None and store.entry("gmail").enabled  # the three sites stay on
 
 
 def test_added_sites_and_settings(tmp_path):
     from ai_browser.brain.store import BrainStore, WatchEntry
 
     store = BrainStore(tmp_path)
-    assert store.style == "" and not store.paused
+    assert store.style == ""
     store.set_watch(WatchEntry(site="custom:shop.example", label="shop.example", url_match="https://shop.example/*",
                                selector="#orders tbody", instructions="Summarize new orders", enabled=True))
     store.set_style("Short and friendly, sign as Alex")
@@ -109,3 +108,41 @@ def test_an_older_watch_file_loads_and_the_watchers_flags_go(tmp_path):
     store.set_style("Shorter")
     saved = json.loads((tmp_path / "brain" / "watch.json").read_text(encoding="utf-8"))
     assert saved["style"] == "Shorter" and "watcher_seen" not in saved and "watcher_prompted" not in saved
+
+
+def test_the_three_sites_are_always_on_whatever_an_older_file_says(tmp_path):
+    from ai_browser.brain.store import BrainStore
+
+    assert all(entry.enabled for entry in BrainStore(tmp_path).watch())
+    (tmp_path / "brain").mkdir()
+    (tmp_path / "brain" / "watch.json").write_text(json.dumps({"watch": [
+        {"site": "gmail", "label": "Gmail", "url_match": "https://mail.google.com/*", "instructions": "mine",
+         "enabled": False}], "paused": True}), encoding="utf-8")  # the watcher's Pause and Gmail switched off
+    store = BrainStore(tmp_path)
+    assert store.entry("gmail").enabled and store.entry("gmail").instructions == "mine"
+    assert not hasattr(store, "paused")  # Settings → Brain's switch took Pause's place
+    store.set_style("Short")
+    assert "paused" not in json.loads((tmp_path / "brain" / "watch.json").read_text(encoding="utf-8"))
+
+
+def test_what_the_readers_keep_survives_a_restart(tmp_path):
+    from ai_browser.brain.store import MEMORY_LIMIT, BrainStore, WatchEntry
+
+    store = BrainStore(tmp_path)
+    assert store.memory("slack") == {} and not store.baselined("custom:shop.example", "#orders")
+    store.set_watch(WatchEntry(site="custom:shop.example", label="shop.example", url_match="https://shop.example/*",
+                               selector="#orders", enabled=True))
+    store.set_memory("slack", {f"C{n}": {"id": "abc", "read": False} for n in range(MEMORY_LIMIT + 10)})
+    store.mark_baselined("custom:shop.example", "#orders")
+    store.set_memory("slack", "not a dict")  # ignored
+    again = BrainStore(tmp_path)
+    assert len(again.memory("slack")) == MEMORY_LIMIT and "C0" not in again.memory("slack")  # the oldest go first
+    assert again.baselined("custom:shop.example", "#orders") and not again.baselined("custom:shop.example", "#x")
+    again.remove_watch("custom:shop.example")
+    again.set_watch(WatchEntry(site="custom:other.example", label="other.example", url_match="https://other.example/*",
+                               selector="ul", enabled=True))
+    again.mark_baselined("custom:other.example", "ul")
+    assert not again.baselined("custom:shop.example", "#orders")  # a removed part's mark goes with the next one
+    assert file_mode(tmp_path / "brain" / "readers.json") in (0o600, None)
+    (tmp_path / "brain" / "readers.json").write_text("not json", encoding="utf-8")
+    assert BrainStore(tmp_path).memory("slack") == {}  # damaged: set aside, and that part starts empty
