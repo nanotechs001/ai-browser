@@ -37,10 +37,14 @@ function el(tag, className, text) {
   return node;
 }
 
-export function mountBrain(root, link, { compact = false, openAgent = null } = {}) {
+export function mountBrain(root, link, { compact = false, openAgent = null, openSettings = null } = {}) {
   const head = el("div", "brain-head");
   const counts = el("span", "brain-others muted");
-  head.append(counts);
+  const reading = el("span", "brain-reading muted"); // how reading the user's tabs stands (Settings → Brain)
+  const turnOn = el("button", "ghost brain-turn-on", "Turn it on in Settings");
+  turnOn.hidden = true;
+  turnOn.addEventListener("click", () => openSettings?.());
+  head.append(counts, reading, turnOn);
   const list = el("div", "brain-items list");
   const more = el("button", "brain-more ghost");
   more.hidden = true;
@@ -49,6 +53,7 @@ export function mountBrain(root, link, { compact = false, openAgent = null } = {
   const rows = new Map(); // id -> its row, built once and updated in place
   let order = []; // ids, newest first
   let others = 0;
+  let readingState = "off";
   let showAll = !compact;
   let focusing = null;
 
@@ -250,6 +255,8 @@ export function mountBrain(root, link, { compact = false, openAgent = null } = {
     counts.textContent = order.length
       ? [needs && `${needs} need you`, fresh && `${fresh} new`, others && `${others} others`].filter(Boolean).join(" · ")
       : others ? `${others} others, nothing needs you` : "Nothing new";
+    reading.textContent = { off: "Reading your tabs is off", waiting: "Waiting for Brave" }[readingState] || "";
+    turnOn.hidden = readingState !== "off" || !openSettings;
   }
 
   function render() {
@@ -281,6 +288,7 @@ export function mountBrain(root, link, { compact = false, openAgent = null } = {
 
   function settings(message) {
     others = message.others || 0;
+    readingState = message.reading || "off";
   }
 
   function onMessage(message) {

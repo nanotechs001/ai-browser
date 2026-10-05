@@ -140,6 +140,10 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .settings .choices label { display: flex; align-items: center; gap: 8px; }
 .settings .choices label:has(input:disabled) { color: var(--muted); }
 .settings .card + .card { margin-top: 16px; }
+.settings .brain-sites { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.settings .brain-site { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.settings .brain-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.settings h3 { font-size: 15px; margin: 14px 0 4px; }
 .settings .accounts { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 .settings .account .top-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .settings .account .row { margin-top: 6px; }

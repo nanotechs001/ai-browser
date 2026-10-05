@@ -61,6 +61,7 @@ from ..skills import Catalog
 from ..syncdir import write_atomic
 from .agents import Agent, AgentManager
 from .bravelink import NOT_CONNECTED
+from .inworld import WorldError
 from .cdprelay import Tokens
 from .groups import GroupKeeper
 
@@ -95,6 +96,9 @@ LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an e
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
 CODE_TTL = 60  # seconds a one-time start code is good for
+PICK_WAIT = 120.0  # seconds a pick may take: the user points and clicks in Brave
+PICK_OFF = "Turn on Read my Gmail, Slack and Asana tabs first"
+PICK_TAB = "Pick one of your open tabs in Brave"
 # watcher_note: AI Home's Got it; read_tabs: Settings → Brain's switch
 SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs")
 NOTES_KEPT = 50  # the app's notifications whose click is still answered
@@ -132,6 +136,7 @@ MESSAGE_RULES: dict[str, Rule] = {
     # the Brain's inbox, in AI Home, Mission Control and Settings
     "brain": APP_ONLY, "draft": APP_ONLY, "approve": APP_ONLY, "hand": APP_ONLY, "done": APP_ONLY,
     "tell": APP_ONLY, "watch_set": APP_ONLY, "watch_remove": APP_ONLY, "style": APP_ONLY,
+    "watch_pick": APP_ONLY,  # Settings → Brain: Pick the part to watch, on the user's click
     "workflow_run": APP_ONLY,
     "workflows": APP_ONLY, "workflow_save": APP_ONLY, "workflow_delete": APP_ONLY,
     "permission": APP_ONLY,
@@ -341,6 +346,7 @@ class AppServer:
         self.groups = GroupKeeper(lambda message: False, on_change=self._browser_changed)  # no watcher: no groups
         self.brave = None  # BraveLink in brave mode (attach_brave): the user's Brave
         self.inbox: InboxReader | None = None  # the Brain's reading of the user's tabs (attach_brave makes it)
+        self._picks: set[asyncio.Future] = set()  # Pick the part to watch, waiting for the user's click in Brave
         self.sessions: dict[str, dict] = {}  # Claude Code sessions browsing in Brave while the app runs
         self._sweeper: asyncio.Task | None = None
         self.url: str | None = None
@@ -443,6 +449,9 @@ class AppServer:
             return
         if key == "read_tabs" and self.inbox is not None:  # Settings → Brain: reading starts or stops at once
             self.inbox.set_on(self.settings.get()["read_tabs"])
+        if key == "read_tabs" and not self.settings.get()["read_tabs"]:
+            for pick in list(self._picks):  # a pick under way ends too, and keeps nothing
+                pick.cancel()
         self._send_all({"type": "settings", **self._settings_payload()})
 
     def attach_desktop(self, desktop) -> None:
@@ -959,6 +968,53 @@ class AppServer:
         return next((entry.site for entry in self.brain.store.watch() if not built_in(entry.site) and entry.enabled
                      and entry.selector and sites.matches(entry.url_match, url)), None)
 
+    async def _watch_pick(self, queue: asyncio.Queue, message: dict) -> None:
+        """Pick the part to watch, on the user's click in Settings → Brain: the tab they chose comes forward in Brave,
+        and the picker runs there in the isolated world (BraveLink's gate: one of their listed web tabs, only while
+        reading is on). A click picks, Escape cancels, and what was picked is watched from now on. A pick nobody
+        finished, or one that ends after reading went off, keeps nothing."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        target, brave = message.get("target"), self.brave
+
+        def answer(**fields) -> None:
+            queue.put_nowait({"type": "watch_picked", "request": request, **fields})
+
+        if brave is None or brave.state != "connected" or self.brain is None:
+            answer(error=NOT_CONNECTED)
+            return
+        if not self.settings.get()["read_tabs"]:
+            answer(error=PICK_OFF)
+            return
+        tab = next((tab for tab in brave.tabs() if tab["target"] == target), None)
+        if not isinstance(target, str) or tab is None or not brave.may_run(target, "pick"):
+            answer(error=PICK_TAB)
+            return
+        await brave.watch(target)  # the tab comes forward in Brave: the user picks there
+        pick = asyncio.ensure_future(brave.run_reader(target, "pick", "pick", timeout=PICK_WAIT))
+        self._picks.add(pick)
+        try:
+            result = await pick
+        except (asyncio.CancelledError, WorldError):
+            result = None
+        finally:
+            self._picks.discard(pick)
+        if not isinstance(result, dict) or not self.settings.get()["read_tabs"]:
+            await brave.end_pick(target)  # given up, or reading went off: the outline leaves the page
+            answer(cancelled=True)
+            return
+        selector = result.get("selector")
+        if result.get("cancelled") or not isinstance(selector, str):
+            answer(cancelled=True)  # Escape
+            return
+        place = urlsplit(tab["url"]).hostname or ""
+        site = f"custom:{place}"
+        error = self.brain.set_watch({"site": site, "label": place, "url_match": sites.watch_pattern(tab["url"]),
+                                     "selector": selector[:500], "enabled": True})
+        if error:
+            answer(error=error)
+        else:
+            answer(site=site, sample=_text(result.get("sample"))[:300])
+
     def _handed_to(self, identity: str) -> set[str]:
         """The tabs the user handed this agent now (Hand over, or a task started in a tab): read live."""
         agent = self.agents.agents.get(identity)
@@ -1167,6 +1223,8 @@ class AppServer:
         if kind in BRAIN_MESSAGES:
             if self.brain is not None:
                 await self._brain_command(queue, kind, agent_id, message)
+        elif kind == "watch_pick":  # Settings → Brain: the user's click on Pick the part to watch
+            self._job(self._watch_pick(queue, message))
         elif kind in TOOLS_MESSAGES:
             self._tools_command(queue, kind, message)
         elif kind in WORKFLOW_MESSAGES:

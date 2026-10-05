@@ -331,7 +331,7 @@ class FakeBrave:
         self.state = state
         self.pages = [dict(page) for page in pages]  # {"target", "url", "title"}
         self.owners: dict[str, dict] = {}
-        self.watched, self.closed = [], []
+        self.watched, self.closed, self.ended = [], [], []  # Watch, closes, picks ended
         self.connects = 0
         self.connect_calls = []  # (why, identity) of each connect
         self.relay = FakeRelay()
@@ -383,6 +383,12 @@ class FakeBrave:
 
     async def watch(self, target):
         self.watched.append(target)
+
+    def brain_tabs(self):  # the Brain's reading: nothing here (tests/fake_reading.py fakes it whole)
+        return []
+
+    async def end_pick(self, target):
+        self.ended.append(target)
 
     async def close_targets(self, targets):
         self.closed += list(targets)

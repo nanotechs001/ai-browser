@@ -271,6 +271,16 @@ class BraveLink:
             await asyncio.sleep(0.1)
         return target
 
+    async def end_pick(self, target: str) -> None:
+        """A pick nobody finished (the wait ran out, or reading went off): AI Browser's outline leaves the page. It
+        reads nothing, so it runs in any of the user's listed tabs, whatever the switch says; a page without the
+        readers has nothing to end."""
+        client = self.client()
+        if client is None or not any(tab["target"] == target and tab["owner"]["kind"] in USERS for tab in self.tabs()):
+            return
+        with contextlib.suppress(inworld.WorldError):
+            await inworld.run(client, target, readers.call("unpick"), timeout=5)
+
     async def run_reader(self, target: str, purpose: str, name: str, *args, timeout: float = inworld.SCRIPT_WAIT):
         """One of the Brain's readers (brain/readers/) in the tab's isolated world, only where may_run says so: its
         plain JSON answer. inworld.WorldError says, in plain words, why it couldn't."""

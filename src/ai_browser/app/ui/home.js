@@ -45,7 +45,8 @@ guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 // Shown again (its tab, or the window after the user signed in in a terminal): each account's status, now
 window.addEventListener("focus", () => link.send({ type: "accounts" }));
-const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id) });
+const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id),
+                                             openSettings: () => openTab("/settings") });
 let watchSites = []; // the Brain's watch list: a message workflow's sites
 let switchedOn = []; // the MCP servers switched on: what a workflow may use
 const tools = mountTools($("tools"), link);

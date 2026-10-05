@@ -16,7 +16,7 @@ from ui_socket import ui_socket
 # The table of watcher-safety's spec, plus cdp-relay's, brain-delegation's, app-window's and AI accounts' rows, every
 # one for AI Browser's own pages. A row added to MESSAGE_RULES fails here until this copy says the same.
 SENDS = {
-    "hello", "brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "style",
+    "hello", "brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "style", "watch_pick",
     "workflow_run", "workflows", "workflow_save", "workflow_delete", "permission",
     "tools", "tool_set", "tool_allow", "tool_forget", "skills", "skill_draft", "skill_save",
     "hearing", "hearing_download", "hearing_cancel", "listen_start", "listen_chunk", "listen_end", "listen_cancel",
