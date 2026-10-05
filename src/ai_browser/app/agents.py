@@ -16,9 +16,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
-from ..accounts import DEFAULT, DEFAULT_NAME, GONE, NOT_SIGNED_IN, clean_env
+from ..accounts import DEFAULT, DEFAULT_NAME, GONE, NOT_SIGNED_IN, clean_env, default_folder
 from ..checks import KINDS
 from . import move as moving
+from . import powers
 from .bridge import ClaudeBridge
 
 COLORS = ("blue", "green", "cyan", "pink", "yellow", "red", "grey")  # the agents' chip colours, minus the Brain's
@@ -40,6 +41,9 @@ FRESH = "Started fresh on {name} with a hand-over note"
 FRESH_NOTE = "Started fresh with a hand-over note"  # the chat's line: no account name (other views may get it)
 BUSY_MOVE = "{label} is still working: stop it, or wait for its turn to end, then move it"
 NO_CONVERSATION = "no conversation found"
+TRUST_FIRST = "Answer “Trust this folder?” for that folder first"  # agent powers, Decision 7
+NOTE_LIMIT = 300  # characters of Deny's note to the agent
+SUBAGENTS_KEPT = 20  # sub-agents an agent's drawer lists, the newest
 _SCHEME = re.compile(r"\bhttps?://(?:www\.)?", re.IGNORECASE)
 _FILLER = {"and", "or", "then", "to", "the", "a", "an", "of", "in", "on", "with", "for", "from"}
 _AGENT_ID = re.compile(r"a([0-9]{1,9})")  # the ids the server and the relay accept: ^a[0-9]{1,9}$
@@ -106,10 +110,17 @@ class Agent:
     task: str = field(default="", repr=False)  # its first words: the hand-over note (wave C's Restart in too)
     handover: str | None = field(default=None, repr=False)  # the note a resume that doesn't take falls back to
     moving: bool = field(default=False, repr=False)  # one move at a time
+    # agent powers: the task's folder (its real path; None: the agent's own scratch folder) and whether the user trusts
+    # it; Claude Code's to-do list, and its sub-agents ({id, task, action, state}), for the row and the drawer
+    folder: str | None = None
+    trusted: bool = False
+    todos: list = field(default_factory=list)
+    subagents: list = field(default_factory=list)
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
-                                         "permission", "check", "number", "queued", "account", "limit", "moved")
+                                         "permission", "check", "number", "queued", "account", "limit", "moved",
+                                         "folder", "trusted", "todos", "subagents")
 
     @property
     def number(self) -> int:
@@ -122,8 +133,8 @@ class Agent:
         return len(self.pending)
 
     def public(self) -> dict:
-        return {key: list(value) if isinstance(value, list) else value
-                for key, value in ((key, getattr(self, key)) for key in self.PUBLIC)}
+        return {key: [dict(item) if isinstance(item, dict) else item for item in value] if isinstance(value, list)
+                else value for key, value in ((key, getattr(self, key)) for key in self.PUBLIC)}
 
 
 class AgentManager:
@@ -142,6 +153,7 @@ class AgentManager:
         self.own_tabs: Callable[[str], list[str]] | None = None  # set by the app in brave mode: the relay's table
         self.tools = None  # the user's MCP servers (ToolsConfig), set by the app: agents ask before using them
         self.accounts = accounts  # AI accounts (Accounts); None: every agent runs on Default, as before
+        self.rules = powers.Rules(self.home)  # agent powers: the user's rules and trusted folders, per folder
         self.on_limit: Callable[[str], None] | None = None  # set by the app: an account hit its usage limit
         self._asks: dict[str, asyncio.Future] = {}  # agent id -> its tool request waiting for the user
         self.agents: dict[str, Agent] = {}
@@ -184,11 +196,14 @@ class AgentManager:
 
     async def create(self, text: str, skills=(), model: str = "sonnet", adopt: str | None = None,
                      tab: dict | None = None, servers: list[str] | None = None,
-                     account: str | None = None) -> Agent:
+                     account: str | None = None, folder: str | None = None) -> Agent:
         """A new agent for `text`; with `adopt`, it works in that tab of the user's (started from the panel). Its MCP
         servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list). It runs on
-        `account`, else on the default account for new agents; ValueError for an account that isn't listed."""
+        `account`, else on the default account for new agents; ValueError for an account that isn't listed. With
+        `folder` it works there (agent powers, Decision 6): a folder no task may use, or one whose "Trust this
+        folder?" isn't answered yet, is a ValueError too. Without, it works in its own scratch folder."""
         chosen = self._account_row(account)  # first: a refused account leaves no agent and no number behind
+        work, trusted = self._folder_for(folder)  # and so does a refused folder
         self._seq += 1
         agent_id = f"a{self._seq}"
         env = {**self.env, "AIB_APP_AGENT": agent_id, **({"AIB_APP_ADOPT": adopt} if adopt else {})}
@@ -197,11 +212,15 @@ class AgentManager:
         bridge = ClaudeBridge(self.home, model=model, claude=self.claude, env=env, agent_id=agent_id,
                               tools=self.tools_for(chosen["id"]), servers=servers,
                               on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request),
-                              environment=self._environment(chosen["id"]))
+                              environment=self._environment(chosen["id"]), work=work, rules=self.rules,
+                              trusted=trusted)
         if self.accounts is not None:  # its account must be signed in before its Claude Code starts
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
         agent = Agent(agent_id, _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge, account=chosen,
-                      task=text)
+                      task=text, folder=work, trusted=trusted)
+        if work is not None:
+            with contextlib.suppress(OSError):  # a read-only home: the folder isn't listed as recent, nothing more
+                self.rules.note_used(work)
         if adopt:  # the panel can show this agent for that tab before Claude's first step
             agent.adopted.append(adopt)
             agent.working_tab = adopt
@@ -222,6 +241,31 @@ class AgentManager:
         if chosen is None:
             raise ValueError(GONE)
         return {"id": chosen.id, "name": chosen.name}
+
+    def _folder_for(self, folder) -> tuple[str | None, bool]:
+        """(the real path a task works in, whether it is trusted); (None, False) for its own scratch folder. A
+        ValueError with the words the user sees for a folder no task may use, or one never answered for."""
+        if folder is None:
+            return None, False
+        why = self.folder_problem(folder)
+        if why:
+            raise ValueError(why)
+        real = powers.real_path(folder)
+        trusted = self.rules.trusted(real)
+        if trusted is None:
+            raise ValueError(TRUST_FIRST)
+        return real, trusted
+
+    def claude_dirs(self) -> list[str]:
+        """Claude Code's own folders, which no task may use: the environment's (else ~/.claude), and each account's."""
+        dirs = [str(default_folder())]
+        if self.accounts is not None:
+            dirs += [account.folder for account in self.accounts.list()]
+        return dirs
+
+    def folder_problem(self, path) -> str | None:
+        """Why `path` can't be a task's folder (Decision 6), or None."""
+        return powers.check_folder(path, home=self.home, claude_dirs=self.claude_dirs())
 
     def _environment(self, account_id: str) -> dict[str, str]:
         """Claude Code's environment on that account: CLAUDE_CONFIG_DIR, and never the API variables."""
@@ -310,17 +354,21 @@ class AgentManager:
         for agent_id in list(self.agents):
             await self.close(agent_id, keep_tabs=True)
 
-    async def _ask(self, agent_id: str, request: dict) -> str:
-        """An agent wants a tool that isn't allowed yet: it waits ("needs you") for the user's answer."""
+    async def _ask(self, agent_id: str, request: dict) -> tuple[str, str]:
+        """An agent wants a tool that isn't allowed yet: it waits ("needs you") for the user's answer and note. A power
+        card shows what the app read from the input, clipped: the input itself stays in the bridge, so no row carries
+        an edit's whole file (Review Focus 5)."""
         agent = self.agents.get(agent_id)
         if agent is None:
-            return "deny"
+            return "deny", ""
         tools = self.tools_for(agent.account["id"])  # its own account's always-allowed tools, never another's
-        if tools is not None and request["tool"] in tools.always():
-            return "once"  # allowed always since this agent started
+        if not request.get("card") and tools is not None and request["tool"] in tools.always():
+            return "once", ""  # allowed always since this agent started
         future = asyncio.get_running_loop().create_future()
         self._asks[agent_id] = future
-        agent.permission = {key: request[key] for key in ("request", "server", "tool", "input")}
+        agent.permission = {"request": request["request"], "server": request.get("server", ""),
+                            "tool": request["tool"], "input": {} if request.get("card") else request.get("input", {}),
+                            "card": request.get("card"), "sub": str(request.get("sub") or "")}
         agent.state = "needs_you"
         self._changed(agent)
         self._broadcast({"type": "permission_request", "agent": agent_id, **agent.permission})
@@ -333,17 +381,21 @@ class AgentManager:
                 agent.state = "working"
             self._changed(agent)
 
-    def answer_permission(self, agent_id: str, request: str, answer: str) -> None:
-        """The user's answer: "once", "always" (remembered in Tools) or "deny"."""
+    def answer_permission(self, agent_id: str, request: str, answer: str, note: str = "") -> None:
+        """The user's answer: "once", "always" or "deny", and with a deny an optional note to the agent (one line).
+        "always" is remembered in Tools for one of the user's MCP tools. For Claude Code's own tools the bridge keeps
+        it for the task's folder, and only where the card offered it. An answer for a card that has gone (Stop, Close,
+        another answer) does nothing (Review Focus 3)."""
         agent, future = self.agents.get(agent_id), self._asks.get(agent_id)
         if agent is None or future is None or future.done() or agent.permission is None \
                 or agent.permission["request"] != request:
             return
         answer = answer if answer in ("once", "always") else "deny"
         tools = self.tools_for(agent.account["id"])
-        if answer == "always" and tools is not None:  # remembered for its own account
-            tools.allow_always(agent.permission["tool"])
-        future.set_result(answer)
+        if answer == "always" and tools is not None and not agent.permission.get("card"):
+            tools.allow_always(agent.permission["tool"])  # remembered for its own account
+        note = " ".join(str(note or "").split())[:NOTE_LIMIT] if answer == "deny" else ""
+        future.set_result((answer, note))
 
     def working(self, agent_id: str) -> bool:
         """Whether the agent is in a turn now: its engine may then open the browser connection (Decision 10)."""
@@ -522,9 +574,17 @@ class AgentManager:
         self._record(agent, {"type": "limit"} if kind == "limit" else event)  # the chat names no account or time
         if kind == "tool":
             agent.tools[event.get("id", "")] = (event.get("name", ""), event.get("summary", ""))
-            agent.status = f"{event.get('name', '')} {event.get('summary', '')}".strip()
+            line = f"{event.get('name', '')} {event.get('summary', '')}".strip()
+            if event.get("sub"):  # a sub-agent's action: its line in the drawer (Decision 8)
+                self._sub_action(agent, str(event["sub"]), line)
+            else:
+                agent.status = line
             if event.get("name") == "load_skill":
                 agent.loaded_skills = sorted(agent.bridge.loaded_skills)
+        elif kind == "subagent":
+            self._subagent(agent, event)
+        elif kind == "todos":  # Claude Code's to-do list (Decision 9), for the drawer and a page opened later
+            agent.todos = [dict(item) for item in event.get("todos") or [] if isinstance(item, dict)]
         elif kind == "tool_result":
             name, summary = agent.tools.get(event.get("id", ""), (event.get("name", ""), ""))
             ms = event.get("ms")
@@ -533,8 +593,10 @@ class AgentManager:
                 with contextlib.suppress(Exception):
                     self.on_action(agent)
         elif kind == "limit":
+            self._end_subagents(agent)
             self._limited(agent, event.get("resets_at"))
         elif kind == "done":
+            self._end_subagents(agent)
             agent.limit = None  # the turn ended well: a limit it heard of didn't stop it
             agent.seconds = round(agent.seconds + (event.get("seconds") or 0), 1)
             agent.cost = round(agent.cost + (event.get("cost") or 0), 4)
@@ -542,12 +604,39 @@ class AgentManager:
             agent.state = "working" if agent.pending else "stopped" if event.get("stopped") else \
                 "needs_you" if agent.check is not None else "your_turn"
         elif kind == "error":
+            self._end_subagents(agent)
             if agent.limit is None:  # at a limit, its own line stays
                 agent.status = str(event.get("text", ""))
             agent.state = "working" if agent.pending and agent.limit is None else "failed"
         else:
             return
         self._changed(agent)
+
+    @staticmethod
+    def _subagent(agent: Agent, event: dict) -> None:
+        """A sub-agent started, or its result came back (done or failed)."""
+        row = next((row for row in agent.subagents if row["id"] == event.get("id")), None)
+        if row is None:
+            if len(agent.subagents) >= SUBAGENTS_KEPT:
+                agent.subagents.pop(0)
+            row = {"id": str(event.get("id", "")), "task": str(event.get("task", "")), "action": "",
+                   "state": "working"}
+            agent.subagents.append(row)
+        if event.get("state") in ("working", "done", "failed"):
+            row["state"] = event["state"]
+
+    @staticmethod
+    def _sub_action(agent: Agent, sub: str, line: str) -> None:
+        for row in agent.subagents:
+            if row["id"] == sub:
+                row["action"] = line[:120]
+
+    @staticmethod
+    def _end_subagents(agent: Agent) -> None:
+        """The turn ended (done, stopped, failed, a limit): a sub-agent still working was stopped with it."""
+        for row in agent.subagents:
+            if row["state"] == "working":
+                row["state"] = "stopped"
 
     def _limited(self, agent: Agent, resets_at) -> None:
         """Its account hit its usage limit (the bridge tells it once per turn): the agent pauses, its partial answer
