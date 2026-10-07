@@ -42,6 +42,10 @@ _MISSING = "__aib_missing__"
 _UNDEFINED = object()
 CF_WAIT = 8.0  # seconds Cloudflare's own "Just a moment…" page gets to finish by itself; nothing is sent meanwhile
 CF_POLL = 0.5
+# Tabs a session keeps of its own (in the user's Brave each opens in a background window of its own): a new tab past
+# these reuses the oldest. Tabs the user handed over never count; tabs its pages opened do.
+MAX_OWN_TABS = 2
+REUSED = "(opened in your oldest tab {key}: at most {limit} tabs of your own)\n"
 
 
 class BrowserError(RuntimeError):
@@ -77,6 +81,7 @@ class Tab:
     handed: bool = False  # a tab the user handed this agent in AI Home: let go of when they take it back
     detached: bool = False  # the relay cut our session on this handed tab (Take back): let go of at the next call
     world: int | None = None  # the reader's isolated-world context in the current document (dropped on navigation)
+    used: int = 0  # when the session last switched to it (0: never): the lowest is the oldest, reused past MAX_OWN_TABS
 
 
 @dataclass
@@ -178,6 +183,7 @@ class Browser:
         self._allow_dialogs = False  # True only while running steps the user confirmed
         self._adopting: set[asyncio.Future] = set()
         self._opened: list[Tab] = []
+        self._switches = 0  # tab switches so far: each tab's `used`
         self._stepping = 0  # act steps running now
         self._lost: str | None = None  # key of the tab in use when something outside this session closed it
         self._check_hook: Callable[[Tab, Check], Awaitable[str]] | None = None  # the Engine's hold (on_check)
@@ -411,14 +417,23 @@ class Browser:
         if problem:
             raise BrowserError(f"{url}: {problem}")
 
-    async def _new_tab(self, url: str | None = None) -> Tab:
+    async def _new_tab(self, url: str | None = None) -> str:
+        """Work in a new tab of ours, opening `url` there; returns a note. With MAX_OWN_TABS of our own already open,
+        no tab opens (in the user's Brave, no window): the oldest of ours, the one switched to least recently, opens
+        `url` (about:blank without one) instead, and the note says so. The user's handed tabs are never reused."""
         if url:
             self._check_url(url)  # before a tab exists, so a refused URL leaves nothing behind
+        ours = [tab for tab in self.owned.values() if not tab.adopted]
+        if len(ours) >= MAX_OWN_TABS:
+            oldest = min(ours, key=lambda tab: tab.used)
+            await self._switch(oldest)
+            await self._navigate(url or "about:blank")
+            return REUSED.format(key=oldest.key, limit=MAX_OWN_TABS)
         tab = await self.open_worker(background=self.mode == "chrome")
         await self._switch(tab)
         if url:
             await self._navigate(url)
-        return tab
+        return ""
 
     async def open_worker(self, background: bool | None = None) -> Tab:
         """A new tab of ours (closed with the session) that does not become the working tab: Website QA uses these.
@@ -592,6 +607,8 @@ class Browser:
         return "".join(notes)
 
     async def _switch(self, tab: Tab) -> None:
+        self._switches += 1
+        tab.used = self._switches
         self.current = tab
         for callback in self._tab_listeners:
             callback(tab)
@@ -745,11 +762,13 @@ class Browser:
         return "\n".join(self._download_notes() + dialogs + [skipped if skipped is not None else render_page(state)])
 
     async def open(self, url: str, new_tab: bool = False) -> str:
+        """Open `url` in the working tab, or with new_tab in another tab of ours (past MAX_OWN_TABS, the oldest)."""
+        note = ""
         if new_tab or self.current is None:
-            await self._new_tab(url)
+            note = await self._new_tab(url)
         else:
             await self._navigate(url)
-        return await self.observe()
+        return note + await self.observe()
 
     # ---- bot checks: seen, handed to the user, never touched ------------------------------------
 
@@ -977,8 +996,8 @@ class Browser:
         if action == "list":
             return await self._tab_list()
         if action == "new":
-            await self._new_tab(url)
-            return await self.observe()
+            note = await self._new_tab(url)
+            return note + await self.observe()
         if action == "switch" and tab and tab.startswith("h") and tab not in self._handed_keys and self.handed:
             await self._tab_list()  # h keys come from the list: read it now
         if action == "switch" and tab in self._handed_keys:  # a tab the user handed this agent: take it on

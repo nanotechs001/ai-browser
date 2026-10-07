@@ -399,6 +399,146 @@ async def test_a_tab_a_page_opens_is_followed_and_only_the_first_is_the_placers(
     assert browser.current.target != opener and placer.opened == [opener]  # the page's own tab: followed, not placed
 
 
+async def location(browser, tab) -> str:
+    return await browser.eval_in(tab, "location.href")
+
+
+def reused(tab) -> str:
+    return f"(opened in your oldest tab {tab.key}: at most 2 tabs of your own)"
+
+
+@CHROME
+async def test_a_third_tab_of_its_own_reuses_the_oldest_and_opens_none(own_browser):
+    """At most MAX_OWN_TABS tabs of its own (each a window of its own in the user's Brave): a third new tab is the
+    oldest one, the tab switched to least recently, which opens the page; no tab, so no window, opens."""
+    from ai_browser.browser import MAX_OWN_TABS
+
+    make, base, cdp = own_browser
+    placer = RecordingPlacer()
+    browser = await make(placer=placer)
+    await browser.open(base + "form.html")
+    first = browser.current
+    await browser.open(base + "privacy.html", new_tab=True)
+    second = browser.current
+    pages = await chrome_pages(cdp)
+    assert MAX_OWN_TABS == 2 and placer.opened == [first.target, second.target]
+    out = await browser.open(base + "popup.html", new_tab=True)
+    assert out.splitlines()[0] == reused(first) and out.splitlines()[1].startswith('page  "Popup test"')
+    assert browser.current is first and list(browser.owned) == [first.key, second.key]
+    assert placer.opened == [first.target, second.target] and await chrome_pages(cdp) == pages  # nothing opened
+    assert await location(browser, second) == base + "privacy.html"  # the other tab is left as it was
+    out = await browser.tabs("new", url=base + "form.html")  # tabs new too: now the second is the oldest
+    assert out.splitlines()[0] == reused(second) and browser.current is second
+    assert await location(browser, first) == base + "popup.html" and await location(browser, second) == base + \
+        "form.html"
+    await browser.tabs("switch", first.key)  # the oldest is the one switched to least recently: the second again
+    assert (await browser.open(base + "privacy.html", new_tab=True)).splitlines()[0] == reused(second)
+    assert (await browser.tabs("new")).splitlines()[0] == reused(first)  # a blank one: the oldest, blank
+    assert browser.current is first and await location(browser, first) == "about:blank"
+    assert placer.opened == [first.target, second.target] and await chrome_pages(cdp) == pages
+
+
+@CHROME
+async def test_without_new_tab_the_page_opens_in_the_current_tab_as_before(own_browser):
+    make, base, cdp = own_browser
+    placer = RecordingPlacer()
+    browser = await make(placer=placer)
+    assert (await browser.open(base + "form.html")).startswith('page  "Form test"')  # the first tab: a new one
+    first = browser.current
+    assert (await browser.open(base + "privacy.html")).startswith('page  "Privacy"')
+    assert browser.current is first and placer.opened == [first.target]
+    await browser.open(base + "popup.html", new_tab=True)
+    second = browser.current
+    assert (await browser.open(base + "form.html")).startswith('page  "Form test"')  # at two: no note, no reuse
+    assert browser.current is second and await location(browser, first) == base + "privacy.html"
+    assert placer.opened == [first.target, second.target]
+
+
+@CHROME
+@pytest.mark.direct_only  # tests the Browser alone over one shared connection (as the other hand-over tests)
+async def test_a_handed_tab_neither_counts_nor_is_reused(own_browser):
+    make, base, cdp = own_browser
+    user = (await cdp.send("Target.createTarget", {"url": base + "privacy.html"}))["targetId"]
+    for _ in range(50):  # until the user's page has loaded
+        infos = (await cdp.send("Target.getTargets"))["targetInfos"]
+        if any(info["targetId"] == user and info.get("title") == "Privacy" for info in infos):
+            break
+        await asyncio.sleep(0.1)
+    handed = [{"target": user, "title": "Privacy", "url": base + "privacy.html"}]
+
+    async def handed_tabs():
+        return list(handed)
+
+    placer = RecordingPlacer()
+    browser = await make(handed=handed_tabs, placer=placer)
+    await browser.tabs("switch", "h1")
+    users = browser.current
+    await browser.open(base + "form.html", new_tab=True)
+    second = browser.current
+    await browser.open(base + "popup.html", new_tab=True)
+    third = browser.current
+    assert users.adopted and placer.opened == [second.target, third.target]  # the handed tab didn't count
+    await browser.tabs("switch", users.key)  # the agent works in the user's tab, then wants another page
+    out = await browser.open(base + "privacy.html", new_tab=True)
+    assert out.splitlines()[0] == reused(second) and browser.current is second
+    assert placer.opened == [second.target, third.target]
+    assert await location(browser, users) == base + "privacy.html" and users.key in browser.owned  # never reused
+
+
+@CHROME
+async def test_a_closed_tab_frees_its_place(own_browser):
+    make, base, cdp = own_browser
+    placer = RecordingPlacer()
+    browser = await make(placer=placer)
+    await browser.open(base + "form.html")
+    await browser.open(base + "privacy.html", new_tab=True)
+    second = browser.current
+    await cdp.send("Target.closeTarget", {"targetId": second.target})  # the user closes it
+    for _ in range(50):
+        if second.key not in browser.owned:
+            break
+        await asyncio.sleep(0.1)
+    await browser.ensure_tab()  # as the engine does first in every call
+    out = await browser.open(base + "popup.html", new_tab=True)
+    assert "oldest tab" not in out and len(placer.opened) == 3 and len(browser.owned) == 2
+    await browser.tabs("close", browser.current.key)  # the agent closes one itself
+    out = await browser.tabs("new", url=base + "privacy.html")
+    assert "oldest tab" not in out and len(placer.opened) == 4 and len(browser.owned) == 2
+
+
+@CHROME
+async def test_a_tab_its_page_opened_counts_as_its_own(own_browser):
+    from ai_browser.steps import parse_steps
+
+    make, base, cdp = own_browser
+    placer = RecordingPlacer()
+    browser = await make(placer=placer)
+    page = await browser.open(base + "popup.html")
+    opener = browser.current
+    link = next(line.split()[0] for line in page.splitlines() if '"Preview in new tab"' in line)
+    await browser.act(parse_steps([f"click {link}"]))
+    for _ in range(30):
+        if browser.current is not opener:
+            break
+        await asyncio.sleep(0.1)
+    assert browser.current is not opener and len(browser.owned) == 2  # the page's tab is the agent's own
+    out = await browser.open(base + "form.html", new_tab=True)
+    assert out.splitlines()[0] == reused(opener) and placer.opened == [opener.target]
+
+
+@CHROME
+async def test_the_engine_says_a_new_tab_reused_the_oldest(chrome_engine):
+    engine, base, _ = chrome_engine
+    await engine.sandbox_start(chrome=True)
+    await engine.open(base + "form.html")
+    first = engine.browser.current
+    await engine.open(base + "privacy.html", new_tab=True)
+    pages = await chrome_pages(engine.cdp)
+    text = (await engine.open(base + "popup.html", new_tab=True)).text
+    assert text.startswith(reused(first) + '\npage  "Popup test"')
+    assert await chrome_pages(engine.cdp) == pages and engine.browser.current is first
+
+
 @CHROME
 async def test_a_reconnect_with_no_tab_left_still_says_so(chrome_engine):
     engine, base, _ = chrome_engine
