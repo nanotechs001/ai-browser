@@ -42,7 +42,9 @@ def test_the_readme_tells_the_new_way_and_not_the_old_one():
                   "**Pick the part to watch**", "then click **Use draft**",
                   "**You press Send**: the Brain never sends anything.", "Settings → **Where agents browse**",
                   "never among your windows", 'click **Remove** on "AI Browser Watcher"',
-                  "AI Browser never removes either"):
+                  "AI Browser never removes either",
+                  "An agent keeps to its tab and opens at most 2 of its own (so at most 2 windows), a third reusing "
+                  "the oldest"):
         assert words in text, words
     for gone in ("type `ai`", "tab group", "Load unpacked", "the watcher's Brain page", "Pause watching", "**Approve**"):
         assert gone not in text, gone
