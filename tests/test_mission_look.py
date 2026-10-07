@@ -54,6 +54,24 @@ async def test_the_layout_at_three_widths(stack):
 
 
 @CHROME
+async def test_the_icon_only_menu_still_names_each_button(stack):  # the final review, F10
+    js = await open_with(stack, size=NARROW)
+    assert await until(js, "document.getElementById('status').dataset.state === 'connected'")
+    assert await js("getComputedStyle(document.querySelector('.page-link .label')).display") == "none"  # icons only
+    cdp, session = stack["cdp"], js.session
+    root = (await cdp.send("DOM.getDocument", {"depth": 0}, session_id=session))["root"]["nodeId"]
+    buttons = (await cdp.send("DOM.querySelectorAll", {"nodeId": root, "selector": "#new-mission, .page-link"},
+                              session_id=session))["nodeIds"]
+    names = []
+    for node in buttons:  # what a screen reader says: the accessibility tree's name
+        tree = await cdp.send("Accessibility.getPartialAXTree", {"nodeId": node, "fetchRelatives": False},
+                              session_id=session)
+        names.append(tree["nodes"][0].get("name", {}).get("value", ""))
+    assert names == ["New Mission", "Dashboard", "My Missions", "Templates", "Knowledge", "Integrations", "History"]
+    assert await js("[...document.querySelectorAll('#new-mission, .page-link')].map(node => node.title)") == names
+
+
+@CHROME
 async def test_the_menu_counts_and_opens_its_pages(stack):
     agents = stack["server"].agents
     js = await open_mission(stack)

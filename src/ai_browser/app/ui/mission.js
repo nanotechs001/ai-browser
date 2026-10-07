@@ -47,7 +47,15 @@ let accountRows = []; // Settings → Accounts as the app lists them: names and 
 let tabHidden = false; // the tab menu shows another tab (app.js tells its frames)
 let paused = false;
 
-for (const node of document.querySelectorAll("[data-icon]")) node.prepend(icon(node.dataset.icon));
+for (const node of document.querySelectorAll("[data-icon]")) {
+  node.prepend(icon(node.dataset.icon));
+  const label = node.querySelector(":scope > .label"); // the menu's buttons: named when the menu shows icons only
+  if (label) {
+    const name = label.textContent.split(/\s+/).filter(Boolean).join(" ");
+    node.setAttribute("aria-label", name);
+    node.title = name;
+  }
+}
 $("new-key").textContent = MAC ? "⌘ K" : "Ctrl K";
 
 function inWorkspace(agent) { // the menu's workspace filter: every agent while none is picked
