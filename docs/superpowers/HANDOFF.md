@@ -78,6 +78,18 @@ capability for faster navigation and all feature of the claude app". Four projec
      runs, `limits.USAGE_KEY` is None and the Usage card never shows a percentage).
    - **The build's ledger** stays at `../Ai_Browser-wt/look/.superpowers/sdd/2026-10-05-new-look/progress.md` (git-ignored)
      until the hand check, whose findings go there.
+2b. **Without Docker: PAUSED by the user on 2026-10-08** ("paise the no docker task for now. make a savepoint to continue
+   it later").
+   - **Spec** `docs/superpowers/specs/2026-10-07-no-docker-design.md`, **plan** `docs/superpowers/plans/2026-10-07-no-docker.md`
+     (11 tasks, dry-run).
+   - **The save point:** branch `no-docker` (pushed), commit 3f8aa7c. Tasks 1–3 are complete and reviewed; Task 4
+     (`LocalSandboxes`) has three review rounds fixed and is waiting only for its round-3 scoped re-review. Task 5 had
+     not started changing files.
+   - **The ledger** (git-ignored): `../Ai_Browser-wt/no-docker/.superpowers/sdd/2026-10-07-no-docker/progress.md`. It holds
+     every ruling, every deferred minor, and the notes carried to Tasks 5, 6 and 9.
+   - **To continue:** merge `main` into `no-docker`; re-run Task 4's round-3 re-review (base a4ae9d1); then Task 5 with the
+     carried rulings (fake `socket.getaddrinfo`, check WebSocket handshakes and QA's `loadNetworkResource` redirects
+     under Fetch, keep Local Network Access on), then Tasks 6–11.
 3. **Projects, sessions and chat:** not designed yet. The user wants coding in project folders, sessions and history,
    and plain chat with Claude.
 4. **Claude artifacts:** not designed yet. Claude Code 2.1.263 carries claude.ai artifact tools (list and read with
