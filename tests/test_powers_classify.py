@@ -243,7 +243,7 @@ def test_auto_approve_takes_only_the_asks_of_the_folders_own_tools(project):  # 
     edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
     for tool, data in (("Bash", {"command": "npm test"}), ("Bash", {"command": "python -m pytest"}), ("Edit", edit),
                        ("Write", {"file_path": str(project / "notes.md"), "content": "x"}),
-                       ("Bash", {"command": "cd src"})):
+                       ("Bash", {"command": "cd src"}), ("Bash", {"command": "git commit -m 'fix the cd step'"})):
         assert auto(tool, data) and auto(tool, data, sandbox=True), (tool, data)
     assert auto("Bash", {"command": "ls"}, moved=True)  # after a cd: judged from the folder, as the rules are
     outside = str(project.parent / "outside" / "secret.txt")

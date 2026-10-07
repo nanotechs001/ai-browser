@@ -411,27 +411,27 @@ NETWORK_USES = frozenset({
     ("git", "push"), ("git", "pull"), ("git", "fetch"), ("git", "clone"), ("git", "ls-remote"), ("git", "submodule"),
     *(("npm", use) for use in ("install", "i", "add", "ci", "update", "publish", "exec", "x")),
     *(("pnpm", use) for use in ("install", "i", "add", "update", "publish", "dlx")),
-    *(("yarn", use) for use in ("install", "add", "upgrade", "publish", "dlx")), ("yarn",),  # yarn alone installs
+    *(("yarn", use) for use in ("install", "add", "upgrade", "publish", "dlx")),
     *(("bun", use) for use in ("install", "i", "add", "update", "publish", "x")),
     ("pip", "install"), ("pip", "download"), ("pip3", "install"), ("pip3", "download"),
     ("uv", "pip", "install"), ("uv", "pip", "sync"), ("uv", "add"), ("uv", "sync"), ("uv", "tool", "install"),
     ("poetry", "add"), ("poetry", "install"), ("poetry", "update"),
     ("cargo", "install"), ("cargo", "add"), ("cargo", "publish"), ("go", "get"), ("go", "install"),
     ("docker", "pull"), ("docker", "push"), ("docker", "login")})
+NETWORK_ALONE = frozenset({"yarn"})  # programs that install when nothing follows them
 _SUFFIX = re.compile(r"\.(?:exe|cmd|bat)$", re.IGNORECASE)  # curl.exe is curl
 
 
 def reaches_network(command) -> bool:
-    """Whether a command's job is reaching a site: a program in NETWORK_PROGRAMS, a use in NETWORK_USES (its first
-    words), or `python -m pip install` (any Python). A command that isn't one plain command may too: True."""
+    """Whether a command's job is reaching a site: a program in NETWORK_PROGRAMS (or NETWORK_ALONE, alone), a use in
+    NETWORK_USES (its first words), or `python -m pip install` (any Python). A command that isn't one plain command may too: True."""
     words = words_of(command)
     if words is None:
         return True
     program = _SUFFIX.sub("", _program(words[0])).lower()
-    if program in NETWORK_PROGRAMS:
+    if program in NETWORK_PROGRAMS or (len(words) == 1 and program in NETWORK_ALONE):
         return True
-    if (program, *words[1:]) in NETWORK_USES or any((program, *words[1:len(use)]) == use for use in NETWORK_USES
-                                                     if len(use) > 1):
+    if any((program, *words[1:len(use)]) == use for use in NETWORK_USES):
         return True
     return words[1:3] in (["-m", "pip"], ["-m", "pip3"]) and len(words) > 3 and words[3] in ("install", "download")
 
@@ -447,10 +447,12 @@ def auto_approves(tool: str, data, decision: str, sandbox: bool = False) -> bool
     if tool != "Bash":
         return True
     command = data.get("command") if isinstance(data, dict) else None
-    if moves_folder(command):
-        words = words_of(command)
-        if words is None or len(words) != 2 or words[0] != "cd" or words[1].startswith("-"):
-            return False
+    words = words_of(command)  # an "ask" is one plain command: its first word is its program
+    if words is None:
+        return False
+    if _program(words[0]) in ("cd", "pushd", "popd") \
+            and (words[0] != "cd" or len(words) != 2 or words[1].startswith("-")):
+        return False  # only cd into a folder inside: cd alone goes home, cd - and popd go back to where it was
     return (sandbox and SANDBOX_NETWORK) or not reaches_network(command)
 
 
