@@ -276,3 +276,21 @@ async def test_no_step_card_sits_under_the_heading_the_switch_or_the_sign(stack,
     assert shown == count
     assert hits == [], hits  # no desk's step card under the heading's words, the switch or the AI OFFICE sign
     assert outside == [], outside  # and every desk, with its card, in view in the room's box
+
+
+@CHROME
+@pytest.mark.parametrize(("count", "size", "least"), [(5, (1280, 760), 0.5), (6, (1280, 760), 0.5), (5, WIDE, 0.6)])
+async def test_a_few_desks_fill_the_room_below_the_heading_and_stay_in_view(stack, count, size, least):
+    stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
+    stack["server"].agents.max_working = count
+    for number in range(count):
+        await stack["server"].agents.create(f"Task number {number}")
+    js = await open_with(stack, size=size)
+    await front(stack, js)
+    working = "document.querySelectorAll('.station[data-state=\"working\"]:not(.away)').length"
+    assert await until(js, f"{working} === {count}", 15)
+    await asyncio.sleep(1.5)  # every desk in its place
+    zoom = await js("parseFloat(/scale3d\\(([\\d.]+)/.exec(document.querySelector('.room').style.transform)[1])")
+    assert zoom >= least, zoom  # the room is placed between the heading's band and the box's bottom, not squeezed
+    shown, hits, outside = await js(CARDS_UNDER_WORDS)
+    assert (shown, hits, outside) == (count, [], [])

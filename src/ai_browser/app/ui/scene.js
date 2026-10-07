@@ -29,6 +29,8 @@ const FIRST_RING = [150, 30, 112, 68, 215, -35];
 const TALL = 280; // a desk with its step card, in CSS pixels: the card, the gap and the desk
 const TOP = 190; // CSS pixels kept clear along the box's top, for no step card to sit under the page's words there:
 // Mission Control's heading (to 162 px down), its Flow · List · Calendar switch and the AI OFFICE sign (to 183)
+const ORIGIN = 0.2; // the perspective's origin, as a share of the box's height (office.css .viewport: 50% 20%)
+const BOTTOM = 12; // CSS pixels kept clear below the near desks
 const FLOOR = 0.15; // the room's smallest zoom to fit in (20 desks in a box 700 px wide fit at about 0.2)
 const CHIPS_PAST = 6; // more desks than this: step cards fold to chips
 const SPARKS = 6; // arrivals in flight at once: any more arrive without a spark
@@ -165,34 +167,47 @@ export function createScene(root, { onSelect = () => {} } = {}) {
   let ticking = null;
   let pulsing = null;
 
-  function fits(scale, width, height) { // at this zoom, every desk and the globe are in view
+  // Where the room stands at this zoom, and whether every desk and the globe are in view. `middle` is how far the
+  // room's middle hangs below the perspective's origin (office.css .viewport): the room's span, from the top of the
+  // highest card (or the globe) to the near desks' bottom, goes in the band between TOP and the box's bottom (less
+  // BOTTOM), centred in what the band has to spare.
+  function frame(scale, width, height) {
     const tilt = (START.tilt * Math.PI) / 180;
-    const middle = 0.38 * height; // the room's middle, below the perspective's origin (.room top 58%, origin 20%)
-    const screen = (y) => {
+    const at = (y) => { // a room's y: how far down the screen it falls from the room's middle, and its magnification
       const depth = (y - 700) * scale;
-      const factor = 1800 / (1800 - depth * Math.sin(tilt));
-      return { y: 0.2 * height + (middle + depth * Math.cos(tilt)) * factor, factor };
+      return { down: depth * Math.cos(tilt), factor: 1800 / (1800 - depth * Math.sin(tilt)) };
     };
-    const near = screen(extent.near);
-    const far = screen(extent.far);
-    const middleOfRoom = screen(CENTER.y);
-    return near.y <= height - 12 && far.y - TALL * scale * far.factor >= TOP
-      && middleOfRoom.y - 340 * scale * middleOfRoom.factor >= 8
-      && width / 2 - (extent.dx + DESK.w / 2) * scale * near.factor >= 0;
+    const far = at(extent.far);
+    const near = at(extent.near);
+    const globe = at(CENTER.y);
+    const origin = ORIGIN * height; // a point's screen y: origin + (middle + down) * factor
+    const highest = Math.max((TOP - origin) / far.factor - far.down + TALL * scale,
+                             (TOP - origin) / globe.factor - globe.down + 340 * scale); // the least `middle` may be
+    const lowest = (height - BOTTOM - origin) / near.factor - near.down; // and the most
+    const sideways = width / 2 - (extent.dx + DESK.w / 2) * scale * near.factor >= 0;
+    return { fits: highest <= lowest && sideways, middle: (highest + lowest) / 2 };
   }
 
-  function fit() { // the room fills the box it is in, with every desk in view
+  function fit() { // the room's zoom, the largest with every desk in the box (below the top band), and where it stands
     const width = viewport.clientWidth || innerWidth;
     const height = viewport.clientHeight || innerHeight;
     let scale = Math.min(1.2, (width * 0.94) / (2 * extent.dx + DESK.w + 40), height / 820);
-    while (scale > FLOOR && !fits(scale, width, height)) scale -= 0.02;
-    return Math.max(FLOOR, scale);
+    let found = frame(scale, width, height);
+    while (scale > FLOOR && !found.fits) {
+      scale -= 0.02;
+      found = frame(scale, width, height);
+    }
+    scale = Math.max(FLOOR, scale);
+    return { scale, top: ORIGIN * height + frame(scale, width, height).middle };
   }
 
   function apply() {
     room.style.setProperty("--tilt", `${camera.tilt}deg`);
     room.style.setProperty("--spin", `${camera.spin}deg`);
-    const scale = camera.scale * fit(); // in 3D: the desks stand up through z, and keep their shape
+    const { scale: fitted, top } = fit();
+    const scale = camera.scale * fitted; // in 3D: the desks stand up through z, and keep their shape
+    const where = `${Math.round(top * 10) / 10}px`;
+    if (room.style.top !== where) room.style.top = where; // the room's middle, in the box (the sheet's 58% before this)
     room.style.transform = `rotateX(${camera.tilt}deg) rotateZ(${camera.spin}deg) scale3d(${scale}, ${scale}, ${scale})`;
     room.dataset.tilt = shortly(camera.tilt);
     room.dataset.spin = shortly(camera.spin);

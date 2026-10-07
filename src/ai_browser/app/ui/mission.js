@@ -298,7 +298,6 @@ function start() {
 
 function handle(message) {
   folders.onMessage(message);
-  drawer.onMessage(message);
   for (const part of parts) part.onMessage?.(message);
   switch (message.type) {
     case "brain_snapshot":
@@ -409,6 +408,7 @@ function handle(message) {
       for (const [id, jpeg] of Object.entries(message.thumbs || {})) scene.thumb(id, jpeg);
       break;
   }
+  drawer.onMessage(message); // after the switch: an `accounts` message has set accountRows, which the drawer draws from
 }
 
 // ---- moving around the room, and the keys ----------------------------------------------------------------------
