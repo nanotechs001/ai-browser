@@ -144,6 +144,7 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .checklist .current { color: var(--accent-2); font-weight: 600; }
 .checklist .current .mark { border-color: var(--accent-2); box-shadow: 0 0 8px var(--glow); }
 .current-buttons { margin-top: 12px; }
+.current-buttons .pair { display: inline-flex; gap: 8px; } /* Watch never wraps away from Hand over */
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; }
 .activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .activity-row { width: 100%; display: grid; grid-template-columns: 40px 10px minmax(0, 1fr) auto; gap: 10px;

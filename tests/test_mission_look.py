@@ -304,6 +304,23 @@ async def test_watch_beside_hand_over_brings_the_agents_tab_to_the_front(stack):
 
 
 @CHROME
+@pytest.mark.parametrize("size", [WIDE, (1280, 760)])
+async def test_watch_stays_right_of_hand_over_with_stop_shown_or_hidden(stack, size):  # the review of look-3, F2
+    agents = stack["server"].agents
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    await agents.create("keep working")
+    agents.tab_event("a1", "working_tab", "T1")
+    js = await open_with(stack, size=size)
+    assert await until(js, "!document.getElementById('current-watch').disabled")
+    pair = f"[{BOX}(document.getElementById('current-hand')), {BOX}(document.getElementById('current-watch'))]"
+    for stop_shown in (True, False):
+        assert await until(js, f"document.getElementById('current-stop').hidden === {str(not stop_shown).lower()}")
+        hand, watch = await js(pair)
+        assert watch[0] >= hand[2] and abs(watch[1] - hand[1]) < 2, (size, stop_shown, hand, watch)  # one row
+        await agents.stop("a1")  # a finished agent that still has its tab: Stop goes, Watch stays
+
+
+@CHROME
 @pytest.mark.parametrize("size", [WIDE, (1280, 760), MIDDLE, NARROW])
 async def test_the_list_and_the_calendar_start_right_under_the_switch(stack, size):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
