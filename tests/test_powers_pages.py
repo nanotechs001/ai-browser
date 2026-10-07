@@ -396,10 +396,12 @@ async def test_the_drawers_switch_turns_auto_approve_on_and_off_and_says_where(s
 
 
 @CHROME
-async def test_an_auto_approved_action_line_carries_its_mark(stack):  # the user's choice: what ran without a card
+async def test_an_auto_approved_action_line_carries_its_mark(stack, monkeypatch):  # what ran without a card
+    from ai_browser.app import powers
     from test_bridge_powers import result
     from test_mission import open_drawer, open_mission, station
 
+    monkeypatch.setattr(powers, "sandbox_on", lambda: True)  # where the sandbox holds commands
     stack["script"].write_text(json.dumps([INIT, use("u1", "Bash", {"command": "npm test"}),
                                            ask("Bash", {"command": "npm test"}, tool_id="u1"),
                                            result("u1", "3 passed"),
@@ -414,6 +416,33 @@ async def test_an_auto_approved_action_line_carries_its_mark(stack):  # the user
     assert await until(mission, f"{rows}.length === 2")
     assert await mission(f"{rows}.map((row) => row.querySelector('.auto')?.textContent ?? null)") == ["auto", None]
     assert await mission(f"{rows}[0].querySelector('.auto').title") == "Ran without a card: Auto-approve in its folder"
+
+
+EDITS_ONLY = "On this computer, commands still ask: only file edits run without a card"
+
+
+@CHROME
+@pytest.mark.parametrize("sandbox", [True, False])
+async def test_the_switch_says_what_runs_without_a_card_on_this_computer(stack, monkeypatch, sandbox):  # I3
+    from ai_browser.app import powers
+    from test_mission import WORKING, open_drawer, open_mission, station
+
+    monkeypatch.setattr(powers, "sandbox_on", lambda: sandbox)
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    await stack["server"].agents.create("keep working", auto=True)
+    mission = await open_mission(stack)
+    title = "document.getElementById('task-auto-switch').title"
+    assert await until(mission, f"{title}.length > 0")
+    words = await mission(title)
+    assert "judged from what a command names, not from what a script it runs does" in words
+    assert words.startswith(EDITS_ONLY) is (not sandbox) and ("ordinary commands" in words) is sandbox
+    assert await until(mission, f"{station('a1')} != null")
+    await mission(open_drawer("a1"))
+    note = "document.querySelector('#drawer-body .auto-note')"
+    assert await until(mission, f"{note} != null && "
+                                "document.querySelector('#drawer-body .auto-words').hidden === false")
+    assert await mission(f"{note}.hidden") is sandbox and await mission(f"{note}.textContent") == EDITS_ONLY
+    assert await mission("document.querySelector('#drawer-body .auto-toggle').title") == words
 
 
 def test_the_readme_explains_auto_approve():  # the user's choice, 2026-10-07: what it covers and what still asks

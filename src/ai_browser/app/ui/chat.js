@@ -3,11 +3,21 @@
 "use strict";
 
 // Auto-approve in its folder (the user's choice, 2026-10-07): the switch's words, and the mark of what ran without a
-// card. The composer's and the drawer's switch say the same.
+// card. The composer's and the drawer's switch say the same. Commands run without a card only where Claude Code's
+// sandbox holds them (the app's `auto_commands`: a Mac); elsewhere only file edits do.
 export const AUTO_LABEL = "Auto-approve in its folder";
-export const AUTO_TITLE = "Edits, new files and ordinary commands inside the task's folder run without a card. "
-  + "Deleting, sudo, anything outside the folder, force-push and reaching a site still ask.";
+export const AUTO_EDITS_ONLY = "On this computer, commands still ask: only file edits run without a card";
+const AUTO_JUDGED = "What still asks is judged from what a command names, not from what a script it runs does.";
 const AUTO_MARK = "Ran without a card: Auto-approve in its folder";
+
+export function autoTitle(commands) { // the switch's title, for this computer
+  return commands
+    ? "Edits, new files and ordinary commands (reading, building, testing, everyday Git) inside the task's folder run "
+      + "without a card. Deleting, sudo, anything outside the folder, force-push and reaching a site still ask. "
+      + AUTO_JUDGED
+    : `${AUTO_EDITS_ONLY}. Edits and new files inside the task's folder run without one; anything outside it, and `
+      + `Git's, Claude Code's or an editor's own settings, still ask. ${AUTO_JUDGED}`;
+}
 
 export function el(tag, className, text) {
   const node = document.createElement(tag);

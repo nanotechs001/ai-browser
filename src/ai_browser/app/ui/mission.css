@@ -169,6 +169,7 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 #drawer-body .auto-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2);
                             cursor: pointer; align-self: flex-start; }
 #drawer-body .auto-words { color: var(--accent-2); }
+#drawer-body .auto-note { font-size: 12px; margin-top: -6px; }  /* commands still ask on this computer */
 #drawer-body .folder, #drawer-body .auto-words { overflow-wrap: anywhere; }  /* a long path wraps */
 .drawer-brain { display: flex; flex-direction: column; gap: 8px; }
 .permission-slot:empty, .ask-slot:empty { display: none; }

@@ -7,7 +7,7 @@
 import { askBox, askKey } from "./accountui.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
-import { AUTO_LABEL, AUTO_TITLE, agentLabel, createChat, el } from "./chat.js";
+import { AUTO_EDITS_ONLY, AUTO_LABEL, agentLabel, autoTitle, createChat, el } from "./chat.js";
 import { COLORS } from "./desk.js";
 import { openLive } from "./nav.js";
 import { permissionCard } from "./permission.js";
@@ -19,6 +19,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
   const $ = (id) => document.getElementById(id);
   const send = (message) => link.send(message);
   const drawer = { id: null, parts: null, chat: null, brain: null, yourTabs: null };
+  let autoCommands = false; // whether Auto-approve may run commands here (the app's word: a Mac's sandbox)
 
   function setText(node, text) {
     if (node.textContent !== text) node.textContent = text;
@@ -87,6 +88,8 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
     parts.autoInput.checked = agent.auto === true; // the app's word: what the bridge does now
     setText(parts.autoWords, `Auto-approving inside ${agent.folder || "its own scratch folder"}`);
     parts.autoWords.hidden = agent.auto !== true;
+    parts.auto.title = autoTitle(autoCommands);
+    parts.autoNote.hidden = agent.auto !== true || autoCommands;
     renderPlan(parts.plan, agent.todos); // agent powers, Decision 9: the agent's plan, live
     renderSubagents(parts.subs, agent.subagents); // Decision 8: each sub-agent, its task and its current action
     parts.watch.disabled = !agent.working_tab;
@@ -125,9 +128,9 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
                     askSlot: el("div", "ask-slot"), ask: null, askKey: "",
                     folder: el("div", "status muted folder"), plan: el("section", "plan"),
                     subs: el("section", "subagents"), auto: el("label", "auto-toggle"), autoInput: el("input"),
-                    autoWords: el("div", "status auto-words") };
+                    autoWords: el("div", "status auto-words"),
+                    autoNote: el("div", "muted auto-note", AUTO_EDITS_ONLY) };
     parts.autoInput.type = "checkbox";
-    parts.auto.title = AUTO_TITLE;
     parts.auto.append(parts.autoInput, document.createTextNode(` ${AUTO_LABEL}`));
     parts.autoInput.addEventListener("change", () => { // the user's click, also while it works
       const on = parts.autoInput.checked;
@@ -155,7 +158,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
     drawer.yourTabs = mountYourTabs(parts.yourTabs, { send, agentId: () => id });
     parts.yourTabs.open = showTabs; // folded, unless the user asked to hand a tab over
     $("drawer-body").replaceChildren(parts.status, parts.moved, parts.folder, parts.auto, parts.autoWords,
-                                     parts.buttons, parts.permission,
+                                     parts.autoNote, parts.buttons, parts.permission,
                                      parts.askSlot, parts.plan, parts.subs, parts.yourTabs, parts.messages,
                                      parts.composer);
     drawer.parts = parts;
@@ -175,6 +178,10 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
     get isOpen() { return !$("drawer").hidden; },
     onMessage(message) {
       if (message.type?.startsWith("brain_")) drawer.brain?.onMessage(message); // the inbox in the drawer
+      if (message.type === "snapshot") {
+        autoCommands = message.auto_commands === true;
+        if (drawer.id) fill(agentOf(drawer.id));
+      }
       if (message.type === "agent_event" && message.id === drawer.id) {
         drawer.chat?.append(message.event);
       } else if (message.type === "agent_events" && message.id === drawer.id && drawer.chat) {

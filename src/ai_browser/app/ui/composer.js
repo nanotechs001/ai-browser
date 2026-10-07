@@ -7,7 +7,7 @@
 "use strict";
 
 import { fillPicker, pickDefault } from "./accountui.js";
-import { AUTO_TITLE, el } from "./chat.js";
+import { autoTitle, el } from "./chat.js";
 import { mountFolderPicker } from "./folderpick.js";
 import { mountUploads } from "./uploads.js";
 
@@ -172,7 +172,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     workspacePicked = true;
   });
   $("start-key").textContent = MAC ? "⌘ ↵" : "Ctrl ↵";
-  $("task-auto-switch").title = AUTO_TITLE;
+  $("task-auto-switch").title = autoTitle(false); // until the app says this computer's sandbox holds commands
   setMode("build");
 
   return {
@@ -194,6 +194,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
       uploads.onMessage(message);
       switch (message.type) {
         case "snapshot":
+          $("task-auto-switch").title = autoTitle(message.auto_commands === true);
           rows = message.accounts || [];
           fillPicker($("task-account"), rows);
           workspaces = message.workspaces || [];
