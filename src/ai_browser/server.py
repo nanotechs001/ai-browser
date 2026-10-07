@@ -83,7 +83,8 @@ def build_server(engine_factory: Callable[[], Engine] | None = None) -> MCPServe
     @server.tool(structured_output=False)
     async def open(url: str, new_tab: bool = False) -> Content:
         """Open a URL (connects this session's browser if needed: the user's own by default) and return the page as
-        numbered elements."""
+        numbered elements. Use your one tab for everything: new_tab=true opens a second only when you need two pages
+        at once. At most 2 tabs of your own: a third reuses the oldest."""
         return _content(await engine().open(url, new_tab))
 
     @server.tool(structured_output=False)
@@ -112,8 +113,9 @@ def build_server(engine_factory: Callable[[], Engine] | None = None) -> MCPServe
 
     @server.tool(structured_output=False)
     async def tabs(action: str = "list", tab: str | None = None, url: str | None = None) -> Content:
-        """Tabs this session opened, and tabs the user handed you (h1…). action: list · new (url optional) ·
-        switch (tab="t2", or "h1" to take on a handed tab) · close (tab="t2")."""
+        """Tabs this session opened, and tabs the user handed you (h1…). action: list · new (url optional; at most 2
+        tabs of your own: a third reuses the oldest) · switch (tab="t2", or "h1" to take on a handed tab) ·
+        close (tab="t2")."""
         return _content(await engine().tabs(action, tab, url))
 
     @server.tool(structured_output=False)
