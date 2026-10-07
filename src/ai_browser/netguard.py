@@ -1,0 +1,94 @@
+"""Without Docker (the no-Docker spec) the sandbox's browser runs on this computer, so it could reach this computer's own
+services and its network's, which Docker's browser couldn't: its loopback was the container's own. So it never opens
+them: loopback, private, link-local, shared (100.64.0.0/10, tailnets) and unspecified addresses, and the names
+localhost, *.localhost and *.local.
+- An address is judged as written (Chrome writes every address in one form first, so 2130706433 and 0x7f.1 reach it
+  as 127.0.0.1).
+- A name an agent opens, and every navigation's, is also looked up: a public name that points here (localtest.me) is
+  refused too.
+The browser applies it to every request it makes (browser.py: CDP Fetch with PATTERNS), and open, act goto and qa
+say so before anything loads."""
+
+from __future__ import annotations
+
+import asyncio
+import ipaddress
+from urllib.parse import urlsplit
+
+REFUSED = ("{host} is on this computer or its network, and the sandbox never opens those. QA a site on this computer "
+           "in your own browser (ask the user first)")
+SHARED = ipaddress.ip_network("100.64.0.0/10")  # carrier-grade NAT, and tailnets (Tailscale)
+LOOKUP_WAIT = 3.0  # seconds a name's lookup may take; past it, the browser decides (it looks the name up itself)
+# The requests Chrome pauses for a look (CDP Fetch patterns: * and ? only). Every navigation (Document) pauses, so its
+# name is looked up; any other request pauses only when its address may be private as written. The look decides.
+PATTERNS = [{"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"},
+            *({"urlPattern": pattern, "requestStage": "Request"} for pattern in (
+                "*://localhost*", "*://*.local*", "*://0.*", "*://10.*", "*://127.*", "*://100.*", "*://169.254.*",
+                "*://172.1?.*", "*://172.2?.*", "*://172.3?.*", "*://192.168.*", "*://[*"))]
+
+
+def exempt(url: str) -> bool:
+    """Never, outside the test suite. The tests serve their pages on this computer, and let only those through by
+    replacing this function."""
+    return False
+
+
+def private_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if address.version == 6:  # an IPv4 address carried in an IPv6 one is judged as itself
+        carried = address.ipv4_mapped or address.sixtofour
+        if carried is not None:
+            address = carried
+    return (address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified
+            or address.is_reserved or (address.version == 4 and address in SHARED))
+
+
+def private_host(host: str) -> bool:
+    """Whether a host, as written, is this computer or its network."""
+    name = (host or "").strip().strip("[]").rstrip(".").lower()
+    if not name:
+        return False
+    if name == "localhost" or name.endswith((".localhost", ".local")):
+        return True
+    try:
+        return private_address(ipaddress.ip_address(name.split("%", 1)[0]))  # fe80::1%en0: the zone isn't the address
+    except ValueError:
+        return False  # a name: only a lookup can say
+
+
+def host_of(url: str) -> str:
+    try:
+        return urlsplit(str(url).strip()).hostname or ""
+    except ValueError:
+        return ""
+
+
+def private_url(url: str) -> bool:
+    """Whether an address names this computer or its network, as written (no lookup)."""
+    return not exempt(url) and private_host(host_of(url))
+
+
+async def refused(url: str) -> str | None:
+    """The refusal for an address the sandbox's browser never opens, or None: as written, then its name looked up."""
+    if exempt(url):
+        return None
+    host = host_of(url)
+    if not host:
+        return None  # data:, about:blank, a file in the work folder: no network
+    if private_host(host):
+        return REFUSED.format(host=host)
+    try:
+        ipaddress.ip_address(host)
+        return None  # a public address, as written
+    except ValueError:
+        pass
+    try:
+        found = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(host, None), LOOKUP_WAIT)
+    except (OSError, UnicodeError, TimeoutError):
+        return None  # not found (the browser can't open it either), or too slow to say
+    for *_, address in found:
+        try:
+            if private_address(ipaddress.ip_address(str(address[0]).split("%", 1)[0])):
+                return REFUSED.format(host=host)
+        except ValueError:
+            continue
+    return None
