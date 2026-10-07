@@ -71,7 +71,8 @@ def test_a_template_is_in_at_most_one_workspace(tmp_path):
     assert workspaces.get(one["id"])["templates"] == [] and workspaces.get(two["id"])["templates"] == ["weekly-report"]
     workspaces.assign_template("weekly-report", None)
     assert workspaces.get(two["id"])["templates"] == []
-    for slug, where, words in (("../x", one["id"], "Not a template"), ("ok", "w00000000", "was deleted")):
+    for slug, where, words in (("../x", one["id"], "Not a template"), ("ok\n", one["id"], "Not a template"),
+                               ("ok", "w00000000", "was deleted")):
         with pytest.raises(ValueError, match=words):
             workspaces.assign_template(slug, where)
 
@@ -84,6 +85,7 @@ def test_a_broken_file_reads_as_none_and_a_broken_row_is_skipped(tmp_path):
         path.write_text(text, encoding="utf-8")
         assert workspaces.list() == []
     path.write_text(json.dumps({"workspaces": [
-        {"id": "w1234abcd", "name": "Fine", "templates": ["a", "../b", 7, "a"]}, {"id": "nope", "name": "Bad id"},
-        {"id": "w1234abcd", "name": "Twice"}, {"id": "wabcdef01", "name": ""}, "not a row"]}), encoding="utf-8")
+        {"id": "w1234abcd", "name": "Fine", "templates": ["a", "../b", 7, "a", "c\n"]},
+        {"id": "nope", "name": "Bad id"}, {"id": "w1234abcd", "name": "Twice"}, {"id": "wabcdef01", "name": ""},
+        {"id": "wabcdef02\n", "name": "Line"}, "not a row"]}), encoding="utf-8")
     assert workspaces.list() == [{"id": "w1234abcd", "name": "Fine", "templates": ["a"]}]

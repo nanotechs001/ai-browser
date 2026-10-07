@@ -16,8 +16,8 @@ from ..syncdir import write_atomic
 FILE = "workspaces.json"
 NAME_LIMIT = 40
 MOST = 50
-_ID = re.compile(r"^w[0-9a-f]{8}$")
-_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}$")  # a workflow's slug (brain/workflows.py)
+_ID = re.compile(r"w[0-9a-f]{8}")
+_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")  # a workflow's slug (brain/workflows.py)
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩﻿]")
 NO_NAME = "Give the workspace a name"
 TOO_LONG = f"A workspace's name is at most {NAME_LIMIT} characters"
@@ -49,7 +49,7 @@ class Workspaces:
         rows = data.get("workspaces") if isinstance(data, dict) else None
         out, seen = [], set()
         for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not _ID.match(row["id"]) \
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not _ID.fullmatch(row["id"]) \
                     or row["id"] in seen:
                 continue
             try:
@@ -57,7 +57,7 @@ class Workspaces:
             except ValueError:
                 continue
             listed = row.get("templates") if isinstance(row.get("templates"), list) else []
-            templates = [slug for slug in listed if isinstance(slug, str) and _SLUG.match(slug)]
+            templates = [slug for slug in listed if isinstance(slug, str) and _SLUG.fullmatch(slug)]
             seen.add(row["id"])
             out.append({"id": row["id"], "name": name, "templates": list(dict.fromkeys(templates))})
         return out[:MOST]
@@ -112,7 +112,7 @@ class Workspaces:
 
     def assign_template(self, slug, workspace_id) -> None:
         """Put a template in one workspace, or in none (None): a template is in at most one."""
-        if not isinstance(slug, str) or not _SLUG.match(slug):
+        if not isinstance(slug, str) or not _SLUG.fullmatch(slug):
             raise ValueError("Not a template")
         rows = self._read()
         if workspace_id is not None and not any(row["id"] == workspace_id for row in rows):
