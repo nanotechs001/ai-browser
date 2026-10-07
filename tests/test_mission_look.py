@@ -1174,6 +1174,14 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
     for phrase in ("## Mission Control (your AI office)", "`~/.ai-browser/workspaces.json`", "never deletes its files",
                    "a percentage only when Claude Code reports one", '"Within limits"', "under `attachments/`",
                    '"name (2).ext"', "**Brave only**", "**⋯ Options**",
-                   "past 12 desks, the oldest finished agents leave the room", "**Ask AI**, in the composer"):
+                   "past 12 desks, the oldest finished agents leave the room", "**Ask AI**, in the composer",
+                   '"No missions in this workspace"', '"Not sent: attach it again"',
+                   "applies to the agents you start next",  # the rulings' results (Task 18, the final review)
+                   'After a reconnect, every attached file says "Not sent: attach it again", even one that showed ✓',
+                   "the task refuses to start and says which folder",
+                   "no Web Search, Web Fetch, browser tools or skills shell",
+                   "a command still asks you, with a card, before it reaches a site",
+                   "your own tools (Integrations) still run"):
         assert phrase in readme, phrase
-    assert "brain of glowing points" not in readme and "WebGL" not in readme
+    for gone in ("brain of glowing points", "WebGL", "no web tools at all", "a file that was not yet sent"):
+        assert gone not in readme, gone

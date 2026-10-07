@@ -578,11 +578,13 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   - **Attach:** at most 10 files, 20 MB each. They are copied into the agent's folder under `attachments/`, never over
     a file that is there (a duplicate becomes "name (2).ext"), and the task names them. Pictures reach the agent through
     Claude Code's own Read. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
-    that folder has been replaced by a link, the task refuses to start and names it. After a reconnect, a file that was
-    not yet sent says "Not sent: attach it again".
-  - **Web:** **Web + Brave** (the default), **Brave only** (no WebSearch or WebFetch), or **No web** (no web tools at
-    all). **No web** also stops the skills' Docker shell: skills' instructions still load, but their scripts don't run
-    in a "No web" task;
+    that folder has been replaced by a link, the task refuses to start and says which folder. After a reconnect, every
+    attached file says "Not sent: attach it again", even one that showed ✓: the app forgets files when the connection
+    drops.
+  - **Web:** **Web + Brave** (the default), **Brave only** (no Web Search or Web Fetch), or **No web**: no Web Search,
+    Web Fetch, browser tools or skills shell (a skill's instructions still load, but its scripts don't run). Under
+    **No web**, a command still asks you, with a card, before it reaches a site, and your own tools (Integrations)
+    still run;
   - **Model**, **Account**, **Folder** and **Workspace**; the mic (in Ask AI it talks to the Brain; otherwise your words
     fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
   - On a narrow window the pickers fold into **⋯ Options**, the right column moves under the office, and the menu
