@@ -78,6 +78,7 @@ function show(key) {
     if (on) one.button.setAttribute("aria-current", "page");
     else one.button.removeAttribute("aria-current");
     one.view?.classList.toggle("active", on);
+    one.frame?.contentWindow?.postMessage({ type: "shown", on }, location.origin); // our pages pause while hidden
   }
   renderTitle();
   tab.frame.contentWindow?.focus(); // keys go to the page shown (Mission Control's Space to talk, Escape, arrows)

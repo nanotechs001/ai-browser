@@ -1,7 +1,6 @@
 // Mission Control: the user's AI team at work. One station per agent in a 3D room (scene.js), the Brain in the
 // middle, on the same line to the app as AI Home (link.js), sending only the messages AI Home sends.
 import { askBox, askError, askKey, fillPicker, pickDefault } from "./accountui.js";
-import { createBlob } from "./blob.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { agentLabel, createChat } from "./chat.js";
@@ -35,14 +34,8 @@ let tabScope = null; // which profile that list comes from, and how many tabs it
 let browser = null; // where agents browse: {kind, name, state} (snapshot.browser, then each "browser" message)
 let accountRows = []; // Settings → Accounts as the app lists them: names and "signed in", never an email
 
-const scene = createScene($("scene"), { onSelect: select, onCamera: aimBrain });
-const brainButton = el("button", "brain");
-brainButton.id = "brain";
-brainButton.type = "button";
-brainButton.setAttribute("aria-label", "The Brain: open its inbox");
-const canvas = el("canvas", "blob");
-const orb = el("div", "orb");
-brainButton.append(canvas, orb);
+const scene = createScene($("scene"), { onSelect: select });
+const brainButton = scene.globe; // the globe is the Brain's seat: click it for its inbox
 const brainLabel = el("div", "brain-label");
 const brainCount = el("span", "count");
 brainCount.id = "brain-count";
@@ -53,8 +46,7 @@ const bubble = el("div", "bubble");
 bubble.id = "bubble";
 bubble.hidden = true;
 bubble.setAttribute("role", "status");
-scene.stage.append(bubble, brainButton, brainLabel);
-const blob = createBlob(canvas, orb);
+scene.stage.append(bubble, brainLabel);
 const voice = createVoice({
   bubble,
   onSpeaking: (on) => {
@@ -62,7 +54,7 @@ const voice = createVoice({
     renderBrain();
   },
   onBlocked: (blocked) => setText($("voice-note"), blocked ? "Click anywhere on this page to let the Brain speak" : ""),
-  onWord: () => blob.word(),
+  onWord: () => scene.pulse(), // each spoken word pulses the globe
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
@@ -181,7 +173,6 @@ function update(agent) {
   agents.set(agent.id, agent);
   const fresh = agentsKnown && !before; // created while this page is open: its arrival plays
   scene.upsert(agent, { fresh });
-  if (fresh) blob.burst(scene.directionTo(agent.id));
   listRow(agent);
   if (drawer.id === agent.id) fillDrawer(agent);
   renderCounts();
@@ -207,16 +198,9 @@ function renderBrain() { // the Brain thinks while it works, beats while somethi
   const agentsNeed = [...agents.values()].some((agent) => stateOf(agent) === "needs_you");
   const state = talkState === "listening" ? "listening" : speaking ? "speaking"
     : brainState.busy || talkState === "transcribing" ? "thinking" : needs || agentsNeed ? "alert" : "idle";
-  blob.setState(state);
+  scene.stage.dataset.state = state; // the globe's glow
   setText(brainCount, needs ? `${needs} ${needs === 1 ? "needs" : "need"} you` : "");
   setText(brainWhat, brainState.busy ? brainState.what : "");
-  aimBrain();
-}
-
-function aimBrain() { // the alert's signals gather on the side facing the oldest agent that needs the user
-  const waiting = [...agents.values()].filter((agent) => stateOf(agent) === "needs_you")
-    .sort((one, two) => (Number(one.created) || Infinity) - (Number(two.created) || Infinity))[0];
-  blob.focus(waiting ? scene.directionTo(waiting.id) : null);
 }
 
 function showList(on) {
@@ -237,8 +221,7 @@ function openBrain() {
 
 function select(id, options = {}) {
   selected = id;
-  for (const node of document.querySelectorAll(".station.selected")) node.classList.remove("selected");
-  document.querySelector(`.station[data-id="${CSS.escape(id)}"]`)?.classList.add("selected");
+  scene.select(id);
   openAgent(id, options);
 }
 
@@ -366,7 +349,7 @@ function closeDrawer() {
   drawer.brain = null;
   drawer.yourTabs = null;
   $("drawer-body").replaceChildren();
-  for (const node of document.querySelectorAll(".station.selected")) node.classList.remove("selected");
+  scene.select(null);
 }
 
 // ---- the task bar ------------------------------------------------------------------------------------------------
@@ -610,6 +593,20 @@ $("task-model").addEventListener("change", () => {
   link.send({ type: "settings_set", key: "model", value: $("task-model").value });
 });
 $("list-button").addEventListener("click", () => showList($("list").hidden));
+let tabHidden = false; // the tab menu shows another tab (app.js tells its frames)
+
+function hidden(on) { // its tab or the window is hidden: animations and timers wait (plan decision 16)
+  document.documentElement.classList.toggle("paused", on);
+  scene.pause(on);
+}
+
+addEventListener("message", (event) => {
+  if (event.source !== window.parent || event.origin !== location.origin || event.data?.type !== "shown") return;
+  tabHidden = !event.data.on;
+  hidden(tabHidden || document.hidden);
+});
+document.addEventListener("visibilitychange", () => hidden(tabHidden || document.hidden));
+
 renderCounts();
 renderEmptyList();
 renderBrain();

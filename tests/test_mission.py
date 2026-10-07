@@ -94,10 +94,11 @@ async def test_the_camera_turns_and_zooms_within_limits(mission):
 @CHROME
 async def test_many_agents_fill_the_rings_without_overlap(mission):
     js, stack = mission
-    for number in range(14):
-        await stack["server"].agents.create(f"Task number {number}")
-    assert await until(js, "document.querySelectorAll('.station').length === 14")
-    points = await js("[...document.querySelectorAll('.station')].map(s => [Number(s.dataset.x), Number(s.dataset.y)])")
+    for number in range(15):  # the spec's scene with 15 agents
+        await stack["server"].agents.create(f"Task number {number}")  # each is done at once: 12 stay in the room
+    shown = "document.querySelectorAll('.station:not(.away)')"
+    assert await until(js, f"document.querySelectorAll('.station').length === 15 && {shown}.length === 12", 20)
+    points = await js(f"[...{shown}].map(s => [Number(s.dataset.x), Number(s.dataset.y)])")
     closest = min(math.dist(one, two) for one, two in itertools.combinations(points, 2))
     assert closest >= 160, points
 
@@ -175,12 +176,11 @@ def changed(brain, entry, **fields):
 
 
 @CHROME
-async def test_the_blob_follows_the_brain(mission):
+async def test_the_globe_follows_the_brain(mission):
     js, stack = mission
     brain = stack["brain"]
     stage = "document.querySelector('.stage')"
     assert await until(js, f"{stage}.dataset.state === 'idle'")
-    assert await js(f"{stage}.dataset.mode") == "webgl"
     brain.broadcast({"type": "brain_activity", "busy": True, "what": "Sorting 2 new messages from Gmail"})
     assert await until(js, f"{stage}.dataset.state === 'thinking'")
     assert await js("document.getElementById('brain-what').textContent") == "Sorting 2 new messages from Gmail"
@@ -194,31 +194,6 @@ async def test_the_blob_follows_the_brain(mission):
     assert "<img" in await js(f"{item}.textContent") and await js("document.title") != "pwned"
     brain.done("gmail:t1")
     assert await until(js, f"{stage}.dataset.state === 'idle'")
-
-
-@CHROME
-async def test_without_webgl_the_orb_takes_over(stack):
-    cdp = stack["cdp"]
-    target = (await cdp.send("Target.createTarget", {"url": "about:blank"}))["targetId"]
-    session = (await cdp.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
-    await cdp.send("Page.enable", session_id=session)
-    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {"source": (
-        "const real = HTMLCanvasElement.prototype.getContext;"
-        "HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {"
-        "  return /webgl/.test(kind) ? null : real.call(this, kind, ...rest); };")}, session_id=session)
-    await cdp.send("Page.navigate", {"url": stack["url"] + "/mission"},
-                   session_id=session)
-
-    async def js(expression):
-        return await evaluate(cdp, session, expression)
-
-    assert await until(js, "document.getElementById('status')?.dataset.state === 'connected'")
-    stage = "document.querySelector('.stage')"
-    assert await until(js, f"{stage}.dataset.mode === 'css'")
-    assert await js("getComputedStyle(document.querySelector('.stage .orb')).display") != "none"
-    assert await js("getComputedStyle(document.querySelector('.stage canvas')).display") == "none"
-    stack["brain"].broadcast({"type": "brain_activity", "busy": True, "what": "Drafting a reply to Maria"})
-    assert await until(js, f"{stage}.dataset.state === 'thinking'")
 
 
 BUBBLES = ("window.seen = []; const bubble = document.getElementById('bubble');"  # every update shown, in order
@@ -323,8 +298,8 @@ def overlapping(rects):
             if min(one[2], two[2]) - max(one[0], two[0]) > 4 and min(one[3], two[3]) - max(one[1], two[1]) > 4]
 
 
-CARDS = ("[...document.querySelectorAll('.station:not(.leaving) .card')].map(card => {"
-         " const r = card.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; })")
+ARTS = ("[...document.querySelectorAll('.station:not(.leaving):not(.away) .desk-art')].map(art => {"
+        " const r = art.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; })")
 BRAIN_SHAPE = "(() => { const r = document.getElementById('brain').getBoundingClientRect(); return r.height / r.width; })()"
 
 
@@ -347,11 +322,11 @@ async def test_twenty_agents_dont_cover_each_other_on_screen(stack):
     js = await open_with(stack, size=(1280, 760))
     for number in range(20):
         await stack["server"].agents.create(f"Task number {number}")
-    assert await until(js, "document.querySelectorAll('.station').length === 20")
+    assert await until(js, "document.querySelectorAll('.station:not(.away)').length === 12", 20)  # done: 12 stay
     await asyncio.sleep(1.5)
-    cards = await js(CARDS)
-    assert overlapping(cards) == []
-    assert all(card[0] >= 0 and card[2] <= 1280 and card[1] >= 50 and card[3] <= 760 - 70 for card in cards), cards
+    desks = await js(ARTS)
+    assert len(desks) == 12 and overlapping(desks) == []
+    assert all(desk[0] >= 0 and desk[2] <= 1280 and desk[1] >= 0 and desk[3] <= 760 for desk in desks), desks
 
 
 @CHROME
@@ -536,18 +511,6 @@ async def test_voice_waits_for_a_click_when_chrome_asks_for_one(stack):
     needs_reply(stack["brain"], raw_id="t2", sender="Ben", summary="asks about staging")
     assert await until(js, "window.spoken.length === 1", 8)
     assert await js("window.spoken[0]") == ["speak", "Ben needs your reply: asks about staging"]
-
-
-@CHROME
-async def test_a_lost_webgl_context_hands_over_to_the_orb(mission):
-    js, stack = mission
-    assert await until(js, "document.querySelector('.stage').dataset.mode === 'webgl'")
-    await js("document.querySelector('.stage canvas').getContext('webgl').getExtension('WEBGL_lose_context')"
-             ".loseContext(); true")
-    assert await until(js, "document.querySelector('.stage').dataset.mode === 'css'")
-    assert await js("getComputedStyle(document.querySelector('.stage .orb')).display") != "none"
-    stack["brain"].broadcast({"type": "brain_activity", "busy": True, "what": "Drafting a reply to Maria"})
-    assert await until(js, "document.querySelector('.stage').dataset.state === 'thinking'")
 
 
 @CHROME

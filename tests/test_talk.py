@@ -804,29 +804,8 @@ async def test_an_old_card_expires_and_a_late_yes_starts_nothing(stack):
     assert stack["server"].agents.agents == {}
 
 
-# ---- the Brain listens: the particle brain's fifth state (the visuals spec's test 31) -------------------------------
+# ---- the Brain listens: the globe's listening state (the new look) ---------------------------------------------------
 
-LISTEN_GL = """
-window.gl = { last: {} };
-(() => {
-  const names = new WeakMap();
-  const proto = WebGLRenderingContext.prototype;
-  const locate = proto.getUniformLocation;
-  proto.getUniformLocation = function (program, name) {
-    const location = locate.call(this, program, name);
-    if (location) names.set(location, name);
-    return location;
-  };
-  for (const method of ["uniform1f", "uniform4fv"]) {
-    const real = proto[method];
-    proto[method] = function (location, ...values) {
-      const name = location && names.get(location);
-      if (name) window.gl.last[name] = method === "uniform1f" ? values[0] : Array.from(values[0]);
-      return real.call(this, location, ...values);
-    };
-  }
-})();
-"""
 STAGE_STATES = """
 window.states = [];
 addEventListener("DOMContentLoaded", () => {
@@ -838,39 +817,20 @@ addEventListener("DOMContentLoaded", () => {
   new MutationObserver(note).observe(stage, { attributes: true, attributeFilter: ["data-state"] });
 });
 """
-NO_WEBGL = ("const realContext = HTMLCanvasElement.prototype.getContext;"
-            "HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {"
-            "  return /webgl/.test(kind) ? null : realContext.call(this, kind, ...rest); };")
 
 
 @CHROME
-async def test_the_particle_brain_listens(stack):
+async def test_the_globe_listens(stack):
     talk_script(stack, {"say": "OK.", "action": "none"})
-    js = await open_talk(stack, LISTEN_GL, STAGE_STATES, mic())
+    js = await open_talk(stack, STAGE_STATES, mic())
     stage = "document.querySelector('.stage')"
-    assert await until(js, f"{stage}.dataset.mode === 'webgl' && window.gl.last.u_mix !== undefined")
     await key_down(stack, js, SPACE, " ")
     assert await until(js, f"{stage}.dataset.state === 'listening'")
-    settled = ("Math.abs(window.gl.last.u_listen - 1) < 0.05"
-               " && window.gl.last.u_mix.every((weight) => Math.abs(weight) < 0.05)")
-    assert await until(js, settled, 5)  # u_listen near 1, and the four weights of u_mix near 0
-    assert await js(f"{stage}.dataset.mode") == "webgl"  # the shaders with u_listen compile
+    glow = "getComputedStyle(document.querySelector('.stage .globe')).getPropertyValue('--g').trim()"
+    assert await until(js, f"{glow} === '#f28cd9'")  # rose while it listens
     await key_up(stack, js, SPACE)
-    assert await until(js, "window.gl.last.u_listen < 0.05", 6)  # it eases back once the turn ends
+    assert await until(js, f"{stage}.dataset.state !== 'listening'", 6)
     assert "listening" in await js("window.states")
-
-
-@CHROME
-async def test_without_webgl_the_dotted_brain_listens(stack):
-    js = await open_talk(stack, NO_WEBGL, mic())
-    stage = "document.querySelector('.stage')"
-    assert await until(js, f"{stage}.dataset.mode === 'css'")
-    await key_down(stack, js, SPACE, " ")
-    assert await until(js, f"{stage}.dataset.state === 'listening'")
-    dots = "getComputedStyle(document.querySelector('.stage .orb'), '::before')"
-    assert await js(f"{dots}.getPropertyValue('--a').trim()") == "#fff2fa"  # white
-    assert await js(f"{dots}.getPropertyValue('--b').trim()") == "#f28cd9"  # rose
-    await key_up(stack, js, SPACE)
 
 
 def test_the_readme_says_how_to_talk_and_the_zero_setup_way():

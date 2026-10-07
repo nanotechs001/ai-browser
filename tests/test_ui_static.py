@@ -82,3 +82,9 @@ def test_every_page_in_the_window_keeps_the_close_tab_key():
     assert '"close-tab"' in (UI / "setup.js").read_text(encoding="utf-8")  # setup.js imports nothing: it opens in Brave
 
 
+def test_the_particle_brain_is_gone():  # the new look, Decision 10: the globe is the Brain's seat
+    for name in ("blob.js", "brainshape.js"):
+        assert not (UI / name).exists(), name
+    for path in [*sorted(UI.glob("*.js")), *sorted(UI.glob("*.html")), *sorted(UI.glob("*.css"))]:
+        text = path.read_text(encoding="utf-8")
+        assert "blob.js" not in text and "brainshape" not in text and "webgl" not in text.lower(), path.name
