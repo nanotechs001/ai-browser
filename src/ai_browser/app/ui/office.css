@@ -86,29 +86,17 @@
 }
 
 /* ---- the room ------------------------------------------------------------------------------------------------- */
+/* the room is the page's plain navy (the user's hand check: no back wall, no grid): --bg, and --bg-deep in the corners */
 .scene { position: relative; overflow: hidden; isolation: isolate;
-         background: radial-gradient(ellipse at 50% 38%, #142454 0%, #0a1430 38%, var(--bg-deep) 75%); }
-.backdrop { position: absolute; inset: 0 0 45% 0; pointer-events: none; opacity: 0.55;
-            background:
-              repeating-linear-gradient(90deg, transparent 0 46px, rgba(255, 200, 120, 0.05) 46px 52px,
-                                        transparent 52px 110px),
-              repeating-linear-gradient(0deg, transparent 0 30px, rgba(120, 150, 255, 0.05) 30px 33px),
-              linear-gradient(180deg, #0b1636, transparent);
-            -webkit-mask-image: linear-gradient(180deg, #000 30%, transparent);
-            mask-image: linear-gradient(180deg, #000 30%, transparent); }
+         background: radial-gradient(ellipse at 50% 40%, var(--bg) 55%, var(--bg-deep)); }
 .viewport { position: absolute; inset: 0; perspective: 1800px; perspective-origin: 50% 20%; overflow: hidden;
             cursor: grab; touch-action: none; }
 .viewport.dragging { cursor: grabbing; }
 .room { position: absolute; left: 50%; top: 58%; width: 2000px; height: 1400px; margin: -700px 0 0 -1000px;
         transform-style: preserve-3d; --tilt: 58deg; --spin: 0deg; }
-.floor { position: absolute; inset: -500px; pointer-events: none;
-         background:
-           radial-gradient(circle at 50% 44%, rgba(60, 110, 255, 0.28), transparent 22%),
-           repeating-linear-gradient(0deg, rgba(120, 150, 230, 0.09) 0 1px, transparent 1px 120px),
-           repeating-linear-gradient(90deg, rgba(120, 150, 230, 0.09) 0 1px, transparent 1px 120px),
-           #0d1838;
-         -webkit-mask-image: radial-gradient(ellipse at 50% 46%, #000 34%, transparent 70%);
-         mask-image: radial-gradient(ellipse at 50% 46%, #000 34%, transparent 70%); }
+.floor { position: absolute; inset: -500px; pointer-events: none; /* only the soft blue glow under the globe */
+         background: radial-gradient(circle at 50% 44%, color-mix(in srgb, var(--glow) 50%, transparent),
+                                     transparent 22%); }
 .ring { position: absolute; border-radius: 50%; pointer-events: none; border: 2px solid rgba(90, 150, 255, 0.55);
         box-shadow: 0 0 30px var(--glow), inset 0 0 30px rgba(60, 110, 255, 0.3); }
 .ring.inner { width: 340px; height: 340px; margin: -170px 0 0 -170px; }

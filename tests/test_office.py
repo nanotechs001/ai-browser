@@ -248,6 +248,45 @@ async def test_an_empty_room_says_start_a_mission_below(stack):
     assert await until(js, f"getComputedStyle({note}).display === 'none'")
 
 
+ROOM_SHEET = """(() => {
+  const look = (selector) => { const style = getComputedStyle(document.querySelector(selector));
+    return [style.backgroundImage, style.backgroundColor]; };
+  return { backdrop: document.querySelectorAll('.backdrop').length, scene: look('.scene'), floor: look('.floor'),
+           rings: document.querySelectorAll('.ring').length };
+})()"""
+
+
+def rule(sheet, selector):
+    """The body of one rule in a style sheet, found by its selector at the start of a line."""
+    found = re.search(rf"^{re.escape(selector)} {{(.*?)}}", sheet, re.MULTILINE | re.DOTALL)
+    assert found, selector
+    return found.group(1)
+
+
+@CHROME
+async def test_the_room_is_the_pages_plain_navy_with_no_wall_or_grid(stack):  # the user's hand check
+    from pathlib import Path
+
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    await stack["server"].agents.create("Fix the footer")
+    js = await open_mission(stack)
+    assert await until(js, f"{station('a1')} !== null")
+    look = await js(ROOM_SHEET)
+    assert look["backdrop"] == 0  # no back wall
+    for part in ("scene", "floor"):
+        assert "repeating" not in look[part][0], (part, look[part])  # no grid lines, on the wall or the floor
+    # the room is the page's navy: --bg in the middle, --bg-deep in the far corners, and no other colour
+    assert set(re.findall(r"rgba?\([^)]*\)", " ".join(look["scene"]))) <= {"rgb(7, 15, 35)", "rgb(5, 11, 26)",
+                                                                          "rgba(0, 0, 0, 0)"}, look["scene"]
+    assert look["floor"][1] == "rgba(0, 0, 0, 0)" and "radial-gradient" in look["floor"][0]  # only the globe's glow
+    assert look["rings"] == 2  # the globe's rings stay, and the desk's glow and the dotted line
+    assert await js("document.querySelectorAll('.shadow:not(.away)').length") == 1
+    assert await js("document.querySelectorAll('.links path.link:not(.away)').length") == 1
+    sheet = (Path(__file__).parents[1] / "src" / "ai_browser" / "app" / "ui" / "office.css").read_text(encoding="utf-8")
+    for selector in (".scene", ".floor"):  # theme tokens only
+        assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", rule(sheet, selector)), selector
+
+
 @CHROME
 async def test_desks_stand_in_rings_round_the_globe(stack):  # the spec's scene with 5 agents
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")

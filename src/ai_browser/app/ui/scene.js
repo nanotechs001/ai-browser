@@ -1,10 +1,10 @@
-// Mission Control's office (the new look, Decision 3), drawn with CSS 3D: a dark navy floor tilted away from the
-// user, the glowing globe in the middle (the Brain's seat: #brain), and one desk per agent in rings around it
-// (desk.js). Desks and the globe are billboards: they stand upright and face the user (their own turn undoes the
-// room's). Dotted lines on the floor join each desk to the globe's base. There is no other decor (the user's hand
-// check: no lamp, no sign, no big plants). Past 12 desks the oldest finished agents leave the room (step.js
-// roomAgents); with more than 6 desks the step cards fold to chips. Everything is built once and updated in place; the
-// timers tick together once a second, and stop while the room is paused. Text is set with textContent.
+// Mission Control's office (the new look, Decision 3), drawn with CSS 3D: a floor in the page's plain navy, tilted
+// away from the user, the glowing globe in the middle (the Brain's seat: #brain), and one desk per agent in rings
+// around it (desk.js). Desks and the globe are billboards: they stand upright and face the user (their own turn undoes
+// the room's). Dotted lines on the floor join each desk to the globe's base. There is no other decor (the user's hand
+// check: no wall, no grid, no lamp, no sign, no big plants). Past 12 desks the oldest finished agents leave the room
+// (step.js roomAgents); with more than 6 desks the step cards fold to chips. Everything is built once and updated in
+// place; the timers tick together once a second, and stop while the room is paused. Text is set with textContent.
 "use strict";
 
 import { ensureDefs } from "./chibi.js";
@@ -128,7 +128,7 @@ export function createScene(root, { onSelect = () => {} } = {}) {
   const inner = el("div", "ring inner");
   room.append(el("div", "floor"), links, outer, inner, stage, empty);
   viewport.append(room);
-  root.replaceChildren(el("div", "backdrop"), viewport);
+  root.replaceChildren(viewport);
   ensureDefs(document);
   for (const node of [outer, inner, stage]) place(node, CENTER);
   place(empty, { x: CENTER.x, y: CENTER.y + 250 });
