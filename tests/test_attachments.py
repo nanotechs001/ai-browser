@@ -13,6 +13,8 @@ from conftest import file_mode, symlink_or_skip
     ("..", "file"), (".", "file"), ("", "file"), (None, "file"), (".env", "env"), ("a\x00b\x1f.txt", "a_b_.txt"),
     ("‮gnp.exe", "_gnp.exe"), ('bad<>:"|?*.txt', "bad_______.txt"), ("  spaced   out  .md ", "spaced out.md"),
     ("con.txt", "file.txt"), ("NUL", "file"), ("archive.tar.gz", "archive.tar.gz"),
+    ("con .txt", "file.txt"), ("nul..txt", "file.txt"), ("con.tar.gz", "file.tar.gz"), ("NUL.txt.bak", "file.txt.bak"),
+    ("COM¹.txt", "file.txt"), ("CONIN$.txt", "file.txt"), ("conout$", "file"), ("console.txt", "console.txt"),
     ("x" * 300 + ".png", "x" * 116 + ".png")])
 def test_strange_names_are_cleaned(given, saved):  # Review Focus 5
     from ai_browser.app.attachments import clean_name

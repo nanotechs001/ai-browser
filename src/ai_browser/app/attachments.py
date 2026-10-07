@@ -28,7 +28,7 @@ NAME_LIMIT = 120
 IMAGES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
 UPLOAD_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 _UNSAFE = re.compile(r'[\x00-\x1f\x7f-\x9f<>:"/\\|?*​-‏‪-‮⁦-⁩﻿]')
-_RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.IGNORECASE)
+_RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$)$", re.IGNORECASE)
 TOO_MANY = f"At most {MAX_FILES} files at once"
 TOO_BIG = "{name} is over 20 MB"
 NOT_A_FILE = "That isn't a file the app can take"
@@ -43,19 +43,24 @@ FULL = "There are too many files named {name} in attachments already"
 
 def clean_name(name) -> str:
     """A file's name as it is saved: its last part only (so "../x" is "x"), control characters, direction marks and
-    <>:"/\\|?* turned into "_", whitespace squeezed, no dot or space at either end, Windows' reserved names made
-    plain, at most NAME_LIMIT characters with its extension kept. Never empty, never "." or ".."."""
+    <>:"/\\|?* turned into "_", whitespace squeezed, no dot or space at either end, at most NAME_LIMIT characters
+    with its extension kept, and last of all Windows' reserved device names made plain: Windows reads the part before
+    the FIRST dot (so "con.tar.gz" and "NUL.txt.bak" count, and "con .txt" too). Never empty, never "." or ".."."""
     text = unicodedata.normalize("NFC", name) if isinstance(name, str) else ""
     text = re.split(r"[\\/]", text)[-1]
     text = " ".join(_UNSAFE.sub("_", text).split()).strip(" .")
     stem, dot, suffix = text.rpartition(".")
     if not dot:
         stem, suffix = text, ""
-    if not stem.strip(" .") or _RESERVED.match(stem):
+    if not stem.strip(" ."):
         stem = "file"
     suffix = suffix[:16]
     stem = stem[:NAME_LIMIT - len(suffix) - 1].rstrip(" .") or "file"
-    return f"{stem}.{suffix}" if suffix else stem
+    cleaned = f"{stem}.{suffix}" if suffix else stem
+    head, dot, rest = cleaned.partition(".")
+    if _RESERVED.fullmatch(head.rstrip(" .")):
+        head = "file"
+    return head + dot + rest
 
 
 def _numbered(name: str, number: int) -> str:
