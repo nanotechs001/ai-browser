@@ -58,7 +58,7 @@ export function usageOf(row, now = Date.now() / 1000) {
       return { ...bar, width: 100, state: "limit", end,
                text: end !== null ? `At its limit until ${resetTime(end)}` : "At its limit" };
     }
-    return { ...bar, percent: Math.round(used), width: used, state: used >= NEAR ? "high" : "ok",
+    return { ...bar, percent: Math.floor(used), width: used, state: used >= NEAR ? "high" : "ok", // never "100%" early
              text: resets !== null ? `resets ${resetTime(resets)}` : "" };
   });
   const read = WINDOWS.map(([key]) => windows[key]).filter((reading) => percentOf(reading) !== null)

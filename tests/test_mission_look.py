@@ -969,6 +969,7 @@ async def test_the_usage_cards_words_and_bars_in_plain_data(stack):  # usage.js'
         usageOf(row({}), now).note, usageOf(row({ five_hour: { used: 1, at: now } }), now).note.startsWith('as of '),
         bars(usageOf(row({ five_hour: { used: 40, resets_at: now + 600, at: now } }, { limit_until: now + 600 }), now)),
         bars(usageOf(row({ five_hour: { used: 40, resets_at: now + 600, at: now } }, { limit_until: now - 1 }), now)),
+        bars(usageOf(row({ five_hour: { used: 99.6, at: now } }), now)),
       ];
     })""")
     assert found == [
@@ -979,6 +980,7 @@ async def test_the_usage_cards_words_and_bars_in_plain_data(stack):  # usage.js'
         "Updates when an agent works", True,
         [["five_hour", None, 100, "limit"], ["seven_day", None, 0, "none"]],  # the account's limit ends at its reset
         [["five_hour", 40, 40, "ok"], ["seven_day", None, 0, "none"]],  # a limit that has ended
+        [["five_hour", 99, 99.6, "high"], ["seven_day", None, 0, "none"]],  # never "100%" short of the limit
     ]
 
 
