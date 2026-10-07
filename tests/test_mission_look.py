@@ -136,6 +136,33 @@ async def test_the_right_column_follows_the_agent_picked(stack):
 
 
 @CHROME
+async def test_in_the_folded_layout_the_wheel_scrolls_the_page_and_ctrl_zooms(stack):  # the final review, F11
+    cdp = stack["cdp"]
+    for size, scrolls in ((MIDDLE, True), (WIDE, False)):
+        js = await open_with(stack, size=size)
+        assert await until(js, "document.getElementById('status').dataset.state === 'connected'")
+        left, top, right, bottom = await js(f"{BOX}(document.querySelector('.viewport'))")
+        x, y = (left + right) / 2, top + (min(bottom, size[1]) - top) * 0.4
+        assert await js(f"document.elementFromPoint({x}, {y}).closest('.viewport') !== null")  # over the room
+        scale = "document.querySelector('.room').dataset.scale"
+        before = await js(scale)
+
+        async def wheel(modifiers=0):
+            await cdp.send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": x, "y": y, "deltaX": 0,
+                                                        "deltaY": 240, "modifiers": modifiers}, session_id=js.session)
+            await asyncio.sleep(0.3)
+
+        await wheel()  # a plain wheel
+        scrolled = await js("document.querySelector('.mc').scrollTop")
+        if scrolls:  # 1100 px: the right column is under the room, and the wheel reaches it
+            assert scrolled > 0 and await js(scale) == before, size
+            await wheel(modifiers=2)  # with Ctrl (a trackpad's pinch too): it zooms, and the page stays
+            assert await js(scale) != before and await js("document.querySelector('.mc').scrollTop") == scrolled
+        else:  # 1440 px: nothing to scroll, the wheel zooms as before
+            assert scrolled == 0 and await js(scale) != before, size
+
+
+@CHROME
 async def test_an_agent_without_a_to_do_list_shows_its_actions(stack):
     from test_bridge_powers import result
 
@@ -1215,7 +1242,8 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
                    "the task refuses to start and says which folder",
                    "no Web Search, Web Fetch, browser tools or skills shell",
                    "a command still asks you, with a card, before it reaches a site",
-                   "your own tools (Integrations) still run"):
+                   "your own tools (Integrations) still run",
+                   "scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom"):
         assert phrase in readme, phrase
     for gone in ("brain of glowing points", "WebGL", "no web tools at all", "a file that was not yet sent"):
         assert gone not in readme, gone

@@ -561,7 +561,8 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     **List**, or zoom in. An empty room says "Start a mission below".
   - The room stands still while its tab or the window is hidden, and with Reduce Motion on (System Settings →
     Accessibility → Display).
-  - Drag to turn, scroll to zoom, double-click to reset. Keys: ← → turn, ↑ ↓ tilt, + − zoom, 0 resets.
+  - Drag to turn, scroll to zoom, double-click to reset. Keys: ← → turn, ↑ ↓ tilt, + − zoom, 0 resets. On a narrow
+    window, where the page scrolls, scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom.
 - **List** shows the room's agents as rows. **Calendar** shows a month, or a week, with your scheduled templates' next
   runs and this run's finished agents. A scheduled run that has passed isn't shown.
 - **The right column**, for the agent you click (or the one at work):

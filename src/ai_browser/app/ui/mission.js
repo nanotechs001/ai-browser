@@ -486,7 +486,9 @@ for (const type of ["pointerup", "pointercancel"]) {
     }
   });
 }
+const FOLDED = matchMedia("(max-width: 1279px)"); // the right column under the room: the page itself scrolls
 roomView.addEventListener("wheel", (event) => { // in proportion to the scroll: a trackpad sends many small ones
+  if (FOLDED.matches && !event.ctrlKey && !event.metaKey) return; // it scrolls the page; Ctrl or Cmd (a pinch) zooms
   event.preventDefault();
   const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1);
   scene.zoom(Math.exp(-Math.max(-300, Math.min(300, delta)) * 0.002));
