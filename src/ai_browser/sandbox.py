@@ -52,6 +52,7 @@ class SandboxInfo:
     shell: str = ""
     stale_skills: bool = False  # skill folders changed since the shell started (it was busy)
     chrome: bool = False  # the browser is the user's own Chrome, not a sandbox container
+    local: bool = False  # the sandbox's browser without Docker: a separate browser on this computer (localbox.py)
 
 
 @dataclass

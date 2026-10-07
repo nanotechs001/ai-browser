@@ -161,9 +161,12 @@ def find_ws_url(user_data_dir: Path, timeout: float = 0) -> str:
     raise ChromeError(f"{name} doesn't allow remote debugging yet: {hint}")
 
 
-def launch(user_data_dir: Path, headless: bool = True, extra_args: tuple[str, ...] = ()) -> subprocess.Popen:
-    """Start a separate, throwaway Chrome with its own profile folder (never one of the user's own browsers')."""
-    binary = chrome_binary()
+def launch(user_data_dir: Path, headless: bool = True, extra_args: tuple[str, ...] = (), binary: str | None = None,
+           detach: bool = False) -> subprocess.Popen:
+    """Start a separate, throwaway Chrome with its own profile folder (never one of the user's own browsers'). With
+    `binary`, that browser instead (the local sandbox's may be Brave). With `detach`, it outlives this process and its
+    process group: the local sandbox's browser is shared by every session on its profile."""
+    binary = binary or chrome_binary()
     if binary is None:
         raise ChromeError("Google Chrome is not installed")
     folder = Path(user_data_dir)
@@ -175,4 +178,10 @@ def launch(user_data_dir: Path, headless: bool = True, extra_args: tuple[str, ..
     if headless:
         args.append("--headless=new")
     args += [*extra_args, "about:blank"]
-    return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    options: dict = {}
+    if detach and platforms.WINDOWS:
+        options["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    elif detach:
+        options["start_new_session"] = True
+    return subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            **options)
