@@ -1,17 +1,46 @@
-/* Mission Control's composer, under the office: the talk with the Brain, the task box and its pickers. */
-.composer { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 0 24px 18px; }
-.task-bar { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding: 10px 12px;
-            border-color: var(--line-strong); }
-.task-bar textarea { flex: 1; min-width: 200px; border: none; outline: none; resize: none; background: transparent;
-                     font-size: 15px; field-sizing: content; max-height: 140px; min-height: 26px; padding: 3px 4px; }
-.task-bar .note { position: absolute; left: 14px; top: -22px; }
-#task-folder { max-width: 180px; }
-.mic { width: 34px; height: 32px; padding: 0; justify-content: center; flex: none; }
+/* Mission Control's composer (the new look, Decision 9): the modes, the box, the attached files, the pickers (folded
+   into ⋯ Options on a narrow window), the mic and the main button; above it, the Brain's answers (Ask AI). */
+.composer { flex: none; position: relative; display: flex; flex-direction: column; gap: 8px; padding: 0 24px 18px; }
+.composer-box { position: relative; border-radius: 16px; background: var(--card); border: 1px solid var(--line);
+                padding: 10px; box-shadow: var(--shadow); }
+.modes { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 8px; }
+.modes [data-mode] { gap: 8px; border: 1px solid transparent; background: transparent; padding: 8px 14px;
+                     border-radius: 11px; color: var(--text-2); }
+.modes [data-mode][aria-selected="true"] { background: linear-gradient(180deg, #10287c, #0b1f66); border-color: #1b41a8;
+                                           color: var(--text); box-shadow: 0 0 14px var(--glow); }
+.voice-switch { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 13px;
+                color: var(--text-2); cursor: pointer; }
+.box { border-radius: 12px; background: var(--field); border: 1px solid var(--line-strong); padding: 10px 12px; }
+.box textarea { width: 100%; border: none; outline: none; resize: none; background: transparent; color: var(--text);
+                font-size: 15px; field-sizing: content; min-height: 44px; max-height: 160px; padding: 2px 4px; }
+.box textarea::placeholder { color: var(--muted); }
+.attached { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.attached-file { display: inline-flex; align-items: center; gap: 6px; max-width: 280px; padding: 3px 4px 3px 10px;
+                 border-radius: 999px; background: var(--soft); border: 1px solid var(--line); font-size: 12px; }
+.attached-file .name { max-width: 140px; }
+.attached-file[data-state="done"] .progress { color: var(--ok); }
+.attached-file[data-state="failed"] { border-color: var(--fail); }
+.attached-file[data-state="failed"] .progress { color: var(--fail); max-width: 160px; overflow: hidden;
+                                                text-overflow: ellipsis; white-space: nowrap; }
+.attached-file .drop { padding: 0 6px; border: 0; background: transparent; }
+.controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.pickers { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
+.pickers select { max-width: 190px; }
+.icon-button { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }
+.options { display: none; }
+.mic { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }
 .mic svg { width: 18px; height: 18px; fill: currentColor; }
 .mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
                             box-shadow: 0 0 0 3px rgba(79, 141, 253, 0.35); }
-.voice-line { margin: 0; display: flex; gap: 8px; align-items: center; }
-.switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.start { margin-left: auto; padding: 9px 16px; border-radius: 12px; font-weight: 600; flex: none; }
+.start kbd { border-color: rgba(255, 255, 255, 0.35); }
+.box .note { display: block; margin-top: 4px; }
+.box .note:empty { display: none; }
+.folder-ask { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.folder-ask .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 0; }
+.folder-ask .folder-typed { flex: 1; min-width: 200px; }
+.folder-ask p { margin: 0; }
+.folder-ask .folder-path { font: 12px var(--mono); overflow-wrap: anywhere; }
 .talk { max-height: 38vh; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .talk-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .talk-log li { white-space: pre-wrap; word-break: break-word; }
@@ -27,11 +56,14 @@
 .talk-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap; }
 .talk-card .talk-state, .talk-card .talk-hint { font-size: 13px; }
 .talk-card .row { margin-top: 0; }
-.talk-form { display: flex; gap: 8px; }
-.talk-form input { flex: 1; }
 .talk-note { margin: 0; font-size: 12px; }
-.folder-ask { flex: 1 0 100%; order: 10; display: flex; flex-direction: column; gap: 6px; }
-.folder-ask .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 0; }
-.folder-ask .folder-typed { flex: 1; min-width: 200px; }
-.folder-ask p { margin: 0; }
-.folder-ask .folder-path { font: 12px var(--mono); overflow-wrap: anywhere; }
+@media (max-width: 899px) {
+  .composer { padding: 0 12px 12px; }
+  .options { display: inline-flex; }
+  .pickers { display: none; }
+  .composer.options-open .pickers { display: flex; position: absolute; left: 10px; right: 10px;
+                                    bottom: calc(100% + 6px); z-index: 5; padding: 10px; border-radius: 12px;
+                                    background: var(--card); border: 1px solid var(--line-strong);
+                                    box-shadow: var(--shadow); }
+  .start kbd, .voice-switch { display: none; }
+}

@@ -2,10 +2,10 @@
 // pages, the workspaces and the Usage card), the centre (the heading, the Flow · List · Calendar switch, the office of
 // scene.js, the menu's pages and the composer), and the right column (side.js) for the agent picked. On the same line
 // to the app as AI Home (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
-import { askError, fillPicker, pickDefault } from "./accountui.js";
+import { askError } from "./accountui.js";
 import { el } from "./chat.js";
+import { mountComposer } from "./composer.js";
 import { mountDrawer } from "./drawer.js";
-import { mountFolderPicker } from "./folderpick.js";
 import { icon } from "./icons.js";
 import { connect } from "./link.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
@@ -32,8 +32,6 @@ let eventsFor = null; // whose actions the right column asked for
 let workspace = null; // the workspace the menu filters by (null: every agent)
 let page = "dashboard";
 let view = "flow";
-let pending = null; // the new_task request waiting for its "created": one Start, one agent
-let pendingTimer = null;
 let defaultModel = "sonnet"; // ai-browser app --model, until the user picks one (the app remembers the pick)
 let talkState = "idle"; // the talk panel's state (talk.js): the Brain listens while the user talks
 let talk = null; // the talk panel, mounted once the line to the app exists (connect calls setStatus at once)
@@ -76,7 +74,6 @@ const voice = createVoice({
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
 const send = (message) => link.send(message);
-const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") }, send); // agent powers
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 window.addEventListener("focus", () => link.send({ type: "accounts" })); // shown again: each account's status, now
@@ -84,6 +81,8 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                              browserOf: () => ({ tabs, scope: tabScope, browser }) });
 const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
 const list = mountList($("view-list"), { onOpen: select });
+const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI, Build a Mission, Use a Template
+parts.push(composer);
 talk = mountTalk({
   panel: $("talk"),
   micButton: $("mic"),
@@ -96,6 +95,7 @@ talk = mountTalk({
   openAgent: (id, options) => openDrawer(id, options),
   openBrain: () => drawer.openBrain(),
   model: () => $("task-model").value, // the model last picked here or in AI Home
+  fill: (words) => composer.fill(words), // the mic outside Ask AI fills the box
 });
 
 function setText(node, text) {
@@ -252,52 +252,12 @@ function showView(name) {
 
 function newMission() { // New Mission and Command-K (Ctrl+K): the Dashboard, and the cursor in the box
   showPage("dashboard");
-  $("task").focus();
-}
-
-// ---- the task box ------------------------------------------------------------------------------------------------
-
-function note(text) {
-  setText($("task-note"), text);
-  clearTimeout(note.timer);
-  note.timer = setTimeout(() => setText($("task-note"), ""), 5000);
-}
-
-function finishStart() {
-  pending = null;
-  clearTimeout(pendingTimer);
-  $("start").disabled = false;
-}
-
-function start() {
-  const text = $("task").value.trim();
-  if (!text) {
-    note("Write what the agent should do");
-    return;
-  }
-  if (pending) return;
-  const why = folders.ready();
-  if (why) {
-    note(why);
-    return;
-  }
-  const folder = folders.value();
-  pending = `m${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-  $("start").disabled = true;
-  const account = $("task-account").hidden ? {} : { account: $("task-account").value }; // the picked account
-  if (!link.send({ type: "new_task", text, skills: [], model: $("task-model").value, request: pending, ...account,
-                   ...(folder ? { folder } : {}) })) {
-    finishStart();
-    note("Not connected: is `ai-browser app` running?");
-    return;
-  }
-  pendingTimer = setTimeout(finishStart, 10000);
+  composer.focus();
 }
 
 // ---- the line to the app -----------------------------------------------------------------------------------------
 
 function handle(message) {
-  folders.onMessage(message);
   for (const part of parts) part.onMessage?.(message);
   switch (message.type) {
     case "brain_snapshot":
@@ -346,9 +306,7 @@ function handle(message) {
       defaultModel = message.default_model || defaultModel;
       applySettings(message.settings);
       accountRows = message.accounts || [];
-      fillPicker($("task-account"), accountRows);
       if (message.settings?.voice && !$("voice").checked) setVoice(true); // Voice was on: it comes back on
-      if (pending) finishStart(); // a new connection: an unanswered Start can be pressed again
       if (drawer.id) link.send({ type: "events", id: drawer.id });
       eventsFor = null; // and the right column asks for its agent's actions again
       renderAll();
@@ -363,14 +321,8 @@ function handle(message) {
       break;
     case "accounts":
       accountRows = message.accounts || [];
-      fillPicker($("task-account"), accountRows);
       break;
     case "created":
-      if (pending && message.request === pending) {
-        finishStart();
-        $("task").value = "";
-        pickDefault($("task-account"), accountRows);
-      }
       talk?.onMessage(message); // a start from the talk's card, or a spoken yes
       break;
     case "hearing_status":
@@ -379,9 +331,7 @@ function handle(message) {
       talk?.onMessage(message);
       break;
     case "error":
-      if (pending && message.request === pending) finishStart();
-      if (askError(message)) note(message.text || ""); // a refused Continue on: why, and it can be clicked again
-      else if (message.text && (!message.request || String(message.request).startsWith("m"))) note(message.text);
+      if (askError(message)) composer.note(message.text || ""); // a refused Continue on: it can be clicked again
       break;
     case "tabs":
       tabs = message.tabs || [];
@@ -479,13 +429,6 @@ async function setVoice(on) { // Voice: only a voice that runs on this computer;
 $("voice").addEventListener("change", async () => {
   const result = await setVoice($("voice").checked);
   link.send({ type: "settings_set", key: "voice", value: result.on }); // remembered by the app, not the browser
-});
-$("start").addEventListener("click", start);
-$("task").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-    event.preventDefault();
-    start();
-  }
 });
 $("task-model").addEventListener("change", () => {
   link.send({ type: "settings_set", key: "model", value: $("task-model").value });

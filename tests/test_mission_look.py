@@ -279,7 +279,8 @@ async def test_no_step_card_sits_under_the_heading_the_switch_or_the_sign(stack,
 
 
 @CHROME
-@pytest.mark.parametrize(("count", "size", "least"), [(5, (1280, 760), 0.5), (6, (1280, 760), 0.5), (5, WIDE, 0.6)])
+# 1280x760: 0.44 (it was 0.5): the composer is 236 px tall now (118 before), so the room's band is 524 px, not 642
+@pytest.mark.parametrize(("count", "size", "least"), [(5, (1280, 760), 0.44), (6, (1280, 760), 0.44), (5, WIDE, 0.6)])
 async def test_a_few_desks_fill_the_room_below_the_heading_and_stay_in_view(stack, count, size, least):
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
     stack["server"].agents.max_working = count
@@ -294,3 +295,148 @@ async def test_a_few_desks_fill_the_room_below_the_heading_and_stay_in_view(stac
     assert zoom >= least, zoom  # the room is placed between the heading's band and the box's bottom, not squeezed
     shown, hits, outside = await js(CARDS_UNDER_WORDS)
     assert (shown, hits, outside) == (count, [], [])
+
+
+# ---- the composer (Task 13) ------------------------------------------------------------------------------------------
+
+ATTACH = ("(files) => { const transfer = new DataTransfer();"
+          " for (const [name, size] of files) transfer.items.add(new File([new Uint8Array(size).fill(65)], name));"
+          " const input = document.getElementById('attach-files'); input.files = transfer.files;"
+          " input.dispatchEvent(new Event('change')); return true; }")
+KEY = ("(key, command, shift) => { const mac = /mac/i.test(navigator.userAgentData?.platform || navigator.platform);"
+       " (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', {key,"
+       " metaKey: command && mac, ctrlKey: command && !mac, shiftKey: shift, bubbles: true, cancelable: true}));"
+       " return true; }")
+CHIPS = "[...document.querySelectorAll('#attached .attached-file')]"
+
+
+@CHROME
+async def test_build_a_mission_starts_an_agent_with_its_pickers(stack):
+    research = stack["server"].workspaces.create("Research")
+    js = await open_mission(stack)
+    models = "[...document.querySelectorAll('#task-model option')].map(option => option.textContent)"
+    assert await js(models) == ["Opus · most capable", "Sonnet · balanced", "Haiku · fastest"]
+    webs = "[...document.querySelectorAll('#task-web option')].map(option => [option.value, option.textContent])"
+    assert await js(webs) == [["web", "Web + Brave"], ["brave", "Brave only"], ["none", "No web"]]
+    assert await until(js, "[...document.getElementById('task-workspace').options].some(option =>"
+                           f" option.value === {json.dumps(research['id'])})")
+    assert await js("document.getElementById('start-label').textContent") == "Start Mission"
+    await js("document.getElementById('task').value = 'check the shop';"
+             "document.getElementById('task-model').value = 'haiku';"
+             "document.getElementById('task-web').value = 'none';"
+             f"document.getElementById('task-workspace').value = {json.dumps(research['id'])};"
+             "document.getElementById('start').click(); document.getElementById('start').click(); true")
+    agents = stack["server"].agents
+    await wait_for(lambda: "a1" in agents.agents)
+    await asyncio.sleep(0.5)
+    agent = agents.agents["a1"]
+    assert len(agents.agents) == 1  # a double press makes one agent
+    assert (agent.model, agent.web, agent.workspace) == ("haiku", "none", research["id"])
+    assert await until(js, "document.getElementById('task').value === ''")
+
+
+@CHROME
+async def test_ask_ai_asks_the_brain_and_shows_its_answer(stack):
+    from test_talk import talk_script
+
+    talk_script(stack, {"say": "Two agents are at work.", "action": "none"})
+    js = await open_mission(stack)
+    await js("document.getElementById('mode-ask').click(); true")
+    assert await js("document.getElementById('start-label').textContent") == "Ask"
+    hidden = "['task-web', 'task-model', 'task-folder', 'attach'].every(id => document.getElementById(id).hidden)"
+    assert await js(hidden)
+    await js("document.getElementById('task').value = 'what are my agents doing?';"
+             "document.getElementById('start').click(); true")
+    log = "[...document.querySelectorAll('#talk-log li')].map(line => line.textContent)"
+    assert await until(js, f"{log}.includes('Brain: Two agents are at work.')", 15)
+    assert await js(f"{log}.includes('You: what are my agents doing?')")
+    assert stack["server"].agents.agents == {}  # Ask AI starts nothing by itself
+    assert await js("document.getElementById('task').value") == ""
+    assert await js("document.getElementById('talk-form').hidden") is True  # the composer is the talk's box
+
+
+@CHROME
+async def test_use_a_template_runs_its_workflow(stack):
+    stack["workflows"].save({"name": "Weekly report", "instructions": "Write the weekly report"})
+    js = await open_mission(stack)
+    await js("document.getElementById('mode-template').click(); true")
+    assert await until(js, "[...document.getElementById('task-template').options].some(option =>"
+                           " option.value === 'weekly-report')")
+    assert await js("document.getElementById('start-label').textContent") == "Run Template"
+    assert await js("document.getElementById('task-model').hidden && !document.getElementById('task-template').hidden")
+    await js("document.getElementById('task-template').value = 'weekly-report';"
+             "document.getElementById('task').value = 'for the sales team';"
+             "document.getElementById('start').click(); true")
+    agents = stack["server"].agents
+    await wait_for(lambda: "a1" in agents.agents)
+    assert agents.agents["a1"].task.endswith("The user adds: for the sales team")
+
+
+@CHROME
+async def test_attach_sends_files_into_the_agents_folder(stack):
+    from test_app_server import told
+
+    js = await open_mission(stack)
+    await js(f"({ATTACH})([['../shot.png', 2000], ['notes.txt', 900000]])")  # notes.txt goes in two pieces
+    assert await until(js, f"{CHIPS}.length === 2 && {CHIPS}.every(chip => chip.dataset.state === 'done')", 15)
+    assert await js(f"{CHIPS}.map(chip => chip.querySelector('.name').textContent)") == ["shot.png", "notes.txt"]
+    await js("document.getElementById('task').value = 'look at these'; document.getElementById('start').click(); true")
+    folder = stack["home"] / "app" / "agents" / "a1" / "work" / "attachments"
+    await wait_for(lambda: folder.is_dir() and len(list(folder.iterdir())) == 2)
+    assert (folder / "notes.txt").stat().st_size == 900000
+    await wait_for(lambda: bool(told(stack["log"])))
+    assert "- attachments/shot.png (a picture: look at it with Read)" in told(stack["log"])[0]
+    assert await until(js, f"{CHIPS}.length === 0")
+
+
+@CHROME
+async def test_attach_refuses_too_many_or_too_big_files(stack):  # Review Focus 5
+    js = await open_mission(stack)
+    await js(f"({ATTACH})([['big.mov', 20000001]])")
+    assert await until(js, "document.getElementById('task-note').textContent === 'big.mov is over 20 MB'")
+    await js(f"({ATTACH})({json.dumps([[f'f{number}.txt', 10] for number in range(11)])})")
+    assert await until(js, "document.getElementById('task-note').textContent === 'At most 10 files at once'")
+    assert await js(f"{CHIPS}.length") == 10
+    assert await until(js, f"{CHIPS}.every(chip => chip.dataset.state === 'done')", 10)
+    await js("document.querySelector('#attached .attached-file .drop').click(); true")
+    assert await js(f"{CHIPS}.length") == 9
+    uploads = stack["home"] / "app" / "uploads"
+    await wait_for(lambda: len(list(uploads.glob("*.part"))) == 9)  # the app dropped it too
+
+
+@CHROME
+async def test_the_keys_jump_to_the_box_and_start(stack):
+    js = await open_mission(stack)
+    await js(f"{page_link('history')}.click(); document.getElementById('mode-ask').click(); true")
+    await js(f"({KEY})('k', true, false)")  # ⌘K (Ctrl+K)
+    assert await js("!document.getElementById('page-dashboard').hidden && document.activeElement.id === 'task'")
+    assert await js("document.getElementById('mode-build').getAttribute('aria-selected')") == "true"
+    await js("document.getElementById('task').value = 'first line'; true")
+    await js(f"({KEY})('Enter', false, true)")  # Shift+Enter: a new line, nothing starts
+    await asyncio.sleep(0.5)
+    assert stack["server"].agents.agents == {}
+    await js(f"({KEY})('Enter', true, false)")  # ⌘↵ (Ctrl+Enter)
+    await wait_for(lambda: "a1" in stack["server"].agents.agents)
+    assert await js("document.getElementById('start-key').textContent") in ("⌘ ↵", "Ctrl ↵")
+
+
+@CHROME
+async def test_narrow_windows_fold_the_pickers_into_options(stack):
+    wide = await open_with(stack, size=WIDE)
+    assert await wide("getComputedStyle(document.getElementById('pickers')).display") != "none"
+    assert await wide("getComputedStyle(document.getElementById('options')).display") == "none"
+    narrow = await open_with(stack, size=NARROW)
+    assert await narrow("getComputedStyle(document.getElementById('pickers')).display") == "none"
+    await narrow("document.getElementById('options').click(); true")
+    assert await narrow("getComputedStyle(document.getElementById('pickers')).display") != "none"
+    assert await narrow("document.getElementById('options').getAttribute('aria-expanded')") == "true"
+
+
+@CHROME
+async def test_the_options_open_above_the_whole_composer_not_over_its_modes(stack):
+    js = await open_with(stack, size=NARROW)
+    await js("document.getElementById('options').click(); true")
+    pickers = await js(f"{BOX}(document.getElementById('pickers'))")
+    modes = await js(f"{BOX}(document.querySelector('.modes'))")
+    assert pickers[3] <= modes[1], (pickers, modes)  # the pickers end where the modes' row begins: its tabs stay in view
+    assert pickers[1] >= 0 and pickers[0] >= 0 and pickers[2] <= NARROW[0]  # and the panel is inside the window

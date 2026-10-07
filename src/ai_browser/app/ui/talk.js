@@ -61,9 +61,11 @@ function base64(buffer) {
 // aboutPage(): the floating chat's "Ask about it": {target, site}, the tab a question reads then and the site the user
 // marked on it, or null. hintVoice: say once that Voice reads answers aloud (Mission Control has the switch; the chat
 // answers in text only).
+// fill(words): the page may take heard words into its own box instead (Mission Control's composer outside Ask AI):
+// true when it did, and the Brain isn't asked.
 export function mountTalk({ panel, micButton, link, voice, onState = () => {}, openAgent = () => {},
                             openBrain = () => {}, model = () => "sonnet", aboutPage = () => null,
-                            hintVoice = true }) {
+                            hintVoice = true, fill = () => false }) {
   const log = panel.querySelector(".talk-log");
   const status = panel.querySelector(".talk-status");
   const notice = panel.querySelector(".talk-notice");
@@ -499,7 +501,13 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
       tell(String(message.error));
       return;
     }
-    ask(String(message.text || ""));
+    const words = String(message.text || "");
+    if (fill(words)) { // the page took them into its box: the user starts it
+      setState(asking ? "asking" : "idle");
+      progress(asking ? "Thinking about what you said" : "");
+      return;
+    }
+    ask(words);
   }
 
   function ask(text) { // the user's words, spoken or typed, go to the Brain

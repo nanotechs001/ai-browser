@@ -63,38 +63,65 @@
     <section id="page-knowledge" class="page" hidden aria-label="Knowledge"></section>
     <section id="page-integrations" class="page" hidden aria-label="Integrations"></section>
     <section id="page-history" class="page" hidden aria-label="History"></section>
-    <section id="composer" class="composer" aria-label="Give an agent a task">
-      <section id="talk" class="talk panel" hidden data-state="idle" aria-label="Talk to the Brain">
+    <section id="composer" class="composer" data-mode="build" aria-label="Give an agent a task">
+      <section id="talk" class="talk panel" hidden data-state="idle" aria-label="Ask AI: the Brain's answers">
         <ol id="talk-log" class="talk-log" aria-live="polite"></ol>
         <div id="talk-status" class="talk-status muted"></div>
         <div id="talk-notice" class="talk-notice" role="status"></div>
         <div id="talk-card" class="talk-card"></div>
-        <form id="talk-form" class="talk-form">
-          <input id="talk-text" type="text" maxlength="2000" autocomplete="off" placeholder="Ask the Brain"
-                 aria-label="Ask the Brain">
-          <button type="submit">Ask</button>
+        <form id="talk-form" class="talk-form" hidden>
+          <input id="talk-text" type="text" maxlength="2000" autocomplete="off" aria-label="Ask the Brain">
         </form>
         <p class="talk-note muted">Your voice stays on this computer. Your words go to Claude, like typed text.</p>
       </section>
-      <div class="task-bar panel">
-        <textarea id="task" rows="1" placeholder="Describe what you want to accomplish…"
-                  aria-label="Describe what you want to accomplish"></textarea>
-        <select id="task-model" aria-label="Model">
-          <option value="sonnet">Sonnet · balanced</option>
-          <option value="opus">Opus · best</option>
-          <option value="haiku">Haiku · fastest</option>
-        </select>
-        <select id="task-account" aria-label="Account" hidden></select>
-        <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
-        <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
-                title="Talk to the Brain: hold Space, or hold or click here"><svg viewBox="0 0 24 24"
-          aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg></button>
-        <button id="start" class="primary" type="button">Start</button>
-        <span id="task-note" class="muted note" role="status"></span>
-        <div id="folder-ask" class="folder-ask" hidden></div>
+      <div class="composer-box">
+        <div class="modes" role="tablist" aria-label="What to do">
+          <button id="mode-ask" type="button" role="tab" data-mode="ask" data-icon="sparkle"
+                  aria-selected="false">Ask AI</button>
+          <button id="mode-build" type="button" role="tab" data-mode="build" data-icon="missions"
+                  aria-selected="true">Build a Mission</button>
+          <button id="mode-template" type="button" role="tab" data-mode="template" data-icon="template"
+                  aria-selected="false">Use a Template</button>
+          <label class="voice-switch" title="Updates spoken aloud, with a voice that runs on this computer only"><input
+            id="voice" type="checkbox"> Voice</label>
+          <span id="voice-note" class="muted" role="status"></span>
+        </div>
+        <div class="box">
+          <textarea id="task" rows="2" maxlength="20000" placeholder="Describe what you want to accomplish…"
+                    aria-label="Describe what you want to accomplish"></textarea>
+          <ul id="attached" class="attached" hidden aria-label="Attached files"></ul>
+          <div class="controls">
+            <button id="attach" class="icon-button" type="button" data-icon="clip" aria-label="Attach files"
+                    title="Attach files: at most 10, 20 MB each"></button>
+            <input id="attach-files" type="file" multiple hidden>
+            <button id="options" class="icon-button options" type="button" data-icon="more" aria-expanded="false"
+                    aria-controls="pickers" aria-label="Options"></button>
+            <div id="pickers" class="pickers">
+              <select id="task-web" aria-label="Web" title="The agent's web tools">
+                <option value="web">Web + Brave</option>
+                <option value="brave">Brave only</option>
+                <option value="none">No web</option>
+              </select>
+              <select id="task-model" aria-label="Model">
+                <option value="opus">Opus · most capable</option>
+                <option value="sonnet">Sonnet · balanced</option>
+                <option value="haiku">Haiku · fastest</option>
+              </select>
+              <select id="task-account" aria-label="Account" hidden></select>
+              <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
+              <select id="task-template" aria-label="Template" hidden></select>
+              <select id="task-workspace" aria-label="Workspace"></select>
+            </div>
+            <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
+                    title="Talk to the Brain: hold Space, or hold or click here"><svg viewBox="0 0 24 24"
+              aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg></button>
+            <button id="start" class="primary start" type="button" data-icon="play"><span id="start-label">Start
+              Mission</span><kbd id="start-key"></kbd></button>
+          </div>
+          <span id="task-note" class="muted note" role="status"></span>
+          <div id="folder-ask" class="folder-ask" hidden></div>
+        </div>
       </div>
-      <p class="voice-line"><label class="switch" title="Updates spoken aloud, with a voice that runs on this computer
-        only"><input id="voice" type="checkbox"> Voice</label><span id="voice-note" class="muted" role="status"></span></p>
     </section>
   </main>
   <aside id="side" class="side" aria-label="The agent picked">

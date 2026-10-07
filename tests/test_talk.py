@@ -288,11 +288,15 @@ async def ask_typed(js, words):
              " document.getElementById('talk-form').requestSubmit(); true")
 
 
-async def open_talk(stack, *sources, hearing="ready"):
-    """Mission Control with `sources` run before its scripts, in front, once it knows whether talking is ready."""
+async def open_talk(stack, *sources, hearing="ready", ask=True):
+    """Mission Control with `sources` run before its scripts, in front, once it knows whether talking is ready, and in
+    Ask AI: the talk with the Brain is Ask AI's (in the composer's other modes the mic fills the box), unless not
+    ask."""
     js = await open_with(stack, "".join(sources))
     await front(stack, js)
     assert await until(js, f"{PANEL}.dataset.hearing === {json.dumps(hearing)}")
+    if ask:
+        await js("document.getElementById('mode-ask').click(); true")
     return js
 
 
@@ -1033,3 +1037,18 @@ async def test_the_browser_is_named_from_its_brands(stack):
                      " [{brand: 'Brave'}], [{brand: 'Google Chrome'}], []]"
                      ".map((brands) => browserName({ userAgentData: { brands } })))")
     assert names == ["Microsoft Edge", "Brave", "Google Chrome", "Google Chrome"]
+
+
+@CHROME
+async def test_the_mic_fills_the_box_outside_ask_ai(stack):  # the new look: "voice, as today, filling the box"
+    talk_script(stack, {"say": "OK.", "action": "none"})
+    stack["engine"].answers = ["check the shop"]
+    js = await open_talk(stack, mic(), ask=False)
+    await talk(stack, js)  # Build a Mission is the composer's first mode
+    assert await until(js, "document.getElementById('task').value === 'check the shop'")
+    await asyncio.sleep(0.5)
+    assert talk_calls(stack) == []  # nothing went to the Brain
+    await js("document.getElementById('mode-ask').click(); document.getElementById('task').value = ''; true")
+    stack["engine"].answers = ["what is going on"]
+    await talk(stack, js)
+    assert await eventually(lambda: len(talk_calls(stack)) == 1)  # in Ask AI the Brain hears it, as before
