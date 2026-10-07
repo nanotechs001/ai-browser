@@ -64,6 +64,8 @@ from . import powers
 from .agents import Agent, AgentManager
 from .bravelink import NOT_CONNECTED, PlaceError
 from .inworld import WorldError
+from .workspaces import GONE as WORKSPACE_GONE
+from .workspaces import Workspaces
 from .cdprelay import Tokens
 
 APP_PORTS = range(8792, 8812)
@@ -118,6 +120,7 @@ SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
 ACCOUNT_MESSAGES = {"accounts", "account_add", "account_add_existing", "account_remove", "account_default",
                     "account_brain", "account_signin", "account_move"}  # AI accounts: AI Browser's own pages only
 POWERS_MESSAGES = {"folder_choose", "folder_trust", "permission_rules", "permission_rule_remove"}  # agent powers
+WORKSPACE_MESSAGES = {"workspaces", "workspace_save", "workspace_delete", "workspace_assign"}  # the new look
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
@@ -169,6 +172,8 @@ MESSAGE_RULES: dict[str, Rule] = {
     # A trust answer or a rule's removal is the user's click on one of our pages: never the Brain or voice
     "folder_choose": APP_ONLY, "folder_trust": APP_ONLY, "permission_rules": APP_ONLY,
     "permission_rule_remove": APP_ONLY,
+    # the new look: Mission Control's workspaces, named groups of agents and templates. A filter: no new right
+    "workspaces": APP_ONLY, "workspace_save": APP_ONLY, "workspace_delete": APP_ONLY, "workspace_assign": APP_ONLY,
 }
 
 
@@ -316,6 +321,7 @@ class AppServer:
                  accounts: Accounts | None = None, brain_account=None):
         self.home = Path(home)
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
+        self.workspaces = Workspaces(self.home)  # <home>/workspaces.json: the new look's groups
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
         self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
         self.desktop = None  # AI Browser's own app while it runs (run_app attaches it): the shortcut, notifications
@@ -1322,6 +1328,8 @@ class AppServer:
             await self._account_command(queue, kind, message)
         elif kind in POWERS_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._powers_command(queue, kind, message)
+        elif kind in WORKSPACE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            self._workspace_command(queue, kind, message)
         elif kind == "hello":
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
@@ -1353,7 +1361,7 @@ class AppServer:
                 else None  # agent powers: the task's folder; none is the agent's own scratch folder
             try:  # an account that isn't listed any more is said, never swapped for another
                 agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
-                                            folder=folder)
+                                            folder=folder, workspace=self._workspace_of(message))
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
@@ -1604,6 +1612,9 @@ class AppServer:
                     agent_id = await self.brain.run_workflow(message["item"], message["slug"])
                 else:
                     agent_id = await self.runner.run(message["slug"], text=_text(message.get("text")) or None)
+                    workspace = self._workspace_of(message)
+                    if workspace is not None:
+                        self.agents.set_workspace(agent_id, workspace)
                 queue.put_nowait({"type": "created", "id": agent_id, "request": request})
         except ValueError as exc:
             queue.put_nowait({"type": "error", "text": str(exc), "request": request})
@@ -1664,6 +1675,51 @@ class AppServer:
                      for workflow in self.workflows.all()]
         return {"type": "workflows_snapshot", "workflows": workflows, "problems": self.workflows.problems()}
 
+    def _workspaces_message(self) -> dict:
+        return {"type": "workspaces", "workspaces": self.workspaces.list()}
+
+    def _workspace_of(self, message: dict) -> str | None:
+        """The workspace a new agent goes in: one that exists, else none. A filter: a start is never refused for it."""
+        given = message.get("workspace")
+        return given if isinstance(given, str) and self.workspaces.get(given) is not None else None
+
+    def _workspace_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        """The new look's workspaces: the list, New and rename, Delete (its agents keep running, ungrouped), and moving
+        an agent or a template. Every page then hears the list again; an agent's move is its own row."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        if kind == "workspaces":
+            queue.put_nowait(self._workspaces_message())
+            return
+        try:
+            if kind == "workspace_save":
+                given = message.get("id")
+                row = self.workspaces.rename(given, message.get("name")) if isinstance(given, str) and given \
+                    else self.workspaces.create(message.get("name"))
+                queue.put_nowait({"type": "workspace_saved", "request": request, "id": row["id"]})
+            elif kind == "workspace_delete" and isinstance(message.get("id"), str):
+                if self.workspaces.delete(message["id"]):
+                    self.agents.ungroup(message["id"])
+            elif kind == "workspace_assign":
+                target = message.get("workspace")
+                if target is not None and (not isinstance(target, str) or self.workspaces.get(target) is None):
+                    raise ValueError(WORKSPACE_GONE)
+                if isinstance(message.get("agent"), str):
+                    self.agents.set_workspace(message["agent"], target)
+                    return
+                if not isinstance(message.get("template"), str):
+                    return
+                self.workspaces.assign_template(message["template"], target)
+            else:
+                return
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        except OSError as exc:  # a read-only home, a full disk: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't save that: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._send_all(self._workspaces_message())
+
     def _tools_snapshot(self, account: str = "default", tools=None) -> dict:
         tools = tools if tools is not None else self.tools
         return {"type": "tools_snapshot", "account": account, "servers": tools.servers(),
@@ -1677,7 +1733,7 @@ class AppServer:
                 "default_model": self.default_model, "browser": self._browser_info(),
                 "sessions": self._session_list(), "browser_clients": self._browser_clients(),
                 "settings": self._settings_payload(), "accounts": self._account_rows(),
-                "brain_limit": self.brain_limit}
+                "brain_limit": self.brain_limit, "workspaces": self.workspaces.list()}
 
     # ---- AI accounts: Settings → Accounts, the pickers and Continue on (AI Browser's own pages only) -------------
 

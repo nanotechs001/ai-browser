@@ -154,12 +154,13 @@ class Agent:
     files: list = field(default_factory=list)
     words: str = field(default="", repr=False)
     said: str = field(default="", repr=False)
+    workspace: str | None = None  # the new look: its workspace, a filter only (in memory: ids start again each run)
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
                                          "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
-                                         "result", "files")
+                                         "result", "files", "workspace")
 
     @property
     def number(self) -> int:
@@ -241,7 +242,7 @@ class AgentManager:
 
     async def create(self, text: str, skills=(), model: str = "sonnet", adopt: str | None = None,
                      tab: dict | None = None, servers: list[str] | None = None,
-                     account: str | None = None, folder: str | None = None) -> Agent:
+                     account: str | None = None, folder: str | None = None, workspace: str | None = None) -> Agent:
         """A new agent for `text`; with `adopt`, it works in that tab of the user's (started from the panel). Its MCP
         servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list). It runs on
         `account`, else on the default account for new agents; ValueError for an account that isn't listed. With
@@ -262,7 +263,7 @@ class AgentManager:
         if self.accounts is not None:  # its account must be signed in before its Claude Code starts
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
         agent = Agent(agent_id, _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge, account=chosen,
-                      task=text, folder=work, trusted=trusted)
+                      task=text, folder=work, trusted=trusted, workspace=workspace)
         if work is not None:
             with contextlib.suppress(OSError):  # a read-only home: the folder isn't listed as recent, nothing more
                 self.rules.note_used(work)
@@ -446,6 +447,24 @@ class AgentManager:
     def working(self, agent_id: str) -> bool:
         """Whether the agent is in a turn now: its engine may then open the browser connection (Decision 10)."""
         return agent_id in self._turns
+
+    def set_workspace(self, agent_id: str, workspace_id: str | None) -> bool:
+        """Move an agent into a workspace, or out of any (None): a filter only, nothing about its work changes."""
+        agent = self.agents.get(agent_id)
+        if agent is None:
+            return False
+        if agent.workspace != workspace_id:
+            agent.workspace = workspace_id
+            self._changed(agent)
+        return True
+
+    def ungroup(self, workspace_id: str) -> list[str]:
+        """A workspace was deleted: its agents keep working, in no workspace (the new look's Review Focus 4)."""
+        moved = [agent for agent in self.agents.values() if agent.workspace == workspace_id]
+        for agent in moved:
+            agent.workspace = None
+            self._changed(agent)
+        return [agent.id for agent in moved]
 
     def set_model(self, agent_id: str, model: str) -> None:
         agent = self.agents.get(agent_id)
