@@ -234,3 +234,47 @@ async def test_a_chosen_folders_own_attachments_are_never_cleared(fake_claude, t
         assert (project / "attachments" / "mine.txt").read_text(encoding="utf-8") == "the user's own"
     finally:
         await agents.close_all()
+
+
+@pytest.mark.parametrize("attach", [False, True])
+@pytest.mark.parametrize("linked", ["work", "agent", "dangling"])
+async def test_a_scratch_folder_that_is_a_link_is_refused_and_nothing_is_deleted(  # Review round 2
+        fake_claude, tmp_path, linked, attach):
+    """`a<N>/work`, or `a<N>` itself, a link to a folder of the user's: the start is refused, no agent number is used,
+    and what the link leads to is left whole (its attachments folder isn't cleared, no file goes in)."""
+    from conftest import symlink_or_skip
+
+    agents = scratch_manager(fake_claude, tmp_path)
+    outside = tmp_path / "user project"
+    keep = outside / "attachments" / "keep.txt"
+    if linked == "agent":  # the link is a1 itself: its work folder is the project's work/
+        keep = outside / "work" / "attachments" / "keep.txt"
+    keep.parent.mkdir(parents=True)
+    keep.write_text("the user's own", encoding="utf-8")
+    agent_folder = tmp_path / "home" / "app" / "agents" / "a1"
+    if linked == "agent":
+        agent_folder.parent.mkdir(parents=True)
+        symlink_or_skip(outside, agent_folder)
+    else:
+        agent_folder.mkdir(parents=True)
+        symlink_or_skip(tmp_path / "nowhere" if linked == "dangling" else outside, agent_folder / "work")
+    files = [(staged(tmp_path), "new.txt")] if attach else []
+    before = sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*") if path.is_file())
+    try:
+        with pytest.raises(ValueError) as refused:
+            await agents.create("x", files=files)
+        assert str(refused.value) == ("This agent's own folder is a link to somewhere else: "
+                                      f"{agent_folder / 'work'}. Remove the link and try again.")
+        assert keep.read_text(encoding="utf-8") == "the user's own"
+        assert not (tmp_path / "nowhere").exists()
+        assert not agents.agents
+        after = sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*") if path.is_file())
+        assert after == before  # no file went in or out (a staged one stays staged)
+        (agent_folder if linked == "agent" else agent_folder / "work").unlink()  # the user removes the link
+        if linked == "agent":
+            agent_folder.mkdir()
+        agent = await agents.create("y")
+        assert agent.id == "a1"  # the refused start took no number
+        await wait_for(lambda: agent.state == "your_turn")
+    finally:
+        await agents.close_all()

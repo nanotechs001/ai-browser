@@ -45,6 +45,7 @@ FRESH_NOTE = "Started fresh with a hand-over note"  # the chat's line: no accoun
 BUSY_MOVE = "{label} is still working: stop it, or wait for its turn to end, then move it"
 NO_CONVERSATION = "no conversation found"
 TRUST_FIRST = "Answer “Trust this folder?” for that folder first"  # agent powers, Decision 7
+LINKED = "This agent's own folder is a link to somewhere else: {path}. Remove the link and try again."
 NOTE_LIMIT = 300  # characters of Deny's note to the agent
 SUBAGENTS_KEPT = 20  # sub-agents an agent's drawer lists, the newest
 FINISHED = ("your_turn", "stopped", "failed")  # a turn that ended: the room's finished agents (the new look)
@@ -80,10 +81,20 @@ def _name(text: str) -> str:
     return " ".join(parts).rstrip(",.;:") or "task"
 
 
+def _own_scratch(scratch: Path) -> None:
+    """ValueError unless `scratch` (<agents folder>/a<N>/work) really is the app's own: if a<N> or work is a link (even
+    a dangling one), it leads out of the agents folder, and nothing may be cleared or placed there. Only the agents
+    folder itself is resolved (a link there is the user's way to keep it elsewhere); text compared as the disk does."""
+    expected = os.path.join(os.path.realpath(scratch.parent.parent), scratch.parent.name, scratch.name)
+    if os.path.normcase(os.path.realpath(scratch)) != os.path.normcase(expected):
+        raise ValueError(LINKED.format(path=scratch))
+
+
 def _clear_attachments(scratch: Path) -> None:
     """Whatever an earlier run left as `attachments` in an agent's own scratch folder (ids restart at a1 every run, the
     folder stays): a link is unlinked, never followed (what it leads to is not ours); a folder is removed (rmtree
-    doesn't follow links inside it either); a plain file is removed. Never used for a folder the user chose."""
+    doesn't follow links inside it either); a plain file is removed. Never used for a folder the user chose, and only
+    after _own_scratch said the scratch folder is the app's own."""
     stale = scratch / attachments.FOLDER
     if stale.is_symlink() or os.path.isjunction(stale):
         try:
@@ -276,6 +287,7 @@ class AgentManager:
         scratch = self.home / "app" / "agents" / agent_id / "work"  # the bridge's own path when no folder is chosen
         try:  # the attached files, into its folder's attachments/
             if work is None:
+                _own_scratch(scratch)  # a link as a<N> or work: refused, with nothing touched
                 _clear_attachments(scratch)  # ids restart each run: the last run's a<N> left its files here
             saved = attachments.place(work or scratch, list(files))
         except OSError as exc:
