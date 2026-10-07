@@ -1,14 +1,14 @@
 // Mission Control's office (the new look, Decision 3), drawn with CSS 3D: a dark navy floor tilted away from the
 // user, the glowing globe in the middle (the Brain's seat: #brain), and one desk per agent in rings around it
 // (desk.js). Desks and the globe are billboards: they stand upright and face the user (their own turn undoes the
-// room's). Dotted lines on the floor join each desk to the globe's base. A hanging lamp, plants and a neon "AI OFFICE"
-// sign keep still. Past 12 desks the oldest finished agents leave the room (step.js roomAgents); with more than 6 desks
-// the step cards fold to chips. Everything is built once and updated in place; the timers tick together once a
-// second, and stop while the room is paused. Text is set with textContent.
+// room's). Dotted lines on the floor join each desk to the globe's base. There is no other decor (the user's hand
+// check: no lamp, no sign, no big plants). Past 12 desks the oldest finished agents leave the room (step.js
+// roomAgents); with more than 6 desks the step cards fold to chips. Everything is built once and updated in place; the
+// timers tick together once a second, and stop while the room is paused. Text is set with textContent.
 "use strict";
 
 import { ensureDefs } from "./chibi.js";
-import { createDesk, DESK, plantArt } from "./desk.js";
+import { createDesk, DESK } from "./desk.js";
 import { roomAgents, stateOf } from "./step.js";
 
 export { COLORS } from "./desk.js";
@@ -27,10 +27,11 @@ const PUSH = 100; // room pixels: in a ring after the first, every odd seat stan
 // stand back and out (215°, -35°), so that a full step card (a desk with it is TALL) never hides the desk behind it.
 const FIRST_RING = [150, 30, 112, 68, 215, -35];
 const TALL = 280; // a desk with its step card, in CSS pixels: the card, the gap and the desk
-const TOP = 190; // CSS pixels kept clear along the box's top, for no step card to sit under the page's words there:
-// Mission Control's heading (to 162 px down), its Flow · List · Calendar switch and the AI OFFICE sign (to 183)
+const TOP = 72; // CSS pixels kept clear along the box's top, for no step card to sit under the Flow · List · Calendar
+// switch (mission.css: its foot is 62 px down), the only words over the room
 const ORIGIN = 0.2; // the perspective's origin, as a share of the box's height (office.css .viewport: 50% 20%)
 const BOTTOM = 12; // CSS pixels kept clear below the near desks
+const LOW = 0.75; // where the room stands in the room it has to spare: 0 at the top, 1 at the foot (see frame)
 const FLOOR = 0.15; // the room's smallest zoom to fit in (20 desks in a box 700 px wide fit at about 0.2)
 const CHIPS_PAST = 6; // more desks than this: step cards fold to chips
 const SPARKS = 6; // arrivals in flight at once: any more arrive without a spark
@@ -39,7 +40,6 @@ const CONTINENTS = [ // [longitude, latitude, half-width, half-height] in degree
   [-100, 45, 32, 20], [-62, -16, 16, 26], [-40, 72, 12, 8], [12, 50, 18, 10], [20, 4, 20, 28], [46, 25, 10, 8],
   [92, 46, 46, 20], [78, 20, 8, 10], [112, 4, 16, 8], [135, -25, 17, 10], [138, 36, 4, 7],
 ];
-const PLANTS = [[-1120, -260], [1100, -240], [930, 520]]; // big plants at the room's edges, from the globe
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -116,25 +116,6 @@ function createGlobe() { // the Brain's seat: click it for its inbox (mission.js
   return globe;
 }
 
-function sign() {
-  const node = el("div", "sign");
-  node.setAttribute("aria-hidden", "true");
-  node.append(el("span", "", "AI"), el("span", "", "OFFICE"));
-  return node;
-}
-
-function lamp() {
-  const node = el("div", "lamp");
-  node.setAttribute("aria-hidden", "true");
-  const shade = el("div", "shade");
-  const art = svg("svg", { viewBox: "0 0 60 34", "aria-hidden": "true" });
-  art.append(svg("path", { d: "M18 2 h24 l16 28 a2 2 0 0 1 -2 3 H4 a2 2 0 0 1 -2 -3 Z", fill: "#1c2240" }),
-             svg("ellipse", { cx: 30, cy: 32, rx: 12, ry: 3, fill: "#fff2d6" }));
-  shade.append(art);
-  node.append(el("div", "cord"), shade, el("div", "light"));
-  return node;
-}
-
 export function createScene(root, { onSelect = () => {} } = {}) {
   const viewport = el("div", "viewport");
   const room = el("div", "room");
@@ -146,13 +127,8 @@ export function createScene(root, { onSelect = () => {} } = {}) {
   const outer = el("div", "ring outer");
   const inner = el("div", "ring inner");
   room.append(el("div", "floor"), links, outer, inner, stage, empty);
-  for (const [dx, dy] of PLANTS) {
-    const plant = plantArt("plant-big billboard");
-    place(plant, { x: CENTER.x + dx, y: CENTER.y + dy });
-    room.append(plant);
-  }
   viewport.append(room);
-  root.replaceChildren(el("div", "backdrop"), viewport, sign(), lamp());
+  root.replaceChildren(el("div", "backdrop"), viewport);
   ensureDefs(document);
   for (const node of [outer, inner, stage]) place(node, CENTER);
   place(empty, { x: CENTER.x, y: CENTER.y + 250 });
@@ -170,7 +146,9 @@ export function createScene(root, { onSelect = () => {} } = {}) {
   // Where the room stands at this zoom, and whether every desk and the globe are in view. `middle` is how far the
   // room's middle hangs below the perspective's origin (office.css .viewport): the room's span, from the top of the
   // highest card (or the globe) to the near desks' bottom, goes in the band between TOP and the box's bottom (less
-  // BOTTOM), centred in what the band has to spare.
+  // BOTTOM), three quarters of the way down what the band has to spare (LOW). A room as wide as its box has room to
+  // spare above it, now that only the switch is kept clear: lower down it is seen from higher up, and a nearer chip
+  // covers less of the name behind it (centred, 16 and 20 desks covered more than half a name).
   function frame(scale, width, height) {
     const tilt = (START.tilt * Math.PI) / 180;
     const at = (y) => { // a room's y: how far down the screen it falls from the room's middle, and its magnification
@@ -185,13 +163,13 @@ export function createScene(root, { onSelect = () => {} } = {}) {
                              (TOP - origin) / globe.factor - globe.down + 340 * scale); // the least `middle` may be
     const lowest = (height - BOTTOM - origin) / near.factor - near.down; // and the most
     const sideways = width / 2 - (extent.dx + DESK.w / 2) * scale * near.factor >= 0;
-    return { fits: highest <= lowest && sideways, middle: (highest + lowest) / 2 };
+    return { fits: highest <= lowest && sideways, middle: highest + (lowest - highest) * LOW };
   }
 
   function fit() { // the room's zoom, the largest with every desk in the box (below the top band), and where it stands
     const width = viewport.clientWidth || innerWidth;
     const height = viewport.clientHeight || innerHeight;
-    let scale = Math.min(1.2, (width * 0.94) / (2 * extent.dx + DESK.w + 40), height / 820);
+    let scale = Math.min(1.2, (width * 0.94) / (2 * extent.dx + DESK.w + 40)); // frame() checks the height
     let found = frame(scale, width, height);
     while (scale > FLOOR && !found.fits) {
       scale -= 0.02;

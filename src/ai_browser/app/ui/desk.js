@@ -67,9 +67,6 @@ export function art(className, viewBox, shapes) { // a small fixed drawing from 
   return holder;
 }
 
-export function plantArt(className = "plant") {
-  return art(className, "0 0 40 48", PLANT);
-}
 
 export function createDesk(id, onSelect = () => {}) {
   const node = el("button", "station billboard arriving placing"); // its first place: no sliding into it
@@ -95,7 +92,7 @@ export function createDesk(id, onSelect = () => {}) {
   const laptop = el("div", "laptop");
   laptop.append(art("lid", "0 0 64 40", LID), el("div", "keyboard"));
   parts.art.append(art("chair", "0 0 58 66", CHAIR), parts.pose, art("table", "0 0 220 110", TABLE), laptop,
-                   art("mug", "0 0 24 24", MUG), plantArt(), parts.subs, parts.more, parts.nameplate);
+                   art("mug", "0 0 24 24", MUG), art("plant", "0 0 40 48", PLANT), parts.subs, parts.more, parts.nameplate);
   node.append(parts.step, parts.art, parts.needs);
   node.addEventListener("click", () => onSelect(id));
   const subs = new Map(); // sub-agent id -> its pose

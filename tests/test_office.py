@@ -240,8 +240,8 @@ async def test_an_empty_room_says_start_a_mission_below(stack):
     assert await js(f"{note}.textContent") == "Start a mission below"
     assert await js(f"getComputedStyle({note}).display") != "none"
     assert await js("document.getElementById('brain').classList.contains('globe')")
-    assert await js("[...document.querySelectorAll('.sign span')].map(node => node.textContent)") == ["AI", "OFFICE"]
-    assert await js("document.querySelectorAll('.lamp, .plant-big').length") >= 4
+    # the user's hand check: no AI OFFICE sign, no hanging lamp, no big plants (each desk keeps its small one)
+    assert await js("document.querySelectorAll('.sign, .lamp, .plant-big').length") == 0
     assert await js("document.querySelectorAll('.globe .map circle').length") > 300  # the dotted continents
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("Fix the footer")

@@ -49,8 +49,13 @@ async def test_the_layout_at_three_widths(stack):
         assert await js("document.documentElement.scrollWidth <= innerWidth"
                         " && document.querySelector('.mc').scrollWidth <= document.querySelector('.mc').clientWidth"), \
             size  # nothing scrolls sideways
-        assert await js("document.querySelector('.heading h2').textContent") == "Your AI Workforce"
-        assert await js("document.querySelector('.heading .eyebrow').textContent") == "Mission Control"
+        # no visible heading (the user's hand check): the page keeps an accessible title, visually hidden
+        assert await js("document.querySelector('#page-dashboard :is(.heading, .eyebrow, .lede)') === null"), size
+        assert await js("document.querySelectorAll('#page-dashboard :is(h1, h2)').length") == 1, size
+        title = "document.querySelector('#page-dashboard > h2')"
+        assert await js(f"{title}.textContent") == "Mission Control"
+        box = await js(f"{BOX}({title})")
+        assert box[2] - box[0] <= 1 and box[3] - box[1] <= 1, (size, box)
 
 
 @CHROME
@@ -273,7 +278,7 @@ async def test_stop_chat_and_hand_over(stack):
 
 @CHROME
 @pytest.mark.parametrize("size", [WIDE, (1280, 760), MIDDLE, NARROW])
-async def test_the_list_and_the_calendar_start_below_the_heading_and_the_switch(stack, size):
+async def test_the_list_and_the_calendar_start_right_under_the_switch(stack, size):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("first")
     js = await open_with(stack, size=size)
@@ -285,8 +290,9 @@ async def test_the_list_and_the_calendar_start_below_the_heading_and_the_switch(
                                 " const bottom = (one) => document.querySelector(one).getBoundingClientRect().bottom;"
                                 " return [row ? row.getBoundingClientRect().top : view.getBoundingClientRect().top"
                                 " + parseFloat(getComputedStyle(view).paddingTop),"
-                                " Math.max(bottom('.heading'), bottom('.switch-views'))]; })()")
-        assert first >= words, (name, first, words)  # its first row (or its content's top) is below the words over it
+                                " bottom('.switch-views')]; })()")
+        # its first row (or its content's top) is below the switch, and right under it: no room kept for a heading
+        assert words <= first <= words + 24, (name, first, words)
 
 
 @CHROME
@@ -306,8 +312,7 @@ CARDS_UNDER_WORDS = """(() => {
   const box = (node) => node.getBoundingClientRect();
   const over = (one, two) => Math.min(one.right, two.right) > Math.max(one.left, two.left)
     && Math.min(one.bottom, two.bottom) > Math.max(one.top, two.top);
-  const words = ['.heading', '.switch-views', '.sign']
-    .map((selector) => [selector, box(document.querySelector(selector))]);
+  const words = ['.switch-views'].map((selector) => [selector, box(document.querySelector(selector))]);
   const scene = box(document.querySelector('.scene'));
   const inside = (r) => r.left >= scene.left - 1 && r.right <= scene.right + 1 && r.top >= scene.top - 1
     && r.bottom <= scene.bottom + 1;
@@ -326,7 +331,7 @@ CARDS_UNDER_WORDS = """(() => {
 @CHROME
 @pytest.mark.parametrize("size", [WIDE, (1280, 760), MIDDLE, NARROW])  # three columns (widest, narrowest), two, one
 @pytest.mark.parametrize("count", [5, 6, 12, 20])
-async def test_no_step_card_sits_under_the_heading_the_switch_or_the_sign(stack, count, size):  # Task 11's far desks
+async def test_no_step_card_sits_under_the_switch(stack, count, size):  # Task 11's far desks; the switch is all that's left
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
     stack["server"].agents.max_working = count  # all of them at work at once, none waiting in line
     for number in range(count):
@@ -338,14 +343,15 @@ async def test_no_step_card_sits_under_the_heading_the_switch_or_the_sign(stack,
     await asyncio.sleep(1.5)  # every desk in its place
     shown, hits, outside = await js(CARDS_UNDER_WORDS)
     assert shown == count
-    assert hits == [], hits  # no desk's step card under the heading's words, the switch or the AI OFFICE sign
+    assert hits == [], hits  # no desk's step card under the Flow · List · Calendar switch
     assert outside == [], outside  # and every desk, with its card, in view in the room's box
 
 
 @CHROME
-# 1280x760: 0.44 (it was 0.5): the composer is 236 px tall now (118 before), so the room's band is 524 px, not 642
-@pytest.mark.parametrize(("count", "size", "least"), [(5, (1280, 760), 0.44), (6, (1280, 760), 0.44), (5, WIDE, 0.6)])
-async def test_a_few_desks_fill_the_room_below_the_heading_and_stay_in_view(stack, count, size, least):
+# with the heading and the sign gone the room grows into the box's top, where only the switch's band is kept clear, up to
+# the width it has: measured 0.5545 at 1280x760 (0.4545 under the heading) and 0.6609 at 1440x900 (0.6409)
+@pytest.mark.parametrize(("count", "size", "least"), [(5, (1280, 760), 0.54), (6, (1280, 760), 0.54), (5, WIDE, 0.65)])
+async def test_a_few_desks_fill_the_room_below_the_switch_and_stay_in_view(stack, count, size, least):
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
     stack["server"].agents.max_working = count
     for number in range(count):
@@ -356,7 +362,7 @@ async def test_a_few_desks_fill_the_room_below_the_heading_and_stay_in_view(stac
     assert await until(js, f"{working} === {count}", 15)
     await asyncio.sleep(1.5)  # every desk in its place
     zoom = await js("parseFloat(/scale3d\\(([\\d.]+)/.exec(document.querySelector('.room').style.transform)[1])")
-    assert zoom >= least, zoom  # the room is placed between the heading's band and the box's bottom, not squeezed
+    assert zoom >= least, zoom  # the room is placed between the switch's band and the box's bottom, not squeezed
     shown, hits, outside = await js(CARDS_UNDER_WORDS)
     assert (shown, hits, outside) == (count, [], [])
 

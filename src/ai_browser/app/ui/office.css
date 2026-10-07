@@ -1,5 +1,5 @@
 /* Mission Control's office (the new look): the workers (chibi.js) and the icons (icons.js); from Task 11's room on, the
-   desks, the globe and the decor too. Colours come from theme.css. */
+   desks and the globe too. Colours come from theme.css. */
 .icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8;
         stroke-linecap: round; stroke-linejoin: round; }
 .icon.filled { fill: currentColor; stroke: none; }
@@ -126,8 +126,6 @@
 .empty-note { padding: 8px 18px; border-radius: 999px; background: rgba(13, 24, 52, 0.85); color: var(--text-2);
               border: 1px solid var(--line-strong); font-size: 16px; white-space: nowrap; pointer-events: none; }
 .room:not([data-empty="true"]) .empty-note { display: none; }
-.plant-big { width: 110px; height: 132px; pointer-events: none; }
-.plant-big svg { width: 100%; height: 100%; display: block; }
 
 /* ---- the globe: the Brain's seat. Its glow (--g) follows the Brain's state ------------------------------------- */
 .stage { width: 300px; display: flex; flex-direction: column; align-items: center; }
@@ -165,20 +163,6 @@
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); text-align: left; }
 .bubble::after { content: ""; position: absolute; left: 50%; bottom: -8px; margin-left: -8px;
                  border: 8px solid transparent; border-bottom: 0; border-top-color: rgba(236, 242, 255, 0.97); }
-
-/* ---- the decor: a neon sign, a hanging lamp ------------------------------------------------------------------- */
-.sign { position: absolute; right: 9%; top: 96px; z-index: 1; padding: 10px 14px; border: 3px solid #2b5cff;
-        border-radius: 8px; transform: perspective(600px) rotateY(-14deg); color: #3a72ff; font-weight: 800;
-        font-size: 30px; line-height: 1; letter-spacing: 0.02em; text-align: center; pointer-events: none;
-        text-shadow: 0 0 10px rgba(58, 114, 255, 0.9), 0 0 24px rgba(58, 114, 255, 0.6);
-        box-shadow: 0 0 18px rgba(43, 92, 255, 0.55), inset 0 0 18px rgba(43, 92, 255, 0.35); }
-.sign span { display: block; }
-.lamp { position: absolute; top: 0; left: 62%; z-index: 1; width: 90px; height: 120px; pointer-events: none; }
-.lamp .cord { position: absolute; left: 44px; top: 0; width: 2px; height: 60px; background: #2a3150; }
-.lamp .shade { position: absolute; left: 15px; top: 56px; width: 60px; height: 34px; }
-.lamp .shade svg { width: 100%; height: 100%; display: block; }
-.lamp .light { position: absolute; left: -60px; top: 72px; width: 210px; height: 160px; border-radius: 50%;
-               background: radial-gradient(ellipse at 50% 10%, rgba(255, 214, 160, 0.35), transparent 60%); }
 
 /* ---- a desk (desk.js): the step card above it, the desk with its chibi, laptop, mug and plant ------------------ */
 .station { width: 230px; border: 0; background: none; color: inherit; padding: 0; cursor: pointer; font: inherit;
