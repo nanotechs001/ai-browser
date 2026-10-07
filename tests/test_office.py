@@ -6,6 +6,7 @@ headless Chrome. The art holds no agent data, text stays text, and nothing is do
 import asyncio
 import itertools
 import json
+import math
 import re
 
 import pytest
@@ -256,9 +257,12 @@ async def test_an_empty_room_says_start_a_mission_below(stack):
 ROOM_SHEET = """(() => {
   const look = (selector) => { const style = getComputedStyle(document.querySelector(selector));
     return [style.backgroundImage, style.backgroundColor]; };
-  return { backdrop: document.querySelectorAll('.backdrop').length, scene: look('.scene'), floor: look('.floor'),
-           rings: document.querySelectorAll('.ring').length };
+  return { backdrop: document.querySelectorAll('.backdrop').length, scene: look('.scene'),
+           under: document.querySelectorAll('.ring, .pedestal, .floor').length,
+           stage: [...document.querySelector('.stage').children].map((child) => child.classList[0]) };
 })()"""
+LINK_ENDS = ("[...document.querySelectorAll('.links path.link:not(.away)')].map(path =>"
+             " path.getAttribute('d').trim().split(/\\s+/).slice(-2).map(Number))")
 
 
 def rule(sheet, selector):
@@ -278,18 +282,21 @@ async def test_the_room_is_the_pages_plain_navy_with_no_wall_or_grid(stack):  # 
     assert await until(js, f"{station('a1')} !== null")
     look = await js(ROOM_SHEET)
     assert look["backdrop"] == 0  # no back wall
-    for part in ("scene", "floor"):
-        assert "repeating" not in look[part][0], (part, look[part])  # no grid lines, on the wall or the floor
+    assert "repeating" not in look["scene"][0], look["scene"]  # no grid lines
     # the room is the page's navy: --bg in the middle, --bg-deep in the far corners, and no other colour
     assert set(re.findall(r"rgba?\([^)]*\)", " ".join(look["scene"]))) <= {"rgb(7, 15, 35)", "rgb(5, 11, 26)",
                                                                           "rgba(0, 0, 0, 0)"}, look["scene"]
-    assert look["floor"][1] == "rgba(0, 0, 0, 0)" and "radial-gradient" in look["floor"][0]  # only the globe's glow
-    assert look["rings"] == 2  # the globe's rings stay, and the desk's glow and the dotted line
-    assert await js("document.querySelectorAll('.shadow:not(.away)').length") == 1
-    assert await js("document.querySelectorAll('.links path.link:not(.away)').length") == 1
+    # nothing under the globe (the user's look, 2026-10-07): no rings, no light disc, no glow on the floor; the globe,
+    # its bubble and its label stay
+    assert look["under"] == 0
+    assert look["stage"] == ["globe", "bubble", "brain-label"]
+    assert await js("document.querySelectorAll('.shadow:not(.away)').length") == 1  # the desk's glow stays
+    assert await js("document.querySelectorAll('.links path.link:not(.away)').length") == 1  # and the dotted line,
+    for x, y in await js(LINK_ENDS):  # which ends at the globe's foot (the globe stands at 1000, 640)
+        assert math.hypot(x - 1000, y - 640) <= 80, (x, y)
     sheet = (Path(__file__).parents[1] / "src" / "ai_browser" / "app" / "ui" / "office.css").read_text(encoding="utf-8")
-    for selector in (".scene", ".floor"):  # theme tokens only
-        assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", rule(sheet, selector)), selector
+    assert not re.search(r"^\.(ring|pedestal|floor)\b", sheet, re.MULTILINE)
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", rule(sheet, ".scene"))  # theme tokens only
 
 
 @CHROME
