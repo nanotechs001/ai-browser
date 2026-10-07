@@ -15,10 +15,18 @@ PRIVATE = ["http://localhost:8792/home", "http://LOCALHOST./", "http://app.local
            "http://172.16.0.1/", "http://172.31.255.255/", "http://192.168.1.1/admin", "http://169.254.169.254/",
            "http://100.64.0.1/", "http://100.127.255.1/", "http://[::1]:8080/",
            "http://[fe80::1]/", "http://[fd00::1]/", "http://[::ffff:127.0.0.1]/", "http://[::ffff:c0a8:101]/",
-           "https://192.168.0.10:8443/", "ws://localhost:9222/devtools/browser/x"]
+           "https://192.168.0.10:8443/", "ws://localhost:9222/devtools/browser/x",
+           "http://240.0.0.1/", "http://255.255.255.255/", "http://[::]/", "http://[fec0::1]/",
+           # an IPv4 address inside an IPv6 one is judged by its IPv4 part: 127.0.0.1, 192.168.1.1, 100.64.0.1
+           "http://[::7f00:1]/", "http://[2002:7f00:1::]/", "http://[2002:c0a8:101::]/", "http://[64:ff9b::7f00:1]/",
+           "http://[64:ff9b::c0a8:101]/", "http://[::ffff:6440:1]/"]
 PUBLIC = ["https://example.com/", "http://93.184.216.34/", "http://172.32.0.1/", "http://100.128.0.1/",
           "http://10.example.com/", "https://localhost.example.com/", "http://[2606:4700::1111]/", "about:blank",
-          "data:text/html,hi", "file:///tmp/x.html", "not a url", ""]
+          "data:text/html,hi", "file:///tmp/x.html", "not a url", "",
+          # not this computer's or its network's: fake-IP proxies answer 198.18.0.0/15 for every site, and a DNS64
+          # network (macOS on an IPv6-only network) answers 64:ff9b:: for every IPv4-only site
+          "http://198.18.0.1/", "http://198.19.255.255/", "http://[64:ff9b::808:808]/", "http://[2002:808:808::]/",
+          "http://[::808:808]/", "http://[::ffff:8.8.8.8]/"]
 
 
 @pytest.mark.parametrize("url", PRIVATE)

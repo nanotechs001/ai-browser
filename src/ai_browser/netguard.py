@@ -19,7 +19,15 @@ from urllib.parse import urlsplit
 
 REFUSED = ("{host} is on this computer or its network, and the sandbox never opens those. QA a site on this computer "
            "in your own browser (ask the user first)")
-SHARED = ipaddress.ip_network("100.64.0.0/10")  # carrier-grade NAT, and tailnets (Tailscale)
+# The ranges are listed, not taken from ipaddress's is_private and is_reserved: those also hold 198.18.0.0/15 (fake-IP
+# proxies answer it for every site) and 64:ff9b::/96 (DNS64 answers it for every IPv4-only site), and their meaning
+# changed in Python 3.12.4. 0/8 is "this host" (0.0.0.0 reaches this computer), 100.64/10 carrier-grade NAT and
+# tailnets (Tailscale), 240/4 holds 255.255.255.255, fc00::/7 is IPv6's private range, fec0::/10 its old one.
+PRIVATE_V4 = [ipaddress.ip_network(net) for net in (
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
+    "240.0.0.0/4")]
+PRIVATE_V6 = [ipaddress.ip_network(net) for net in ("::/128", "::1/128", "fc00::/7", "fe80::/10", "fec0::/10")]
+NAT64 = ipaddress.ip_network("64:ff9b::/96")
 LOOKUP_WAIT = 3.0  # seconds a name's lookup may take; past it, it is refused (a page can make lookups hang)
 # Lookups run on threads of their own, not the loop's shared pool: a page that opens many names whose DNS never answers
 # can only fill these four (then every lookup is refused, until they are free), and never stalls agentlink or the
@@ -30,7 +38,7 @@ LOOKUPS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="netguard")
 PATTERNS = [{"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"},
             *({"urlPattern": pattern, "requestStage": "Request"} for pattern in (
                 "*://localhost*", "*://*.local*", "*://0.*", "*://10.*", "*://127.*", "*://100.*", "*://169.254.*",
-                "*://172.1?.*", "*://172.2?.*", "*://172.3?.*", "*://192.168.*", "*://[*"))]
+                "*://172.1?.*", "*://172.2?.*", "*://172.3?.*", "*://192.168.*", "*://24?.*", "*://25?.*", "*://[*"))]
 
 
 def exempt(url: str) -> bool:
@@ -39,13 +47,23 @@ def exempt(url: str) -> bool:
     return False
 
 
+def carried(address: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address an IPv6 one carries: mapped (::ffff:a.b.c.d), compatible (::a.b.c.d, but not :: or ::1), 6to4
+    (2002:a.b.c.d::) or NAT64 (64:ff9b::a.b.c.d)."""
+    for found in (address.ipv4_mapped, address.sixtofour):
+        if found is not None:
+            return found
+    if address in NAT64 or 1 < int(address) < 1 << 32:
+        return ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
+    return None
+
+
 def private_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if address.version == 6:  # an IPv4 address carried in an IPv6 one is judged as itself
-        carried = address.ipv4_mapped or address.sixtofour
-        if carried is not None:
-            address = carried
-    return (address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified
-            or address.is_reserved or (address.version == 4 and address in SHARED))
+        inside = carried(address)
+        if inside is not None:
+            address = inside
+    return any(address in net for net in (PRIVATE_V4 if address.version == 4 else PRIVATE_V6))
 
 
 def private_host(host: str) -> bool:
