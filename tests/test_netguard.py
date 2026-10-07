@@ -4,6 +4,7 @@ here is a fake: no test asks a real DNS server."""
 
 import asyncio
 import socket
+import threading
 
 import pytest
 
@@ -30,15 +31,18 @@ def test_public_addresses_and_pages_without_a_host_are_not(url):
     assert not netguard.private_url(url), url
 
 
-def fake_lookup(monkeypatch, answers: dict[str, list[str]]):
-    """getaddrinfo for these names only; any other name isn't found, as on a computer with no network."""
-    async def getaddrinfo(self, host, port, *args, **kwargs):
+def fake_lookup(monkeypatch, answers: dict[str, list[str]], on_lookup=None):
+    """getaddrinfo for these names only; any other name isn't found, as on a computer with no network. netguard asks
+    from its own threads, so the fake is the plain, blocking one."""
+    def getaddrinfo(host, port, *args, **kwargs):
+        if on_lookup:
+            on_lookup(host)
         if host not in answers:
             raise socket.gaierror(socket.EAI_NONAME, "not found")
         return [(socket.AF_INET6 if ":" in address else socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 0))
                 for address in answers[host]]
 
-    monkeypatch.setattr(asyncio.BaseEventLoop, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
 
 
 async def test_a_public_name_that_points_here_is_refused_once_looked_up(monkeypatch):
@@ -56,13 +60,40 @@ async def test_a_public_name_that_points_here_is_refused_once_looked_up(monkeypa
     assert await netguard.refused("data:text/html,hi") is None and await netguard.refused("about:blank") is None
 
 
-async def test_a_slow_lookup_lets_the_browser_decide(monkeypatch):
-    async def slow(self, host, port, *args, **kwargs):
-        await asyncio.sleep(60)
-
-    monkeypatch.setattr(asyncio.BaseEventLoop, "getaddrinfo", slow)
+async def test_a_lookup_too_slow_to_say_is_refused(monkeypatch):
+    release = threading.Event()
+    fake_lookup(monkeypatch, {}, on_lookup=lambda host: release.wait(5))
     monkeypatch.setattr(netguard, "LOOKUP_WAIT", 0.1)
-    assert await netguard.refused("http://slow.example/") is None
+    try:
+        problem = await netguard.refused("http://slow.example/")
+    finally:
+        release.set()
+    assert problem is not None and problem.startswith("slow.example is on this computer or its network")
+
+
+async def test_a_page_cannot_starve_the_lookups_into_letting_a_name_through(monkeypatch):
+    """Names whose DNS never answers fill the lookup threads; the next lookup then can't say, and is refused. They
+    run on netguard's own threads, so nothing else (agentlink, the sandbox start) waits behind them."""
+    release, started = threading.Event(), []
+
+    def on_lookup(host):
+        started.append(threading.current_thread().name)
+        if host.startswith("slow"):
+            release.wait(10)
+
+    fake_lookup(monkeypatch, {"example.com": ["93.184.216.34"], **{f"slow{n}.example": ["93.184.216.34"]
+                                                                   for n in range(8)}}, on_lookup)
+    monkeypatch.setattr(netguard, "LOOKUP_WAIT", 0.2)
+    try:
+        slow = await asyncio.gather(*(netguard.refused(f"http://slow{n}.example/") for n in range(8)))
+        assert all(slow)  # none was let through
+        assert await netguard.refused("http://example.com/") is not None  # the threads are full: it can't say
+    finally:
+        release.set()
+    await asyncio.sleep(0.3)
+    assert await netguard.refused("http://example.com/") is None  # and it says again once they are free
+    assert started and all(name.startswith("netguard") for name in started), started  # never asyncio's own pool
+    assert len(started) <= 4 + 1  # the 4 threads, then the lookup once they were free: the queued ones were dropped
 
 
 async def test_only_the_tests_own_pages_are_ever_exempt(monkeypatch):

@@ -13,12 +13,18 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import socket
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
 REFUSED = ("{host} is on this computer or its network, and the sandbox never opens those. QA a site on this computer "
            "in your own browser (ask the user first)")
 SHARED = ipaddress.ip_network("100.64.0.0/10")  # carrier-grade NAT, and tailnets (Tailscale)
-LOOKUP_WAIT = 3.0  # seconds a name's lookup may take; past it, the browser decides (it looks the name up itself)
+LOOKUP_WAIT = 3.0  # seconds a name's lookup may take; past it, it is refused (a page can make lookups hang)
+# Lookups run on threads of their own, not the loop's shared pool: a page that opens many names whose DNS never answers
+# can only fill these four (then every lookup is refused, until they are free), and never stalls agentlink or the
+# sandbox start. ponytail: a lookup stuck in the OS holds its thread until the OS gives up.
+LOOKUPS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="netguard")
 # The requests Chrome pauses for a look (CDP Fetch patterns: * and ? only). Every navigation (Document) pauses, so its
 # name is looked up; any other request pauses only when its address may be private as written. The look decides.
 PATTERNS = [{"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"},
@@ -82,9 +88,12 @@ async def refused(url: str) -> str | None:
     except ValueError:
         pass
     try:
-        found = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(host, None), LOOKUP_WAIT)
-    except (OSError, UnicodeError, TimeoutError):
-        return None  # not found (the browser can't open it either), or too slow to say
+        found = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(LOOKUPS, socket.getaddrinfo, host, None), LOOKUP_WAIT)
+    except TimeoutError:  # before OSError: it is one. Too slow to say, so no: a page can make a lookup hang
+        return REFUSED.format(host=host)
+    except (OSError, UnicodeError):
+        return None  # not found: the browser can't open it either
     for *_, address in found:
         try:
             if private_address(ipaddress.ip_address(str(address[0]).split("%", 1)[0])):
