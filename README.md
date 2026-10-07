@@ -691,8 +691,8 @@ the sites you are signed in to.
 What happens in your Brave:
 - **Background tabs only:**
   - each agent works in background tabs AI Browser opens for it, in windows of their own, in the profile where agents
-    browse. An agent keeps to its tab and opens at most 2 of its own (so at most 2 windows), a third reusing the
-    oldest;
+    browse. An agent keeps to its tab and opens at most 2 of its own (so usually at most 2 windows), a third reusing
+    the oldest;
   - nothing comes to the front unless you click **Watch**, or a site shows a bot check (handed to you, see
     "Bot checks");
   - a Claude Code session's tabs go in a group called "Claude Code" while `ai-browser app` runs, and in a window of
