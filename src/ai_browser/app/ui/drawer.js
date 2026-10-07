@@ -13,21 +13,16 @@ import { AUTO_LABEL, AUTO_TITLE, agentLabel, createChat, el } from "./chat.js";
 import { COLORS } from "./desk.js";
 import { icon } from "./icons.js";
 import { openLive } from "./nav.js";
-import { takeFiles } from "./paste.js";
 import { permissionCard } from "./permission.js";
 import { renderPlan, renderSubagents } from "./plan.js";
 import { STATES, stateOf } from "./step.js";
 import { mountYourTabs } from "./tablist.js";
-import { mountUploads } from "./uploads.js";
-
-const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
-const WAIT = 10000; // ms a message with files waits for the app's answer before Send works again
+import { mountMessageBox } from "./uploads.js";
 
 export function mountDrawer({ link, agentOf, accounts, browserOf }) {
   const $ = (id) => document.getElementById(id);
   const send = (message) => link.send(message);
   const drawer = { id: null, parts: null, chat: null, brain: null, yourTabs: null, line: null };
-  let made = 0;
 
   function setText(node, text) {
     if (node.textContent !== text) node.textContent = text;
@@ -41,7 +36,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
   }
 
   function dropLine() { // its box goes: what was typed, and the files the app staged for it (it drops them)
-    drawer.line?.uploads.clear();
+    drawer.line?.box.clear();
     drawer.line = null;
   }
 
@@ -69,97 +64,44 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
                                    name: browser?.name || "Brave", scope });
   }
 
-  function chatLine(id) { // the chat's box: the words, Attach, Send, the chips and a note. One per agent shown
-    const line = { id, box: el("div", "chat-box"), input: el("textarea"), files: el("input"),
-                   list: el("ul", "attached"), words: el("span", "muted note"), pending: null, timer: null,
-                   noted: null };
-    line.note = (text) => {
-      line.words.textContent = text;
-      clearTimeout(line.noted);
-      line.noted = setTimeout(() => { line.words.textContent = ""; }, 6000);
+  function chatLine(id) { // the chat's box: Attach, the words, Send, the chips and a note. One per agent shown
+    const box = el("div", "chat-box");
+    const input = el("textarea");
+    const words = el("span", "muted note");
+    const list = el("ul", "attached");
+    const picker = el("input");
+    const note = (text) => {
+      words.textContent = text;
+      clearTimeout(note.timer);
+      note.timer = setTimeout(() => { words.textContent = ""; }, 6000);
     };
-    line.uploads = mountUploads({ list: line.list, send, note: line.note });
-    line.input.rows = 1;
-    line.input.placeholder = "Message this agent";
-    line.input.setAttribute("aria-label", "Message this agent");
-    line.input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-        event.preventDefault();
-        sendChat();
-      }
-    });
-    const attach = button("icon-button attach", "", () => line.files.click());
+    input.rows = 1;
+    input.placeholder = "Message this agent";
+    input.setAttribute("aria-label", "Message this agent");
+    const attach = el("button", "icon-button attach");
+    attach.type = "button";
     attach.append(icon("clip"));
     attach.setAttribute("aria-label", "Attach files");
     attach.title = "Attach files: at most 10, 20 MB each";
-    line.files.type = "file";
-    line.files.multiple = true;
-    line.files.hidden = true;
-    line.files.addEventListener("change", () => {
-      line.uploads.add([...line.files.files]);
-      line.files.value = ""; // the same file can be picked again
-    });
-    line.send = button("primary send", "Send", () => sendChat());
-    line.list.hidden = true;
-    line.list.setAttribute("aria-label", "Attached files");
-    line.words.setAttribute("role", "status");
+    picker.type = "file";
+    picker.multiple = true;
+    picker.hidden = true;
+    const sendButton = button("primary send", "Send", () => line.box.send());
+    list.hidden = true;
+    list.setAttribute("aria-label", "Attached files");
+    words.setAttribute("role", "status");
     const row = el("div", "composer-line");
-    row.append(attach, line.files, line.input, line.send);
-    line.box.append(row, line.list, line.words);
-    takeFiles(line.input, (pasted) => line.uploads.add(pasted), { area: line.box }); // pasted or dropped: as Attach
-    return line;
-  }
-
-  function settle(line) { // the app answered (or never will): Send works again
-    clearTimeout(line.timer);
-    line.pending = null;
-    line.send.disabled = false;
-  }
-
-  function sendChat() {
-    const line = drawer.line;
-    if (!line || !drawer.id || line.pending) return;
-    const text = line.input.value.trim();
-    const why = line.uploads.why();
-    if (why) {
-      line.note(why);
-      return;
-    }
-    const files = line.uploads.ids();
-    if (!text && !files.length) return;
-    if (!files.length) { // words only: as before, gone from the box once on their way
-      if (link.send({ type: "send", id: drawer.id, text })) line.input.value = "";
-      else line.note(NOT_CONNECTED);
-      return;
-    }
-    made += 1;
-    const request = `s${Date.now().toString(36)}-${made}`;
-    if (!link.send({ type: "send", id: drawer.id, text, attachments: files, request })) {
-      line.note(NOT_CONNECTED);
-      return;
-    }
-    line.pending = { request, files };
-    line.send.disabled = true;
-    line.timer = setTimeout(() => settle(line), WAIT);
-  }
-
-  function lineMessage(message) { // the app's answers for the chat's box: its files, and whether the message went
-    const line = drawer.line;
-    if (!line) return;
-    line.uploads.onMessage(message);
-    if (message.type === "snapshot") { // a new connection: the app dropped every staged file
-      line.uploads.lost();
-      if (line.pending) settle(line);
-    } else if (line.pending && message.request === line.pending.request) {
-      const { files } = line.pending;
-      settle(line);
-      if (message.type === "sent") { // the app placed them: only now do the chips and the words go
-        line.uploads.taken(files);
-        line.input.value = "";
-      } else if (message.type === "error") {
-        line.note(String(message.text || ""));
+    row.append(attach, picker, input, sendButton);
+    box.append(row, list, words);
+    const line = { id, element: box, box: mountMessageBox({ link, agentId: () => drawer.id, input, sendButton, list,
+                                                            note, area: box, attach, picker }) };
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        line.box.send();
       }
-    }
+    });
+    return line;
   }
 
   function fill(agent) { // the drawer's agent changed: its parts are updated in place
@@ -253,7 +195,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
     $("drawer-body").replaceChildren(parts.status, parts.moved, parts.folder, parts.auto, parts.autoWords,
                                      parts.buttons, parts.permission,
                                      parts.askSlot, parts.plan, parts.subs, parts.yourTabs, parts.messages,
-                                     drawer.line.box);
+                                     drawer.line.element);
     drawer.parts = parts;
     drawer.chat = createChat(parts.messages);
     drawer.chat.reset("Loading…");
@@ -271,7 +213,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
     get isOpen() { return !$("drawer").hidden; },
     onMessage(message) {
       if (message.type?.startsWith("brain_")) drawer.brain?.onMessage(message); // the inbox in the drawer
-      lineMessage(message);
+      drawer.line?.box.onMessage(message); // the chat's files, and whether its message went
       if (message.type === "agent_event" && message.id === drawer.id) {
         drawer.chat?.append(message.event);
       } else if (message.type === "agent_events" && message.id === drawer.id && drawer.chat) {

@@ -758,6 +758,41 @@ async def test_an_agents_chat_keeps_its_files_until_the_app_takes_them(stack):
     await wait_for(lambda: len(list((work / "attachments").iterdir())) == 10)
 
 
+# A page whose long timers (10 s and more) run at once, and whose messages to an agent with files wait for
+# window.release(): the app's answer comes later than any timer the page sets.
+LATE = ("(() => { const later = window.setTimeout;"
+        " window.setTimeout = (run, ms, ...rest) => later(run, ms >= 10000 ? 50 : ms, ...rest);"
+        " const send = WebSocket.prototype.send; const held = [];"
+        " WebSocket.prototype.send = function (data) {"
+        "   if (!window.released && typeof data === 'string' && data.startsWith('{\"type\":\"send\"')"
+        "       && data.includes('\"attachments\"')) { held.push([this, data]); return; }"
+        "   return send.call(this, data); };"
+        " window.release = () => { window.released = true; for (const [socket, data] of held.splice(0))"
+        " send.call(socket, data); }; })();")
+
+
+@CHROME
+async def test_an_agents_chat_waits_for_the_apps_answer_however_late_it_comes(stack):  # the review of look-3, F5
+    from test_mission import open_drawer
+
+    await stack["server"].agents.create("check the page")
+    js = await open_with(stack, LATE)
+    assert await until(js, f"{station('a1')}?.dataset.state === 'your_turn'")
+    await js(open_drawer("a1"))
+    assert await until(js, f"document.querySelector('{LINE} textarea') !== null")
+    await js(f"({PASTE})('{LINE} textarea', {json.dumps(PICTURE)})")
+    assert await until(js, f"{DRAWER_CHIPS}.length === 1 && {DRAWER_CHIPS}[0].dataset.state === 'done'", 15)
+    await js(f"document.querySelector('{LINE} textarea').value = 'see this';"
+             f" document.querySelector('{LINE} .send').click(); true")
+    await asyncio.sleep(1)  # well past every timer the page set
+    assert await js(f"document.querySelector('{LINE} .send').disabled") is True  # still waiting for the answer
+    await js("window.release(); true")
+    assert await until(js, f"{DRAWER_CHIPS}.length === 0 && document.querySelector('{LINE} textarea').value === ''")
+    assert await js(f"document.querySelector('{LINE} .send').disabled") is False
+    folder = stack["home"] / "app" / "agents" / "a1" / "work" / "attachments"
+    await wait_for(lambda: (folder / "image.png").is_file())
+
+
 @CHROME
 async def test_spreadsheet_cells_paste_as_text_and_a_copied_file_still_attaches(stack):  # the review of look-3, F6
     js = await drawer_of_a_finished_agent(stack)
