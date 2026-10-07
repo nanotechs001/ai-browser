@@ -25,8 +25,8 @@ const TABLE = [ // the round desk, seen from the front and a little above (offic
   ["ellipse", { class: "top", cx: "110", cy: "40", rx: "106", ry: "30" }],
   ["ellipse", { class: "shine", cx: "110", cy: "36", rx: "86", ry: "20" }],
 ];
-const LID = [["rect", { class: "shell", x: "2", y: "2", width: "60", height: "36", rx: "4" }],
-             ["path", { class: "logo", d: "M32 12 L39 26 H25 Z" }]];
+const LID = [["rect", { class: "shell", x: "1", y: "1", width: "54", height: "25", rx: "4" }], // seen from behind
+             ["path", { class: "logo", d: "M28 8 L33.5 19 H22.5 Z" }]];
 const CHAIR = [["rect", { x: "4", y: "2", width: "50", height: "58", rx: "14", fill: "#1a2142" }],
                ["rect", { x: "9", y: "7", width: "40", height: "48", rx: "11", fill: "#232b55" }]];
 const MUG = [["path", { d: "M5 7h11v9a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4z", fill: "#e9edf7" }],
@@ -67,9 +67,6 @@ export function art(className, viewBox, shapes) { // a small fixed drawing from 
   return holder;
 }
 
-export function plantArt(className = "plant") {
-  return art(className, "0 0 40 48", PLANT);
-}
 
 export function createDesk(id, onSelect = () => {}) {
   const node = el("button", "station billboard arriving placing"); // its first place: no sliding into it
@@ -93,9 +90,10 @@ export function createDesk(id, onSelect = () => {}) {
   parts.pose.append(createWorker(id));
   parts.more.hidden = true;
   const laptop = el("div", "laptop");
-  laptop.append(art("lid", "0 0 64 40", LID), el("div", "keyboard"));
+  laptop.append(art("lid", "0 0 56 27", LID), el("div", "keyboard"));
   parts.art.append(art("chair", "0 0 58 66", CHAIR), parts.pose, art("table", "0 0 220 110", TABLE), laptop,
-                   art("mug", "0 0 24 24", MUG), plantArt(), parts.subs, parts.more, parts.nameplate);
+                   art("mug", "0 0 24 24", MUG), art("plant", "0 0 40 48", PLANT), parts.subs, parts.more,
+                   parts.nameplate);
   node.append(parts.step, parts.art, parts.needs);
   node.addEventListener("click", () => onSelect(id));
   const subs = new Map(); // sub-agent id -> its pose

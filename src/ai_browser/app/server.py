@@ -350,7 +350,7 @@ class AppServer:
         if accounts is not None:
             agents.accounts = accounts
             agents.on_limit = lambda account: self._accounts_changed()  # the pickers' "at its limit until"
-            agents.on_usage = lambda account: self._accounts_changed()  # the Usage card's percentage (the new look)
+            agents.on_usage = lambda account: self._accounts_changed()  # the Usage card's bars (the new look)
             accounts.on_change = self._accounts_changed  # a status that changed, whoever asked: every page hears it
         self.open_terminal = open_terminal
         self._signing_in: dict[str, asyncio.Task] = {}  # account id -> the look at its sign-in

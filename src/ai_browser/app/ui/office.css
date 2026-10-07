@@ -1,5 +1,5 @@
 /* Mission Control's office (the new look): the workers (chibi.js) and the icons (icons.js); from Task 11's room on, the
-   desks, the globe and the decor too. Colours come from theme.css. */
+   desks and the globe too. Colours come from theme.css. */
 .icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8;
         stroke-linecap: round; stroke-linejoin: round; }
 .icon.filled { fill: currentColor; stroke: none; }
@@ -55,9 +55,9 @@
 .pose[data-state="your_turn"] > .worker :is(.body, .head, .face, .phones, .arm-l, .arm-thumb) {
   animation: mc-hop 2.4s ease-in-out infinite; }
 .pose[data-state="your_turn"] > .worker .sparkle { animation: mc-sparkle 0.8s ease-out 1; }
-/* failed: slumps onto the desk, eyes shut, a sad mouth and a drop of sweat */
+/* failed: slumps to one side, eyes shut, a sad mouth and a drop of sweat */
 .pose[data-state="failed"] > .worker :is(.body, .head, .face, .phones, .blink, .sweat) {
-  transform: translateY(9px) rotate(-12deg); transform-origin: 50% 90%; }
+  transform: translateY(1px) rotate(-10deg); transform-origin: 50% 90%; } /* its face stays over the lid */
 .pose[data-state="failed"] > .worker :is(.eyes-open, .mouth-smile) { opacity: 0; }
 .pose[data-state="failed"] > .worker :is(.eyes-shut, .mouth-sad) { opacity: 1; }
 .pose[data-state="failed"] > .worker .sweat { opacity: 1; animation: mc-sweat 3s ease-in infinite; }
@@ -86,29 +86,17 @@
 }
 
 /* ---- the room ------------------------------------------------------------------------------------------------- */
+/* the room is the page's plain navy (the user's hand check: no back wall, no grid): --bg, --bg-deep in its corners */
 .scene { position: relative; overflow: hidden; isolation: isolate;
-         background: radial-gradient(ellipse at 50% 38%, #142454 0%, #0a1430 38%, var(--bg-deep) 75%); }
-.backdrop { position: absolute; inset: 0 0 45% 0; pointer-events: none; opacity: 0.55;
-            background:
-              repeating-linear-gradient(90deg, transparent 0 46px, rgba(255, 200, 120, 0.05) 46px 52px,
-                                        transparent 52px 110px),
-              repeating-linear-gradient(0deg, transparent 0 30px, rgba(120, 150, 255, 0.05) 30px 33px),
-              linear-gradient(180deg, #0b1636, transparent);
-            -webkit-mask-image: linear-gradient(180deg, #000 30%, transparent);
-            mask-image: linear-gradient(180deg, #000 30%, transparent); }
+         background: radial-gradient(ellipse at 50% 40%, var(--bg) 55%, var(--bg-deep)); }
 .viewport { position: absolute; inset: 0; perspective: 1800px; perspective-origin: 50% 20%; overflow: hidden;
             cursor: grab; touch-action: none; }
 .viewport.dragging { cursor: grabbing; }
 .room { position: absolute; left: 50%; top: 58%; width: 2000px; height: 1400px; margin: -700px 0 0 -1000px;
         transform-style: preserve-3d; --tilt: 58deg; --spin: 0deg; }
-.floor { position: absolute; inset: -500px; pointer-events: none;
-         background:
-           radial-gradient(circle at 50% 44%, rgba(60, 110, 255, 0.28), transparent 22%),
-           repeating-linear-gradient(0deg, rgba(120, 150, 230, 0.09) 0 1px, transparent 1px 120px),
-           repeating-linear-gradient(90deg, rgba(120, 150, 230, 0.09) 0 1px, transparent 1px 120px),
-           #0d1838;
-         -webkit-mask-image: radial-gradient(ellipse at 50% 46%, #000 34%, transparent 70%);
-         mask-image: radial-gradient(ellipse at 50% 46%, #000 34%, transparent 70%); }
+.floor { position: absolute; inset: -500px; pointer-events: none; /* only the soft blue glow under the globe */
+         background: radial-gradient(circle at 50% 44%, color-mix(in srgb, var(--glow) 50%, transparent),
+                                     transparent 22%); }
 .ring { position: absolute; border-radius: 50%; pointer-events: none; border: 2px solid rgba(90, 150, 255, 0.55);
         box-shadow: 0 0 30px var(--glow), inset 0 0 30px rgba(60, 110, 255, 0.3); }
 .ring.inner { width: 340px; height: 340px; margin: -170px 0 0 -170px; }
@@ -126,8 +114,6 @@
 .empty-note { padding: 8px 18px; border-radius: 999px; background: rgba(13, 24, 52, 0.85); color: var(--text-2);
               border: 1px solid var(--line-strong); font-size: 16px; white-space: nowrap; pointer-events: none; }
 .room:not([data-empty="true"]) .empty-note { display: none; }
-.plant-big { width: 110px; height: 132px; pointer-events: none; }
-.plant-big svg { width: 100%; height: 100%; display: block; }
 
 /* ---- the globe: the Brain's seat. Its glow (--g) follows the Brain's state ------------------------------------- */
 .stage { width: 300px; display: flex; flex-direction: column; align-items: center; }
@@ -165,20 +151,6 @@
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); text-align: left; }
 .bubble::after { content: ""; position: absolute; left: 50%; bottom: -8px; margin-left: -8px;
                  border: 8px solid transparent; border-bottom: 0; border-top-color: rgba(236, 242, 255, 0.97); }
-
-/* ---- the decor: a neon sign, a hanging lamp ------------------------------------------------------------------- */
-.sign { position: absolute; right: 9%; top: 96px; z-index: 1; padding: 10px 14px; border: 3px solid #2b5cff;
-        border-radius: 8px; transform: perspective(600px) rotateY(-14deg); color: #3a72ff; font-weight: 800;
-        font-size: 30px; line-height: 1; letter-spacing: 0.02em; text-align: center; pointer-events: none;
-        text-shadow: 0 0 10px rgba(58, 114, 255, 0.9), 0 0 24px rgba(58, 114, 255, 0.6);
-        box-shadow: 0 0 18px rgba(43, 92, 255, 0.55), inset 0 0 18px rgba(43, 92, 255, 0.35); }
-.sign span { display: block; }
-.lamp { position: absolute; top: 0; left: 62%; z-index: 1; width: 90px; height: 120px; pointer-events: none; }
-.lamp .cord { position: absolute; left: 44px; top: 0; width: 2px; height: 60px; background: #2a3150; }
-.lamp .shade { position: absolute; left: 15px; top: 56px; width: 60px; height: 34px; }
-.lamp .shade svg { width: 100%; height: 100%; display: block; }
-.lamp .light { position: absolute; left: -60px; top: 72px; width: 210px; height: 160px; border-radius: 50%;
-               background: radial-gradient(ellipse at 50% 10%, rgba(255, 214, 160, 0.35), transparent 60%); }
 
 /* ---- a desk (desk.js): the step card above it, the desk with its chibi, laptop, mug and plant ------------------ */
 .station { width: 230px; border: 0; background: none; color: inherit; padding: 0; cursor: pointer; font: inherit;
@@ -231,9 +203,12 @@
 .desk-art { position: relative; width: 220px; height: 150px; }
 .desk-art > div { position: absolute; }
 .desk-art svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.desk-art .chair { left: 66px; bottom: 50px; width: 58px; height: 66px; z-index: 0; }
+.desk-art .chair { left: 81px; bottom: 50px; width: 58px; height: 66px; z-index: 0; }
 .desk-art > .pose.main { position: static; } /* not a zero-size box: the worker is placed in the desk's own box */
-.desk-art .pose.main > .worker { right: auto; left: 60px; bottom: 50px; }
+/* the worker sits behind its open laptop, at the desk's middle, as high as the desk's box lets it: its whole face
+   (eyes and mouth, to 44 px down) shows over the lid (from 48 px down) and the desk's far edge (50), its body hides
+   behind the desk, and its hands rest on the keys (74 px down) */
+.desk-art .pose.main > .worker { right: auto; left: 75px; bottom: 73px; }
 .desk-art .table { left: 0; bottom: 0; width: 220px; height: 110px; z-index: 2; }
 .table .top { fill: #1b2142; }
 .table .shine { fill: #252c55; }
@@ -241,7 +216,7 @@
 .table .rim { fill: none; stroke: var(--rim); stroke-width: 3; filter: drop-shadow(0 0 6px var(--rim)); }
 .station[data-state="needs_you"] .table .rim { stroke: var(--needs); }
 .station[data-state="failed"] .table .rim { stroke: var(--fail); }
-.desk-art .laptop { left: 98px; bottom: 58px; width: 64px; height: 46px; z-index: 2; }
+.desk-art .laptop { left: 82px; bottom: 69px; width: 56px; height: 33px; z-index: 2; }
 .laptop .lid { position: absolute; inset: 0 0 6px 0; }
 .laptop .lid .shell { fill: #232a4e; stroke: #3a4a86; stroke-width: 1; }
 .laptop .lid .logo { fill: none; stroke: var(--accent-bright); stroke-width: 2; }
@@ -249,7 +224,7 @@
                     background: linear-gradient(180deg, #3a4370, #20284a); }
 .desk-art .mug { left: 30px; bottom: 54px; width: 24px; height: 24px; z-index: 2; }
 .desk-art .plant { right: 18px; bottom: 54px; width: 34px; height: 42px; z-index: 2; }
-.desk-art .subs { left: 150px; bottom: 70px; display: flex; gap: 2px; z-index: 1; } /* above the desk's far edge */
+.desk-art .subs { left: 150px; bottom: 84px; display: flex; gap: 2px; z-index: 1; } /* faces over the far edge */
 .desk-art .subs .pose { position: relative; width: 42px; height: 46px; }
 .desk-art .subs .worker { right: 0; bottom: 0; }
 .desk-art .more { position: absolute; right: 6px; bottom: 98px; z-index: 3; font-size: 11px; color: var(--text-2); }

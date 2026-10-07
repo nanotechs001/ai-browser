@@ -20,7 +20,7 @@ from .. import platforms
 from ..accounts import clean_env
 from ..brain.tools import ToolsConfig, server_of
 from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
-from ..limits import from_event, from_text, usage_from_event
+from ..limits import from_event, from_text, windows_from_event
 from ..syncdir import write_atomic
 from . import powers
 
@@ -238,11 +238,11 @@ class ClaudeBridge:
             if kind == "control_request" and (event.get("request") or {}).get("subtype") == "can_use_tool":
                 await self._permission(event)  # Claude Code waits for the answer
                 continue
-            if kind == "rate_limit_event":  # undocumented: only status, resetsAt, rateLimitType and USAGE_KEY are read
+            if kind == "rate_limit_event":  # undocumented: status, resetsAt, rateLimitType and unifiedWindows are read
                 self._note_shape(event)
-                usage = usage_from_event(event)
-                if usage is not None:  # how much is used, for the Usage card: never the chat's
-                    yield {"type": "usage", "used": usage.used, "resets_at": usage.resets_at, "kind": usage.kind}
+                windows = windows_from_event(event)
+                if windows:  # how much of the session's and the week's limits is used: the Usage card's, not the chat's
+                    yield {"type": "usage", "windows": windows}
                 hit = from_event(event)
                 if hit is not None and not self._limit_seen:
                     self._limit_seen = True

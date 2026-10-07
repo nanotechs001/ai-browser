@@ -1,5 +1,5 @@
-/* Mission Control (the new look): the left menu, the centre (the heading, the Flow · List · Calendar switch, the
-   office, the menu's pages, the composer), the right column, and the drawer. Colours, type and radii: theme.css; the
+/* Mission Control (the new look): the left menu, the centre (the Flow · List · Calendar switch, the office, the
+   menu's pages, the composer), the right column, and the drawer. Colours, type and radii: theme.css; the
    office itself: office.css; the composer: composer.css. Narrow windows fold the right column under the centre, then
    shrink the menu to icons. */
 * { box-sizing: border-box; }
@@ -36,6 +36,8 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .dot[data-state="connected"] { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
 .dot[data-state="disconnected"] { background: var(--fail); }
 .empty { color: var(--muted); font-size: 14px; margin: 6px 2px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+                   clip-path: inset(50%); white-space: nowrap; border: 0; } /* for a screen reader only */
 
 /* ---- the three columns --------------------------------------------------------------------------------------- */
 .mc { display: grid; grid-template-columns: 248px minmax(0, 1fr) 330px; grid-template-areas: "menu centre side";
@@ -64,18 +66,12 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .workspaces:empty { display: none; }
 .usage { margin-top: auto; width: 100%; padding: 12px 14px; text-align: left; justify-content: space-between;
          background: var(--card); border-color: var(--line); border-radius: 12px; }
-.usage-words { display: flex; flex-direction: column; min-width: 0; }
-.usage-title { font-weight: 600; }
 
-/* ---- the centre: the heading, the switch, the views and the menu's pages ---------------------------------------- */
+/* ---- the centre: the switch, the views and the menu's pages ---------------------------------------------------- */
 .centre { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 .page { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px; }
 .page.dashboard { position: relative; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
-.heading { position: absolute; left: 32px; top: 26px; z-index: 2; max-width: 520px; pointer-events: none; }
-.heading .eyebrow { margin: 0; }
-.heading h2 { font-size: 40px; font-weight: 800; letter-spacing: -0.01em; margin: 6px 0 8px; }
-.heading .lede { margin: 0; color: var(--text-2); font-size: 16px; }
-.switch-views { position: absolute; right: 24px; top: 24px; z-index: 3; display: flex; gap: 4px; padding: 4px;
+.switch-views { position: absolute; right: 24px; top: 16px; z-index: 3; display: flex; gap: 4px; padding: 4px;
                 border-radius: 12px; background: rgba(12, 22, 44, 0.85); border: 1px solid var(--line); }
 .switch-views button { gap: 8px; border: 1px solid transparent; background: transparent; padding: 7px 14px;
                        border-radius: 9px; color: var(--text-2); }
@@ -83,19 +79,11 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
                                        color: var(--text); box-shadow: 0 0 14px var(--glow); }
 .view-flow { position: relative; flex: 1; min-height: 0; }
 .view-flow .scene { position: absolute; inset: 0; }
-.view-flow .help { position: absolute; left: 20px; bottom: 10px; margin: 0; max-width: calc(100% - 40px);
-                   color: var(--dim); font-size: 12px; pointer-events: none; } /* the room's keys, as before */
-/* the List and the Calendar start below the heading (up to 162 px down) */
-.view-list, .view-calendar { flex: 1; min-height: 0; overflow-y: auto; padding: 176px 28px 20px; }
+/* the List and the Calendar start right under the switch (its foot is 62 px down) */
+.view-list, .view-calendar { flex: 1; min-height: 0; overflow-y: auto; padding: 76px 28px 20px; }
 @media (max-width: 899px) {
-  .view-flow .help { display: none; }
-  .heading { left: 20px; top: 18px; }
-  .heading h2 { font-size: 26px; }
-  .heading .lede { display: none; }
-  .switch-views { right: 12px; top: 66px; }
+  .switch-views { right: 12px; }
   .switch-views button { padding: 6px 9px; }
-  .sign { top: 118px; right: 4%; padding: 6px 10px; font-size: 22px; } /* under the switch, smaller */
-  .view-list, .view-calendar { padding-top: 120px; }
 }
 
 /* ---- an agent as a row: the List view, My Missions ---------------------------------------------------------------- */
@@ -288,16 +276,29 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .workspace-name { width: 100%; }
 .workspace-note { margin: 4px 0 0; font-size: 12px; }
 .workspace-note:empty { display: none; }
-.usage { align-items: center; gap: 8px; }
-.usage-lines { display: flex; flex-direction: column; min-width: 0; }
-.usage-line { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-line:is(.limit, .high) { color: var(--needs); }
-.usage-line.out { color: var(--muted); }
-.usage-ring { flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
-              background: conic-gradient(var(--accent-2) calc(var(--p, 0) * 1%), #263354 0); }
-.usage-ring::before { content: ""; grid-area: 1 / 1; width: 44px; height: 44px; border-radius: 50%;
-                      background: var(--card); }
-.usage-ring-text { grid-area: 1 / 1; font-size: 13px; font-weight: 700; }
+/* each account: its name, when it was read, and two bars (usage.js): the current session and the week */
+.usage { align-items: flex-start; gap: 8px; }
+.usage-words { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.usage-title { font-weight: 600; }
+.usage-accounts { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.usage-account { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.usage-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; column-gap: 8px;
+              min-width: 0; }
+.usage-name { min-width: 0; font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden;
+              text-overflow: ellipsis; white-space: nowrap; }
+.usage-note { font-size: 11px; color: var(--muted); }
+.usage-note.limit { color: var(--needs); }
+.usage-window { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.usage-top { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-2); }
+.usage-percent { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.usage-bar { display: block; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.usage-fill { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent-2); }
+.usage-window[data-state="high"] .usage-fill { background: var(--needs); }
+.usage-window[data-state="limit"] .usage-fill { background: var(--fail); }
+.usage-when { font-size: 11px; color: var(--muted); }
+.usage-when:empty { display: none; }
+.usage-window[data-state="limit"] .usage-when { color: var(--needs); }
+.usage-more { font-size: 12px; color: var(--muted); }
 :is(.mission, .workflow) select.move { flex: none; width: 150px; } /* one width on every row: the columns line up */
 .usage-icon { display: none; }
 
@@ -337,6 +338,5 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
   .workspace-pick, .workspace-new { justify-content: center; padding: 9px; }
   .workspace-note { overflow-wrap: anywhere; }
   .usage { justify-content: center; padding: 10px; }
-  .usage .usage-icon { display: block; }
-  .usage .usage-ring { display: none; } /* 56 px does not fit a 64 px menu: the number is a click away */
+  .usage .usage-icon { display: block; } /* its tooltip lists each account's numbers (usage.js) */
 }

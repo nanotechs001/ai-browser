@@ -1,6 +1,6 @@
 // Mission Control (the new look): the user's AI office. The left menu (the line's light, the counts, New Mission, the
-// pages, the workspaces and the Usage card), the centre (the heading, the Flow · List · Calendar switch, the office of
-// scene.js, the menu's pages and the composer), and the right column (side.js) for the agent picked. On the same line
+// pages, the workspaces and the Usage card), the centre (the Flow · List · Calendar switch, the office of scene.js,
+// the menu's pages and the composer), and the right column (side.js) for the agent picked. On the same line
 // to the app as AI Home (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
 import { askError } from "./accountui.js";
 import { mountCalendar } from "./calendar.js";

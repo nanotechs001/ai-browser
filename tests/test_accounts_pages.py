@@ -285,3 +285,24 @@ async def test_the_open_drawer_follows_a_new_account_list_at_once(stack):
     server._send_all({"type": "accounts", "accounts": [*server._account_rows(), work]})  # one message, the new list
     ask = f"{drawer}.querySelector('.account-ask .continue')"
     assert await until(js, f"{ask}?.textContent === 'Continue on Work'", 5)  # drawn from the list it came with
+
+
+@CHROME
+async def test_usage_readings_never_redraw_settings_accounts(home):  # the polish's review, F2
+    _, stack = home
+    accounts, server = stack["accounts"], stack["server"]
+    work = accounts.add("Work")  # not signed in: Sign in and Remove
+    settings = await open_settings(stack)
+    row = f"document.querySelector('#accounts .account[data-id=\"{work.id}\"]')"
+    assert await until(settings, f"{ROWS}.length === 2 && {row}.querySelector('.status').textContent !== 'Checking…'")
+    await settings(f"{row}.querySelector('.signin').click(); true")  # its Sign in, unfolded: the command to select
+    assert await until(settings, f"!!{row}?.querySelector('.command')")
+    await settings(f"window.kept = {row}; window.kept.querySelector('.remove').focus();"
+                   " getSelection().selectAllChildren(window.kept.querySelector('.command')); true")
+    for used in (10.0, 11.0, 12.0):  # an agent at work: a reading with each request, and every page hears it
+        accounts.set_windows("default", {"five_hour": {"used": used, "resets_at": time.time() + 3600}})
+        server.agents.on_usage("default")
+        await asyncio.sleep(0.3)
+    assert await settings(f"window.kept === {row} && window.kept.isConnected")  # the list wasn't drawn again
+    assert await settings("document.activeElement === window.kept.querySelector('.remove')")  # its focus stays
+    assert await settings("getSelection().toString()") == await settings(f"{row}.querySelector('.command').textContent")

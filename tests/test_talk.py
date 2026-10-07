@@ -403,7 +403,7 @@ async def test_the_mic_button_clicks_holds_and_stops_at_the_cap(stack):
     stack["hearing"].max_seconds = 2  # the page takes its cap from hearing_status
     js = await open_talk(stack, mic())
     assert await js("document.getElementById('mic').title") == "Talk to the Brain: hold Space, or hold or click here"
-    assert (await js("document.getElementById('help').textContent")).endswith("· hold Space to talk")
+    assert await js("document.getElementById('help') === null")  # no keys line under the office (the hand check)
 
     async def heard(count):
         assert await eventually(lambda: len(engine.heard) == count), count

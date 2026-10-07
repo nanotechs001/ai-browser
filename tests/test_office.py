@@ -60,6 +60,11 @@ POSES = """(async () => {
 })()"""
 
 
+FACE = ("((worker) => [...worker.querySelectorAll('.part.face svg > *')].map((node) => node.getBoundingClientRect())"
+        ".reduce((all, r) => [Math.min(all[0], r.left), Math.min(all[1], r.top), Math.max(all[2], r.right),"
+        " Math.max(all[3], r.bottom)], [Infinity, Infinity, -Infinity, -Infinity]))")  # its eyes, brows, cheeks, mouth
+
+
 def worker(state, part=""):
     return f"document.querySelector('#poses .pose[data-state=\"{state}\"] > .worker {part}'.trim())"
 
@@ -240,12 +245,51 @@ async def test_an_empty_room_says_start_a_mission_below(stack):
     assert await js(f"{note}.textContent") == "Start a mission below"
     assert await js(f"getComputedStyle({note}).display") != "none"
     assert await js("document.getElementById('brain').classList.contains('globe')")
-    assert await js("[...document.querySelectorAll('.sign span')].map(node => node.textContent)") == ["AI", "OFFICE"]
-    assert await js("document.querySelectorAll('.lamp, .plant-big').length") >= 4
+    # the user's hand check: no AI OFFICE sign, no hanging lamp, no big plants (each desk keeps its small one)
+    assert await js("document.querySelectorAll('.sign, .lamp, .plant-big').length") == 0
     assert await js("document.querySelectorAll('.globe .map circle').length") > 300  # the dotted continents
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("Fix the footer")
     assert await until(js, f"getComputedStyle({note}).display === 'none'")
+
+
+ROOM_SHEET = """(() => {
+  const look = (selector) => { const style = getComputedStyle(document.querySelector(selector));
+    return [style.backgroundImage, style.backgroundColor]; };
+  return { backdrop: document.querySelectorAll('.backdrop').length, scene: look('.scene'), floor: look('.floor'),
+           rings: document.querySelectorAll('.ring').length };
+})()"""
+
+
+def rule(sheet, selector):
+    """The body of one rule in a style sheet, found by its selector at the start of a line."""
+    found = re.search(rf"^{re.escape(selector)} {{(.*?)}}", sheet, re.MULTILINE | re.DOTALL)
+    assert found, selector
+    return found.group(1)
+
+
+@CHROME
+async def test_the_room_is_the_pages_plain_navy_with_no_wall_or_grid(stack):  # the user's hand check
+    from pathlib import Path
+
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    await stack["server"].agents.create("Fix the footer")
+    js = await open_mission(stack)
+    assert await until(js, f"{station('a1')} !== null")
+    look = await js(ROOM_SHEET)
+    assert look["backdrop"] == 0  # no back wall
+    for part in ("scene", "floor"):
+        assert "repeating" not in look[part][0], (part, look[part])  # no grid lines, on the wall or the floor
+    # the room is the page's navy: --bg in the middle, --bg-deep in the far corners, and no other colour
+    assert set(re.findall(r"rgba?\([^)]*\)", " ".join(look["scene"]))) <= {"rgb(7, 15, 35)", "rgb(5, 11, 26)",
+                                                                          "rgba(0, 0, 0, 0)"}, look["scene"]
+    assert look["floor"][1] == "rgba(0, 0, 0, 0)" and "radial-gradient" in look["floor"][0]  # only the globe's glow
+    assert look["rings"] == 2  # the globe's rings stay, and the desk's glow and the dotted line
+    assert await js("document.querySelectorAll('.shadow:not(.away)').length") == 1
+    assert await js("document.querySelectorAll('.links path.link:not(.away)').length") == 1
+    sheet = (Path(__file__).parents[1] / "src" / "ai_browser" / "app" / "ui" / "office.css").read_text(encoding="utf-8")
+    for selector in (".scene", ".floor"):  # theme tokens only
+        assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", rule(sheet, selector)), selector
 
 
 @CHROME
@@ -373,12 +417,78 @@ async def test_the_workers_sit_at_the_desk_and_sub_agents_show_over_its_far_edge
         return (f"(() => {{ const r = {station('a1', part)}.getBoundingClientRect();"
                 " return [r.left, r.top, r.right, r.bottom]; })()")
 
-    art, worker, sub, table = [await js(box(part)) for part in (".desk-art", ".pose.main .worker",
-                                                                 ".subs .worker", ".table")]
+    art, worker, sub, table, top = [await js(box(part)) for part in (".desk-art", ".pose.main .worker",
+                                                                      ".subs .worker", ".table", ".table .top")]
     assert art[0] <= worker[0] and worker[2] <= art[2] and art[1] <= worker[1] and worker[3] <= art[3]  # in its desk
-    assert worker[3] - art[1] > 0.6 * (art[3] - art[1])  # behind the desk's rim, at any zoom: 0.6 of its art's height
+    assert worker[3] > top[1] + 0.3 * (top[3] - top[1])  # its lower part behind the desk's top, at any zoom
     assert worker[1] < table[1]  # its head above the desk's box
     assert sub[1] < table[1] < sub[3]  # a sub-agent too: its head over the desk's far edge, not wholly behind it
+    for one in (".pose.main > .worker", ".subs .worker"):  # and each shows its whole face over the desk's far edge
+        face = await js(f"{FACE}({station('a1', one)})")
+        assert face[3] <= top[1], (one, face, top)
+    layers = await js(f"[{station('a1', '.pose.main .part.body')}, {station('a1', '.table')},"
+                      f" {station('a1', '.laptop')}, {station('a1', '.pose.main .part.arm-l')}]"
+                      ".map((node) => Number(getComputedStyle(node).zIndex))")
+    assert layers == [1, 2, 2, 3]  # the body behind the desk and its laptop, the hands in front
+
+
+POSE_ROOM = """(async () => {
+  // a room of stand-in desks over Mission Control, drawn only (nothing is sent to the app): each pose, at a real desk
+  const { createScene } = await import('/scene.js');
+  const root = document.createElement('div');
+  root.className = 'scene';
+  root.id = 'pose-room';
+  root.style.cssText = 'position: fixed; inset: 0; z-index: 100';
+  document.body.append(root);
+  window.poseRoom = createScene(root);
+  return true;
+})()"""
+AT_THE_LAPTOP = f"""((id) => {{
+  const desk = document.querySelector(`#pose-room .station[data-id="${{id}}"]`);
+  const box = (node) => {{ const r = node.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; }};
+  const worker = desk.querySelector('.pose.main > .worker');
+  return {{ state: desk.querySelector('.pose.main').dataset.state, face: {FACE}(worker),
+           lid: box(desk.querySelector('.laptop .lid')), top: box(desk.querySelector('.table .top')),
+           keyboard: box(desk.querySelector('.laptop .keyboard')),
+           hands: ['.arm-l', '.arm-r'].map((arm) => box(worker.querySelector(`.part${{arm}} svg > circle`))) }};
+}})"""
+
+
+def overlap(one, two):
+    """Whether two rectangles share any area: touching is not overlapping."""
+    return min(one[2], two[2]) - max(one[0], two[0]) > 0 and min(one[3], two[3]) - max(one[1], two[1]) > 0
+
+
+@CHROME
+@pytest.mark.parametrize("count", [1, 6])
+async def test_every_pose_shows_the_whole_face_over_the_laptop(stack, count):  # the user's hand check
+    js = await open_with(stack)
+    await front(stack, js)
+    assert await js(POSE_ROOM)
+    rows = [{"id": f"p{index}", "name": f"Stand-in {index}", "state": state, "color": "blue", "created": index}
+            for index, state in enumerate(POSE_STATES)]
+    for moving in (False, True):  # still (Reduce Motion), then a few moments of each pose's animation
+        await reduce_motion(stack, js, not moving)
+        seen = []
+        for row in rows:
+            one = {**row, "id": "p0", "created": 0} if count == 1 else row  # one desk in each state in turn, or six
+            await js(f"window.poseRoom.upsert({json.dumps(one)}); true")
+            if count == 1:
+                await asyncio.sleep(0.8)
+                for _ in range(4 if moving else 1):
+                    seen.append(await js(f"{AT_THE_LAPTOP}('p0')"))
+                    await asyncio.sleep(0.4)
+        if count == 6:
+            await asyncio.sleep(1.2)
+            for _ in range(4 if moving else 1):
+                seen += [await js(f"{AT_THE_LAPTOP}({json.dumps(row['id'])})") for row in rows]
+                await asyncio.sleep(0.4)
+        assert {one["state"] for one in seen} == set(POSE_STATES)
+        for one in seen:
+            assert not overlap(one["face"], one["lid"]), one  # its eyes and mouth over the lid, never behind it
+            assert one["face"][3] <= one["top"][1], one  # and over the desk's far edge
+            if one["state"] == "working":
+                assert all(overlap(hand, one["keyboard"]) for hand in one["hands"]), one  # typing: hands on the keys
 
 
 @CHROME

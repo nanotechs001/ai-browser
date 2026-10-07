@@ -6,7 +6,12 @@ sets it, else ~/.claude. An added account's folder is <home>/accounts/<id>/ (mod
 <home>/accounts.json (mode 0600) keeps {"accounts": [{"id", "name", "folder"}], "default": "<id>", "brain": "<id>"};
 a missing or bad file means Default only, and reading never raises. Only the id, made here, reaches a command line or
 a path; the name is the user's label. AI Browser never sees a password or a token: the user signs in in a terminal
-and their browser."""
+and their browser.
+
+<home>/usage.json (mode 0600) keeps each account's latest reading of its limits, as Claude Code reports them with each
+request (limits.windows_from_event), so the Usage card shows them after a restart, with their time:
+{"accounts": {"<id>": {"five_hour": {"used": <percent>, "resets_at": <seconds> | null, "at": <seconds>}, …}}}. Nothing
+but account ids, window names, numbers and times; an unreadable file reads as no reading."""
 
 from __future__ import annotations
 
@@ -24,11 +29,13 @@ from pathlib import Path
 
 from . import platforms
 from .claudecli import claude_argv, spawn_options, track
+from .limits import KNOWN_WINDOWS, seconds
 from .syncdir import write_atomic
 
 DEFAULT = "default"
 DEFAULT_NAME = "Default"
 FILE = "accounts.json"
+USAGE_FILE = "usage.json"
 NAME_LIMIT = 40
 FOLDER_LIMIT = 1000
 API_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")  # never passed on: Claude Code uses a login
@@ -102,7 +109,8 @@ class Accounts:
         self._status: dict[str, tuple[float, dict]] = {}  # account id -> (monotonic time, {"signed_in", "plan"})
         self._locks: dict[str, asyncio.Lock] = {}  # one `claude auth status` per account at a time
         self._limits: dict[str, float] = {}  # account id -> when its usage limit resets (this app run only)
-        self._usage: dict[str, dict] = {}  # account id -> {"used", "resets_at", "kind"}, as reported (this app run)
+        self.usage_path = self.home / USAGE_FILE
+        self._usage = self._read_usage()  # account id -> {window: {"used", "resets_at", "at"}}, the latest readings
         self.on_change: Callable[[], None] | None = None  # set by the app: a status changed, so pages hear it
 
     # ---- reading -----------------------------------------------------------------------------------------------
@@ -228,6 +236,8 @@ class Accounts:
             if data.get(key) == account_id:
                 data[key] = DEFAULT
         self._write(data)
+        if self._usage.pop(account_id, None) is not None:  # its readings go with it
+            self._write_usage()
 
     def _choose(self, key: str, account_id) -> None:
         if self.get(account_id) is None:
@@ -335,22 +345,72 @@ class Accounts:
         if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool) and resets_at > time.time():
             self._limits[account_id] = float(resets_at)
 
-    def set_usage(self, account_id, used, resets_at=None, kind="") -> None:
-        """How much of this account's limit is used, as Claude Code reported it (a percentage, 0 to 100), kept for this
-        app run. Anything that isn't one is ignored."""
-        if isinstance(used, bool) or not isinstance(used, (int, float)) or not 0 <= used <= 100:
-            return
-        resets = float(resets_at) if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool) else None
-        self._usage[account_id] = {"used": float(used), "resets_at": resets,
-                                   "kind": kind if isinstance(kind, str) else ""}
+    # ---- how much of each limit is used (the Usage card) -----------------------------------------------------------
 
-    def usage(self, account_id) -> dict | None:
-        """The last usage reported for this account, until its reset time passes."""
-        kept = self._usage.get(account_id)
-        if kept is not None and kept["resets_at"] is not None and kept["resets_at"] <= time.time():
-            del self._usage[account_id]
+    @staticmethod
+    def _reading(value, at) -> dict | None:
+        """A reading as kept: a percentage from 0 to 100, its reset time or None, and when it was read; None for
+        anything else."""
+        if not isinstance(value, dict):
             return None
-        return kept
+        used = value.get("used")  # compared, never converted first: NaN, infinity and huge integers fail
+        if isinstance(used, bool) or not isinstance(used, (int, float)) or not 0 <= used <= 100 or seconds(at) is None:
+            return None
+        return {"used": float(used), "resets_at": seconds(value.get("resets_at")), "at": seconds(at)}
+
+    def _read_usage(self) -> dict[str, dict]:
+        """usage.json's sane readings of the listed accounts; {} for a file that can't be read, however odd (too deep
+        for the parser, a number too big for a float): the app always starts."""
+        try:
+            return self._usage_from(json.loads(self.usage_path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError, OverflowError, RecursionError):
+            return {}
+
+    def _usage_from(self, data) -> dict[str, dict]:
+        found, listed = {}, {account.id for account in self.list()}
+        accounts = data.get("accounts") if isinstance(data, dict) else None
+        for account_id, windows in accounts.items() if isinstance(accounts, dict) else ():
+            if account_id not in listed or not isinstance(windows, dict):  # an account of this home only
+                continue
+            kept = {}
+            for name in KNOWN_WINDOWS:
+                stored = windows.get(name)
+                reading = self._reading(stored, stored.get("at")) if isinstance(stored, dict) else None
+                if reading is not None:
+                    kept[name] = reading
+            if kept:
+                found[account_id] = kept
+        return found
+
+    def _write_usage(self) -> None:
+        """usage.json, with the accounts that are still listed. A write that fails is skipped: the readings stay in
+        memory, and an agent's turn never stops for it."""
+        listed = {account.id for account in self.list()}
+        self._usage = {account_id: windows for account_id, windows in self._usage.items() if account_id in listed}
+        data = (json.dumps({"accounts": self._usage}, indent=1) + "\n").encode("utf-8")
+        with contextlib.suppress(OSError):
+            write_atomic(self.usage_path, data, 0o600)
+
+    def set_windows(self, account_id, windows) -> None:
+        """This account's latest readings, as limits.windows_from_event read them ({"five_hour": {"used",
+        "resets_at"}, …}): each known window is kept with the time it was read, the others stay as they were. Anything
+        that isn't a reading, or an account that isn't listed, is ignored."""
+        if not isinstance(windows, dict) or self.get(account_id) is None:
+            return
+        now = time.time()
+        fresh = {}
+        for name in KNOWN_WINDOWS:
+            reading = self._reading(windows.get(name), now)
+            if reading is not None:
+                fresh[name] = reading
+        if fresh:
+            self._usage[account_id] = {**self._usage.get(account_id, {}), **fresh}
+            self._write_usage()
+
+    def windows(self, account_id) -> dict[str, dict]:
+        """{window: {"used", "resets_at", "at"}}: this account's latest readings, kept across restarts. A reading
+        whose reset time has passed stays, with its time: the Usage card no longer shows its number."""
+        return {name: dict(reading) for name, reading in self._usage.get(account_id, {}).items()}
 
     # ---- what AI Browser's own pages show ------------------------------------------------------------------------
 
@@ -373,11 +433,9 @@ class Accounts:
         for account in self.list():
             kept = self._status.get(account.id)
             status = kept[1] if kept is not None else UNKNOWN
-            used = self.usage(account.id)
             rows.append({"id": account.id, "name": account.name, "signed_in": status["signed_in"],
                          "plan": status["plan"], "checked": kept is not None, "limit_until": self.limit(account.id),
-                         "used": used["used"] if used else None, "used_resets_at": used["resets_at"] if used else None,
-                         "used_kind": used["kind"] if used else "",
+                         "windows": self.windows(account.id),
                          "default": account.id == default, "brain": account.id == brain,
                          "command": self.command(account.id)})
         return rows

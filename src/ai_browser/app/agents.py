@@ -678,7 +678,7 @@ class AgentManager:
 
     def _on_event(self, agent: Agent, event: dict) -> None:
         kind = event.get("type")
-        if kind == "usage":  # how much of its account's limit is used: the Usage card's, never the chat's
+        if kind == "usage":  # how much of its account's limits is used: the Usage card's, never the chat's
             self._usage(agent, event)
             return
         self._record(agent, {"type": "limit"} if kind == "limit" else event)  # the chat names no account or time
@@ -799,10 +799,12 @@ class AgentManager:
                 self.on_limit(account)
 
     def _usage(self, agent: Agent, event: dict) -> None:
+        """Its account's latest readings (the bridge's usage event: {"windows": {"five_hour": …, "seven_day": …}}),
+        kept by Accounts; on_usage then tells every page."""
         if self.accounts is None:
             return
         account = agent.account["id"]
-        self.accounts.set_usage(account, event.get("used"), event.get("resets_at"), event.get("kind"))
+        self.accounts.set_windows(account, event.get("windows"))
         if self.on_usage is not None:
             with contextlib.suppress(Exception):
                 self.on_usage(account)
