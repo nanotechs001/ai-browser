@@ -67,3 +67,27 @@ def test_project_root_is_the_bundle_in_the_packaged_exe(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "frozen", True, raising=False)  # AI Browser.exe: docker/ and skills/ are in its bundle
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
     assert config.project_root() == tmp_path
+
+
+def test_a_skill_is_blocked_and_brought_back_keeping_every_other_key(tmp_path):  # the new look's Knowledge
+    import pytest
+
+    from conftest import file_mode
+
+    (tmp_path / "config.json").write_text(json.dumps({"risky_words": ["pay"], "blocked_skills": ["old:one"]}),
+                                          encoding="utf-8")
+    config.set_blocked(tmp_path, "personal:footer", True)
+    config.set_blocked(tmp_path, "personal:footer", True)  # once
+    assert json.loads((tmp_path / "config.json").read_text(encoding="utf-8")) == {
+        "risky_words": ["pay"], "blocked_skills": ["old:one", "personal:footer"]}
+    config.set_blocked(tmp_path, "old:one", False)
+    assert config.load_config(tmp_path).blocked_skills == ["personal:footer"]
+    (tmp_path / "config.json").write_text("{broken", encoding="utf-8")
+    with pytest.raises(ValueError, match="fix it first"):
+        config.set_blocked(tmp_path, "x:y", True)
+    assert (tmp_path / "config.json").read_text(encoding="utf-8") == "{broken"  # never overwritten
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    config.set_blocked(fresh, "x:y", True)
+    assert config.load_config(fresh).blocked_skills == ["x:y"]
+    assert file_mode(fresh / "config.json") in (None, 0o600)

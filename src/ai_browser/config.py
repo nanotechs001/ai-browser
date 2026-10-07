@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import platforms
+from .syncdir import write_atomic
 
 IMAGE = "ai-browser-sandbox:0.1"
 CDP_PORT = 9223  # socat inside the container, forwarding to Chromium's 127.0.0.1:9222
@@ -88,3 +89,20 @@ def load_config(root: Path) -> Config:
     if isinstance(words, list) and words:
         cfg.risky_words = [str(item) for item in words]
     return cfg
+
+
+def set_blocked(root: Path, ref: str, blocked: bool) -> None:
+    """Knowledge's Remove and Bring back (the new look): hide a skill from AI Browser's agents, or show it again, in
+    root/config.json's blocked_skills, keeping every other key. The skill's files are the user's and stay where they
+    are. A config.json that can't be read is never overwritten: ValueError."""
+    path = root / "config.json"
+    try:
+        data = _read(path)
+    except FileNotFoundError:
+        data = {}
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"{path} can't be read ({exc}): fix it first, then try again") from None
+    listed = data.get("blocked_skills") if isinstance(data.get("blocked_skills"), list) else []
+    kept = [str(item) for item in listed if str(item) != ref]
+    data["blocked_skills"] = [*kept, ref] if blocked else kept
+    write_atomic(path, (json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8"), 0o600)

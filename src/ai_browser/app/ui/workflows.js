@@ -29,11 +29,12 @@ function select(name, options) {
   return node;
 }
 
-export function mountWorkflows(root, link, { skills = () => [], sites = () => [], servers = () => [] } = {}) {
+export function mountWorkflows(root, link, { skills = () => [], sites = () => [], servers = () => [],
+                                              heading = "New workflow" } = {}) {
   const list = el("div", "list workflows-list");
   const problems = el("div", "problems muted");
   const form = el("div", "workflow-form card");
-  root.replaceChildren(list, problems, el("h3", "", "New workflow"), form);
+  root.replaceChildren(list, problems, el("h3", "", heading), form);
   let editing = null; // the slug being edited
   let pending = null; // the request waiting for its answer
   let last = {}; // the latest workflows snapshot

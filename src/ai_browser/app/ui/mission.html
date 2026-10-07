@@ -5,59 +5,171 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mission Control</title>
 <link rel="icon" href="icon.png">
+<link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="brainui.css">
+<link rel="stylesheet" href="office.css">
 <link rel="stylesheet" href="mission.css">
+<link rel="stylesheet" href="composer.css">
 </head>
 <body>
-<div id="scene" class="scene" aria-label="The room: each agent at its station, the Brain in the middle"></div>
-<header class="hud top">
-  <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
-    <h1>Mission Control</h1><span id="counts" class="muted"></span></div>
-  <div class="tools">
-    <label class="switch" title="Updates spoken aloud, with a voice that runs on this computer only">
-      <input id="voice" type="checkbox"> Voice</label>
-    <span id="voice-note" class="muted" role="status"></span>
-    <button id="list-button" class="ghost" aria-expanded="false" aria-controls="list">List</button>
-    <button id="home-link" class="ghost" type="button" title="Back to AI Home's tab">AI Home</button>
-  </div>
-</header>
-<nav id="list" class="hud panel list-panel" hidden aria-label="Agents"></nav>
-<aside id="drawer" class="hud panel drawer" hidden aria-label="Details">
+<div class="mc">
+  <nav id="menu" class="menu" aria-label="Mission Control">
+    <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
+      <h1 class="label">Mission Control</h1></div>
+    <p id="counts" class="counts muted"></p>
+    <button id="new-mission" class="primary new-mission" type="button" data-icon="plus"><span class="label">New
+      Mission</span><kbd id="new-key"></kbd></button>
+    <ul class="pages">
+      <li><button class="page-link" type="button" data-page="dashboard" data-icon="home" aria-current="page"><span
+        class="label">Dashboard</span></button></li>
+      <li><button class="page-link" type="button" data-page="missions" data-icon="missions"><span class="label">My
+        Missions</span></button></li>
+      <li><button class="page-link" type="button" data-page="templates" data-icon="template"><span
+        class="label">Templates</span></button></li>
+      <li><button class="page-link" type="button" data-page="knowledge" data-icon="book"><span
+        class="label">Knowledge</span></button></li>
+      <li><button class="page-link" type="button" data-page="integrations" data-icon="cube"><span
+        class="label">Integrations</span></button></li>
+      <li><button class="page-link" type="button" data-page="history" data-icon="clock"><span
+        class="label">History</span></button></li>
+    </ul>
+    <section id="workspaces" class="workspaces" aria-label="Workspaces"></section>
+    <button id="usage" class="usage" type="button" title="Settings → Accounts"><span class="usage-words"><span
+      class="usage-title">Usage</span><span class="muted">Settings → Accounts</span></span></button>
+  </nav>
+  <main id="centre" class="centre">
+    <section id="page-dashboard" class="page dashboard" aria-label="Dashboard">
+      <header class="heading">
+        <p class="eyebrow">Mission Control</p>
+        <h2>Your AI Workforce</h2>
+        <p class="lede">Plan, run, and monitor research and work tasks. Turn ideas into results with AI agents.</p>
+      </header>
+      <div id="views-switch" class="switch-views" role="tablist" aria-label="View">
+        <button type="button" role="tab" data-view="flow" data-icon="flow" aria-selected="true">Flow</button>
+        <button type="button" role="tab" data-view="list" data-icon="list" aria-selected="false">List</button>
+        <button type="button" role="tab" data-view="calendar" data-icon="calendar"
+                aria-selected="false">Calendar</button>
+      </div>
+      <div id="view-flow" class="view-flow">
+        <div id="scene" class="scene" aria-label="The office: each agent at its desk, the globe in the middle"></div>
+        <p id="help" class="help">Drag to turn · scroll to zoom · double-click to reset · <kbd>←</kbd> <kbd>→</kbd>
+          <kbd>↑</kbd> <kbd>↓</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> · hold <kbd>Space</kbd> to talk</p>
+      </div>
+      <div id="view-list" class="view-list" hidden></div>
+      <div id="view-calendar" class="view-calendar" hidden></div>
+    </section>
+    <section id="page-missions" class="page" hidden aria-label="My Missions"></section>
+    <section id="page-templates" class="page" hidden aria-label="Templates"></section>
+    <section id="page-knowledge" class="page" hidden aria-label="Knowledge"></section>
+    <section id="page-integrations" class="page" hidden aria-label="Integrations"></section>
+    <section id="page-history" class="page" hidden aria-label="History"></section>
+    <section id="composer" class="composer" data-mode="build" aria-label="Give an agent a task">
+      <section id="talk" class="talk panel" hidden data-state="idle" aria-label="Ask AI: the Brain's answers">
+        <ol id="talk-log" class="talk-log" aria-live="polite"></ol>
+        <div id="talk-status" class="talk-status muted"></div>
+        <div id="talk-notice" class="talk-notice" role="status"></div>
+        <div id="talk-card" class="talk-card"></div>
+        <form id="talk-form" class="talk-form" hidden>
+          <input id="talk-text" type="text" maxlength="2000" autocomplete="off" aria-label="Ask the Brain">
+        </form>
+        <p class="talk-note muted">Your voice stays on this computer. Your words go to Claude, like typed text.</p>
+      </section>
+      <div class="composer-box">
+        <div class="modes" role="tablist" aria-label="What to do">
+          <button id="mode-ask" type="button" role="tab" data-mode="ask" data-icon="sparkle"
+                  aria-selected="false">Ask AI</button>
+          <button id="mode-build" type="button" role="tab" data-mode="build" data-icon="missions"
+                  aria-selected="true">Build a Mission</button>
+          <button id="mode-template" type="button" role="tab" data-mode="template" data-icon="template"
+                  aria-selected="false">Use a Template</button>
+          <label class="voice-switch" title="Updates spoken aloud, with a voice that runs on this computer only"><input
+            id="voice" type="checkbox"> Voice</label>
+          <span id="voice-note" class="muted" role="status"></span>
+        </div>
+        <div class="box">
+          <textarea id="task" rows="2" maxlength="20000" placeholder="Describe what you want to accomplish…"
+                    aria-label="Describe what you want to accomplish"></textarea>
+          <ul id="attached" class="attached" hidden aria-label="Attached files"></ul>
+          <div class="controls">
+            <button id="attach" class="icon-button" type="button" data-icon="clip" aria-label="Attach files"
+                    title="Attach files: at most 10, 20 MB each"></button>
+            <input id="attach-files" type="file" multiple hidden>
+            <button id="options" class="icon-button options" type="button" data-icon="more" aria-expanded="false"
+                    aria-controls="pickers" aria-label="Options"></button>
+            <div id="pickers" class="pickers">
+              <select id="task-web" aria-label="Web" title="The agent's web tools">
+                <option value="web">Web + Brave</option>
+                <option value="brave">Brave only</option>
+                <option value="none">No web</option>
+              </select>
+              <select id="task-model" aria-label="Model">
+                <option value="opus">Opus · most capable</option>
+                <option value="sonnet">Sonnet · balanced</option>
+                <option value="haiku">Haiku · fastest</option>
+              </select>
+              <select id="task-account" aria-label="Account" hidden></select>
+              <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
+              <select id="task-template" aria-label="Template" hidden></select>
+              <select id="task-workspace" aria-label="Workspace"></select>
+            </div>
+            <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
+                    title="Talk to the Brain: hold Space, or hold or click here"><svg viewBox="0 0 24 24"
+              aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg></button>
+            <button id="start" class="primary start" type="button" data-icon="play"><span id="start-label">Start
+              Mission</span><kbd id="start-key"></kbd></button>
+          </div>
+          <span id="task-note" class="muted note" role="status"></span>
+          <div id="folder-ask" class="folder-ask" hidden></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <aside id="side" class="side" aria-label="The agent picked">
+    <section id="progress" class="panel progress" aria-labelledby="progress-title">
+      <h3 id="progress-title">Mission Progress</h3>
+      <div class="progress-line"><span id="progress-text"></span><span id="progress-percent"></span></div>
+      <div class="bar"><span id="progress-bar"></span></div>
+      <ul id="groups" class="groups"></ul>
+    </section>
+    <section id="current" class="panel current" aria-labelledby="current-title">
+      <h3 id="current-title">Current Task</h3>
+      <p id="current-empty" class="muted">No mission yet: start one below.</p>
+      <div id="current-body" class="current-body" hidden>
+        <div class="current-head"><span id="current-avatar" class="avatar"></span>
+          <div class="current-words">
+            <div class="current-top"><strong id="current-step" class="clip"></strong><span id="current-timer"
+              class="timer"></span></div>
+            <div id="current-line" class="muted clip"></div>
+            <span id="current-badge" class="step-badge" hidden></span>
+          </div>
+        </div>
+        <p id="current-needs" class="needs" hidden></p>
+        <div class="running">
+          <div id="running-label" class="running-label"></div>
+          <div class="bar"><span id="running-bar"></span></div>
+          <ol id="checklist" class="checklist"></ol>
+        </div>
+        <div class="row current-buttons">
+          <button id="current-answer" class="answer primary" type="button" hidden>Answer</button>
+          <button id="current-stop" class="stop" type="button" data-icon="stop">Stop</button>
+          <button id="current-chat" class="chat" type="button" data-icon="chat">Chat</button>
+          <button id="current-hand" class="hand" type="button" data-icon="hand"
+                  title="Give it one of your tabs">Hand over</button>
+        </div>
+      </div>
+    </section>
+    <section id="activity" class="panel activity" aria-labelledby="activity-title">
+      <div class="panel-head"><h3 id="activity-title">Recent Activity</h3><button id="see-all" class="link"
+        type="button">See all</button></div>
+      <ol id="activity-list" class="activity-list"></ol>
+    </section>
+  </aside>
+</div>
+<aside id="drawer" class="drawer panel" hidden aria-label="Details">
   <header><span id="drawer-dot" class="dot"></span><strong id="drawer-title"></strong>
-    <button id="drawer-close" class="ghost" aria-label="Close">✕</button></header>
+    <button id="drawer-close" class="ghost" type="button" aria-label="Close">✕</button></header>
   <div id="drawer-body"></div>
 </aside>
-<section id="talk" class="hud panel talk" hidden data-state="idle" aria-label="Talk to the Brain">
-  <ol id="talk-log" class="talk-log" aria-live="polite"></ol>
-  <div id="talk-status" class="talk-status muted"></div>
-  <div id="talk-notice" class="talk-notice" role="status"></div>
-  <div id="talk-card" class="talk-card"></div>
-  <form id="talk-form" class="talk-form">
-    <input id="talk-text" type="text" maxlength="2000" autocomplete="off" placeholder="Ask the Brain"
-           aria-label="Ask the Brain">
-    <button type="submit">Ask</button>
-  </form>
-  <p class="talk-note muted">Your voice stays on this computer. Your words go to Claude, like typed text.</p>
-</section>
-<section id="task-bar" class="hud panel task-bar" aria-label="Give an agent a task">
-  <textarea id="task" rows="1" placeholder="Give an agent a task, for example: QA my-site.com, 20 pages"></textarea>
-  <select id="task-model" aria-label="Model">
-    <option value="sonnet">Sonnet · balanced</option>
-    <option value="opus">Opus · best</option>
-    <option value="haiku">Haiku · fastest</option>
-  </select>
-  <select id="task-account" aria-label="Account" hidden></select>
-  <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
-  <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
-          title="Talk to the Brain: hold Space, or hold or click here"><svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/>
-  </svg></button>
-  <button id="start" class="primary">Start</button>
-  <span id="task-note" class="muted note" role="status"></span>
-  <div id="folder-ask" class="folder-ask" hidden></div>
-</section>
-<p id="help" class="hud help">Drag to turn · scroll to zoom · double-click to reset · <kbd>←</kbd> <kbd>→</kbd>
-  <kbd>↑</kbd> <kbd>↓</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> · hold <kbd>Space</kbd> to talk</p>
 <script type="module" src="mission.js"></script>
 </body>
 </html>

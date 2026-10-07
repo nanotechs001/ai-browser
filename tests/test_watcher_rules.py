@@ -27,6 +27,9 @@ SENDS = {
     "account_signin", "account_move",  # AI accounts
     "this_page", "show_app",  # the floating chat (native-app part c)
     "folder_choose", "folder_trust", "permission_rules", "permission_rule_remove",  # agent powers
+    "workspaces", "workspace_save", "workspace_delete", "workspace_assign",  # the new look's workspaces
+    "attach_start", "attach_chunk", "attach_drop",  # the new look's Attach
+    "skill_block",  # the new look's Knowledge
 }
 RETIRED = {"items", "replied", "thread", "filled", "reader_status", "watcher_caps", "tab_grouped", "pause",
            "ai_keyword"}  # the watcher's own: gone with it

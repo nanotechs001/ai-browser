@@ -135,14 +135,14 @@ async def test_ai_homes_row_and_chat_show_the_folder_the_plan_the_sub_agents_and
 
 @CHROME
 async def test_mission_controls_drawer_lists_the_plan_and_the_sub_agents(stack):  # Decisions 8 and 9, Review Focus 3
-    from test_mission import open_mission, station
+    from test_mission import open_drawer, open_mission, station
 
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
     agent = await stack["server"].agents.create("fix the footer")
     assert await settled(lambda: bool(agent.subagents) and bool(agent.subagents[0]["action"]))
     mission = await open_mission(stack)  # opened later: the plan comes with the agent
     assert await until(mission, f"{station('a1')} != null")
-    await mission(f"{station('a1')}.click(); true")
+    await mission(open_drawer("a1"))
     plan = "[...document.querySelectorAll('#drawer-body .plan li')].map((item) => item.textContent)"
     assert await until(mission, f"{plan}.length === 3")
     assert await mission(plan) == ["✓ Read the code", "● Fixing the bug", "○ Run the tests"]

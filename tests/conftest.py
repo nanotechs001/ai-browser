@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+REAL_HOME = Path.home()  # the user's own home, read when the suite starts, before any test sets HOME
+
 
 def _docker_unavailable() -> str | None:
     """Return why Docker tests cannot run, or None when Docker and the image are ready."""
@@ -125,6 +127,21 @@ def _never_the_users_claude_folder(monkeypatch, tmp_path_factory):
     folder = tmp_path_factory.mktemp("claude-default")
     sign_in(folder)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(folder))
+
+
+@pytest.fixture(autouse=True)
+def _never_the_users_skills(monkeypatch, tmp_path_factory):
+    """No test's skill catalog reads the user's own ~/.claude or Claude desktop folder (Mission Control's pages ask for
+    the skills on every snapshot): while HOME is still the user's, the catalog's folders are a throwaway that holds
+    nothing. A test that sets HOME (USERPROFILE on Windows) to its own folder steers the catalog there, as before."""
+    from ai_browser import skills
+
+    found, spare = skills.user_folders, tmp_path_factory.getbasetemp() / "no-user-skills"
+
+    def folders():
+        return found() if Path.home() != REAL_HOME else (spare / ".claude", spare / "Claude")
+
+    monkeypatch.setattr(skills, "user_folders", folders)
 
 
 USERS_APP_PORT = 8792  # APP_PORTS' first: the port the user's own `ai-browser app` remembers and comes back on

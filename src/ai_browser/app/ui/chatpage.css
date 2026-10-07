@@ -1,17 +1,8 @@
 /* AI Browser's floating chat (/chat): a small window beside Brave. */
-:root {
-  --bg: #faf9f5; --card: #ffffff; --soft: #f2f0e8; --text: #1f1e1d; --muted: #6b6a66; --line: #e6e3da;
-  --accent: #c96442; --accent-fg: #ffffff; --ok: #2f7d4f; --fail: #b3261e; --wait: #8a6d1d;
-  color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #1f1e1d; --card: #262624; --soft: #30302d; --text: #ecebe6; --muted: #a3a29c; --line: #3a3936;
-          --accent: #d97757; --accent-fg: #1f1e1d; --ok: #6cc58c; --fail: #f2867c; --wait: #e2c26b; }
-}
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
-       font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+       font: 14px/1.45 var(--font); }
 h1 { font-size: 14px; font-weight: 600; margin: 0; }
 button, select, textarea, input { font: inherit; color: inherit; }
 button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 3px 10px;
@@ -47,7 +38,7 @@ select { border: 1px solid var(--line); background: var(--card); border-radius: 
 .talk-log li { white-space: pre-wrap; word-break: break-word; }
 .talk-log li.you { color: var(--muted); }
 .talk-status:empty, .talk-notice:empty, .talk-card:empty { display: none; }
-.talk-notice { color: var(--wait); font-size: 12px; }
+.talk-notice { color: var(--needs); font-size: 12px; }
 .talk-card { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .talk-card p { margin: 0; }
 .talk-card code { font: 12px ui-monospace, Menlo, monospace; background: var(--soft); border-radius: 4px;

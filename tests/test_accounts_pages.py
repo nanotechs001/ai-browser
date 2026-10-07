@@ -241,7 +241,7 @@ async def test_the_tools_section_shows_one_accounts_tools_at_a_time(home):
 
 @CHROME
 async def test_mission_control_picks_the_account_and_its_drawer_asks_at_a_limit(stack):
-    from test_mission import open_mission, station
+    from test_mission import open_drawer, open_mission, station
 
     server, accounts = stack["server"], stack["accounts"]
     stack["script"].write_text(json.dumps(LIMIT_SCRIPT), encoding="utf-8")
@@ -255,7 +255,7 @@ async def test_mission_control_picks_the_account_and_its_drawer_asks_at_a_limit(
     assert await eventually(lambda: "a1" in server.agents.agents)
     assert server.agents.agents["a1"].account["id"] == "default"  # the picker's default
     assert await until(js, f"{station('a1')} !== null")
-    await js(f"{station('a1')}.click(); true")
+    await js(open_drawer("a1"))
     drawer = "document.querySelector('#drawer:not([hidden])')"
     assert await until(js, f"!!{drawer}?.querySelector('.account-ask')", 15)
     assert await js(f"{drawer}.querySelector('.chip.account').textContent") == "Default"
@@ -265,3 +265,23 @@ async def test_mission_control_picks_the_account_and_its_drawer_asks_at_a_limit(
     assert await until(js, f"{drawer}.querySelector('.moved').textContent === "
                            "'Moved to Work with its conversation'", 15)
     assert await js(f"{drawer}.querySelector('.chip.account').textContent") == "Work"
+
+
+@CHROME
+async def test_the_open_drawer_follows_a_new_account_list_at_once(stack):
+    from test_mission import open_drawer, open_mission, station
+
+    server = stack["server"]
+    stack["script"].write_text(json.dumps(LIMIT_SCRIPT), encoding="utf-8")
+    await server.agents.create("check the shop")  # only Default: it has nowhere to continue
+    js = await open_mission(stack)
+    assert await until(js, f"{station('a1')} !== null")
+    await js(open_drawer("a1"))
+    drawer = "document.querySelector('#drawer:not([hidden])')"
+    assert await until(js, f"{drawer}?.querySelector('.add-account') !== null", 15)
+    assert await js(f"{drawer}.querySelector('.continue') === null")
+    work = {**server._account_rows()[0], "id": "work", "name": "Work", "signed_in": True, "default": False,
+            "brain": False, "checked": True}
+    server._send_all({"type": "accounts", "accounts": [*server._account_rows(), work]})  # one message, the new list
+    ask = f"{drawer}.querySelector('.account-ask .continue')"
+    assert await until(js, f"{ask}?.textContent === 'Continue on Work'", 5)  # drawn from the list it came with

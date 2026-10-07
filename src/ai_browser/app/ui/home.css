@@ -1,15 +1,6 @@
-:root {
-  --bg: #faf9f5; --card: #ffffff; --soft: #f2f0e8; --text: #1f1e1d; --muted: #6b6a66; --line: #e6e3da;
-  --accent: #c96442; --accent-fg: #ffffff; --ok: #2f7d4f; --fail: #b3261e; --wait: #8a6d1d;
-  color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #1f1e1d; --card: #262624; --soft: #30302d; --text: #ecebe6; --muted: #a3a29c; --line: #3a3936;
-          --accent: #d97757; --accent-fg: #1f1e1d; --ok: #6cc58c; --fail: #f2867c; --wait: #e2c26b; }
-}
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
-       font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+       font: 15px/1.5 var(--font); }
 h1 { font-size: 20px; font-weight: 600; margin: 0; }
 h2 { font-size: 13px; font-weight: 600; text-transform: none; color: var(--muted); margin: 18px 0 8px; }
 button, select, textarea, input { font: inherit; color: inherit; }
@@ -46,9 +37,9 @@ details summary { cursor: pointer; border: 1px solid var(--line); border-radius:
 .agent .head { display: flex; align-items: center; gap: 8px; }
 .agent .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip { font-size: 12px; border-radius: 999px; padding: 1px 8px; background: var(--soft); white-space: nowrap; }
-.chip.working { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.chip.working { background: color-mix(in srgb, var(--work) 18%, transparent); color: var(--work); }
 .chip.waiting { background: color-mix(in srgb, var(--wait) 18%, transparent); color: var(--wait); }
-.chip.your_turn { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.chip.your_turn { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
 .chip.failed { background: color-mix(in srgb, var(--fail) 16%, transparent); color: var(--fail); }
 .agent .status, .agent .last { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
                                 white-space: nowrap; margin-top: 2px; }
@@ -93,7 +84,7 @@ details summary { cursor: pointer; border: 1px solid var(--line); border-radius:
 .composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
 .composer textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px;
                      background: var(--bg); field-sizing: content; max-height: 140px; }
-.chip.needs_you { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.chip.needs_you { background: color-mix(in srgb, var(--needs) 22%, transparent); color: var(--needs); }
 details.section { margin-top: 18px; }
 details.section > summary { font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; border: none;
                             padding: 0; list-style: revert; }
@@ -158,7 +149,7 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
                         border-radius: 8px; padding: 6px 8px; word-break: break-all; user-select: all; }
 .chip.account { background: transparent; border: 1px solid var(--line); }
 .agent .moved { color: var(--ok); }
-.account-ask { border-color: var(--wait); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.account-ask { border-color: var(--needs); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .account-ask p { margin: 0; }
 .account-ask-head { font-weight: 600; font-size: 14px; }
 .account-ask-buttons, .account-move { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }

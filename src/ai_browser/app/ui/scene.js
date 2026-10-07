@@ -1,24 +1,45 @@
-// Mission Control's room, drawn with CSS 3D: a floor tilted away from the user, the Brain's stage in the middle, and
-// one station per agent around it. Stations and the stage are billboards: they stand upright and face the user (their
-// own turn undoes the room's). Stations are built once and then updated in place, so a click is never lost to a
-// rebuild; text is set with textContent, and a monitor only ever shows the app's own JPEG pictures. Each station is a
-// little desk: the monitor, a chibi worker (chibi.js) posed by the agent's state, and the desk's nameplate and ticker.
+// Mission Control's office (the new look, Decision 3), drawn with CSS 3D: a dark navy floor tilted away from the
+// user, the glowing globe in the middle (the Brain's seat: #brain), and one desk per agent in rings around it
+// (desk.js). Desks and the globe are billboards: they stand upright and face the user (their own turn undoes the
+// room's). Dotted lines on the floor join each desk to the globe's base. A hanging lamp, plants and a neon "AI OFFICE"
+// sign keep still. Past 12 desks the oldest finished agents leave the room (step.js roomAgents); with more than 6 desks
+// the step cards fold to chips. Everything is built once and updated in place; the timers tick together once a
+// second, and stop while the room is paused. Text is set with textContent.
 "use strict";
 
-import { createWorker, ensureDefs } from "./chibi.js";
-import { agentLabel } from "./chat.js";
+import { ensureDefs } from "./chibi.js";
+import { createDesk, DESK, plantArt } from "./desk.js";
+import { roomAgents, stateOf } from "./step.js";
 
-export const COLORS = { grey: "#8a8f98", blue: "#4c8df6", red: "#ef6a5f", yellow: "#f6c344", green: "#3fb26b",
-                        pink: "#ea5aa8", purple: "#b57bf7", cyan: "#2bb3bd", orange: "#fb9f4e" };
-export const STATES = { working: "working", waiting: "waiting in line", your_turn: "done", stopped: "stopped",
-                        failed: "failed", needs_you: "needs you" };
-const CENTER = { x: 1000, y: 540 }; // the Brain, in room pixels (the room is 2000 × 1400)
+export { COLORS } from "./desk.js";
+export { STATES, toolLabel } from "./step.js";
+
+const CENTER = { x: 1000, y: 640 }; // the globe, in room pixels (the room is 2000 × 1400)
 const START = { tilt: 58, spin: 0, scale: 1 };
 const TILT = [35, 70];
 const SCALE = [0.6, 1.6];
-const JPEG = /^[A-Za-z0-9+/]+={0,2}$/;
-export const CARD = { w: 200, h: 156 }; // a station's card, in CSS pixels (mission.css uses the same numbers)
+const RING = 430; // the first ring's radius, in room pixels
+const RING_STEP = 330; // between two rings
+const WIDE = 1.25; // rings are ellipses, wider than deep: desks stand side by side on screen
+const ARC = 240; // degrees of each ring in front of the globe: no desk stands right behind it
+const PUSH = 100; // room pixels: in a ring after the first, every odd seat stands this much further out (see placeOf)
+// Ring 1's seats, in degrees (90 is the front): left, right, front-left, front-right, far left, far right. The far two
+// stand back and out (215°, -35°), so that a full step card (a desk with it is TALL) never hides the desk behind it.
+const FIRST_RING = [150, 30, 112, 68, 215, -35];
+const TALL = 280; // a desk with its step card, in CSS pixels: the card, the gap and the desk
+const TOP = 190; // CSS pixels kept clear along the box's top, for no step card to sit under the page's words there:
+// Mission Control's heading (to 162 px down), its Flow · List · Calendar switch and the AI OFFICE sign (to 183)
+const ORIGIN = 0.2; // the perspective's origin, as a share of the box's height (office.css .viewport: 50% 20%)
+const BOTTOM = 12; // CSS pixels kept clear below the near desks
+const FLOOR = 0.15; // the room's smallest zoom to fit in (20 desks in a box 700 px wide fit at about 0.2)
+const CHIPS_PAST = 6; // more desks than this: step cards fold to chips
 const SPARKS = 6; // arrivals in flight at once: any more arrive without a spark
+const SVG = "http://www.w3.org/2000/svg";
+const CONTINENTS = [ // [longitude, latitude, half-width, half-height] in degrees: rough blobs, enough for a globe
+  [-100, 45, 32, 20], [-62, -16, 16, 26], [-40, 72, 12, 8], [12, 50, 18, 10], [20, 4, 20, 28], [46, 25, 10, 8],
+  [92, 46, 46, 20], [78, 20, 8, 10], [112, 4, 16, 8], [135, -25, 17, 10], [138, 36, 4, 7],
+];
+const PLANTS = [[-1120, -260], [1100, -240], [930, 520]]; // big plants at the room's edges, from the globe
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -27,50 +48,14 @@ function el(tag, className, text) {
   return node;
 }
 
-function setText(node, text) {
-  if (node.textContent !== text) node.textContent = text;
+function svg(tag, attributes = {}) {
+  const node = document.createElementNS(SVG, tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
+  return node;
 }
 
 function shortly(value) {
   return String(Math.round(value * 100) / 100);
-}
-
-const SEAT = 240; // room pixels between two stations side by side (a card is 200 wide: they never overlap)
-const ROW = 340; // between two rows, front to back: more than a card's height on screen
-const BACK = 440; // the rows behind are farther apart: far away, a card looks shorter but the Brain needs the room
-
-function at(depth, dx) { // every row is an arc around the Brain, the first one just in front of it
-  const arc = Math.sqrt(Math.max(0, 1 - (dx / 1000) ** 2));
-  return { x: Math.round(CENTER.x + dx), y: Math.round(CENTER.y + 380 * arc + depth) };
-}
-
-// The rows after the first take turns: behind it (beside the Brain, leaving the Brain's place free), then in front of
-// it, then further behind, and so on. A row's seats fill from the middle out, half a seat over from the row before.
-function rowSeats(row) {
-  const step = Math.ceil(row / 2);
-  const behind = row % 2 === 1;
-  const half = step % 2 === 0;
-  const widest = 720 + (half ? 120 : 0) + (step > 2 ? SEAT : 0);
-  const seats = [];
-  for (let dx = half ? SEAT / 2 : 0; dx <= widest; dx += SEAT) {
-    if (behind && dx < SEAT) continue;
-    if (dx === 0) seats.push(0);
-    else seats.push(-dx, dx);
-  }
-  return { seats, depth: behind ? -step * BACK : step * ROW };
-}
-
-// Where the index-th of `count` agents works: the first six side by side in an arc in front of the Brain (centred),
-// the rest in the rows behind and in front of it.
-export function placeOf(index, count) {
-  const first = Math.min(count, 6);
-  if (index < first) return at(0, (index - (first - 1) / 2) * SEAT);
-  let start = 6;
-  for (let row = 1; ; row += 1) {
-    const { seats, depth } = rowSeats(row);
-    if (index < start + seats.length) return at(depth, seats[index - start]);
-    start += seats.length;
-  }
 }
 
 function place(node, point) {
@@ -78,127 +63,225 @@ function place(node, point) {
   node.style.top = `${point.y}px`;
 }
 
-export function toolLabel(permission) { // "ClickUp: create task", for a station's ticker and the Brain's words
-  if (permission?.card) return String(permission.card.title || "use a tool"); // agent powers: "run a command"
-  const server = String(permission?.server || "a tool").replace(/^claude_ai_/, "").replaceAll("_", " ");
-  const tool = String(permission?.tool || "").split("__").slice(2).join("__").replaceAll("_", " ");
-  return tool ? `${server}: ${tool}` : server;
-}
-
-function tickerOf(agent, state) {
-  if (state === "needs_you" && agent.check) return `bot check · ${agent.check.site}`;
-  if (state === "needs_you" && agent.permission) {
-    return `wants ${agent.permission.card ? "to " : ""}${toolLabel(agent.permission)}`;
+// The seat of the index-th of `count` desks. Ring 1's six seats come in a fixed order (three desks sit as in the
+// mockup); ring r ≥ 2 holds 6·r desks over the ARC in front of the globe, a ring that isn't full spreading its desks
+// over the whole arc. Along a full ring's two sides, neighbours stand in line one behind the other, and the card of the
+// nearer one would hide the name of the next: so the odd seats of a ring after the first stand PUSH further out.
+export function placeOf(index, count) {
+  let ring = 1;
+  let first = 0;
+  while (index >= first + 6 * ring) {
+    first += 6 * ring;
+    ring += 1;
   }
-  if (state === "failed") return agent.status || "failed";
-  return agent.last_action || agent.status || STATES[state] || state;
+  let angle;
+  let radius = RING + RING_STEP * (ring - 1);
+  if (ring === 1) {
+    angle = FIRST_RING[index];
+  } else {
+    const seats = 6 * ring;
+    const inRing = Math.min(seats, count - first);
+    const seat = Math.round((index - first + 0.5) * (seats / inRing) - 0.5);
+    angle = 90 + ARC / 2 - (seat + 0.5) * (ARC / seats);
+    if (seat % 2 === 1) radius += PUSH;
+  }
+  const radians = (angle * Math.PI) / 180;
+  return { x: Math.round(CENTER.x + WIDE * radius * Math.cos(radians)),
+           y: Math.round(CENTER.y + radius * Math.sin(radians)), ring };
 }
 
-export function createScene(root, { onSelect = () => {}, onCamera = () => {} } = {}) {
+function globeMap() { // the dotted continents, twice side by side: sliding by one width turns the globe
+  const map = svg("svg", { viewBox: "0 0 800 200", class: "map-art", "aria-hidden": "true" });
+  for (let lat = 84; lat >= -84; lat -= 6) {
+    for (let lon = -177; lon < 180; lon += 6) {
+      if (!CONTINENTS.some(([x, y, w, h]) => ((lon - x) / w) ** 2 + ((lat - y) / h) ** 2 <= 1)) continue;
+      for (const offset of [0, 400]) {
+        map.append(svg("circle", { cx: ((lon + 180) / 360) * 400 + offset, cy: ((90 - lat) / 180) * 200, r: 1.7 }));
+      }
+    }
+  }
+  return map;
+}
+
+function createGlobe() { // the Brain's seat: click it for its inbox (mission.js)
+  const globe = el("button", "globe");
+  globe.id = "brain";
+  globe.type = "button";
+  globe.setAttribute("aria-label", "The Brain: open its inbox");
+  const sphere = el("div", "sphere");
+  const map = el("div", "map");
+  map.append(globeMap());
+  sphere.append(map, el("div", "shine"));
+  globe.append(sphere);
+  return globe;
+}
+
+function sign() {
+  const node = el("div", "sign");
+  node.setAttribute("aria-hidden", "true");
+  node.append(el("span", "", "AI"), el("span", "", "OFFICE"));
+  return node;
+}
+
+function lamp() {
+  const node = el("div", "lamp");
+  node.setAttribute("aria-hidden", "true");
+  const shade = el("div", "shade");
+  const art = svg("svg", { viewBox: "0 0 60 34", "aria-hidden": "true" });
+  art.append(svg("path", { d: "M18 2 h24 l16 28 a2 2 0 0 1 -2 3 H4 a2 2 0 0 1 -2 -3 Z", fill: "#1c2240" }),
+             svg("ellipse", { cx: 30, cy: 32, rx: 12, ry: 3, fill: "#fff2d6" }));
+  shade.append(art);
+  node.append(el("div", "cord"), shade, el("div", "light"));
+  return node;
+}
+
+export function createScene(root, { onSelect = () => {} } = {}) {
   const viewport = el("div", "viewport");
   const room = el("div", "room");
-  const floor = el("div", "floor");
-  const ring = el("div", "ring");
+  const links = svg("svg", { class: "links", "aria-hidden": "true" });
   const stage = el("div", "stage billboard");
-  room.append(floor, ring, stage);
+  const globe = createGlobe();
+  stage.append(globe, el("div", "pedestal"));
+  const empty = el("div", "empty-note billboard", "Start a mission below");
+  const outer = el("div", "ring outer");
+  const inner = el("div", "ring inner");
+  room.append(el("div", "floor"), links, outer, inner, stage, empty);
+  for (const [dx, dy] of PLANTS) {
+    const plant = plantArt("plant-big billboard");
+    place(plant, { x: CENTER.x + dx, y: CENTER.y + dy });
+    room.append(plant);
+  }
   viewport.append(room);
-  root.replaceChildren(viewport);
+  root.replaceChildren(el("div", "backdrop"), viewport, sign(), lamp());
   ensureDefs(document);
-  place(ring, CENTER);
-  place(stage, CENTER);
-  const stations = new Map(); // agent id -> {node, shadow, parts, jpeg}
+  for (const node of [outer, inner, stage]) place(node, CENTER);
+  place(empty, { x: CENTER.x, y: CENTER.y + 250 });
+  const desks = new Map(); // agent id -> {desk, shadow, link}
+  const rows = new Map(); // agent id -> its latest row
   const camera = { ...START };
-  const created = new Map(); // agent id -> when it was created: the oldest gets the first place
-  let order = []; // agent ids, oldest first
-  let extent = { dx: 600, near: 920, far: CENTER.y }; // how far the stations reach: the room is fitted to them
-  let started = false; // the first apply() runs before the Brain exists: onCamera only after it
+  let filter = () => true;
+  let selected = null;
+  let shownKey = null;
+  let current = []; // the ids with a desk in the room, oldest first
+  let extent = { dx: 300, near: CENTER.y + 200, far: CENTER.y };
+  let ticking = null;
+  let pulsing = null;
 
-  function fits(scale, height) { // with this zoom, the nearest station stands above the task bar, the farthest
-    const tilt = (START.tilt * Math.PI) / 180; // card and the Brain below the top bar (the room's perspective)
-    const middle = 0.38 * height; // the room's middle, below the perspective's origin (.room top 58%, origin 20%)
-    const screen = (y) => {
+  // Where the room stands at this zoom, and whether every desk and the globe are in view. `middle` is how far the
+  // room's middle hangs below the perspective's origin (office.css .viewport): the room's span, from the top of the
+  // highest card (or the globe) to the near desks' bottom, goes in the band between TOP and the box's bottom (less
+  // BOTTOM), centred in what the band has to spare.
+  function frame(scale, width, height) {
+    const tilt = (START.tilt * Math.PI) / 180;
+    const at = (y) => { // a room's y: how far down the screen it falls from the room's middle, and its magnification
       const depth = (y - 700) * scale;
-      return 0.2 * height + ((middle + depth * Math.cos(tilt)) * 1800) / (1800 - depth * Math.sin(tilt));
+      return { down: depth * Math.cos(tilt), factor: 1800 / (1800 - depth * Math.sin(tilt)) };
     };
-    return screen(extent.near) <= height - 100 && screen(extent.far) >= 64 + (CARD.h + 24) * scale
-      && screen(CENTER.y) >= 64 + 400 * scale;
+    const far = at(extent.far);
+    const near = at(extent.near);
+    const globe = at(CENTER.y);
+    const origin = ORIGIN * height; // a point's screen y: origin + (middle + down) * factor
+    const highest = Math.max((TOP - origin) / far.factor - far.down + TALL * scale,
+                             (TOP - origin) / globe.factor - globe.down + 340 * scale); // the least `middle` may be
+    const lowest = (height - BOTTOM - origin) / near.factor - near.down; // and the most
+    const sideways = width / 2 - (extent.dx + DESK.w / 2) * scale * near.factor >= 0;
+    return { fits: highest <= lowest && sideways, middle: (highest + lowest) / 2 };
   }
 
-  function fit() { // the room fills the window it is in, with every station in view
+  function fit() { // the room's zoom, the largest with every desk in the box (below the top band), and where it stands
     const width = viewport.clientWidth || innerWidth;
     const height = viewport.clientHeight || innerHeight;
-    let scale = Math.max(0.35, Math.min(1.15, (width * 0.94) / (2 * extent.dx + CARD.w + 64), height / 880));
-    while (scale > 0.35 && !fits(scale, height)) scale -= 0.02;
-    return scale;
+    let scale = Math.min(1.2, (width * 0.94) / (2 * extent.dx + DESK.w + 40), height / 820);
+    let found = frame(scale, width, height);
+    while (scale > FLOOR && !found.fits) {
+      scale -= 0.02;
+      found = frame(scale, width, height);
+    }
+    scale = Math.max(FLOOR, scale);
+    return { scale, top: ORIGIN * height + frame(scale, width, height).middle };
   }
 
   function apply() {
     room.style.setProperty("--tilt", `${camera.tilt}deg`);
     room.style.setProperty("--spin", `${camera.spin}deg`);
-    const scale = camera.scale * fit(); // in 3D: the stations stand up through z, and keep their shape
+    const { scale: fitted, top } = fit();
+    const scale = camera.scale * fitted; // in 3D: the desks stand up through z, and keep their shape
+    const where = `${Math.round(top * 10) / 10}px`;
+    if (room.style.top !== where) room.style.top = where; // the room's middle, in the box (the sheet's 58% before this)
     room.style.transform = `rotateX(${camera.tilt}deg) rotateZ(${camera.spin}deg) scale3d(${scale}, ${scale}, ${scale})`;
     room.dataset.tilt = shortly(camera.tilt);
     room.dataset.spin = shortly(camera.spin);
     room.dataset.scale = shortly(camera.scale);
-    if (started) onCamera(); // turn, zoom, reset, resize and layout: the Brain re-aims its alert
   }
 
-  function layout() {
-    extent = { dx: 600, near: 920, far: CENTER.y };
-    order.forEach((id, index) => {
-      const station = stations.get(id);
-      const point = placeOf(index, order.length);
-      place(station.node, point);
-      place(station.shadow, point);
-      station.node.dataset.x = String(point.x);
-      station.node.dataset.y = String(point.y);
+  function shownIds() {
+    return roomAgents([...rows.values()].filter(filter)).map((agent) => agent.id);
+  }
+
+  function modeOf(agent, count) {
+    return count > CHIPS_PAST && agent.id !== selected && stateOf(agent) !== "needs_you" ? "chip" : "full";
+  }
+
+  function linkPath(point) { // from under the desk to the globe's base, on the floor
+    const angle = Math.atan2(point.y - CENTER.y, point.x - CENTER.x);
+    return `M ${point.x} ${point.y} L ${Math.round(CENTER.x + 175 * Math.cos(angle))} `
+      + `${Math.round(CENTER.y + 140 * Math.sin(angle))}`;
+  }
+
+  function fillOne(id, count) {
+    const entry = desks.get(id);
+    const row = rows.get(id);
+    entry.desk.fill(row, modeOf(row, count));
+    entry.link.classList.toggle("live", stateOf(row) === "working");
+  }
+
+  function refresh() { // who is in the room, where each desk stands, and how each card shows
+    const ids = shownIds();
+    extent = { dx: 300, near: CENTER.y + 200, far: CENTER.y };
+    for (const [id, entry] of desks) {
+      const index = ids.indexOf(id);
+      const away = index < 0;
+      entry.desk.node.classList.toggle("away", away);
+      entry.desk.node.disabled = away;
+      entry.shadow.classList.toggle("away", away);
+      entry.link.classList.toggle("away", away);
+      if (away) continue;
+      const point = placeOf(index, ids.length);
+      place(entry.desk.node, point);
+      place(entry.shadow, point);
+      entry.desk.node.dataset.x = String(point.x);
+      entry.desk.node.dataset.y = String(point.y);
+      entry.link.setAttribute("d", linkPath(point));
       extent = { dx: Math.max(extent.dx, Math.abs(point.x - CENTER.x)), near: Math.max(extent.near, point.y),
                  far: Math.min(extent.far, point.y) };
-    });
+    }
+    current = ids;
+    shownKey = ids.join(" ");
+    for (const id of ids) fillOne(id, ids.length);
+    room.dataset.empty = String(!ids.length);
+    // the empty note: agents exist and the workspace picked hides them all, or no agent exists at all
+    const words = rows.size ? "No missions in this workspace" : "Start a mission below";
+    if (empty.textContent !== words) empty.textContent = words;
     apply();
   }
 
   function build(id) {
-    const node = el("button", "station billboard arriving placing"); // its first place: no sliding into it
-    node.type = "button";
-    node.dataset.id = id;
-    const parts = { card: el("div", "card"), monitor: el("div", "monitor"), shot: el("img", "shot"),
-                    scan: el("div", "scan"), boot: el("div", "boot"), stand: el("div", "stand"),
-                    worker: createWorker(id), desk: el("div", "desk"), plate: el("div", "plate"),
-                    nameplate: el("span", "nameplate"), light: el("span", "light"), ticker: el("div", "ticker"),
-                    badge: el("span", "badge", "needs you") };
-    parts.shot.alt = "";
-    parts.shot.hidden = true;
-    parts.monitor.append(parts.shot, parts.scan, parts.boot);
-    parts.plate.append(parts.nameplate, parts.light);
-    parts.desk.append(parts.plate, parts.ticker);
-    parts.card.append(parts.monitor, parts.stand, parts.worker, parts.desk);
-    node.append(parts.card, parts.badge);
-    node.addEventListener("click", () => onSelect(id));
+    const desk = createDesk(id, onSelect);
     const shadow = el("div", "shadow placing");
-    room.append(shadow, node);
+    const link = svg("path", { class: "link" });
+    links.append(link);
+    room.append(shadow, desk.node);
+    const entry = { desk, shadow, link };
+    desks.set(id, entry);
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      node.classList.remove("arriving", "placing");
+      desk.node.classList.remove("arriving", "placing");
       shadow.classList.remove("placing");
     }));
-    return { node, shadow, parts, jpeg: null };
+    return entry;
   }
 
-  function fill(station, agent) {
-    const { node, parts } = station;
-    const state = agent.permission || agent.check ? "needs_you" : String(agent.state || "waiting");
-    if (node.dataset.state !== state) node.dataset.state = state;
-    const color = COLORS[agent.color] || COLORS.grey;
-    if (node.style.getPropertyValue("--c") !== color) node.style.setProperty("--c", color);
-    const name = agentLabel(agent);
-    setText(parts.nameplate, name);
-    setText(parts.ticker, tickerOf(agent, state));
-    const label = `${name}: ${STATES[state] || state}`;
-    if (node.getAttribute("aria-label") !== label) node.setAttribute("aria-label", label);
-  }
-
-  function arrive(station) { // a new agent's short scene: the spark flies from the Brain, the desk plays .spawning
-    const { node } = station;
+  function arrive(entry) { // a new agent's short scene: a spark flies from the globe, the worker pops up and waves
+    const { node } = entry.desk;
     node.classList.add("spawning");
     setTimeout(() => node.classList.remove("spawning"), 2000); // a timer: animationend never fires without animations
     if (room.querySelectorAll(".spark").length >= SPARKS) return;
@@ -220,51 +303,62 @@ export function createScene(root, { onSelect = () => {}, onCamera = () => {} } =
 
   function upsert(agent, { fresh = false } = {}) { // fresh: created while the page is open, so its arrival plays
     if (!agent?.id) return;
-    let station = stations.get(agent.id);
-    const added = !station;
-    if (added) {
-      station = build(agent.id);
-      stations.set(agent.id, station);
-      created.set(agent.id, Number(agent.created) || Infinity);
-      order.push(agent.id);
-      order.sort((one, two) => created.get(one) - created.get(two));
-      layout();
+    rows.set(agent.id, agent);
+    const added = !desks.has(agent.id);
+    if (added) build(agent.id);
+    const ids = shownIds();
+    if (added || ids.join(" ") !== shownKey) refresh();
+    else if (ids.includes(agent.id)) fillOne(agent.id, ids.length);
+    if (added && fresh && ids.includes(agent.id) && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      arrive(desks.get(agent.id));
     }
-    fill(station, agent);
-    if (added && fresh && !matchMedia("(prefers-reduced-motion: reduce)").matches) arrive(station);
-  }
-
-  function directionTo(id) { // from the Brain to a station, in the viewer's frame: dx to the right, dz to the user
-    const station = stations.get(id);
-    if (!station) return null;
-    const x = Number(station.node.dataset.x) - CENTER.x;
-    const y = Number(station.node.dataset.y) - CENTER.y;
-    const spin = (camera.spin * Math.PI) / 180;
-    const dx = x * Math.cos(spin) - y * Math.sin(spin);
-    const dz = x * Math.sin(spin) + y * Math.cos(spin);
-    const length = Math.hypot(dx, dz);
-    return length ? { dx: dx / length, dz: dz / length } : null;
   }
 
   function remove(id) {
-    const station = stations.get(id);
-    if (!station) return;
-    stations.delete(id);
-    created.delete(id);
-    order = order.filter((other) => other !== id);
-    station.node.classList.add("leaving");
-    station.node.disabled = true;
-    station.shadow.remove();
-    setTimeout(() => station.node.remove(), 300);
-    layout();
+    const entry = desks.get(id);
+    if (!entry) return;
+    desks.delete(id);
+    rows.delete(id);
+    if (selected === id) selected = null;
+    entry.desk.node.classList.add("leaving");
+    entry.desk.node.disabled = true;
+    entry.shadow.remove();
+    entry.link.remove();
+    setTimeout(() => entry.desk.node.remove(), 300);
+    refresh();
   }
 
-  function thumb(id, jpeg) { // a picture for an agent without a station (closed meanwhile) is dropped
-    const station = stations.get(id);
-    if (!station || typeof jpeg !== "string" || !JPEG.test(jpeg) || station.jpeg === jpeg) return;
-    station.jpeg = jpeg;
-    station.parts.shot.src = `data:image/jpeg;base64,${jpeg}`;
-    station.parts.shot.hidden = false;
+  function thumb(id, jpeg) { // a picture for an agent without a desk (closed meanwhile) is dropped
+    desks.get(id)?.desk.thumb(jpeg);
+  }
+
+  function select(id) {
+    selected = id;
+    for (const [one, entry] of desks) entry.desk.node.classList.toggle("selected", one === id);
+    refresh(); // the picked desk's card stays whole in a crowded room
+  }
+
+  function setFilter(next) {
+    filter = typeof next === "function" ? next : () => true;
+    refresh();
+  }
+
+  function tick() {
+    const now = Date.now() / 1000;
+    for (const id of current) {
+      if (rows.has(id)) desks.get(id)?.desk.tick(rows.get(id), now);
+    }
+  }
+
+  function pause(on) { // its tab or the window is hidden: the timers wait (mission.js pauses the animations)
+    clearInterval(ticking);
+    ticking = on ? null : setInterval(tick, 1000);
+  }
+
+  function pulse() { // a word the Brain says
+    globe.classList.add("pulse");
+    clearTimeout(pulsing);
+    pulsing = setTimeout(() => globe.classList.remove("pulse"), 250);
   }
 
   function turn(degrees, tilt = 0) {
@@ -283,8 +377,9 @@ export function createScene(root, { onSelect = () => {}, onCamera = () => {} } =
     apply();
   }
 
-  addEventListener("resize", apply);
-  apply();
-  started = true;
-  return { upsert, remove, thumb, turn, zoom, reset, directionTo, camera, stage, viewport };
+  new ResizeObserver(() => apply()).observe(viewport); // the box it is in changed: fit again (after layout)
+  refresh();
+  pause(false);
+  return { upsert, remove, thumb, select, setFilter, pause, pulse, refit: apply, shown: () => [...current], turn, zoom,
+           reset, camera, stage, globe, viewport };
 }

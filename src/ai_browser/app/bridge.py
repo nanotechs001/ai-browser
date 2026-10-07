@@ -20,7 +20,7 @@ from .. import platforms
 from ..accounts import clean_env
 from ..brain.tools import ToolsConfig, server_of
 from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
-from ..limits import from_event, from_text
+from ..limits import from_event, from_text, usage_from_event
 from ..syncdir import write_atomic
 from . import powers
 
@@ -119,7 +119,7 @@ class ClaudeBridge:
                  servers: list[str] | None = None,
                  on_permission: Callable[[dict], Awaitable[str]] | None = None,
                  environment: dict[str, str] | None = None, work: str | Path | None = None,
-                 rules: powers.Rules | None = None, trusted: bool = False):
+                 rules: powers.Rules | None = None, trusted: bool = False, web: str = "web"):
         self.home = Path(home)
         self.agent_id = agent_id
         self.tools = tools  # the user's MCP servers (phase 2): with it, tools outside the allowed ones are asked for
@@ -133,6 +133,7 @@ class ClaudeBridge:
         self.work = Path(work) if work is not None else self.folder / "work"
         self.rules = rules  # the user's rules per folder (<home>/permissions.json)
         self.trusted = bool(trusted) and self.chosen  # Decision 7: what of the folder's own Claude Code loads
+        self.web = web if web in powers.WEB_CHOICES else "web"  # the new look's Web ▾: the agent's web tools
         self._parents: dict[str, str] = {}  # a sub-agent's tool use id -> its sub-agent tool's id
         self._subagents: dict[str, str] = {}  # the sub-agent tool's id -> its task, as cards and the drawer name it
         self._quiet: set[str] = set()  # TodoWrite's tool use ids: the list is their view, never an action line
@@ -237,8 +238,11 @@ class ClaudeBridge:
             if kind == "control_request" and (event.get("request") or {}).get("subtype") == "can_use_tool":
                 await self._permission(event)  # Claude Code waits for the answer
                 continue
-            if kind == "rate_limit_event":  # undocumented: only status, resetsAt and rateLimitType are read
+            if kind == "rate_limit_event":  # undocumented: only status, resetsAt, rateLimitType and USAGE_KEY are read
                 self._note_shape(event)
+                usage = usage_from_event(event)
+                if usage is not None:  # how much is used, for the Usage card: never the chat's
+                    yield {"type": "usage", "used": usage.used, "resets_at": usage.resets_at, "kind": usage.kind}
                 hit = from_event(event)
                 if hit is not None and not self._limit_seen:
                     self._limit_seen = True
@@ -483,8 +487,11 @@ class ClaudeBridge:
         sub-agent tool (Decision 3) and the folder's site rules (plan decision 1). The folder's own settings load
         only when the user trusts it (Decision 7)."""
         argv = claude_argv(self.claude)  # ClaudeNotUsable for an npm claude.cmd
-        allowed = ["mcp__ai-browser__*", *powers.FREE, *self._handed_rules()]
-        blocked, strict = ["mcp__ai-browser__sandbox_start"], ["--strict-mcp-config"]
+        tools, web_blocked = powers.web_tools(self.web)
+        sites = self._handed_rules() if "WebFetch" in tools else []  # Brave only, No web: no site's rule handed over
+        allowed = ["mcp__ai-browser__*", *powers.FREE, *sites]
+        blocked = list(dict.fromkeys(["mcp__ai-browser__sandbox_start", *web_blocked]))
+        strict = ["--strict-mcp-config"]
         if self.tools is not None:  # the user's tools: allowed ones pass, the rest are asked for
             servers = self._allowed_servers()
             allowed += sorted(tool for tool in self.tools.always() if server_of(tool) in servers)
@@ -494,7 +501,7 @@ class ClaudeBridge:
                 blocked += [f"mcp__{name}__*" for name in sorted(connectors - servers)]
         settings = self._settings_file()
         command = [*argv, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-                   "--include-partial-messages", "--model", self.model, "--tools", ",".join(powers.TOOLS), *strict,
+                   "--include-partial-messages", "--model", self.model, "--tools", ",".join(tools), *strict,
                    "--mcp-config", str(self._mcp_config()), "--allowedTools", ",".join(allowed),
                    "--disallowedTools", ",".join(blocked), "--permission-prompt-tool", "stdio",
                    "--setting-sources", powers.setting_sources(self.trusted),

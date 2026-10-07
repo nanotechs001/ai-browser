@@ -17,6 +17,7 @@ const LIVE = /^http:\/\/127\.0\.0\.1:\d{1,5}\/live\?token=[A-Za-z0-9_-]{1,64}$/;
 const AGENT = /^a\d{1,9}$/;
 const COUNT = /^\((\d+)\) /; // AI Home's own title while agents work: "(2) AI Home"
 const LABEL_LIMIT = 80;
+const SECTION = /^#[a-z][a-z0-9-]{0,40}$/; // a page's section ("#accounts-section"): passed on to its fixed tab
 const $ = (id) => document.getElementById(id);
 const tabs = new Map(); // key -> {key, label, src, closable, live, node, button, view, frame}
 let active = null;
@@ -51,7 +52,7 @@ function addTab(key, label, src, { closable = false, live = false } = {}) {
   return tab;
 }
 
-function load(tab) { // the tab's frame, made the first time it is shown
+function load(tab, hash = "") { // the tab's frame, made the first time it is shown (at a section, if asked)
   const view = el("div", "view");
   view.dataset.key = tab.key;
   const frame = el("iframe");
@@ -59,17 +60,18 @@ function load(tab) { // the tab's frame, made the first time it is shown
   if (tab.live) frame.setAttribute("sandbox", "allow-scripts"); // another origin's page: no way out of its frame
   if (tab.key === "/mission") frame.allow = "microphone"; // talking to the Brain
   if (tab.key === "/home") frame.addEventListener("load", () => watchCount(frame));
-  frame.src = tab.src;
+  frame.src = tab.src + hash;
   view.append(frame);
   $("views").append(view);
   tab.view = view;
   tab.frame = frame;
 }
 
-function show(key) {
+function show(key, hash = "") {
   const tab = tabs.get(key);
   if (!tab) return;
-  if (!tab.frame) load(tab);
+  if (!tab.frame) load(tab, hash);
+  else if (hash) tab.frame.contentWindow?.location.replace(tab.src + hash); // the same page: only its section moves
   active = key;
   picked = [...picked.filter((one) => one !== key), key];
   for (const one of tabs.values()) {
@@ -78,6 +80,7 @@ function show(key) {
     if (on) one.button.setAttribute("aria-current", "page");
     else one.button.removeAttribute("aria-current");
     one.view?.classList.toggle("active", on);
+    one.frame?.contentWindow?.postMessage({ type: "shown", on }, location.origin); // our pages pause while hidden
   }
   renderTitle();
   tab.frame.contentWindow?.focus(); // keys go to the page shown (Mission Control's Space to talk, Escape, arrows)
@@ -122,7 +125,7 @@ function openPage(path) { // one of our pages, by its path and #section: its fix
     return;
   }
   if (url.origin !== location.origin) return;
-  if (FIXED.some(([key]) => key === url.pathname)) show(url.pathname);
+  if (FIXED.some(([key]) => key === url.pathname)) show(url.pathname, SECTION.test(url.hash) ? url.hash : "");
   else if (url.pathname === SETUP) openClosable(SETUP, "Setup", SETUP + url.hash);
 }
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 import re
 import time
 from collections.abc import Callable
@@ -101,6 +102,28 @@ class Schedule:
                     return True
             day += datetime.timedelta(days=1)
         return False
+
+    def moments(self, last: float, start: float, end: float, most: int = 100) -> list[float]:
+        """The scheduled moments after `start` and up to `end` (local time), at most `most`, for the Calendar. An
+        interval ("every 2h") counts from `last`: the runner's last run, or when it started counting."""
+        out: list[float] = []
+        if self.every is not None:
+            moment = last + self.every
+            if moment <= start:
+                moment += (math.floor((start - moment) / self.every) + 1) * self.every
+            while moment <= end and len(out) < most:
+                out.append(moment)
+                moment += self.every
+            return out
+        day = datetime.datetime.fromtimestamp(start).date()
+        final = datetime.datetime.fromtimestamp(end).date()
+        while day <= final and len(out) < most:
+            if day.weekday() in self.days:
+                moment = datetime.datetime(day.year, day.month, day.day, self.hour, self.minute).timestamp()
+                if start < moment <= end:
+                    out.append(moment)
+            day += datetime.timedelta(days=1)
+        return out
 
 
 def check(fields: dict, slug: str) -> Workflow:
@@ -248,6 +271,24 @@ class WorkflowRunner:
     def running(self, slug: str) -> bool:
         agent = getattr(self.agents, "agents", {}).get(self.active.get(slug, ""))
         return agent is not None and agent.state in ACTIVE
+
+    def upcoming(self, days: int = 62) -> list[dict]:
+        """The Calendar's scheduled templates: each one's next runs for `days` days. An interval's next run only: the
+        Calendar shows it on every day from then."""
+        now = self._now()
+        out = []
+        for workflow in self.store.all():
+            if workflow.trigger != "schedule":
+                continue
+            try:
+                schedule = Schedule.parse(workflow.schedule)
+            except ValueError:
+                continue
+            runs = schedule.moments(self._last.get(workflow.slug, now), now, now + days * 86400,
+                                    most=1 if schedule.every is not None else 100)
+            out.append({"slug": workflow.slug, "name": workflow.name, "schedule": workflow.schedule,
+                        "every": schedule.every, "runs": runs})
+        return out
 
     async def run(self, slug: str, text: str | None = None, page: str | None = None) -> str:
         """Start the workflow's agent: its instructions (the user's words), then the message as labelled page data

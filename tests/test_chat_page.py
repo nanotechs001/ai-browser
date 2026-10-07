@@ -212,7 +212,7 @@ def record_creates(stack):
     agents, made = stack["server"].agents, []
 
     async def create(text, skills=(), model="sonnet", adopt=None, tab=None, servers=None, account=None,
-                     folder=None):
+                     folder=None, **more):  # more: the new look's workspace, files and web, not recorded here
         made.append({"text": text, "model": model, "adopt": adopt, "account": account, "folder": folder})
         agent = add_agent(agents, f"a{len(made)}", text)
         if adopt:

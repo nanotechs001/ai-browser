@@ -14,7 +14,8 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from test_bridge import EVENTS
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
-from test_mission import BUBBLES, LOCAL_VOICE, SLOW_VOICE, WORKING, needs_reply, open_with, station, voice_on
+from test_mission import (BUBBLES, LOCAL_VOICE, SLOW_VOICE, WORKING, needs_reply, open_drawer, open_with, station,
+                          voice_on)
 from test_oneshot import oneshots
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
@@ -287,11 +288,15 @@ async def ask_typed(js, words):
              " document.getElementById('talk-form').requestSubmit(); true")
 
 
-async def open_talk(stack, *sources, hearing="ready"):
-    """Mission Control with `sources` run before its scripts, in front, once it knows whether talking is ready."""
+async def open_talk(stack, *sources, hearing="ready", ask=True):
+    """Mission Control with `sources` run before its scripts, in front, once it knows whether talking is ready, and in
+    Ask AI: the talk with the Brain is Ask AI's (in the composer's other modes the mic fills the box), unless not
+    ask."""
     js = await open_with(stack, "".join(sources))
     await front(stack, js)
     assert await until(js, f"{PANEL}.dataset.hearing === {json.dumps(hearing)}")
+    if ask:
+        await js("document.getElementById('mode-ask').click(); true")
     return js
 
 
@@ -359,12 +364,12 @@ async def test_space_keeps_its_job_in_text_boxes_and_on_buttons(stack):
     assert await until(js, "document.getElementById('task').value === ' '")  # it typed a space
     await js(f"document.getElementById('task').value = ''; {station('a1')}.focus(); true")
     await tap(stack, js, SPACE, " ")
-    assert await until(js, "!document.getElementById('drawer').hidden")  # it pressed the focused station
+    assert await until(js, f"{station('a1')}.classList.contains('selected')")  # it pressed the focused desk
     await asyncio.sleep(0.5)
     assert await js("window.micOpen") == 0 and await js(f"{PANEL}.dataset.state") == "idle"
     await js("document.getElementById('task').focus(); true")
     for kind in ("mousePressed", "mouseReleased"):  # a click on the room, away from every control
-        await stack["cdp"].send("Input.dispatchMouseEvent", {"type": kind, "x": 40, "y": 300, "button": "left",
+        await stack["cdp"].send("Input.dispatchMouseEvent", {"type": kind, "x": 420, "y": 40, "button": "left",
                                                              "clickCount": 1}, session_id=js.session)
     assert await js("document.activeElement === document.body")  # it gives Space back to talking
     await talk(stack, js)
@@ -377,7 +382,7 @@ async def test_esc_throws_the_turn_away_and_does_nothing_else(stack):
     await stack["server"].agents.create("Fix the footer")
     js = await open_talk(stack, mic())
     assert await until(js, f"{station('a1')} !== null")
-    await js(f"{station('a1')}.click(); true")  # the drawer opens (a script's click leaves the keys with the page)
+    await js(open_drawer("a1"))  # the drawer opens (a script's click leaves the keys with the page)
     assert await until(js, "!document.getElementById('drawer').hidden")
     await key_down(stack, js, SPACE, " ")
     assert await until(js, f"{PANEL}.dataset.state === 'listening'")
@@ -804,29 +809,8 @@ async def test_an_old_card_expires_and_a_late_yes_starts_nothing(stack):
     assert stack["server"].agents.agents == {}
 
 
-# ---- the Brain listens: the particle brain's fifth state (the visuals spec's test 31) -------------------------------
+# ---- the Brain listens: the globe's listening state (the new look) ---------------------------------------------------
 
-LISTEN_GL = """
-window.gl = { last: {} };
-(() => {
-  const names = new WeakMap();
-  const proto = WebGLRenderingContext.prototype;
-  const locate = proto.getUniformLocation;
-  proto.getUniformLocation = function (program, name) {
-    const location = locate.call(this, program, name);
-    if (location) names.set(location, name);
-    return location;
-  };
-  for (const method of ["uniform1f", "uniform4fv"]) {
-    const real = proto[method];
-    proto[method] = function (location, ...values) {
-      const name = location && names.get(location);
-      if (name) window.gl.last[name] = method === "uniform1f" ? values[0] : Array.from(values[0]);
-      return real.call(this, location, ...values);
-    };
-  }
-})();
-"""
 STAGE_STATES = """
 window.states = [];
 addEventListener("DOMContentLoaded", () => {
@@ -838,39 +822,20 @@ addEventListener("DOMContentLoaded", () => {
   new MutationObserver(note).observe(stage, { attributes: true, attributeFilter: ["data-state"] });
 });
 """
-NO_WEBGL = ("const realContext = HTMLCanvasElement.prototype.getContext;"
-            "HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {"
-            "  return /webgl/.test(kind) ? null : realContext.call(this, kind, ...rest); };")
 
 
 @CHROME
-async def test_the_particle_brain_listens(stack):
+async def test_the_globe_listens(stack):
     talk_script(stack, {"say": "OK.", "action": "none"})
-    js = await open_talk(stack, LISTEN_GL, STAGE_STATES, mic())
+    js = await open_talk(stack, STAGE_STATES, mic())
     stage = "document.querySelector('.stage')"
-    assert await until(js, f"{stage}.dataset.mode === 'webgl' && window.gl.last.u_mix !== undefined")
     await key_down(stack, js, SPACE, " ")
     assert await until(js, f"{stage}.dataset.state === 'listening'")
-    settled = ("Math.abs(window.gl.last.u_listen - 1) < 0.05"
-               " && window.gl.last.u_mix.every((weight) => Math.abs(weight) < 0.05)")
-    assert await until(js, settled, 5)  # u_listen near 1, and the four weights of u_mix near 0
-    assert await js(f"{stage}.dataset.mode") == "webgl"  # the shaders with u_listen compile
+    glow = "getComputedStyle(document.querySelector('.stage .globe')).getPropertyValue('--g').trim()"
+    assert await until(js, f"{glow} === '#f28cd9'")  # rose while it listens
     await key_up(stack, js, SPACE)
-    assert await until(js, "window.gl.last.u_listen < 0.05", 6)  # it eases back once the turn ends
+    assert await until(js, f"{stage}.dataset.state !== 'listening'", 6)
     assert "listening" in await js("window.states")
-
-
-@CHROME
-async def test_without_webgl_the_dotted_brain_listens(stack):
-    js = await open_talk(stack, NO_WEBGL, mic())
-    stage = "document.querySelector('.stage')"
-    assert await until(js, f"{stage}.dataset.mode === 'css'")
-    await key_down(stack, js, SPACE, " ")
-    assert await until(js, f"{stage}.dataset.state === 'listening'")
-    dots = "getComputedStyle(document.querySelector('.stage .orb'), '::before')"
-    assert await js(f"{dots}.getPropertyValue('--a').trim()") == "#fff2fa"  # white
-    assert await js(f"{dots}.getPropertyValue('--b').trim()") == "#f28cd9"  # rose
-    await key_up(stack, js, SPACE)
 
 
 def test_the_readme_says_how_to_talk_and_the_zero_setup_way():
@@ -901,9 +866,9 @@ async def test_numbers_show_on_stations_the_list_and_the_drawer(stack):
     js = await open_with(stack)
     assert await until(js, f"{station('a1', '.nameplate')}?.textContent === '1 · Fix the footer'")
     assert (await js(f"{station('a1')}.getAttribute('aria-label')")).startswith("1 · Fix the footer: ")
-    assert await js("document.querySelector('#list button[data-id=\"a1\"] .grow').textContent") == \
+    assert await js("document.querySelector('#view-list .mission[data-id=\"a1\"] .label').textContent") == \
         "1 · Fix the footer"
-    await js(f"{station('a1')}.click(); true")
+    await js(open_drawer("a1"))
     assert await until(js, "document.getElementById('drawer-title').textContent === '1 · Fix the footer'")
     await agents.close("a1")
     assert await until(js, f"{station('a1')} === null")
@@ -1072,3 +1037,19 @@ async def test_the_browser_is_named_from_its_brands(stack):
                      " [{brand: 'Brave'}], [{brand: 'Google Chrome'}], []]"
                      ".map((brands) => browserName({ userAgentData: { brands } })))")
     assert names == ["Microsoft Edge", "Brave", "Google Chrome", "Google Chrome"]
+
+
+@CHROME
+async def test_the_mic_fills_the_box_outside_ask_ai(stack):  # the new look: "voice, as today, filling the box"
+    talk_script(stack, {"say": "OK.", "action": "none"})
+    stack["engine"].answers = ["check the shop"]
+    js = await open_talk(stack, mic(), ask=False)
+    await talk(stack, js)  # Build a Mission is the composer's first mode
+    assert await until(js, "document.getElementById('task').value === 'check the shop'")
+    await asyncio.sleep(0.5)
+    assert talk_calls(stack) == []  # nothing went to the Brain
+    assert stack["server"].agents.agents == {}  # and nothing started: the words wait in the box for the user's Start
+    await js("document.getElementById('mode-ask').click(); document.getElementById('task').value = ''; true")
+    stack["engine"].answers = ["what is going on"]
+    await talk(stack, js)
+    assert await eventually(lambda: len(talk_calls(stack)) == 1)  # in Ask AI the Brain hears it, as before

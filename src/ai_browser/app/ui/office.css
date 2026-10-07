@@ -1,0 +1,293 @@
+/* Mission Control's office (the new look): the workers (chibi.js) and the icons (icons.js); from Task 11's room on, the
+   desks, the globe and the decor too. Colours come from theme.css. */
+.icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8;
+        stroke-linecap: round; stroke-linejoin: round; }
+.icon.filled { fill: currentColor; stroke: none; }
+
+/* ---- the worker (chibi.js): one HTML layer per part, each holding a small SVG. Only the layers move (transform,
+   translate and opacity), never an SVG element, and nothing on .worker itself may make a stacking context (no
+   transform, filter, opacity, will-change, z-index or isolation), so its parts stack with the desk: the body behind
+   it (layer 1), the hands in front (layer 3). Poses follow the nearest .pose's data-state (the worker is its child);
+   neighbours blink out of step. */
+.worker { position: absolute; right: 4px; bottom: 45px; width: 70px; height: 77px; pointer-events: none;
+          --hair: 0; --skin: 0; --lag: calc(-0.6s * var(--hair) - 0.2s * var(--skin)); }
+.worker.small { width: 42px; height: 46px; }
+.worker[data-hair="1"] { --hair: 1; }
+.worker[data-hair="2"] { --hair: 2; }
+.worker[data-skin="1"] { --skin: 1; }
+.worker[data-skin="2"] { --skin: 2; }
+.worker .part { position: absolute; inset: 0; z-index: 1; transform-origin: 50% 62%; }
+.worker .part svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.worker :is(.arm-l, .arm-r, .arm-up, .arm-thumb, .sparkle) { z-index: 3; }
+.worker .arm-l { transform-origin: 22% 74%; }
+.worker .arm-up { transform-origin: 78% 74%; }
+.worker .sparkle { transform-origin: 86% 52%; }
+:is(.worker, .avatar-art) .skin { fill: url(#mc-skin-0); }
+:is(.worker, .avatar-art)[data-skin="1"] .skin { fill: url(#mc-skin-1); }
+:is(.worker, .avatar-art)[data-skin="2"] .skin { fill: url(#mc-skin-2); }
+:is(.worker, .avatar-art) .hair { fill: url(#mc-hair-0); }
+:is(.worker, .avatar-art)[data-colour="1"] .hair { fill: url(#mc-hair-1); }
+:is(.worker, .avatar-art)[data-colour="2"] .hair { fill: url(#mc-hair-2); }
+.worker .shirt { fill: var(--c, #8a8f98); }
+.worker :is(.blink, .sweat, .arm-up, .arm-thumb, .sparkle) { opacity: 0; }
+:is(.worker, .avatar-art) :is(.eyes-happy, .eyes-shut, .mouth-o, .mouth-sad) { opacity: 0; }
+/* working: types (the hands tap in turn), nods, looks at the screen, blinks now and then */
+.pose[data-state="working"] > .worker .arm-l { animation: mc-tap 0.32s ease-in-out infinite alternate; }
+.pose[data-state="working"] > .worker .arm-r { animation: mc-tap 0.32s ease-in-out infinite alternate-reverse; }
+.pose[data-state="working"] > .worker :is(.head, .face, .phones) { animation: mc-nod 1.6s ease-in-out infinite; }
+.pose[data-state="working"] > .worker .blink { animation: mc-nod 1.6s ease-in-out infinite,
+                                                          mc-blink 5s linear var(--lag) infinite; }
+.pose[data-state="working"] > .worker :is(.face, .blink) { translate: -3.5px 0; }
+/* waiting in line: sits back, glances around, checks the time now and then */
+.pose[data-state="waiting"] > .worker :is(.body, .head, .face, .phones, .blink) { transform: translateY(2px); }
+.pose[data-state="waiting"] > .worker :is(.face, .blink) { animation: mc-glance 5s ease-in-out var(--lag) infinite; }
+.pose[data-state="waiting"] > .worker .arm-l { animation: mc-watch 8s ease-in-out var(--lag) infinite; }
+/* needs you: turns to the user, raises a hand and waves, mouth open */
+.pose[data-state="needs_you"] > .worker .arm-r { opacity: 0; }
+.pose[data-state="needs_you"] > .worker .arm-up { opacity: 1; animation: mc-wave 1s ease-in-out infinite; }
+.pose[data-state="needs_you"] > .worker .mouth-smile { opacity: 0; }
+.pose[data-state="needs_you"] > .worker .mouth-o { opacity: 1; }
+/* done: a thumbs up, happy eyes, a little hop, and a sparkle as it starts */
+.pose[data-state="your_turn"] > .worker .arm-r { opacity: 0; }
+.pose[data-state="your_turn"] > .worker .arm-thumb { opacity: 1; }
+.pose[data-state="your_turn"] > .worker .eyes-open { opacity: 0; }
+.pose[data-state="your_turn"] > .worker .eyes-happy { opacity: 1; }
+.pose[data-state="your_turn"] > .worker :is(.body, .head, .face, .phones, .arm-l, .arm-thumb) {
+  animation: mc-hop 2.4s ease-in-out infinite; }
+.pose[data-state="your_turn"] > .worker .sparkle { animation: mc-sparkle 0.8s ease-out 1; }
+/* failed: slumps onto the desk, eyes shut, a sad mouth and a drop of sweat */
+.pose[data-state="failed"] > .worker :is(.body, .head, .face, .phones, .blink, .sweat) {
+  transform: translateY(9px) rotate(-12deg); transform-origin: 50% 90%; }
+.pose[data-state="failed"] > .worker :is(.eyes-open, .mouth-smile) { opacity: 0; }
+.pose[data-state="failed"] > .worker :is(.eyes-shut, .mouth-sad) { opacity: 1; }
+.pose[data-state="failed"] > .worker .sweat { opacity: 1; animation: mc-sweat 3s ease-in infinite; }
+/* stopped: dozes, eyes shut, colours greyed (on each part: never on .worker) */
+.pose[data-state="stopped"] > .worker .eyes-open { opacity: 0; }
+.pose[data-state="stopped"] > .worker .eyes-shut { opacity: 1; }
+.pose[data-state="stopped"] > .worker :is(.head, .face, .phones, .blink) { translate: 0 2px; }
+.pose[data-state="stopped"] > .worker :is(.body, .head, .face, .phones, .blink) {
+  animation: mc-doze 4s ease-in-out infinite; }
+.pose[data-state="stopped"] > .worker .part { filter: saturate(0.4) brightness(0.8); }
+
+@keyframes mc-tap { from { transform: translateY(0); } to { transform: translateY(-2px); } }
+@keyframes mc-nod { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-2deg) translateY(0.6px); } }
+@keyframes mc-blink { 0%, 96.99% { opacity: 0; } 97%, 100% { opacity: 1; } }
+@keyframes mc-glance { 0%, 100% { translate: -3px 0; } 50% { translate: 3px 0; } }
+@keyframes mc-watch { 0%, 84%, 100% { transform: none; } 87%, 97% { transform: translate(5px, -9px) rotate(-28deg); } }
+@keyframes mc-wave { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(14deg); } }
+@keyframes mc-hop { 0%, 80%, 100% { transform: translateY(0); } 88% { transform: translateY(-3px); } }
+@keyframes mc-sparkle { 0% { opacity: 0; transform: scale(0.4) rotate(0deg); } 30% { opacity: 1; }
+                        100% { opacity: 0; transform: scale(1.3) rotate(90deg); } }
+@keyframes mc-sweat { from { translate: 0 0; } to { translate: 0 4px; } }
+@keyframes mc-doze { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(0.8px) scale(1.01); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; }
+}
+
+/* ---- the room ------------------------------------------------------------------------------------------------- */
+.scene { position: relative; overflow: hidden; isolation: isolate;
+         background: radial-gradient(ellipse at 50% 38%, #142454 0%, #0a1430 38%, var(--bg-deep) 75%); }
+.backdrop { position: absolute; inset: 0 0 45% 0; pointer-events: none; opacity: 0.55;
+            background:
+              repeating-linear-gradient(90deg, transparent 0 46px, rgba(255, 200, 120, 0.05) 46px 52px,
+                                        transparent 52px 110px),
+              repeating-linear-gradient(0deg, transparent 0 30px, rgba(120, 150, 255, 0.05) 30px 33px),
+              linear-gradient(180deg, #0b1636, transparent);
+            -webkit-mask-image: linear-gradient(180deg, #000 30%, transparent);
+            mask-image: linear-gradient(180deg, #000 30%, transparent); }
+.viewport { position: absolute; inset: 0; perspective: 1800px; perspective-origin: 50% 20%; overflow: hidden;
+            cursor: grab; touch-action: none; }
+.viewport.dragging { cursor: grabbing; }
+.room { position: absolute; left: 50%; top: 58%; width: 2000px; height: 1400px; margin: -700px 0 0 -1000px;
+        transform-style: preserve-3d; --tilt: 58deg; --spin: 0deg; }
+.floor { position: absolute; inset: -500px; pointer-events: none;
+         background:
+           radial-gradient(circle at 50% 44%, rgba(60, 110, 255, 0.28), transparent 22%),
+           repeating-linear-gradient(0deg, rgba(120, 150, 230, 0.09) 0 1px, transparent 1px 120px),
+           repeating-linear-gradient(90deg, rgba(120, 150, 230, 0.09) 0 1px, transparent 1px 120px),
+           #0d1838;
+         -webkit-mask-image: radial-gradient(ellipse at 50% 46%, #000 34%, transparent 70%);
+         mask-image: radial-gradient(ellipse at 50% 46%, #000 34%, transparent 70%); }
+.ring { position: absolute; border-radius: 50%; pointer-events: none; border: 2px solid rgba(90, 150, 255, 0.55);
+        box-shadow: 0 0 30px var(--glow), inset 0 0 30px rgba(60, 110, 255, 0.3); }
+.ring.inner { width: 340px; height: 340px; margin: -170px 0 0 -170px; }
+.ring.outer { width: 480px; height: 480px; margin: -240px 0 0 -240px; border-color: rgba(90, 150, 255, 0.25); }
+.billboard { position: absolute; transform-style: preserve-3d; transform-origin: 50% 100%;
+             transform: translate(-50%, -100%) rotateZ(calc(-1 * var(--spin))) rotateX(calc(-1 * var(--tilt))); }
+.links { position: absolute; left: 0; top: 0; width: 2000px; height: 1400px; overflow: visible; pointer-events: none; }
+.links path { fill: none; stroke: var(--accent-2); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 0.1 16;
+              opacity: 0.7; }
+.links path.live { animation: mc-dots 1.2s linear infinite; }
+.links path.away, .station.away, .shadow.away { display: none; }
+.shadow { position: absolute; width: 260px; height: 90px; margin: -45px 0 0 -130px; border-radius: 50%;
+          pointer-events: none; background: radial-gradient(closest-side, rgba(40, 90, 255, 0.35), transparent);
+          transition: left 0.6s ease, top 0.6s ease; }
+.empty-note { padding: 8px 18px; border-radius: 999px; background: rgba(13, 24, 52, 0.85); color: var(--text-2);
+              border: 1px solid var(--line-strong); font-size: 16px; white-space: nowrap; pointer-events: none; }
+.room:not([data-empty="true"]) .empty-note { display: none; }
+.plant-big { width: 110px; height: 132px; pointer-events: none; }
+.plant-big svg { width: 100%; height: 100%; display: block; }
+
+/* ---- the globe: the Brain's seat. Its glow (--g) follows the Brain's state ------------------------------------- */
+.stage { width: 300px; display: flex; flex-direction: column; align-items: center; }
+.globe { position: relative; width: 220px; height: 220px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+         background: radial-gradient(circle, rgba(80, 150, 255, 0.35), transparent 70%); --g: #378cff;
+         filter: drop-shadow(0 0 26px var(--glow)); }
+.globe:hover:not(:disabled) { background: radial-gradient(circle, rgba(80, 150, 255, 0.5), transparent 70%); }
+.globe:focus-visible { outline-offset: -10px; }
+.globe .sphere { position: absolute; inset: 18px; border-radius: 50%; overflow: hidden;
+                 background: radial-gradient(circle at 38% 32%, #c8ffff 0%, var(--g) 34%, #0b2582 78%, #06123f 100%);
+                 box-shadow: inset 0 0 30px rgba(170, 220, 255, 0.5), 0 0 40px var(--glow); }
+.globe .map { position: absolute; top: 0; left: 0; height: 100%; aspect-ratio: 4 / 1;
+              animation: mc-turn 60s linear infinite; }
+.globe .map-art { display: block; width: 100%; height: 100%; }
+.globe .map-art circle { fill: #d6f4ff; opacity: 0.85; }
+.globe .shine { position: absolute; inset: 0; border-radius: 50%;
+                background: radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.55), transparent 32%),
+                            radial-gradient(circle, transparent 58%, rgba(4, 12, 40, 0.65) 100%); }
+.pedestal { width: 260px; height: 46px; margin-top: -14px; border-radius: 50%; pointer-events: none;
+            background: radial-gradient(ellipse at 50% 40%, rgba(120, 180, 255, 0.9) 0 18%, rgba(40, 90, 255, 0.5) 40%,
+                                        transparent 70%); }
+.stage[data-state="thinking"] .globe { --g: #5fd0ff; }
+.stage[data-state="alert"] .globe { --g: #ffb547; filter: drop-shadow(0 0 30px rgba(255, 181, 71, 0.6)); }
+.stage[data-state="alert"] .globe .sphere { animation: mc-beat 1.1s linear infinite; }
+.stage[data-state="speaking"] .globe { --g: #2af0b9; }
+.stage[data-state="listening"] .globe { --g: #f28cd9; filter: drop-shadow(0 0 30px rgba(242, 140, 217, 0.6)); }
+.globe.pulse .sphere { animation: mc-word 0.25s ease-out; }
+.brain-label { display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 40px;
+               text-align: center; pointer-events: none; }
+.brain-label .count { font-weight: 700; color: var(--needs); font-size: 15px; text-shadow: 0 0 12px #000; }
+.brain-label .what { color: var(--muted); font-size: 13px; text-shadow: 0 0 10px #000; }
+.bubble { position: absolute; left: 50%; bottom: calc(100% - 10px); transform: translateX(-50%); width: max-content;
+          max-width: 380px; cursor: pointer; animation: mc-rise 0.25s ease-out; background: rgba(236, 242, 255, 0.97);
+          color: #0b1430; border-radius: 16px; padding: 9px 14px; font-size: 14px; line-height: 1.4;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); text-align: left; }
+.bubble::after { content: ""; position: absolute; left: 50%; bottom: -8px; margin-left: -8px;
+                 border: 8px solid transparent; border-bottom: 0; border-top-color: rgba(236, 242, 255, 0.97); }
+
+/* ---- the decor: a neon sign, a hanging lamp ------------------------------------------------------------------- */
+.sign { position: absolute; right: 9%; top: 96px; z-index: 1; padding: 10px 14px; border: 3px solid #2b5cff;
+        border-radius: 8px; transform: perspective(600px) rotateY(-14deg); color: #3a72ff; font-weight: 800;
+        font-size: 30px; line-height: 1; letter-spacing: 0.02em; text-align: center; pointer-events: none;
+        text-shadow: 0 0 10px rgba(58, 114, 255, 0.9), 0 0 24px rgba(58, 114, 255, 0.6);
+        box-shadow: 0 0 18px rgba(43, 92, 255, 0.55), inset 0 0 18px rgba(43, 92, 255, 0.35); }
+.sign span { display: block; }
+.lamp { position: absolute; top: 0; left: 62%; z-index: 1; width: 90px; height: 120px; pointer-events: none; }
+.lamp .cord { position: absolute; left: 44px; top: 0; width: 2px; height: 60px; background: #2a3150; }
+.lamp .shade { position: absolute; left: 15px; top: 56px; width: 60px; height: 34px; }
+.lamp .shade svg { width: 100%; height: 100%; display: block; }
+.lamp .light { position: absolute; left: -60px; top: 72px; width: 210px; height: 160px; border-radius: 50%;
+               background: radial-gradient(ellipse at 50% 10%, rgba(255, 214, 160, 0.35), transparent 60%); }
+
+/* ---- a desk (desk.js): the step card above it, the desk with its chibi, laptop, mug and plant ------------------ */
+.station { width: 230px; border: 0; background: none; color: inherit; padding: 0; cursor: pointer; font: inherit;
+           display: flex; flex-direction: column; align-items: center; gap: 10px;
+           transition: left 0.6s ease, top 0.6s ease, opacity 0.3s ease; }
+.station:hover:not(:disabled) { background: none; }
+.station.arriving, .station.leaving { opacity: 0; }
+.station.placing { transition: opacity 0.3s ease; }
+.shadow.placing { transition: none; }
+.station.leaving { pointer-events: none; }
+.station:focus-visible { outline: none; }
+.station:focus-visible .step, .station.selected .step { border-color: var(--accent-2);
+  box-shadow: 0 0 0 1px var(--accent-2), 0 0 24px var(--glow); }
+.step { position: relative; width: 210px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto;
+        column-gap: 8px; row-gap: 4px; align-items: center; padding: 10px 12px; text-align: left; border-radius: 12px;
+        background: linear-gradient(180deg, rgba(23, 36, 70, 0.94), rgba(12, 22, 46, 0.94));
+        border: 1px solid #263f86; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); }
+.step-ring { grid-row: 1 / span 2; width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid var(--wait); }
+.step-head { grid-column: 2; display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.step-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap;
+              overflow: hidden; text-overflow: ellipsis; }
+.step .timer { flex: none; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.step .monitor { grid-column: 3; grid-row: 1 / span 2; width: 56px; height: 36px; border-radius: 6px; overflow: hidden;
+                 border: 1px solid var(--line-strong); background: #0b1330; }
+.step .monitor .shot { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.ticker { grid-column: 2; min-width: 0; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden;
+          text-overflow: ellipsis; }
+.step-badge { grid-column: 1 / -1; justify-self: start; display: inline-flex; align-items: center; gap: 6px;
+              max-width: 100%; padding: 3px 10px; border-radius: 8px; font-size: 11px; color: var(--text-2);
+              background: rgba(28, 44, 88, 0.9); border: 1px solid #253a6e; }
+.step-badge .icon { width: 13px; height: 13px; }
+.step-badge .badge-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.station[data-state="working"] .step-ring { border-color: rgba(91, 144, 255, 0.25); border-top-color: var(--work);
+                                            animation: mc-spin-ring 1s linear infinite; }
+.station[data-state="your_turn"] .step-ring { border: 0; background: var(--ok); box-shadow: 0 0 12px rgba(42, 240, 185, 0.6); }
+.station[data-state="your_turn"] .step-ring::before { content: "✓"; display: grid; place-items: center; height: 100%;
+                                                      color: #04261c; font-size: 13px; font-weight: 800; }
+.station[data-state="needs_you"] .step-ring { border-color: var(--needs); box-shadow: 0 0 10px rgba(255, 181, 71, 0.6); }
+.station[data-state="failed"] .step-ring { border-color: var(--fail); }
+.station[data-state="failed"] .ticker { color: var(--fail); }
+.station[data-state="needs_you"] .step { border-color: var(--needs);
+  box-shadow: 0 0 0 1px var(--needs), 0 0 26px rgba(255, 181, 71, 0.35); }
+.station:is([data-state="stopped"], [data-state="your_turn"]) .step { opacity: 0.88; }
+/* a crowded room: the card folds to a chip (its step, its timer and its badge's icon) */
+.step[data-mode="chip"] { width: 150px; grid-template-columns: 16px minmax(0, 1fr) auto; padding: 6px 8px; }
+.step[data-mode="chip"] .step-ring { grid-row: 1; width: 14px; height: 14px; border-width: 2px; }
+.step[data-mode="chip"] :is(.ticker, .monitor) { display: none; }
+.step[data-mode="chip"] .step-badge { grid-column: 3; grid-row: 1; padding: 2px 5px; }
+.step[data-mode="chip"] .badge-text { display: none; }
+.desk-art { position: relative; width: 220px; height: 150px; }
+.desk-art > div { position: absolute; }
+.desk-art svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.desk-art .chair { left: 66px; bottom: 50px; width: 58px; height: 66px; z-index: 0; }
+.desk-art > .pose.main { position: static; } /* not a zero-size box: the worker is placed in the desk's own box */
+.desk-art .pose.main > .worker { right: auto; left: 60px; bottom: 50px; }
+.desk-art .table { left: 0; bottom: 0; width: 220px; height: 110px; z-index: 2; }
+.table .top { fill: #1b2142; }
+.table .shine { fill: #252c55; }
+.table .side { fill: #0b1330; }
+.table .rim { fill: none; stroke: var(--rim); stroke-width: 3; filter: drop-shadow(0 0 6px var(--rim)); }
+.station[data-state="needs_you"] .table .rim { stroke: var(--needs); }
+.station[data-state="failed"] .table .rim { stroke: var(--fail); }
+.desk-art .laptop { left: 98px; bottom: 58px; width: 64px; height: 46px; z-index: 2; }
+.laptop .lid { position: absolute; inset: 0 0 6px 0; }
+.laptop .lid .shell { fill: #232a4e; stroke: #3a4a86; stroke-width: 1; }
+.laptop .lid .logo { fill: none; stroke: var(--accent-bright); stroke-width: 2; }
+.laptop .keyboard { position: absolute; left: -6px; right: -6px; bottom: 0; height: 7px; border-radius: 2px 2px 4px 4px;
+                    background: linear-gradient(180deg, #3a4370, #20284a); }
+.desk-art .mug { left: 30px; bottom: 54px; width: 24px; height: 24px; z-index: 2; }
+.desk-art .plant { right: 18px; bottom: 54px; width: 34px; height: 42px; z-index: 2; }
+.desk-art .subs { left: 150px; bottom: 70px; display: flex; gap: 2px; z-index: 1; } /* above the desk's far edge */
+.desk-art .subs .pose { position: relative; width: 42px; height: 46px; }
+.desk-art .subs .worker { right: 0; bottom: 0; }
+.desk-art .more { position: absolute; right: 6px; bottom: 98px; z-index: 3; font-size: 11px; color: var(--text-2); }
+.nameplate { position: absolute; left: 24px; right: 24px; bottom: 10px; z-index: 3; font-size: 11px; font-weight: 600;
+             color: var(--text-2); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.station > .badge { position: absolute; top: -10px; right: 0; display: none; background: var(--needs); color: #2a1a00;
+                    font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 8px; }
+.station[data-state="needs_you"] > .badge { display: block; animation: mc-pulse 1.4s ease-in-out infinite; }
+
+/* ---- a new agent's arrival: scene.js adds .spawning for 2 s (never with Reduce Motion on) and flies a .spark ----- */
+.station.spawning .pose.main .worker .part:is(.body, .head, .face, .phones, .blink, .sweat) {
+  animation: mc-pop 0.45s ease-out 0.85s backwards; }
+.station.spawning .pose.main .worker .part.arm-l { animation: mc-arm-in 1.25s linear; }
+.station.spawning .pose.main .worker .part.arm-r { animation: mc-arm-r-in 1.9s linear; }
+.station.spawning .pose.main .worker .part.arm-up { animation: mc-hello 1.9s linear; }
+.station.spawning .pose.main .worker .part:is(.arm-thumb, .sparkle) { animation: mc-hidden 1.9s linear; }
+.spark { width: 18px; height: 18px; border-radius: 50%; pointer-events: none;
+         background: radial-gradient(circle, #ffffff 0 18%, var(--c, #4c8df6) 45%, transparent 72%);
+         box-shadow: 0 0 14px var(--c, #4c8df6), 0 0 28px var(--c, #4c8df6); }
+
+/* ---- paused: its tab or the window is hidden (mission.js sets html.paused) ------------------------------------- */
+html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
+
+@keyframes mc-dots { to { stroke-dashoffset: -16.1; } }
+@keyframes mc-turn { to { transform: translateX(-50%); } }
+@keyframes mc-spin-ring { to { transform: rotate(360deg); } }
+@keyframes mc-beat { 0%, 14%, 20%, 34%, 100% { transform: scale(1); } 6% { transform: scale(1.04); }
+                     26% { transform: scale(1.02); } }
+@keyframes mc-word { 50% { transform: scale(1.04); } }
+@keyframes mc-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+@keyframes mc-rise { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
+@keyframes mc-pop { 0% { transform: translateY(80px); } 70% { transform: translateY(-4px); } 100% { transform: none; } }
+@keyframes mc-arm-in { 0%, 92% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes mc-arm-r-in { 0%, 60.5% { opacity: 0; } 65.8%, 68.4% { opacity: 1; } 68.5%, 100% { opacity: 0; } }
+@keyframes mc-hello { 0%, 68.4% { opacity: 0; transform: rotate(0deg); } 68.5% { opacity: 1; transform: rotate(0deg); }
+                      84% { transform: rotate(16deg); } 100% { opacity: 1; transform: rotate(0deg); } }
+@keyframes mc-hidden { from, to { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .station, .shadow { transition-duration: 0.01s !important; }
+}

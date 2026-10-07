@@ -45,7 +45,7 @@ from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
 from ..chrome import own_browser_dir
 from ..claudecli import claude_argv
-from ..config import LIVE_PORTS, load_config, project_root
+from ..config import LIVE_PORTS, load_config, project_root, set_blocked
 from ..desktop import layout
 from ..desktop.notes import note_for
 from ..desktop.release import asset_for, setup_command
@@ -59,11 +59,14 @@ from ..live import _bind, _QuietServer, _serve
 from ..settings import Settings
 from ..skills import Catalog
 from ..syncdir import write_atomic
+from . import attachments
 from . import pagematch
 from . import powers
 from .agents import Agent, AgentManager
 from .bravelink import NOT_CONNECTED, PlaceError
 from .inworld import WorldError
+from .workspaces import GONE as WORKSPACE_GONE
+from .workspaces import Workspaces
 from .cdprelay import Tokens
 
 APP_PORTS = range(8792, 8812)
@@ -96,7 +99,7 @@ PAGES = {SHELL: "app.html", "/home": "home.html", "/mission": "mission.html", "/
 FRAMED = frozenset({"/home", "/mission", "/settings", "/setup"})  # the pages the tab menu shows: only it frames them
 LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an engine's live view binds one of these
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
-OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png"}  # the setup page's own files: it opens in Brave too
+OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png", "theme.css"}  # the setup page's own files: it opens in Brave too
 CODE_TTL = 60  # seconds a one-time start code is good for
 PICK_WAIT = 120.0  # seconds a pick may take: the user points and clicks in Brave
 PICK_OFF = "Turn on Read my Gmail, Slack and Asana tabs first"
@@ -114,10 +117,13 @@ USED_CODE = "This start link was used already or has expired. Start AI Browser a
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
 SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (cc-<task id>)
 AGENT_ID = re.compile(r"^a[0-9]{1,9}$")  # an agent's id (a<number>)
+SKILL_REF = re.compile(r"^[A-Za-z0-9_.-]{1,100}:[A-Za-z0-9_.-]{1,100}$")  # a skill's ref (namespace:name)
 SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
 ACCOUNT_MESSAGES = {"accounts", "account_add", "account_add_existing", "account_remove", "account_default",
                     "account_brain", "account_signin", "account_move"}  # AI accounts: AI Browser's own pages only
 POWERS_MESSAGES = {"folder_choose", "folder_trust", "permission_rules", "permission_rule_remove"}  # agent powers
+WORKSPACE_MESSAGES = {"workspaces", "workspace_save", "workspace_delete", "workspace_assign"}  # the new look
+ATTACH_MESSAGES = {"attach_start", "attach_chunk", "attach_drop"}  # the new look's Attach: a file in pieces
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
@@ -169,6 +175,12 @@ MESSAGE_RULES: dict[str, Rule] = {
     # A trust answer or a rule's removal is the user's click on one of our pages: never the Brain or voice
     "folder_choose": APP_ONLY, "folder_trust": APP_ONLY, "permission_rules": APP_ONLY,
     "permission_rule_remove": APP_ONLY,
+    # the new look: Mission Control's workspaces, named groups of agents and templates. A filter: no new right
+    "workspaces": APP_ONLY, "workspace_save": APP_ONLY, "workspace_delete": APP_ONLY, "workspace_assign": APP_ONLY,
+    # the new look's Attach: a page sends a file in pieces, for a task it starts. A file, never a right
+    "attach_start": APP_ONLY, "attach_chunk": APP_ONLY, "attach_drop": APP_ONLY,
+    # the new look's Knowledge: Remove hides a skill from AI Browser's agents (config.json), Bring back shows it
+    "skill_block": APP_ONLY,
 }
 
 
@@ -316,6 +328,8 @@ class AppServer:
                  accounts: Accounts | None = None, brain_account=None):
         self.home = Path(home)
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
+        self.workspaces = Workspaces(self.home)  # <home>/workspaces.json: the new look's groups
+        self.uploads = attachments.Uploads(self.home / "app" / "uploads")  # files on their way from a page
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
         self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
         self.desktop = None  # AI Browser's own app while it runs (run_app attaches it): the shortcut, notifications
@@ -336,6 +350,7 @@ class AppServer:
         if accounts is not None:
             agents.accounts = accounts
             agents.on_limit = lambda account: self._accounts_changed()  # the pickers' "at its limit until"
+            agents.on_usage = lambda account: self._accounts_changed()  # the Usage card's percentage (the new look)
             accounts.on_change = self._accounts_changed  # a status that changed, whoever asked: every page hears it
         self.open_terminal = open_terminal
         self._signing_in: dict[str, asyncio.Task] = {}  # account id -> the look at its sign-in
@@ -679,6 +694,7 @@ class AppServer:
         return {"type": "tabs", "tabs": listing, **({"tab_scope": scope} if scope is not None else {})}
 
     async def start(self) -> str:
+        self.uploads.clear()  # a crash's leftovers: no page is there to send them any more
         app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open), Route(SHELL, self._page),
                                        Route("/home", self._page), Route("/mission", self._page),
                                        Route("/settings", self._page), Route("/chat", self._page),
@@ -1236,6 +1252,7 @@ class AppServer:
         self._sockets.pop(ws, None)
         self._roles.pop(ws, None)
         self._windows.discard(ws)
+        self.uploads.drop_all(ws)  # a closed page's files go with it
         if self.hearing is not None:
             self.hearing.drop(ws)  # a closed page's turn, and its audio, go with it
         writer = self._writers.pop(ws, None)
@@ -1321,6 +1338,12 @@ class AppServer:
             await self._account_command(queue, kind, message)
         elif kind in POWERS_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._powers_command(queue, kind, message)
+        elif kind == "skill_block":  # AI Browser's own pages only (MESSAGE_RULES)
+            self._skill_block(queue, message)
+        elif kind in ATTACH_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            self._attach_command(ws, queue, kind, message)
+        elif kind in WORKSPACE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            self._workspace_command(queue, kind, message)
         elif kind == "hello":
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
@@ -1350,12 +1373,17 @@ class AppServer:
             account = message.get("account") if isinstance(message.get("account"), str) else None
             folder = message.get("folder") if isinstance(message.get("folder"), str) and message.get("folder") \
                 else None  # agent powers: the task's folder; none is the agent's own scratch folder
+            listed = message.get("attachments") if isinstance(message.get("attachments"), list) else []
+            web = message.get("web") if message.get("web") in powers.WEB_CHOICES else "web"
             try:  # an account that isn't listed any more is said, never swapped for another
+                files = self.uploads.take(ws, listed)  # each attached file whole, or nothing starts
                 agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
-                                            folder=folder)
+                                            folder=folder, workspace=self._workspace_of(message), files=files,
+                                            web=web)
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
+            self.uploads.done(ws, listed)
             if handed is not None:
                 self._own(adopt, self._owner_of(agent.id, handed=True))
             queue.put_nowait({"type": "created", "id": agent.id, "request": request})
@@ -1374,7 +1402,7 @@ class AppServer:
         elif kind == "events":
             queue.put_nowait({"type": "agent_events", "id": agent_id, "events": agents.events_of(agent_id)})
         elif kind == "skills":
-            queue.put_nowait({"type": "skills", "skills": self._skill_list()})
+            queue.put_nowait({"type": "skills", "skills": self._skill_list(), "blocked": self._blocked_skills()})
         elif kind == "thumbs":  # a page opened later: the latest picture of each agent's tab
             queue.put_nowait({"type": "thumbs", "thumbs": {
                 agent: state["jpeg"] for agent, state in self._thumbs.items()
@@ -1603,6 +1631,9 @@ class AppServer:
                     agent_id = await self.brain.run_workflow(message["item"], message["slug"])
                 else:
                     agent_id = await self.runner.run(message["slug"], text=_text(message.get("text")) or None)
+                    workspace = self._workspace_of(message)
+                    if workspace is not None:
+                        self.agents.set_workspace(agent_id, workspace)
                 queue.put_nowait({"type": "created", "id": agent_id, "request": request})
         except ValueError as exc:
             queue.put_nowait({"type": "error", "text": str(exc), "request": request})
@@ -1651,7 +1682,7 @@ class AppServer:
     def skills_changed(self, name: str = "") -> None:
         """A skill was saved: read the skills again and show them at once."""
         self._catalog = None
-        self._send_all({"type": "skills", "skills": self._skill_list()})
+        self._send_all({"type": "skills", "skills": self._skill_list(), "blocked": self._blocked_skills()})
 
     def workflows_changed(self) -> None:
         if self.workflows is not None:
@@ -1661,7 +1692,82 @@ class AppServer:
         workflows = [{**workflow.public(), "path": str(self.workflows.path_of(workflow.slug)),
                       "note": self.runner.notes.get(workflow.slug, "") if self.runner else ""}
                      for workflow in self.workflows.all()]
-        return {"type": "workflows_snapshot", "workflows": workflows, "problems": self.workflows.problems()}
+        return {"type": "workflows_snapshot", "workflows": workflows, "problems": self.workflows.problems(),
+                "next_runs": self.runner.upcoming() if self.runner is not None else []}  # the Calendar's
+
+    def _attach_command(self, ws: WebSocket, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        """The composer's Attach: a file comes in pieces, staged for this page until its task starts (or it is
+        dropped). Each answer names the page's own id for that file."""
+        upload = message.get("upload") if isinstance(message.get("upload"), str) else ""
+        if kind == "attach_drop":
+            self.uploads.drop(ws, upload)
+            return
+        if kind == "attach_start":
+            try:
+                name, problem = self.uploads.start(ws, upload, message.get("name"), message.get("size"))
+            except OSError as exc:
+                name, problem = "", f"Couldn't keep that file: {exc.strerror or exc}"
+            if problem:
+                queue.put_nowait({"type": "error", "text": problem, "request": upload})
+                return
+            queue.put_nowait({"type": "attach_ready", "upload": upload, "name": name})
+            if self.uploads.whole(ws, upload):  # an empty file is whole already
+                queue.put_nowait({"type": "attach_done", "upload": upload})
+            return
+        try:
+            whole, problem = self.uploads.add(ws, upload, message.get("seq"), message.get("data"))
+        except OSError as exc:
+            self.uploads.drop(ws, upload)
+            whole, problem = False, f"Couldn't keep that file: {exc.strerror or exc}"
+        if problem:
+            queue.put_nowait({"type": "error", "text": problem, "request": upload})
+        elif whole:
+            queue.put_nowait({"type": "attach_done", "upload": upload})
+
+    def _workspaces_message(self) -> dict:
+        return {"type": "workspaces", "workspaces": self.workspaces.list()}
+
+    def _workspace_of(self, message: dict) -> str | None:
+        """The workspace a new agent goes in: one that exists, else none. A filter: a start is never refused for it."""
+        given = message.get("workspace")
+        return given if isinstance(given, str) and self.workspaces.get(given) is not None else None
+
+    def _workspace_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        """The new look's workspaces: the list, New and rename, Delete (its agents keep running, ungrouped), and moving
+        an agent or a template. Every page then hears the list again; an agent's move is its own row."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        if kind == "workspaces":
+            queue.put_nowait(self._workspaces_message())
+            return
+        try:
+            if kind == "workspace_save":
+                given = message.get("id")
+                row = self.workspaces.rename(given, message.get("name")) if isinstance(given, str) and given \
+                    else self.workspaces.create(message.get("name"))
+                queue.put_nowait({"type": "workspace_saved", "request": request, "id": row["id"]})
+            elif kind == "workspace_delete" and isinstance(message.get("id"), str):
+                if self.workspaces.delete(message["id"]):
+                    self.agents.ungroup(message["id"])
+            elif kind == "workspace_assign":
+                target = message.get("workspace")
+                if target is not None and (not isinstance(target, str) or self.workspaces.get(target) is None):
+                    raise ValueError(WORKSPACE_GONE)
+                if isinstance(message.get("agent"), str):
+                    self.agents.set_workspace(message["agent"], target)
+                    return
+                if not isinstance(message.get("template"), str):
+                    return
+                self.workspaces.assign_template(message["template"], target)
+            else:
+                return
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        except OSError as exc:  # a read-only home, a full disk: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't save that: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._send_all(self._workspaces_message())
 
     def _tools_snapshot(self, account: str = "default", tools=None) -> dict:
         tools = tools if tools is not None else self.tools
@@ -1676,7 +1782,7 @@ class AppServer:
                 "default_model": self.default_model, "browser": self._browser_info(),
                 "sessions": self._session_list(), "browser_clients": self._browser_clients(),
                 "settings": self._settings_payload(), "accounts": self._account_rows(),
-                "brain_limit": self.brain_limit}
+                "brain_limit": self.brain_limit, "workspaces": self.workspaces.list()}
 
     # ---- AI accounts: Settings → Accounts, the pickers and Continue on (AI Browser's own pages only) -------------
 
@@ -1805,9 +1911,7 @@ class AppServer:
 
     def _skills(self) -> list:
         if self._catalog is None:  # the same skills the agents' engines see
-            self._catalog = Catalog.discover(Path.home() / ".claude",
-                                             platforms.claude_desktop_dir(),
-                                             project_root() / "skills", set(load_config(self.home).blocked_skills))
+            self._catalog = Catalog.of_user(project_root() / "skills", set(load_config(self.home).blocked_skills))
         return self._catalog.all()
 
     def _skills_summary(self) -> dict:
@@ -1822,6 +1926,24 @@ class AppServer:
         return [{"ref": skill.ref, "name": skill.name, "namespace": skill.namespace,
                  "source": SOURCES.get(skill.namespace, "plugins"), "description": _first_line(skill.description)}
                 for skill in self._skills()]
+
+    def _blocked_skills(self) -> list[str]:
+        return sorted(load_config(self.home).blocked_skills)
+
+    def _skill_block(self, queue: asyncio.Queue, message: dict) -> None:
+        """Knowledge's Remove and Bring back: a skill hidden from AI Browser's agents, or shown again, in
+        <home>/config.json. Its files are the user's and stay where they are."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        ref = message.get("ref")
+        if not isinstance(ref, str) or not SKILL_REF.match(ref):
+            queue.put_nowait({"type": "error", "text": "That isn't a skill", "request": request})
+            return
+        try:
+            set_blocked(self.home, ref, message.get("blocked") is True)
+        except (ValueError, OSError) as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        self.skills_changed()
 
     # ---- thumbnails -------------------------------------------------------------------------------------------
 

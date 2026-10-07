@@ -545,6 +545,26 @@ def badge(name) -> str:
     return "Tool"
 
 
+WEB_CHOICES = ("web", "brave", "none")  # the new look's Web ▾: Web + Brave (the default), Brave only, No web
+WEB_TOOLS = ("WebSearch", "WebFetch")
+BROWSER_TOOLS = ("open", "observe", "act", "screenshot", "tabs", "page_log", "extract", "js", "qa", "sandbox_start",
+                 "sandbox_stop", "sandbox_status",
+                 "shell")  # what "No web" blocks: the page tools, and the shell (it runs in Docker, with the internet)
+# Not blocked by it: the skill tools (load_skill, find_skills, read_skill_file) and read_file and write_file.
+
+
+def web_tools(choice) -> tuple[tuple[str, ...], list[str]]:
+    """(Claude Code's --tools, more --disallowedTools) for a task's Web ▾: "brave" drops WebSearch and WebFetch (and
+    blocks them too, a backstop: the bridge then hands over no site's rule), "none" also blocks the browser's page tools
+    and its shell (a Docker shell with the internet: curl would be a way to the web). Its skill tools, read_file and
+    write_file stay. Anything else is the default, "web"."""
+    choice = choice if choice in WEB_CHOICES else "web"
+    if choice == "web":
+        return TOOLS, []
+    tools = tuple(tool for tool in TOOLS if tool not in WEB_TOOLS)
+    return tools, [*WEB_TOOLS, *([f"{OWN}{name}" for name in BROWSER_TOOLS] if choice == "none" else [])]
+
+
 def summary(tool: str, data) -> str:
     """One line for the action feed: the command, the path, the pattern, the address, the query or the sub-agent's
     task."""

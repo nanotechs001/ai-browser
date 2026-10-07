@@ -1,0 +1,55 @@
+/* AI Browser's one theme (the new look, Decision 1): a deep navy page, slightly lighter navy panels with thin blue
+   borders, and neon-blue highlights with a soft glow. Every page links this sheet first and keeps no palette of its
+   own. The colours were picked from the user's mockup. There is no web font: the pages' CSP loads none, so --font
+   takes Inter where it is installed, else the system's sans-serif. */
+:root {
+  /* surfaces, darkest first */
+  --bg-deep: #050b1a;
+  --bg: #070f23;
+  --bar: #0c1a31;
+  --card: #0e1b32;
+  --panel: rgba(14, 27, 50, 0.92);
+  --code: #101c31;
+  --soft: #152239;
+  --field: #152239;
+  --selected: #213668;
+  /* lines */
+  --line: #1b2a4a;
+  --line-strong: #1d3468;
+  /* words */
+  --text: #f2f6ff;
+  --text-2: #c9d0f9;
+  --muted: #8e98b8;
+  --dim: #5c6980;
+  --eyebrow: #b0bbe7;
+  /* neon blue */
+  --accent: #2a5cff;
+  --accent-2: #4f8dfd;
+  --accent-bright: #7cd8fc;
+  --accent-fg: #ffffff;
+  --glow: rgba(56, 120, 255, 0.55);
+  --rim: #2f6bff;
+  /* status: green done, blue working, grey waiting, amber needs you, red failed */
+  --ok: #2af0b9;
+  --work: #5b90ff;
+  --wait: #6b7a9e;
+  --needs: #ffb547;
+  --fail: #ff5d6c;
+  --done: #8e98b8;
+  /* type and shape */
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+html { background: var(--bg); }
+body { background: var(--bg); color: var(--text); font-family: var(--font); }
+::selection { background: rgba(79, 141, 253, 0.45); }
+a { color: var(--accent-2); }
+:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+* { scrollbar-color: #24345a transparent; }
+/* small spaced capitals for labels ("MISSION CONTROL", "WORKSPACE") */
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.42em; text-transform: uppercase;
+           color: var(--eyebrow); }
