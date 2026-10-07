@@ -450,14 +450,20 @@ def test_the_readme_explains_auto_approve():  # the user's choice, 2026-10-07: w
 
     readme = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
     for phrase in ("- **Auto-approve in its folder:** a switch per task, off by default",
-                   "edits, new files and ordinary commands inside the task's folder run without a card",
+                   "edits and new files inside the task's folder run without a card",
                    "a small **auto** mark beside its badge", '"Auto-approving inside <folder>"',
+                   "on a Mac, where the sandbox holds commands in the folder, ordinary commands run without a card too",
+                   "Any other command asks",
+                   "on Windows and Linux, commands still ask: only file edits run without a card",
                    "Web Search and Web Fetch, a command reaching a site, your own tools",
-                   "a `cd` that isn't into a folder inside",
-                   "On Windows and Linux, a command whose job is reaching a site asks",
-                   "turn it on only for folders and tasks you trust",
+                   "a `cd` that isn't into a folder inside", "Once the shell has left the folder, commands ask again",
+                   "judged from what a command names, not from what a script it runs does",
+                   "Turn it on only for folders and tasks you trust",
                    "The Brain, templates and Claude Code sessions never turn it on",
                    "**Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**",
-                   "You still answer each command's card, unless **Auto-approve in its folder** is on",
-                   "only your click turns it on"):
+                   "unless **Auto-approve in its folder** runs an ordinary one", "only your click turns it on",
+                   "`caffeinate`, `strace`, `flock`", "`deno eval`", "`git rm -f` or `-r`", "`rsync --delete`",
+                   "`.husky`, `.vscode` or `.idea` settings, its Git hooks folder"):
         assert phrase in readme, phrase
+    for gone in ("a command whose job is reaching a site asks", "or one **Auto-approve in its folder** runs"):
+        assert gone not in readme, gone

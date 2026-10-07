@@ -275,11 +275,15 @@ Web Fetch, sub-agents, and a to-do list.
   - starting a sub-agent (its own actions still ask);
   - `ls`, `cat`, `pwd`, `git status`, `git diff` and `git log`.
 - **Asked every time, never "Always":**
-  - `sudo`, `rm`, `chmod`, `chown`, `dd` and `mkfs`;
+  - `sudo`, `rm`, `unlink`, `chmod`, `chown`, `dd` and `mkfs`;
+  - programs that run the command after them (`env`, `xargs`, `caffeinate`, `strace`, `flock`…), and code written on
+    the command line (`python -c`, `node -e`, `deno eval`, a `sed` script that runs a command or writes a file);
   - uses that delete files or throw work away: `find -delete` or `-exec`, `git clean`, `git reset --hard`,
-    `git checkout -- …`, `git restore`, `git push --force` and `git branch -D`;
+    `git checkout -- …`, `git restore`, `git push --force`, `git branch -D`, `git rm -f` or `-r`,
+    `git stash drop`, `git switch --discard-changes` and `rsync --delete`;
   - a download piped into a shell;
-  - anything that reads or writes outside the folder, including edits to its `.git` or `.claude` settings;
+  - anything that reads or writes outside the folder, including changes to its `.git`, `.claude`, `.husky`, `.vscode`
+    or `.idea` settings, its Git hooks folder, `.mcp.json`, and a `git config` value;
   - anything that is more than one plain command (`;`, `&&`, `|`, `$(…)`, a redirect).
 - **Always allow trusts the whole program:** once you always-allow a program (`curl`, `sed`, `tar`, `make`), later
   uses run without a card, and AI Browser can't see inside that program's own options: `curl -T` or `-d @file`,
@@ -287,13 +291,18 @@ Web Fetch, sub-agents, and a to-do list.
 - **Auto-approve in its folder:** a switch per task, off by default, beside **Folder** in Mission Control's **Build a
   Mission**, and in the agent's drawer, where you can turn it on or off while it works (the drawer then says
   "Auto-approving inside <folder>"). While it is on:
-  - edits, new files and ordinary commands inside the task's folder run without a card, and each shows a small
-    **auto** mark beside its badge;
-  - still a card: everything asked every time (deleting, `sudo`, anything outside the folder, `git push --force`),
-    Web Search and Web Fetch, a command reaching a site, your own tools, and a `cd` that isn't into a folder inside;
-  - a command reaching a site: on a Mac, the sandbox's card asks first. On Windows and Linux, a command whose job is
-    reaching a site asks (`curl`, `wget`, `gh`, `git push`, `git pull`, `npm install`, `pip install` and the like),
-    but nothing there holds a program in once it runs: turn it on only for folders and tasks you trust.
+  - edits and new files inside the task's folder run without a card, and each shows a small **auto** mark beside its
+    badge;
+  - on a Mac, where the sandbox holds commands in the folder, ordinary commands run without a card too: reading and
+    listing (`ls`, `cat`, `grep`, `find`…), making files (`mkdir`, `touch`, `cp`, `mv`), everyday Git (`status`,
+    `diff`, `add`, `commit`, a new branch), a package's own scripts (`npm test`, `npm run build`), and the project's
+    checks and builds (`make`, `pytest`, `cargo test`, `python script.py`…). Any other command asks;
+  - on Windows and Linux, commands still ask: only file edits run without a card. The switch and the drawer say so;
+  - still a card everywhere: everything asked every time (above), Web Search and Web Fetch, a command reaching a
+    site, your own tools, and a `cd` that isn't into a folder inside. Once the shell has left the folder, commands
+    ask again until the agent's Claude Code starts again;
+  - what still asks is judged from what a command names, not from what a script it runs does: `npm test` runs your
+    package's own script, whatever it does inside the folder. Turn it on only for folders and tasks you trust.
 
   The Brain, templates and Claude Code sessions never turn it on, and after **Stop** nothing runs.
 - **Your answers are kept per folder** in `~/.ai-browser/permissions.json`. **Settings → Permissions** lists each
@@ -308,7 +317,7 @@ Web Fetch, sub-agents, and a to-do list.
 - **Commands and the sandbox:** on a Mac, commands run in Claude Code's sandbox, so they can't write outside the
   task's folder. A command that needs more asks, every time, on a card of its own: reaching a site ("let a command
   reach a site") or running outside the sandbox. You still answer each command's card, unless **Auto-approve in its
-  folder** is on. On Windows, commands don't run in a sandbox; the cards are the guard.
+  folder** runs an ordinary one. On Windows, commands don't run in a sandbox; the cards are the guard.
 - **Workflows** still run in a scratch folder of their own.
 
 ### AI accounts (Settings → Accounts)
@@ -604,7 +613,7 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     Web Fetch, browser tools or skills shell (a skill's instructions still load, but its scripts don't run). Under
     **No web**, your own tools (Integrations) still run, and a command can still reach a site. On a Mac it asks you
     first, with a card, every time; on Windows and Linux it asks with a card too, except a command you chose
-    **Always allow** for, or one **Auto-approve in its folder** runs.
+    **Always allow** for.
   - **Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**; the mic (in Ask AI it talks
     to the Brain; otherwise your words fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
     **Auto-approve in its folder** (see Agent powers) is off again for each new task.
