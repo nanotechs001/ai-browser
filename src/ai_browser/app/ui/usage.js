@@ -118,7 +118,8 @@ export function mountUsage(button) {
     accounts.replaceChildren(...shown.map(([row, one]) => accountNode(row, one)));
     if (signed.length > SHOWN) accounts.append(el("span", "usage-more", `+${signed.length - SHOWN} more`));
     if (!signed.length) accounts.append(el("span", "usage-more", "Settings → Accounts"));
-    button.title = [...shown.map(([row, one]) => `${row.name}: ${one.tip}`), "Settings → Accounts"].join("\n");
+    button.title = [...shown.map(([row, one]) => `${String(row.name ?? "")}: ${one.tip}`), "Settings → Accounts"]
+      .join("\n");
   }
 
   setInterval(render, MINUTE);

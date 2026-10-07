@@ -985,6 +985,17 @@ async def test_the_usage_cards_words_and_bars_in_plain_data(stack):  # usage.js'
 
 
 @CHROME
+async def test_a_row_without_a_name_never_says_undefined(stack):  # the polish's review, F4
+    js = await open_mission(stack)
+    shown = await js("""import('/usage.js').then(({ mountUsage }) => {
+      const button = document.createElement('button');
+      mountUsage(button).render([{ id: 'x', signed_in: true, windows: {} }]);
+      return [button.title, button.querySelector('.usage-name').textContent];
+    })""")
+    assert shown == [": updates when an agent works\nSettings → Accounts", ""]
+
+
+@CHROME
 async def test_a_reading_left_open_past_its_reset_stops_showing_its_number(stack):  # the card redraws once a minute
     import time
 
