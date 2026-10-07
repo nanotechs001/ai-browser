@@ -604,8 +604,10 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   - **Attach:** at most 10 files, 20 MB each. They are copied into the agent's folder under `attachments/`, never over
     a file that is there (a duplicate becomes "name (2).ext"), and the task names them. Pictures reach the agent through
     Claude Code's own Read. Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it, and it is
-    attached the same way. Pasted text stays text. **Ask AI** and **Use a Template** take no files: a picture pasted
-    there says "Pictures go with Build a Mission or an agent's chat". A task in the agent's own scratch folder starts without the attachments of earlier runs. If
+    attached the same way. Pasted text stays text. Cells copied from a spreadsheet paste as text, without the picture
+    of them that comes along. **Ask AI** and **Use a Template** take no files: a picture pasted there says "Pictures
+    go with Build a Mission or an agent's chat". AI Home's **New task** and an agent's chat there take pictures and
+    files the same way, and so does the floating chat's **New task**. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
     that folder has been replaced by a link, the task refuses to start and says which folder. After a reconnect, every
     attached file says "Not sent: attach it again", even one that showed ✓: the app forgets files when the connection
     drops.

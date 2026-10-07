@@ -438,3 +438,15 @@ async def test_new_task_takes_a_pasted_picture_and_the_brains_box_says_where_pic
     assert await eventually(lambda: bool(told(stack["log"])))
     assert "- attachments/image.png (a picture: look at it with Read)" in told(stack["log"])[0]
     assert await until(js, f"{chips}.length === 0")
+
+
+@CHROME
+async def test_new_task_refuses_an_eleventh_file(stack):  # the review of look-3, F7
+    from test_mission_look import ELEVEN, PASTE
+
+    js, _ = await open_chat(stack)
+    await js("document.getElementById('new-open').click(); true")
+    await js(f"({PASTE})('#task', {json.dumps(ELEVEN)})")
+    assert await until(js, "document.getElementById('hint').textContent === 'At most 10 files at once'")
+    chips = "[...document.querySelectorAll('#attached .attached-file')]"
+    assert await until(js, f"{chips}.length === 10 && {chips}.every(chip => chip.dataset.state === 'done')", 15)
