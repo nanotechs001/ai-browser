@@ -855,28 +855,147 @@ async def test_closing_the_menu_disarms_delete(stack):  # the final review, F9
     assert await js(f"{delete}.textContent") == "Delete? Its agents keep running"
 
 
+USAGE = "document.getElementById('usage')"
+CARD = """[...document.querySelectorAll('#usage .usage-account')].map((account) => ({
+  name: account.querySelector('.usage-name').textContent, note: account.querySelector('.usage-note').textContent,
+  noteColor: getComputedStyle(account.querySelector('.usage-note')).color,
+  windows: [...account.querySelectorAll('.usage-window')].map((one) => ({ window: one.dataset.window,
+    state: one.dataset.state, label: one.querySelector('.usage-label').textContent,
+    percent: one.querySelector('.usage-percent').textContent, width: one.querySelector('.usage-fill').style.width,
+    fill: getComputedStyle(one.querySelector('.usage-fill')).backgroundColor,
+    when: one.querySelector('.usage-when').textContent,
+    whenColor: getComputedStyle(one.querySelector('.usage-when')).color })) }))"""
+ACCENT_2, NEEDS, FAIL = "rgb(79, 141, 253)", "rgb(255, 181, 71)", "rgb(255, 93, 108)"  # the theme's tokens
+
+
+async def clock(js, seconds):
+    """The time the page writes for `seconds` since 1970: "9:30 pm", or "Tue 4:00 pm" on another day (accountui.js)."""
+    return await js(f"import('/accountui.js').then(({{ resetTime }}) => resetTime({seconds}))")
+
+
+async def card_says(js, expression):
+    """The Usage card, once `expression` (about `card`, its first account) holds."""
+    assert await until(js, f"(() => {{ const card = ({CARD})[0]; return Boolean(card && ({expression})); }})()"), \
+        await js(CARD)
+    return (await js(CARD))[0]
+
+
 @CHROME
-async def test_the_usage_card_never_makes_up_a_number(stack):  # Review Focus 3
+async def test_the_usage_card_shows_the_session_and_the_week_and_never_makes_up_a_number(stack):  # Review Focus 3
     import time
 
     accounts, server = stack["accounts"], stack["server"]
     js = await open_mission(stack)
-    usage = "document.getElementById('usage')"
-    line = f"{usage}.querySelector('.usage-line')"
-    assert await until(js, f"{line}?.textContent === 'Default · Within limits'")
-    assert await js(f"{usage}.querySelector('.usage-ring').hidden") is True
-    assert "%" not in await js(f"{usage}.textContent")  # Claude Code reported no number: none is shown
-    later = time.time() + 3600
+    card = await card_says(js, "card.name === 'Default'")
+    assert card["note"] == "Updates when an agent works"  # no reading yet: empty bars, and no number
+    assert [(one["window"], one["label"], one["percent"], one["width"], one["when"]) for one in card["windows"]] == [
+        ("five_hour", "Current session", "", "0%", ""), ("seven_day", "Weekly", "", "0%", "")]
+    assert "%" not in await js(f"{USAGE}.textContent")
+    assert await js(f"{USAGE}.querySelector('.usage-ring')") is None  # the ring went: the bars say it
+    later = time.time() + 3600  # a limit Claude Code gave no reading for: the words, still no number
     accounts.set_limit("default", later)
     server._accounts_changed()
-    assert await until(js, f"{line}.textContent.startsWith('Default · At its limit until ')")
-    assert "%" not in await js(f"{usage}.textContent")
+    card = await card_says(js, "card.note.startsWith('At its limit until ')")
+    assert card["note"] == f"At its limit until {await clock(js, later)}" and card["noteColor"] == NEEDS
+    assert "%" not in await js(f"{USAGE}.textContent")
     accounts._limits.clear()
-    accounts.set_usage("default", 64.0, later, "five_hour")
+    now = time.time()
+    session, week = now + 3 * 3600, now + 4 * 86400
+    accounts.set_windows("default", {"five_hour": {"used": 14.0, "resets_at": session},
+                                     "seven_day": {"used": 83.0, "resets_at": week}})
     server._accounts_changed()
-    assert await until(js, f"{line}.textContent.startsWith('Default · 64% used · resets ')")
-    assert await js(f"{usage}.querySelector('.usage-ring').hidden") is False
-    assert await js(f"{usage}.querySelector('.usage-ring-text').textContent") == "64%"
+    card = await card_says(js, "card.windows[0].percent === '14%'")
+    five, seven = card["windows"]
+    assert (five["percent"], five["width"], five["state"], five["fill"]) == ("14%", "14%", "ok", ACCENT_2)
+    assert (seven["percent"], seven["width"], seven["state"], seven["fill"]) == ("83%", "83%", "high", NEEDS)  # 80%+
+    assert five["when"] == f"resets {await clock(js, session)}"
+    assert seven["when"] == f"resets {await clock(js, week)}" and seven["when"].split()[1] in (
+        "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")  # another day: its weekday too
+    at = accounts.windows("default")["five_hour"]["at"]
+    assert card["note"] == f"as of {await clock(js, at)}"  # the reading's own time, as after a restart
+    # at its limit: a window at 100%, or the account's limit that ends when a window resets
+    accounts.set_windows("default", {"five_hour": {"used": 100.0, "resets_at": session}})
+    server._accounts_changed()
+    five = (await card_says(js, "card.windows[0].state === 'limit'"))["windows"][0]
+    assert (five["percent"], five["width"], five["fill"]) == ("", "100%", FAIL)
+    assert five["when"] == f"At its limit until {await clock(js, session)}" and five["whenColor"] == NEEDS
+    accounts.set_limit("default", week)
+    server._accounts_changed()
+    seven = (await card_says(js, "card.windows[1].state === 'limit'"))["windows"][1]
+    assert (seven["width"], seven["when"]) == ("100%", f"At its limit until {await clock(js, week)}")
+    # a reading whose reset has passed: no number any more
+    accounts._limits.clear()
+    passed = now - 60
+    accounts.set_windows("default", {"five_hour": {"used": 64.0, "resets_at": passed}})
+    server._accounts_changed()
+    five = (await card_says(js, "card.windows[0].state === 'reset'"))["windows"][0]
+    assert (five["percent"], five["width"]) == ("", "0%")
+    assert five["when"] == f"Reset at {await clock(js, passed)} · updates with your next mission"
+    assert "64" not in await js(f"{USAGE}.textContent")
+
+
+@CHROME
+async def test_the_usage_card_lists_three_signed_in_accounts_default_first_as_text(stack):
+    from ai_browser.accounts import clean_name
+    from fake_accounts import sign_in
+    from test_home import HOSTILE
+
+    accounts, server = stack["accounts"], stack["server"]
+    for name in ("Work", HOSTILE, "Side", "Spare"):
+        sign_in(accounts.add(name).folder)
+    accounts.add("Signed out")  # not signed in: not listed
+    js = await open_mission(stack)
+    names = "[...document.querySelectorAll('#usage .usage-name')].map((node) => node.textContent)"
+    more = f"{USAGE}.querySelector('.usage-more')?.textContent"
+    assert await until(js, f"{more} === '+2 more'"), await js(more)  # once each status is known: Side and Spare
+    assert await js(names) == ["Default", "Work", clean_name(HOSTILE)]  # Default first, then as listed, at most 3
+    assert await js(f"{USAGE}.querySelectorAll('img').length") == 0 and await js("document.title") != "pwned"
+    server._accounts_changed()  # drawn again: still three
+    assert await js(f"{USAGE}.querySelectorAll('.usage-account').length") == 3
+
+
+@CHROME
+async def test_the_usage_cards_words_and_bars_in_plain_data(stack):  # usage.js's usageOf, no page needed
+    js = await open_mission(stack)
+    found = await js("""import('/usage.js').then(({ usageOf }) => {
+      const now = 1800000000;
+      const row = (windows, more = {}) => ({ name: 'Work', signed_in: true, limit_until: null, windows, ...more });
+      const bars = (shown) => shown.bars.map((bar) => [bar.window, bar.percent, bar.width, bar.state]);
+      return [
+        bars(usageOf(row({ five_hour: { used: 14.4, resets_at: now + 60, at: now - 5 } }), now)),
+        bars(usageOf(row({ five_hour: { used: 'x' }, seven_day: { used: NaN, at: now } }), now)),
+        bars(usageOf(row({ five_hour: { used: 1e9, at: now }, seven_day: { used: -3, at: now } }), now)),
+        bars(usageOf(row({ seven_day: { used: 99.6, resets_at: now - 1, at: now - 9 } }), now)),
+        usageOf(row({}), now).note, usageOf(row({ five_hour: { used: 1, at: now } }), now).note.startsWith('as of '),
+        bars(usageOf(row({ five_hour: { used: 40, resets_at: now + 600, at: now } }, { limit_until: now + 600 }), now)),
+        bars(usageOf(row({ five_hour: { used: 40, resets_at: now + 600, at: now } }, { limit_until: now - 1 }), now)),
+      ];
+    })""")
+    assert found == [
+        [["five_hour", 14, 14.4, "ok"], ["seven_day", None, 0, "none"]],
+        [["five_hour", None, 0, "none"], ["seven_day", None, 0, "none"]],  # not a number: no reading
+        [["five_hour", None, 0, "none"], ["seven_day", None, 0, "none"]],  # outside 0 to 100: no reading either
+        [["five_hour", None, 0, "none"], ["seven_day", None, 0, "reset"]],  # its reset passed
+        "Updates when an agent works", True,
+        [["five_hour", None, 100, "limit"], ["seven_day", None, 0, "none"]],  # the account's limit ends at its reset
+        [["five_hour", 40, 40, "ok"], ["seven_day", None, 0, "none"]],  # a limit that has ended
+    ]
+
+
+@CHROME
+async def test_a_reading_left_open_past_its_reset_stops_showing_its_number(stack):  # the card redraws once a minute
+    import time
+
+    accounts, server = stack["accounts"], stack["server"]
+    source = ("window.minute = []; const every = window.setInterval;"
+              "window.setInterval = (callback, wait, ...rest) => { if (wait === 60000) window.minute.push(callback);"
+              " return every(callback, wait, ...rest); };")  # the page's once-a-minute timers, to run them by hand
+    accounts.set_windows("default", {"five_hour": {"used": 64.0, "resets_at": time.time() + 2}})
+    js = await open_with(stack, source)
+    await card_says(js, "card.windows[0].percent === '64%'")
+    await asyncio.sleep(2.5)
+    await js("window.minute.forEach((callback) => callback()); true")
+    await card_says(js, "card.windows[0].state === 'reset' && card.windows[0].percent === ''")
 
 
 @CHROME
@@ -930,7 +1049,7 @@ async def test_the_usage_card_shows_an_icon_when_the_menu_shrinks_to_icons(stack
     usage = "document.getElementById('usage')"
     mark = f"{usage}.querySelector('.usage-icon')"
     js = await open_with(stack, size=NARROW)
-    assert await until(js, f"{usage}.querySelector('.usage-line') !== null")
+    assert await until(js, f"{usage}.querySelector('.usage-account') !== null")
     menu = await js(f"{BOX}(document.getElementById('menu'))")
 
     async def narrow_card():
@@ -944,12 +1063,15 @@ async def test_the_usage_card_shows_an_icon_when_the_menu_shrinks_to_icons(stack
         assert await js("document.documentElement.scrollWidth <= innerWidth")
 
     await narrow_card()
-    accounts.set_usage("default", 64.0, time.time() + 3600, "five_hour")  # a number was reported: no ring bursts out
-    server._accounts_changed()
-    assert await until(js, f"{usage}.querySelector('.usage-ring-text').textContent === '64%'")
+    assert await js(f"{usage}.title") == "Default: updates when an agent works\nSettings → Accounts"
+    accounts.set_windows("default", {"five_hour": {"used": 64.0, "resets_at": time.time() + 3600},
+                                     "seven_day": {"used": 20.0, "resets_at": time.time() + 86400 * 3}})
+    server._accounts_changed()  # numbers were reported: the icon stays, and its tooltip lists them
+    assert await until(js, f"{usage}.title.startsWith('Default: Current session 64%')")
+    assert await js(f"{usage}.title") == "Default: Current session 64% · Weekly 20%\nSettings → Accounts"
     await narrow_card()
     js = await open_with(stack, size=WIDE)  # at full width the words say it, not the icon
-    assert await until(js, f"{usage}.querySelector('.usage-line') !== null")
+    assert await until(js, f"{usage}.querySelector('.usage-account') !== null")
     assert await js(f"getComputedStyle({mark}).display") == "none"
 
 

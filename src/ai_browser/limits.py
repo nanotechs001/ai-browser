@@ -1,12 +1,17 @@
 """Usage limits, as Claude Code reports them in stream-json (AI accounts Decision 7). Nothing documents them, so they
 are read defensively.
 
-Two signs count:
+Two signs of a limit hit count:
 - a failed result whose text is a usage-limit text: "usage limit reached", "reached your weekly usage limit", or
   "limit reached|<seconds since 1970>" (older versions);
 - a rate_limit_event whose status is "rejected". Of it, only status, resetsAt and rateLimitType are read (in its
-  rate_limit_info, or in the event itself), and only when they are well-typed. Besides them, one more key is read, and
-  only if the probe named it: USAGE_KEY, how much of the limit is used (the Usage card's percentage)."""
+  rate_limit_info, or in the event itself), and only when they are well-typed.
+
+And how much of each limit is used (the Usage card, the new look): every request's rate_limit_event carries
+rate_limit_info.unifiedWindows (the probe of 2026-10-07, Claude Code 2.1.292), e.g.
+{"five_hour": {"utilization": 0, "resetsAt": 1791372600}, "seven_day": {"utilization": 0.14, "resetsAt": 1791810000}}:
+five_hour is the current session's limit, seven_day the week's. Only a known window's utilization, a fraction from 0 to
+1, makes a percentage, and nothing else is ever read as one."""
 
 from __future__ import annotations
 
@@ -26,7 +31,8 @@ class Limit:
     kind: str = ""  # rateLimitType: "five_hour", "seven_day"…, if said
 
 
-def _seconds(value) -> float | None:
+def seconds(value) -> float | None:
+    """A time in seconds since 1970, as a float, if it is a sane one (EARLIEST to LATEST); else None."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return None
     return float(value) if EARLIEST <= value <= LATEST else None
@@ -39,7 +45,7 @@ def from_text(text) -> Limit | None:
     lower = text.lower()
     timed = _TIMED.search(lower)
     if timed is not None:
-        return Limit(_seconds(int(timed.group(1))))
+        return Limit(seconds(int(timed.group(1))))
     return Limit() if any(phrase in lower for phrase in TEXTS) else None
 
 
@@ -52,36 +58,36 @@ def from_event(event) -> Limit | None:
     if info.get("status") != "rejected":
         return None
     kind = info.get("rateLimitType")
-    return Limit(_seconds(info.get("resetsAt")), kind if isinstance(kind, str) and _KIND.fullmatch(kind) else "")
+    return Limit(seconds(info.get("resetsAt")), kind if isinstance(kind, str) and _KIND.fullmatch(kind) else "")
 
 
-# Task 1's probe (docs/superpowers/plans/2026-10-05-new-look.md) names the rate_limit_info key that says how much of a
-# limit is used, if Claude Code sends one. Until it does, None: no percentage is ever read, and the Usage card says
-# "Within limits" or "At its limit until …" (the new look, Decision 7).
-USAGE_KEY: str | None = None
-USAGE_SCALE = 100.0  # the key's value times this is a percentage: 100 for a fraction (0 to 1), 1 for a percentage
+KNOWN_WINDOWS = ("five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet")  # the limits Claude Code names
+SHOWN_WINDOWS = ("five_hour", "seven_day")  # the Usage card's: the current session, and the week
 
 
-@dataclass(frozen=True)
-class Usage:
-    used: float  # a percentage, 0 to 100
-    resets_at: float | None = None
-    kind: str = ""
-
-
-def usage_from_event(event) -> Usage | None:
-    """How much of a limit is used, from a rate_limit_event: only under USAGE_KEY, and only a finite number that makes
-    a percentage from 0 to 100. Never guessed from any other key."""
-    if USAGE_KEY is None or not isinstance(event, dict) or event.get("type") != "rate_limit_event":
+def percent(fraction) -> float | None:
+    """A utilization (a fraction from 0 to 1) as a percentage, to a tenth; None for anything else (a bool, a string,
+    NaN, infinity, below 0 or above 1)."""
+    if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not math.isfinite(fraction) \
+            or not 0 <= fraction <= 1:
         return None
+    return round(fraction * 100, 1)
+
+
+def windows_from_event(event) -> dict[str, dict]:
+    """How much of each limit is used, from a rate_limit_event's rate_limit_info.unifiedWindows:
+    {"five_hour": {"used": <percent>, "resets_at": <seconds since 1970> | None}, …}, a known window only with a
+    utilization that makes a percentage. {} for anything else: no number is ever made up (Review Focus 3)."""
+    if not isinstance(event, dict) or event.get("type") != "rate_limit_event":
+        return {}
     info = event.get("rate_limit_info")
-    info = info if isinstance(info, dict) else event
-    value = info.get(USAGE_KEY)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return None
-    used = value * USAGE_SCALE
-    if not 0 <= used <= 100:
-        return None
-    kind = info.get("rateLimitType")
-    return Usage(round(used, 1), _seconds(info.get("resetsAt")),
-                 kind if isinstance(kind, str) and _KIND.fullmatch(kind) else "")
+    windows = info.get("unifiedWindows") if isinstance(info, dict) else None
+    if not isinstance(windows, dict):
+        return {}
+    found = {}
+    for name in KNOWN_WINDOWS:
+        window = windows.get(name)
+        used = percent(window.get("utilization")) if isinstance(window, dict) else None
+        if used is not None:
+            found[name] = {"used": used, "resets_at": seconds(window.get("resetsAt"))}
+    return found

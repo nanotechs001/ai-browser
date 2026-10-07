@@ -259,7 +259,7 @@ async def test_rows_say_what_the_pages_show(fake_claude, tmp_path, monkeypatch):
     accounts.set_default(work.id)
     rows = {row["id"]: row for row in accounts.rows()}
     assert rows[work.id] == {"id": work.id, "name": "Work", "signed_in": None, "plan": None, "checked": False,
-                             "limit_until": None, "used": None, "used_resets_at": None, "used_kind": "",
+                             "limit_until": None, "windows": {},
                              "default": True, "brain": False,
                              "command": platforms.signin_command(runner, work.folder)}
     await accounts.refresh()

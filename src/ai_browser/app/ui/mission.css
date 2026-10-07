@@ -66,8 +66,6 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .workspaces:empty { display: none; }
 .usage { margin-top: auto; width: 100%; padding: 12px 14px; text-align: left; justify-content: space-between;
          background: var(--card); border-color: var(--line); border-radius: 12px; }
-.usage-words { display: flex; flex-direction: column; min-width: 0; }
-.usage-title { font-weight: 600; }
 
 /* ---- the centre: the switch, the views and the menu's pages ---------------------------------------------------- */
 .centre { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
@@ -278,16 +276,29 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .workspace-name { width: 100%; }
 .workspace-note { margin: 4px 0 0; font-size: 12px; }
 .workspace-note:empty { display: none; }
-.usage { align-items: center; gap: 8px; }
-.usage-lines { display: flex; flex-direction: column; min-width: 0; }
-.usage-line { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-line:is(.limit, .high) { color: var(--needs); }
-.usage-line.out { color: var(--muted); }
-.usage-ring { flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
-              background: conic-gradient(var(--accent-2) calc(var(--p, 0) * 1%), #263354 0); }
-.usage-ring::before { content: ""; grid-area: 1 / 1; width: 44px; height: 44px; border-radius: 50%;
-                      background: var(--card); }
-.usage-ring-text { grid-area: 1 / 1; font-size: 13px; font-weight: 700; }
+/* each account: its name, when it was read, and two bars (usage.js): the current session and the week */
+.usage { align-items: flex-start; gap: 8px; }
+.usage-words { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.usage-title { font-weight: 600; }
+.usage-accounts { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.usage-account { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.usage-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; column-gap: 8px;
+              min-width: 0; }
+.usage-name { min-width: 0; font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden;
+              text-overflow: ellipsis; white-space: nowrap; }
+.usage-note { font-size: 11px; color: var(--muted); }
+.usage-note.limit { color: var(--needs); }
+.usage-window { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.usage-top { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-2); }
+.usage-percent { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.usage-bar { display: block; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.usage-fill { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent-2); }
+.usage-window[data-state="high"] .usage-fill { background: var(--needs); }
+.usage-window[data-state="limit"] .usage-fill { background: var(--fail); }
+.usage-when { font-size: 11px; color: var(--muted); }
+.usage-when:empty { display: none; }
+.usage-window[data-state="limit"] .usage-when { color: var(--needs); }
+.usage-more { font-size: 12px; color: var(--muted); }
 :is(.mission, .workflow) select.move { flex: none; width: 150px; } /* one width on every row: the columns line up */
 .usage-icon { display: none; }
 
@@ -327,6 +338,5 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
   .workspace-pick, .workspace-new { justify-content: center; padding: 9px; }
   .workspace-note { overflow-wrap: anywhere; }
   .usage { justify-content: center; padding: 10px; }
-  .usage .usage-icon { display: block; }
-  .usage .usage-ring { display: none; } /* 56 px does not fit a 64 px menu: the number is a click away */
+  .usage .usage-icon { display: block; } /* its tooltip lists each account's numbers (usage.js) */
 }
