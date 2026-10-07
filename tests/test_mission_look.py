@@ -789,6 +789,22 @@ async def test_a_workspace_deleted_while_its_agents_run_keeps_them_in_the_room(s
 
 
 @CHROME
+async def test_closing_the_menu_disarms_delete(stack):  # the final review, F9
+    research = stack["server"].workspaces.create("Research")
+    js = await open_mission(stack)
+    more, delete = "document.querySelector('#workspaces .workspace-more')", "document.querySelector('#workspaces .delete')"
+    assert await until(js, f"{more} !== null")
+    await js(f"{more}.click(); {delete}.click(); true")  # armed: "Delete? Its agents keep running"
+    assert await js(f"{delete}.textContent") == "Delete? Its agents keep running"
+    await js(f"{more}.click(); {more}.click(); true")  # closed, and opened again later
+    assert await js(f"{delete}.textContent") == "Delete"
+    await js(f"{delete}.click(); true")  # one click only arms it again
+    await asyncio.sleep(0.5)
+    assert stack["server"].workspaces.get(research["id"]) is not None
+    assert await js(f"{delete}.textContent") == "Delete? Its agents keep running"
+
+
+@CHROME
 async def test_the_usage_card_never_makes_up_a_number(stack):  # Review Focus 3
     import time
 

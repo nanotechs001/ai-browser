@@ -105,6 +105,8 @@ export function mountWorkspaces(root, { send, onFilter }) {
     menu.append(rename, remove);
     more.addEventListener("click", () => {
       menu.hidden = !menu.hidden;
+      delete remove.dataset.sure; // opened or closed: Delete asks again, never armed from an earlier visit
+      remove.textContent = "Delete";
     });
     item.append(pick, more, menu);
     return item;
