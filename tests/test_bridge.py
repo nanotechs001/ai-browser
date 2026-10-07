@@ -238,6 +238,13 @@ def test_ai_browsers_panel_prompt_is_gone():
                 bridge.BRAVE_PROMPT.split())
 
 
+def test_the_prompt_keeps_agents_to_their_one_tab():
+    from ai_browser.app.bridge import BRAVE_PROMPT
+
+    assert ("Use your one tab for everything. Open a second tab (new_tab=true) only when you need two pages at once: "
+            "at most 2 tabs of your own, and a third reuses the oldest.") in " ".join(BRAVE_PROMPT.split())
+
+
 def test_page_line_is_labelled_and_a_hostile_title_stays_on_its_line():  # Review Focus 4
     from ai_browser.app.bridge import page_line
 

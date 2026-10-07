@@ -166,3 +166,12 @@ async def test_sandbox_start_and_tabs_describe_the_users_browser():
         "throwaway). chrome=true: back to the user's own browser (Brave or Chrome), the default, when the user asks "
         "for it (for their logins); they must have its remote-debugging switch on and click Allow.")
     assert "and tabs the user handed you (h1…)" in tools["tabs"].description
+
+
+async def test_open_and_tabs_keep_the_agent_to_its_one_tab():
+    async with Client(build_server(FakeEngine)) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    assert ("Use your one tab for everything: new_tab=true opens a second only when you need two pages at once. At "
+            "most 2 tabs of your own: a third reuses the oldest.") in flat(tools["open"].description)
+    assert "new (url optional; at most 2 tabs of your own: a third reuses the oldest)" in flat(
+        tools["tabs"].description)
