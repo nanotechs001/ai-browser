@@ -82,7 +82,8 @@ export function calendarItems(nextRuns, agents, start, end, now = new Date()) {
   return items.sort((one, two) => one.at - two.at);
 }
 
-export function mountCalendar(root, { onAgent, onTemplate, visible = () => true }) {
+export function mountCalendar(root, { onAgent, onTemplate, visible = () => true,
+                                 visibleTemplate = () => true }) {
   let mode = "month";
   let cursor = startOfDay(new Date());
   let nextRuns = [];
@@ -144,7 +145,8 @@ export function mountCalendar(root, { onAgent, onTemplate, visible = () => true 
       : `${shown[0].getDate()} ${MONTHS[shown[0].getMonth()]} – ${shown[6].getDate()} ${MONTHS[shown[6].getMonth()]}`;
     for (const tab of modes.children) tab.setAttribute("aria-selected", String(tab.dataset.mode === mode));
     const byDay = new Map();
-    for (const item of calendarItems(nextRuns, agents.filter(visible), start, end)) {
+    const rows = (Array.isArray(nextRuns) ? nextRuns : []).filter((row) => visibleTemplate(row.slug));
+    for (const item of calendarItems(rows, agents.filter(visible), start, end)) {
       const key = dayKey(item.at);
       if (!byDay.has(key)) byDay.set(key, []);
       byDay.get(key).push(item);

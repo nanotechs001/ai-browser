@@ -54,6 +54,10 @@ function inWorkspace(agent) { // the menu's workspace filter: every agent while 
   return !workspace || agent?.workspace === workspace;
 }
 
+function templateInWorkspace(slug) { // the same filter for a template: Templates and the Calendar use this one
+  return !workspace || workspaceOfTemplate(slug) === workspace;
+}
+
 const scene = createScene($("scene"), { onSelect: select });
 scene.setFilter(inWorkspace);
 const brainLabel = el("div", "brain-label");
@@ -94,7 +98,7 @@ const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible
 const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
 parts.push(missions, history);
 const templates = mountTemplates($("page-templates"), link, {
-  inWorkspace: (slug) => !workspace || workspaceOfTemplate(slug) === workspace,
+  inWorkspace: templateInWorkspace,
   decorate: (row, slug) => moveFor(row.querySelector(".row") || row, { template: slug }, workspaceOfTemplate(slug)),
 });
 parts.push(templates, mountKnowledge($("page-knowledge"), link, { tabs: () => tabs,
@@ -113,7 +117,8 @@ parts.push(spaces, {
     if (message.type === "snapshot" || message.type === "accounts") usage.render(message.accounts || []);
   },
 });
-parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace }));
+parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
+                                                visibleTemplate: templateInWorkspace }));
 
 function openTemplate(slug) { // a template in the Calendar: Templates, at that template
   showPage("templates");

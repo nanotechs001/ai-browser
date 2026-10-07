@@ -1085,13 +1085,41 @@ async def test_a_calendar_left_open_drops_a_run_once_it_has_passed(stack):  # ne
         return {"slug": slug, "name": slug.title(), "schedule": "daily 09:00", "every": None, "runs": [moment]}
 
     stack["server"]._send_all({"type": "workflows_snapshot", "workflows": [], "problems": [],
-                               "next_runs": [row("past", now - 60), row("soon", now + 2),
+                               "next_runs": [row("past", now - 60), row("soon", now + 4),
                                              row("tomorrow", now + 86400)]})
     slugs = "[...document.querySelectorAll('#view-calendar .entry.template')].map(node => node.dataset.slug).sort()"
     assert await until(js, f"{slugs}.includes('tomorrow')")
     assert await js(slugs) == ["soon", "tomorrow"]  # a run a minute ago is not drawn
-    await asyncio.sleep(2.5)  # "soon" has passed; nothing told the page
+    await asyncio.sleep(4.5)  # "soon" has passed; nothing told the page (the margins hold under a loaded suite)
     assert await js("window.minute.length") >= 1
     both = await js(f"(() => {{ const before = {slugs}; window.minute.forEach((callback) => callback());"
                     f" return [before, {slugs}]; }})()")
     assert both == [["soon", "tomorrow"], ["tomorrow"]]  # its own timer drew it again, without "soon"
+
+
+@CHROME
+async def test_the_calendar_follows_the_menus_workspace_for_templates_as_for_agents(stack):  # the review of Task 17
+    server = stack["server"]
+    research, docs = server.workspaces.create("Research"), server.workspaces.create("Docs")
+    for name, schedule in (("Morning report", "daily 09:00"), ("Check often", "every 2h"),
+                           ("Weekly plan", "daily 10:00")):
+        stack["workflows"].save({"name": name, "instructions": "Do it", "trigger": "schedule", "schedule": schedule})
+    server.workspaces.assign_template("morning-report", research["id"])
+    server.workspaces.assign_template("check-often", docs["id"])  # "weekly-plan" is in no workspace
+    js = await open_mission(stack)
+    await js("document.querySelector('#views-switch [data-view=\"calendar\"]').click(); true")
+    slugs = ("[...new Set([...document.querySelectorAll('#view-calendar .entry.template')]"
+             ".map(node => node.dataset.slug))].sort()")
+
+    def pick(name):
+        return ("[...document.querySelectorAll('#workspaces .workspace-pick')]"
+                f".find(button => button.querySelector('.name').textContent === {json.dumps(name)})")
+
+    assert await until(js, f"JSON.stringify({slugs}) === '[\"check-often\",\"morning-report\",\"weekly-plan\"]'")
+    assert await until(js, f"{pick('Research')} !== undefined")
+    await js(f"{pick('Research')}.click(); true")  # a template of another workspace, or of none, is not drawn
+    assert await until(js, f"JSON.stringify({slugs}) === '[\"morning-report\"]'")
+    await js(f"{pick('Docs')}.click(); true")
+    assert await until(js, f"JSON.stringify({slugs}) === '[\"check-often\"]'")
+    await js(f"{pick('Docs')}.click(); true")  # picked again: every template
+    assert await until(js, f"JSON.stringify({slugs}) === '[\"check-often\",\"morning-report\",\"weekly-plan\"]'")
