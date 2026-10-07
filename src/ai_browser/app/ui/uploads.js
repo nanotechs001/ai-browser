@@ -1,8 +1,10 @@
-// The composer's Attach (the new look, Decision 9): at most 10 files, 20 MB each. Each file goes to the app in pieces
-// over the page's line (the pages' CSP allows no other way), shown as a chip with its name, its size and how far it
-// got, and × to drop it. The app stages them until the task starts; Start waits until each one is whole, and a task
-// takes only the ones it was sent with. A new connection loses them all (the app drops them): each chip says to attach
-// it again. The name shown is the app's cleaned one, set as text.
+// The composer's Attach (the new look, Decision 9), and since 2026-10-07 every box where the user writes to Claude
+// (Build a Mission, an agent's chat in the drawer, the floating chat's New task), for files attached, pasted or
+// dropped (paste.js): at most 10 files, 20 MB each. Each file goes to the app in pieces over the page's line (the
+// pages' CSP allows no other way), shown as a chip with its name, its size and how far it got, and × to drop it. The
+// app stages them until the task starts (or the message goes); Start (Send) waits until each one is whole, and takes
+// only the ones it was sent with. A new connection loses them all (the app drops them): each chip says to attach it
+// again. The name shown is the app's cleaned one, set as text.
 "use strict";
 
 import { el } from "./chat.js";
@@ -111,6 +113,9 @@ export function mountUploads({ list, send, note }) {
       if (states.includes("sending")) return "Wait for the attached files to finish";
       if (states.includes("failed")) return "Remove the files that didn't arrive (×), or attach them again";
       return "";
+    },
+    clear() { // the box goes (the drawer closes, or shows another agent): the app drops what it staged for it
+      for (const id of [...files.keys()]) drop(id);
     },
     taken(ids) { // a task took these: the app moved them into the agent's folder. Any other chip stays
       for (const id of ids) {

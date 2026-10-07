@@ -2,13 +2,16 @@
 // without the user's Start, Send or a plain yes), Build a Mission (start an agent) and Use a Template (run a workflow,
 // with the box as its extra words). Under the box: Attach (uploads.js), Web ▾, Model ▾, Account ▾, Folder ▾ (agent
 // powers' picker), Auto-approve in its folder (a switch, off again for each new task), Template ▾ and Workspace ▾, the
-// mic, and the main button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter makes a new line. Narrow
-// windows fold the pickers into ⋯ Options. Every word is set as text.
+// mic, and the main button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter makes a new line. A picture
+// pasted into the box, or a file dropped on it (paste.js), is attached as Attach does in Build a Mission; Ask AI and
+// Use a Template take none, and say where pictures go. Narrow windows fold the pickers into ⋯ Options. Every word is
+// set as text.
 "use strict";
 
 import { fillPicker, pickDefault } from "./accountui.js";
 import { AUTO_TITLE, el } from "./chat.js";
 import { mountFolderPicker } from "./folderpick.js";
+import { PICTURES_NOTE, takeFiles } from "./paste.js";
 import { mountUploads } from "./uploads.js";
 
 const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
@@ -159,6 +162,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     run();
   });
   $("attach").addEventListener("click", () => $("attach-files").click());
+  takeFiles($("task"), (pasted, { text }) => { // a picture pasted or a file dropped: Build a Mission's, as Attach
+    if (mode === "build") uploads.add(pasted);
+    else if (!text) note(PICTURES_NOTE); // Ask AI and Use a Template take none, and nothing switches by itself
+  }, { area: $("task").closest(".box") });
   $("attach-files").addEventListener("change", () => {
     uploads.add([...$("attach-files").files]);
     $("attach-files").value = ""; // the same file can be picked again
