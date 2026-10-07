@@ -9,7 +9,7 @@ import { mountDrawer } from "./drawer.js";
 import { icon } from "./icons.js";
 import { connect } from "./link.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
-import { mountList } from "./pages.js";
+import { mountHistory, mountList, mountMissions } from "./pages.js";
 import { createScene } from "./scene.js";
 import { mountSide } from "./side.js";
 import { stateOf, toolLabel } from "./step.js";
@@ -83,6 +83,9 @@ const side = mountSide({ send, openDrawer, openHistory: () => showPage("history"
 const list = mountList($("view-list"), { onOpen: select });
 const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI, Build a Mission, Use a Template
 parts.push(composer);
+const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible: inWorkspace });
+const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
+parts.push(missions, history);
 talk = mountTalk({
   panel: $("talk"),
   micButton: $("mic"),

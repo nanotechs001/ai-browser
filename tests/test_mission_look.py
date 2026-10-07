@@ -509,3 +509,122 @@ async def test_after_a_reconnect_the_attached_files_must_be_attached_again(stack
     assert await until(js, "document.getElementById('task-note').textContent.startsWith('Remove the files that didn')")
     await asyncio.sleep(0.5)
     assert server.agents.agents == {}  # nothing was sent: Start waited for the user to attach them again
+
+
+# ---- My Missions and History (Task 14) -------------------------------------------------------------------------------
+
+@CHROME
+async def test_my_missions_lists_every_agent_and_filters_by_state(stack):
+    from test_bridge_powers import RESULT, ask
+
+    card = [INIT, ask("Bash", {"command": "npm test"}), {"sleep": 30}, RESULT]
+    stack["script"].write_text(json.dumps({"default": EVENTS, "keep": WORKING, "card": card}), encoding="utf-8")
+    agents = stack["server"].agents
+    for words in ("finish the report", "keep working", "card please"):
+        await agents.create(words)
+    await wait_for(lambda: agents.agents["a1"].state == "your_turn" and agents.agents["a3"].permission is not None)
+    js = await open_mission(stack)
+    await js(f"{page_link('missions')}.click(); true")
+    rows = "[...document.querySelectorAll('#page-missions .mission:not([hidden])')].map(row => row.dataset.id)"
+    assert await until(js, f"{rows}.length === 3")
+    assert await js(rows) == ["a3", "a2", "a1"]  # newest first
+    for name, ids in (("working", ["a2"]), ("needs_you", ["a3"]), ("done", ["a1"]), ("all", ["a3", "a2", "a1"])):
+        await js(f"document.querySelector('#page-missions [data-filter={json.dumps(name)}]').click(); true")
+        assert await js(rows) == ids, name
+    await js("document.querySelector('#page-missions .mission[data-id=\"a2\"] .open').click(); true")
+    assert await until(js, "document.getElementById('drawer-title').textContent === '2 · keep working'")
+
+
+@CHROME
+async def test_history_lists_finished_agents_with_their_result_and_files(stack):
+    from test_bridge_powers import result
+
+    edit = {"file_path": "/x/footer.html", "old_string": "a", "new_string": "b"}
+    said = {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {
+        "type": "text_delta", "text": "Fixed the footer.\nIt was missing a link."}}}
+    end = {"type": "assistant", "message": {"content": [{"type": "text", "text": "Fixed the footer."}]}}
+    stack["script"].write_text(json.dumps({"default": [INIT, use("e1", "Edit", edit), result("e1"), said, end,
+                                                       EVENTS[-1]], "keep": WORKING}), encoding="utf-8")
+    agents = stack["server"].agents
+    await agents.create("fix the footer")
+    await agents.create("keep working")
+    await wait_for(lambda: agents.agents["a1"].state == "your_turn")
+    js = await open_mission(stack)
+    await js(f"{page_link('history')}.click(); true")
+    rows = "[...document.querySelectorAll('#page-history .history-row:not([hidden])')]"
+    assert await until(js, f"{rows}.length === 1")  # only the finished one
+    row = f"{rows}[0]"
+    assert await js(f"{row}.querySelector('.result').textContent") == "Fixed the footer."
+    assert await js(f"{row}.querySelector('.files').textContent") == "1 file changed"
+    assert await js(f"{row}.querySelector('.files').title") == "/x/footer.html"
+    assert await js(f"{row}.querySelector('.took').textContent") == "2s"
+    assert await js(f"{row}.querySelector('.account').textContent") == "Default"
+    search = "document.getElementById('history-search')"
+    for words, count in (("FOOTER.HTML", 1), ("nothing like it", 0), ("fixed", 1)):
+        await js(f"{search}.value = {json.dumps(words)}; {search}.dispatchEvent(new Event('input')); true")
+        assert await js(f"{rows}.length") == count, words
+    await js(f"{row}.querySelector('.open').click(); true")
+    assert await until(js, "document.querySelector('#drawer:not([hidden]) .messages')?.textContent"
+                           ".includes('fix the footer')")
+
+
+@CHROME
+async def test_long_words_clip_in_my_missions_and_history(stack, user_home, tmp_path):  # Review Focus 1
+    import os
+
+    # a long name (the row shows the folder's name), yet Claude Code's own folder for it (projects/<the whole path,
+    # dashed>) stays within a file name's 255 bytes
+    deep = tmp_path / ("a-very-long-folder-name-" * 4)
+    deep.mkdir()
+    stack["server"].agents.rules.trust(deep)
+    said = {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {
+        "type": "text_delta", "text": "Done: " + "word " * 400}}}
+    end = {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}]}}
+    stack["script"].write_text(json.dumps([INIT, said, end, EVENTS[-1]]), encoding="utf-8")
+    await stack["server"].agents.create("t" * 2000, folder=str(deep))
+    await wait_for(lambda: stack["server"].agents.agents["a1"].state == "your_turn")
+    js = await open_with(stack, size=WIDE)
+    await js(f"{page_link('missions')}.click(); true")
+    folder = "document.querySelector('#page-missions .mission[data-id=\"a1\"] .folder')"
+    assert await until(js, f"{folder} !== null")
+    assert await js(f"{folder}.title") == os.path.realpath(deep)
+    assert await js(f"{folder}.scrollWidth > {folder}.clientWidth")
+    assert await js("(() => { const page = document.getElementById('page-missions');"
+                    " return page.scrollWidth <= page.clientWidth; })()")
+    await js(f"{page_link('history')}.click(); true")
+    words = "document.querySelector('#page-history .history-row .result')"
+    assert await until(js, f"{words} !== null")
+    assert await js(f"{words}.scrollWidth > {words}.clientWidth && {words}.title === {words}.textContent")
+    assert await js("(() => { const page = document.getElementById('page-history');"
+                    " return page.scrollWidth <= page.clientWidth; })()")
+
+
+@CHROME
+async def test_the_columns_line_up_row_by_row_in_my_missions_and_history(stack):  # found by looking at screenshots
+    from test_bridge_powers import RESULT, ask, result
+
+    edit = {"file_path": "/x/footer.html", "old_string": "a", "new_string": "b"}
+    card = [INIT, ask("Bash", {"command": "npm test"}), {"sleep": 30}, RESULT]
+    stack["script"].write_text(json.dumps({
+        "default": EVENTS, "fix": [INIT, use("e1", "Edit", edit), result("e1"), RESULT], "keep": WORKING,
+        "card": card}), encoding="utf-8")
+    agents = stack["server"].agents
+    for words in ("fix the footer", "finish the report", "keep working", "card please"):
+        await agents.create(words)
+    await wait_for(lambda: agents.agents["a2"].state == "your_turn" and agents.agents["a4"].permission is not None)
+    js = await open_mission(stack)
+
+    def edges(page, row, part, side):  # one edge of one part, for each row shown
+        return (f"[...document.querySelectorAll('#page-{page} {row}:not([hidden])')]"
+                f".map(row => Math.round(row.querySelector('{part}').getBoundingClientRect().{side}))")
+
+    await js(f"{page_link('missions')}.click(); true")
+    assert await until(js, f"{edges('missions', '.mission', '.folder', 'left')}.length === 4")
+    for part, side in (("meta", "left"), ("chip", "right"), ("time", "left")):
+        found = await js(edges("missions", ".mission", f".{part}", side))
+        assert len(set(found)) == 1, (part, found)  # the same place in every row, whatever the chip or the time says
+    await js(f"{page_link('history')}.click(); true")
+    assert await until(js, f"{edges('history', '.history-row', '.chip', 'left')}.length === 2")
+    for part in ("chip", "took", "account", "files", "open"):
+        found = await js(edges("history", ".history-row", f".{part}", "left"))
+        assert len(set(found)) == 1, (part, found)
