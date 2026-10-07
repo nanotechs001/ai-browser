@@ -1,28 +1,23 @@
-/* AI Browser's window: the row of tabs under the title bar, and one frame per tab below it. */
-:root {
-  --bg: #faf9f5; --bar: #f2f0e8; --text: #1f1e1d; --muted: #6b6a66; --line: #e6e3da; --accent: #c96442;
-  color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #1f1e1d; --bar: #262624; --text: #ecebe6; --muted: #a3a29c; --line: #3a3936; --accent: #d97757; }
-}
+/* AI Browser's window: the row of tabs under the title bar (the mockup's pills, the picked one in neon blue), and one
+   frame per tab below it. Colours: theme.css. */
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body { margin: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text);
-       font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-.tabs { flex: none; display: flex; align-items: flex-end; gap: 2px; padding: 6px 8px 0; overflow-x: auto;
+       font: 13px/1.4 var(--font); }
+.tabs { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 12px; overflow-x: auto;
         background: var(--bar); border-bottom: 1px solid var(--line); scrollbar-width: none; }
-.tab { flex: none; display: flex; align-items: center; max-width: 260px; margin-bottom: -1px;
-       border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; }
-.tab.active { background: var(--bg); border-color: var(--line); }
+.tab { flex: none; display: flex; align-items: center; max-width: 260px; border: 1px solid var(--line);
+       border-radius: 10px; background: rgba(255, 255, 255, 0.02); }
+.tab.active { background: linear-gradient(180deg, #0b2ab0, #0a2290); border-color: #2455e8;
+              box-shadow: 0 0 16px var(--glow); }
 .tab button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
-.tab-label { padding: 6px 14px 7px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-             color: var(--muted); }
+.tab-label { padding: 7px 16px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+             color: var(--text-2); }
 .tab-label:hover { color: var(--text); }
-.tab.active .tab-label { color: var(--text); font-weight: 600; box-shadow: inset 0 2px 0 var(--accent); }
-.tab-close { flex: none; padding: 2px 8px 2px 0; color: var(--muted); font-size: 15px; line-height: 1; }
+.tab.active .tab-label { color: var(--text); font-weight: 600; }
+.tab-close { flex: none; padding: 2px 10px 2px 0; color: var(--muted); font-size: 15px; line-height: 1; }
 .tab-close:hover { color: var(--text); }
-.tab button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
+.tab button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; border-radius: 8px; }
 .views { position: relative; flex: 1; min-height: 0; }
 .view { position: absolute; inset: 0; }
 /* A tab not shown keeps its page as it was (its scroll, what was typed) and draws nothing until it is shown again:

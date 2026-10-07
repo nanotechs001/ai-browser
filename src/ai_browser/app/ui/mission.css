@@ -1,15 +1,7 @@
-/* Mission Control: a dark control room (always dark, like a real one). The names AI Home's styles use (--card, --line,
-   --accent…) are defined here too, for the Brain's inbox and the permission card in the drawer. */
-:root {
-  --bg: #0b0c13; --card: #1c1e2c; --soft: #262938; --text: #e8e9f2; --muted: #a3a6c2; --line: rgba(140, 150, 220, 0.22);
-  --accent: #d97757; --accent-fg: #1f1e1d; --ok: #6cc58c; --fail: #f2867c; --wait: #e2c26b; --done: #9aa0b4;
-  --panel: rgba(20, 22, 34, 0.9); --glow: rgba(110, 130, 255, 0.35);
-  color-scheme: dark;
-}
+/* Mission Control. Colours, type and radii: theme.css (the room is always dark, like the mockup). */
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
-body { background: radial-gradient(ellipse at 50% 35%, #1a1c2c 0%, var(--bg) 65%); color: var(--text);
-       font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); }
 h1 { font-size: 17px; font-weight: 600; margin: 0; }
 button, select, textarea, input { font: inherit; color: inherit; }
 button, .button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 4px 12px;
@@ -31,7 +23,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- the room ------------------------------------------------------------------------------------------------- */
-.scene { position: fixed; inset: 0; }
+.scene { position: fixed; inset: 0; background: radial-gradient(ellipse at 50% 35%, #142454 0%, var(--bg) 65%); }
 .viewport { position: absolute; inset: 0; perspective: 1800px; perspective-origin: 50% 20%; overflow: hidden;
             cursor: grab; touch-action: none; }
 .viewport.dragging { cursor: grabbing; }
@@ -85,7 +77,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
                                       animation: breathe 4.2s ease-in-out infinite; }
 .brain-label { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: -24px; min-height: 40px;
                text-align: center; pointer-events: none; }
-.brain-label .count { font-weight: 700; color: var(--accent); font-size: 15px; text-shadow: 0 0 12px rgba(0, 0, 0, 0.8); }
+.brain-label .count { font-weight: 700; color: var(--needs); font-size: 15px; text-shadow: 0 0 12px rgba(0, 0, 0, 0.8); }
 .brain-label .what { color: var(--muted); font-size: 13px; text-shadow: 0 0 10px rgba(0, 0, 0, 0.9); }
 .bubble { position: absolute; left: 50%; bottom: calc(100% - 26px); transform: translateX(-50%); width: max-content;
           cursor: pointer; animation: rise 0.25s ease-out;
@@ -128,7 +120,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .light { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--done); }
 .station[data-state="working"] .light { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .station[data-state="waiting"] .light { background: var(--wait); box-shadow: 0 0 8px var(--wait); }
-.station[data-state="needs_you"] .light { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.station[data-state="needs_you"] .light { background: var(--needs); box-shadow: 0 0 10px var(--needs); }
 .station[data-state="failed"] .light { background: var(--fail); box-shadow: 0 0 8px var(--fail); }
 .station[data-state="stopped"] .light { background: #5d6070; }
 .station[data-state="your_turn"] .light { background: none; color: var(--ok); width: auto; height: auto;
@@ -138,11 +130,11 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .ticker { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); margin-top: 4px; text-align: left;
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .station[data-state="failed"] .ticker { color: var(--fail); }
-.badge { position: absolute; top: -12px; right: -8px; background: var(--accent); color: var(--accent-fg); font-size: 11px;
+.badge { position: absolute; top: -12px; right: -8px; background: var(--needs); color: #2a1a00; font-size: 11px;
          font-weight: 700; border-radius: 999px; padding: 2px 8px; display: none; }
 .station[data-state="needs_you"] .badge { display: block; animation: pulse 1.4s ease-in-out infinite; }
-.station[data-state="needs_you"] .card { border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.4), 0 0 30px rgba(217, 119, 87, 0.4), 0 18px 40px rgba(0, 0, 0, 0.45); }
+.station[data-state="needs_you"] .card { border-color: var(--needs);
+  box-shadow: 0 0 0 2px rgba(255, 181, 71, 0.4), 0 0 30px rgba(255, 181, 71, 0.4), 0 18px 40px rgba(0, 0, 0, 0.45); }
 
 /* ---- the worker (chibi.js): one HTML layer per part, each holding a small SVG. Only the layers move (transform,
    translate and opacity), never an SVG element, and nothing on .worker itself may make a stacking context (no
@@ -247,8 +239,8 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 /* ---- the drawer's agent: its chat, as in AI Home ---------------------------------------------------------------- */
 #drawer-body .status { font: 12px ui-monospace, Menlo, monospace; }
 #drawer-body .buttons { margin-top: 0; }
-.chip.needs_you { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
-.chip.working { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.chip.needs_you { background: color-mix(in srgb, var(--needs) 22%, transparent); color: var(--needs); }
+.chip.working { background: color-mix(in srgb, var(--work) 18%, transparent); color: var(--work); }
 .chip.failed { background: color-mix(in srgb, var(--fail) 18%, transparent); color: var(--fail); }
 .permission-slot:empty { display: none; }
 /* Your tabs, in an agent's drawer (tablist.js mountYourTabs): the user's own tabs, each with Give to this agent */
@@ -318,7 +310,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .task-bar .mic { display: inline-grid; place-items: center; width: 34px; height: 30px; padding: 0; flex: none; }
 .task-bar .mic svg { width: 18px; height: 18px; fill: currentColor; }
 .task-bar .mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
-                                      box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.35); }
+                                      box-shadow: 0 0 0 3px rgba(79, 141, 253, 0.35); }
 .talk { left: 50%; bottom: 76px; transform: translateX(-50%); width: min(720px, calc(100vw - 32px)); max-height: 42vh;
         overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .talk:not([hidden]) ~ .help { display: none; }
@@ -326,7 +318,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .talk-log li { white-space: pre-wrap; word-break: break-word; }
 .talk-log li.you { color: var(--muted); }
 .talk-status:empty, .talk-notice:empty, .talk-card:empty { display: none; }
-.talk-notice { color: var(--wait); font-size: 13px; }
+.talk-notice { color: var(--needs); font-size: 13px; }
 .talk-card { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .talk-card p { margin: 0; }
 .talk-card code { font: 12px ui-monospace, Menlo, monospace; background: var(--soft); border-radius: 4px;
@@ -345,7 +337,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .chip.account { background: transparent; border: 1px solid var(--line); }
 #drawer-body .moved { color: var(--ok); }
 .ask-slot:empty { display: none; }
-.account-ask { border-color: var(--wait); display: flex; flex-direction: column; gap: 6px; }
+.account-ask { border-color: var(--needs); display: flex; flex-direction: column; gap: 6px; }
 .account-ask p { margin: 0; }
 .account-ask-head { font-weight: 600; }
 .account-ask-buttons, .account-move { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }

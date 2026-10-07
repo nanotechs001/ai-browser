@@ -238,7 +238,7 @@ function makeChat() { // the floating chat: small, above the other windows, wher
                                    minHeight: policy.CHAT_SIZE.minHeight,
                                    title: "AI Browser chat", alwaysOnTop: true, minimizable: false,
                                    maximizable: false, fullscreenable: false, skipTaskbar: true,
-                                   backgroundColor: "#faf9f5", icon: ICON });
+                                   backgroundColor: "#070f23", icon: ICON });
   win.on("close", (event) => { // closing it hides it, like the shortcut
     if (!quitting) {
       event.preventDefault();
@@ -427,7 +427,7 @@ function begin(message) { // the engine's start: the window on its start address
   if (process.platform === "win32") startMenuEntry();
   makeTray();
   const win = makeWindow("main", { width: 1440, height: 960, minWidth: 720, minHeight: 480, title: "AI Browser",
-                                   backgroundColor: "#faf9f5", icon: ICON });
+                                   backgroundColor: "#070f23", icon: ICON });
   win.on("close", (event) => { // closing hides it: the app keeps running, and so do the agents
     if (!quitting) {
       event.preventDefault();
