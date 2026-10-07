@@ -40,12 +40,13 @@ def test_the_defaults_and_a_bad_value_for_one_key(tmp_path):
     assert settings.path == tmp_path / "settings.json"
     assert settings.get() == DEFAULTS == {"window_browser": "auto", "model": None, "voice": False,
                                        "shortcut": "Alt+Space",
-                                       "read_tabs": False, "agents_profile": None, "watcher_note": True}
+                                       "read_tabs": False, "agents_profile": None, "watcher_note": True,
+                                       "sandbox": "auto"}
     (tmp_path / "settings.json").write_text(json.dumps({"model": "gpt", "voice": True, "window_browser": "brave"}),
                                             encoding="utf-8")
     assert settings.get() == {"window_browser": "brave", "model": None, "voice": True,
                               "shortcut": "Alt+Space",  # only the model falls back
-                              "read_tabs": False, "agents_profile": None, "watcher_note": True}
+                              "read_tabs": False, "agents_profile": None, "watcher_note": True, "sandbox": "auto"}
 
 
 def test_a_broken_file_gives_the_defaults_and_stays_until_the_next_set(tmp_path):
@@ -92,7 +93,7 @@ def test_a_file_from_another_computer_falls_back_key_by_key(tmp_path):  # Review
     mac = Settings(tmp_path, system="darwin")
     assert mac.get() == {"window_browser": "auto", "model": "opus", "voice": False,
                          "shortcut": "Alt+Space",  # Edge draws it on Windows only
-                         "read_tabs": False, "agents_profile": None, "watcher_note": True}
+                         "read_tabs": False, "agents_profile": None, "watcher_note": True, "sandbox": "auto"}
     mac.set("voice", True)
     assert read_settings(tmp_path)["window_browser"] == "edge"  # kept for the Windows computer that wrote it
     assert Settings(tmp_path, system="win32").get()["window_browser"] == "edge"

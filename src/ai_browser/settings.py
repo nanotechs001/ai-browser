@@ -4,7 +4,7 @@ One reader and one writer touch the file: read_settings and write_setting (wave 
 missing, unreadable, broken or half-written file reads as {} and never raises, so the app always starts. A write is
 atomic, mode 0600, and keeps every key it doesn't set, so a file written by a newer build survives an older one.
 Settings(home) is the typed view on top: the window's browser, the model, Voice, the app's shortcut, reading the
-user's tabs, where agents browse and the old extension's note, each value checked."""
+user's tabs, where agents browse, the old extension's note and the sandbox, each value checked."""
 
 from __future__ import annotations
 
@@ -19,8 +19,9 @@ from .syncdir import write_atomic
 
 FILE = "settings.json"
 MODELS = ("opus", "sonnet", "haiku")
+SANDBOXES = ("auto", "docker", "local")  # Settings → Sandbox (the no-Docker spec): Auto is Docker when it is ready
 DEFAULTS = {"window_browser": "auto", "model": None, "voice": False, "shortcut": DEFAULT_SHORTCUT,
-            "read_tabs": False, "agents_profile": None, "watcher_note": True}
+            "read_tabs": False, "agents_profile": None, "watcher_note": True, "sandbox": "auto"}
 
 
 def _path(home) -> Path:
@@ -76,6 +77,9 @@ class Settings:
         elif key == "agents_profile":  # Settings → Where agents browse: a profile's folder, or the one used last
             if value is not None and not plain_folder(value):
                 raise ValueError("Pick one of the profiles listed")
+        elif key == "sandbox":  # Settings → Sandbox: where the sandboxed browser, QA and skill scripts run
+            if not isinstance(value, str) or value not in SANDBOXES:
+                raise ValueError("The sandbox is Auto, Docker or Local")
         else:
             raise ValueError(f"There is no setting {key!r}")
 

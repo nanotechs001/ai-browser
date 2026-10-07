@@ -89,6 +89,14 @@ def _never_the_users_browsers(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _docker_sandbox_unless_a_test_says(monkeypatch):
+    """Every test's sandbox is Docker's, as before the no-Docker spec: AIB_SANDBOX wins over Settings → Sandbox
+    (sandboxmode.py), so no test asks Docker whether it is ready. The tests of Local and of Auto set it, or remove it,
+    themselves."""
+    monkeypatch.setenv("AIB_SANDBOX", "docker")
+
+
+@pytest.fixture(autouse=True)
 def _no_real_window(monkeypatch):
     """No test opens AI Browser's real window: run_app's tests pass a launcher (tests/fake_window.py)."""
     import ai_browser.app.run as run

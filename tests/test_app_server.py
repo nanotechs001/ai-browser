@@ -1535,7 +1535,8 @@ async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude,
             snapshot = await recv(one)
             assert snapshot["settings"] == {"model": None, "voice": False, "window_browser": "auto",
                                             "shortcut": "Alt+Space", "read_tabs": False, "agents_profile": None,
-                                            "watcher_note": True, "old_watcher": False, "profiles": [],
+                                            "watcher_note": True, "sandbox": "auto", "old_watcher": False,
+                                            "profiles": [],
                                             "window": server.window_info,
                                             "desktop": server._desktop_payload()}
             await recv(two)
