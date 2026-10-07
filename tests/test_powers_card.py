@@ -85,9 +85,11 @@ def test_a_command_says_when_it_runs_in_the_sandbox_and_leaving_it_asks_every_ti
     from ai_browser.app import powers
 
     assert powers.card("Bash", {"command": "npm test"}, project)["sandbox"] == ""  # cards only
+    monkeypatch.setattr(powers, "SANDBOX_NETWORK", False)
     assert powers.card("Bash", {"command": "npm test"}, project, sandbox=True)["sandbox"] == powers.SANDBOXED
     monkeypatch.setattr(powers, "SANDBOX_NETWORK", True)
-    assert "reach the network" in powers.card("Bash", {"command": "npm test"}, project, sandbox=True)["sandbox"]
+    assert "reach a site unless you allow it" in powers.card("Bash", {"command": "npm test"}, project,
+                                                             sandbox=True)["sandbox"]
     leaving = powers.card("Bash", {"command": "npm test", "dangerouslyDisableSandbox": True}, project, sandbox=True)
     assert leaving["title"] == "run a command outside the sandbox" and leaving["always"] is False
     assert leaving["sandbox"] == "" and leaving["why"] == powers.WHY_SANDBOX
@@ -143,3 +145,15 @@ def test_every_page_wraps_the_command_on_its_card():  # fresh review F3: nothing
     for sheet in ("brainui.css", "chatpage.css"):
         rule = next(line for line in (ui / sheet).read_text(encoding="utf-8").split("}") if ".permission-text {" in line)
         assert "white-space: pre-wrap" in rule and "overflow-wrap: anywhere" in rule, sheet
+
+
+def test_a_sandboxed_commands_reach_for_a_site_asks_every_time_on_a_card_of_its_own(project):  # R1, probe 2026-10-07
+    from ai_browser.app import powers
+
+    assert powers.classify(powers.NETWORK, {"host": "registry.npmjs.org"}, project) == "ask_always"
+    shown = powers.card(powers.NETWORK, {"host": "registry.npmjs.org"}, project, sandbox=True)
+    assert (shown["title"], shown["text"], shown["site"]) == ("let a command reach a site", "registry.npmjs.org",
+                                                              "registry.npmjs.org")
+    assert shown["badge"] == "Bash" and shown["always"] is False and shown["why"] == powers.WHY_NETWORK
+    odd = powers.card(powers.NETWORK, {"host": "<b>x</b> y"}, project, sandbox=True)
+    assert odd["text"] == "<b>x</b> y" and odd["site"] == "" and odd["always"] is False  # shown as text, never a site

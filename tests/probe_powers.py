@@ -37,6 +37,7 @@ SANDBOX = {"sandbox": {"enabled": True, "autoAllowBashIfSandboxed": False, "allo
 URL = re.compile(r"https?://\S+")
 ABSOLUTE = re.compile(r"(?<![\w.-])/[^\s'\";|&)]*")
 NO = "The probe said no: go on with the next step."
+CONFIG = ""  # the throwaway login's folder, as the user typed it (main sets it)
 
 
 def refuse(text: str) -> None:
@@ -142,7 +143,9 @@ async def ask_claude(probe: Path, cwd: Path, prompt: str, sources: str, settings
         path.write_text(json.dumps(settings), encoding="utf-8")
         argv += ["--settings", str(path)]
     env = clean_env()
-    env["CLAUDE_CONFIG_DIR"] = str(probe / "config")  # the throwaway login, never ~/.claude
+    # The throwaway login, never ~/.claude, spelled exactly as the user signed in with it: Claude Code keys a login
+    # to the folder's path as written (/tmp/… and its real /private/tmp/… are two logins on a Mac).
+    env["CLAUDE_CONFIG_DIR"] = CONFIG or str(probe / "config")
     seen = {"sources": sources, "init_tools": None, "uses": [], "asks": [], "order": [], "results": [],
             "result": None, "stderr": ""}
     process = await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE,
@@ -262,7 +265,9 @@ async def q4_agents(probe: Path, name: str) -> dict:
 
 
 async def main(argument: str) -> None:
+    global CONFIG
     probe = throwaway(argument)
+    CONFIG = str(Path(argument).expanduser() / "config")  # as the user typed it when signing in (see ask_claude)
     prepare(probe)
     report = {"q0_subagent_name": await q0_subagent_name(probe)}
     name = "Agent" if report["q0_subagent_name"]["Agent"]["listed"] else "Task"

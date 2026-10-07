@@ -84,6 +84,35 @@ Date: 2026-10-05 (written 2026-10-07 from the builder's ledger and hand-backs: s
   - **after the fix pass:** 1993 passed, 11 skipped.
 - **Merged** into main as 852cd30 (on GitHub; the user's running app was left alone until they restarted it).
 
+## The probe's answers (2026-10-07)
+
+The user signed in a throwaway login, and the probe ran on Claude Code 2.1.263 on the Mac. The answers:
+- **R1, the sandbox: it holds.**
+  - A sandboxed `touch` inside the folder worked, and one outside it got "Operation not permitted".
+  - The `curl` got no network. Its reach came to the app as a request of its own, `SandboxNetworkAccess` with
+    `{"host": ...}`.
+  - So `SANDBOX = True` and `SANDBOX_NETWORK = True`, on macOS only.
+- **R2, untrusted folders: nothing loads.** `--setting-sources ""` ran no hook and loaded no `CLAUDE.md`; `local` ran
+  the local hook only; `local,project` ran both and loaded `CLAUDE.md`. `UNTRUSTED_SOURCES = ""` stands.
+- **R3, the ask rule: needed.**
+  - Without it, a read inside the folder, `ls` and `echo one && echo two` ran without asking the app.
+  - With it, every use reached the app. The one exception was the Edit, which Claude Code refused itself because
+    its file hadn't been read.
+  - `ASK_ALL = True` stands.
+- **R4, the sub-agent tool: "Task".**
+  - `--tools Agent` listed nothing, and `--tools Task` listed Task. So sub-agents were off until this fix.
+  - Its uses still stream as "Agent", so both names stay read.
+  - A sub-agent's own commands reached the app's cards, and starting one asked nothing.
+  - `SUBAGENT_TOOL = "Task"`.
+- **The fix,** test-first (each test seen failing, then passing):
+  - `test_the_probes_answers_are_what_claude_code_does`;
+  - `test_a_sandboxed_commands_reach_for_a_site_asks_every_time_on_a_card_of_its_own`;
+  - `test_a_sandboxed_commands_reach_for_a_site_shows_a_card_never_refused_unasked`.
+
+  The README's sandbox paragraph is now the "holds" one, and it says Windows has no sandbox.
+- **The probe itself:** it kept the throwaway folder's real path (`/private/tmp/…`). A Claude Code login is keyed to
+  the folder's path as written, so every question first said "Not logged in". The probe now uses the path as typed.
+
 ## Rulings made on the user's behalf
 
 - **Setup:** Ruling: the branch is `powers` (worktree made by the main session), not the plan's `agent-powers` — the
@@ -111,6 +140,12 @@ Date: 2026-10-05 (written 2026-10-07 from the builder's ledger and hand-backs: s
 - **Final:** Ruling: after an allowed `cd`, saved rules still answer and relative paths are still judged from the
   task's folder (the harmless list is voided) — the plan decided it, and the `cd` itself needed a click — cost if
   wrong: a ruled command could run in a subfolder.
+- **Probe:** Ruling: a sandboxed command's reach for a site (`SandboxNetworkAccess`) gets a card of its own, "let a
+  command reach a site", asked every time and never "always" — without it the bridge refused the request unasked as a
+  switched-off tool, and the plan had no word for it — cost if wrong: a command that needs the network (`npm
+  install`) shows one card per site.
+- **Probe:** Ruling: the sandboxed card now says "it can't write outside this folder, or reach a site unless you allow
+  it" — "or reach the network" was untrue once a card can allow it — cost if wrong: none (words).
 - **Final:** Ruling: per-program rules can't see inside a program's own options (curl -T/-d @/-F @, sed 'w', tar
   entries, make) — accepted as Claude Code's "always allow <program>" semantics; the README says so — cost if wrong:
   after one Always for such a program, a prompt-injected agent could read or send a file through it without a card.
@@ -131,24 +166,13 @@ Date: 2026-10-05 (written 2026-10-07 from the builder's ledger and hand-backs: s
 
 ## What only the user can do
 
-- **The deferred probe:**
-  1. sign in a throwaway Claude login:
-     - `mkdir -p /tmp/aib-powers-probe/config`;
-     - `CLAUDE_CONFIG_DIR=/tmp/aib-powers-probe/config claude`;
-     - `/login`, then `/exit`;
-  2. `uv run python tests/probe_powers.py /tmp/aib-powers-probe > /tmp/aib-powers-probe/report.json`.
-
-  What each answer changes in `src/ai_browser/app/powers.py`:
-  - **R1:** `SANDBOX = True` if the sandbox held;
-  - **R2:** a redesign if `""` loads anything;
-  - **R3:** `ASK_ALL = False` if the ask rule doesn't send every use to the app;
-  - **R4:** `SUBAGENT_TOOL = "Task"` if only Task is listed.
-
-  Afterwards: `/logout`, and delete the folder.
+- **The probe's clean-up** (the probe itself ran on 2026-10-07): in the throwaway login,
+  `CLAUDE_CONFIG_DIR=/tmp/aib-powers-probe/config claude`, then `/logout` and `/exit`; then
+  `rm -rf /tmp/aib-powers-probe`.
 - **Hand checks in a real project folder:**
   1. Choose… and the trust question;
   2. Allow once, then Always, then Remove the rule in Settings;
   3. Deny an edit with a note;
   4. a sub-agent and its to-do list, and Stop;
   5. the floating chat's Folder picker;
-  6. if the sandbox turns on, `touch ../outside.txt` fails.
+  6. the sandbox: `touch ../outside.txt` fails, and `curl https://example.com` shows "let a command reach a site".

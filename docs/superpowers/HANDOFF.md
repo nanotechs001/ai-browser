@@ -63,12 +63,11 @@ capability for faster navigation and all feature of the claude app". Four projec
 1. **Agent powers:** done, merged as 852cd30.
    - Agents get Claude Code's own tools behind approval cards, a folder per task, trust, sub-agents and to-do lists.
    - Spec `docs/superpowers/specs/2026-10-05-agent-powers-design.md`, plan `docs/superpowers/plans/2026-10-05-agent-powers.md`.
-   - **Its hand probe (Task 1) is deferred:** it needs a throwaway Claude login the user signs in by hand
-     (`mkdir -p /tmp/aib-powers-probe/config`, `CLAUDE_CONFIG_DIR=/tmp/aib-powers-probe/config claude`, `/login`,
-     `/exit`), then `uv run python tests/probe_powers.py /tmp/aib-powers-probe`. Until then powers.py uses the safest
-     values: R1 SANDBOX = False, R2 UNTRUSTED_SOURCES = "", R3 ASK_ALL = True, R4 both sub-agent tool names.
-   - Its report isn't written yet (subagents can't write report files); write it from the ledger in
-     `../Ai_Browser-wt/powers/.superpowers/sdd/2026-10-05-agent-powers/progress.md`.
+   - **Its hand probe ran on 2026-10-07:** the sandbox holds (now on, macOS only), untrusted folders load nothing,
+     the ask rule is needed, and the sub-agent tool is "Task" (sub-agents were off until then). A sandboxed command's
+     reach for a site has its own card. Report: `docs/superpowers/reports/2026-10-05-agent-powers.md`.
+   - **A Claude Code login is keyed to its folder's path as written:** `/tmp/x` and `/private/tmp/x` are two logins on a
+     Mac. Never resolve an account folder's path before handing it to `CLAUDE_CONFIG_DIR`.
 2. **The new look: PAUSED by the user** ("stop the new look plan for now, create a save point to continue it later").
    - **The spec is approved:** `docs/superpowers/specs/2026-10-05-new-look-design.md`.
    - **The save point:** branch `plan-look` (pushed), commit 6152d3e, holding a 16-task draft of

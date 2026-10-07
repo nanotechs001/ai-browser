@@ -293,7 +293,10 @@ Web Fetch, sub-agents, and a to-do list.
   - Mission Control's drawer shows the agent's plan ("3 / 5 steps · 60%") and each sub-agent's task and current
     action, and AI Home's row says how many sub-agents are working;
   - **Stop** stops its sub-agents too.
-- **Commands and the sandbox:** commands don't run in a sandbox; the cards are the guard.
+- **Commands and the sandbox:** on a Mac, commands run in Claude Code's sandbox, so they can't write outside the
+  task's folder. A command that needs more asks, every time, on a card of its own: reaching a site ("let a command
+  reach a site") or running outside the sandbox. You still answer each command's card. On Windows, commands don't run
+  in a sandbox; the cards are the guard.
 - **Workflows** still run in a scratch folder of their own.
 
 ### AI accounts (Settings → Accounts)

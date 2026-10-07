@@ -276,7 +276,7 @@ class ClaudeBridge:
         tool = str(request.get("tool_name", ""))
         data = request.get("input") if isinstance(request.get("input"), dict) else {}
         request_id = str(event.get("request_id", ""))
-        if tool in powers.TOOLS or tool in powers.SUBAGENTS:
+        if tool in powers.TOOLS or tool in powers.SUBAGENTS or tool == powers.NETWORK:
             answer, note = await self._power(request_id, request, tool, data)
             reason = DENIED
         else:

@@ -161,3 +161,14 @@ def test_a_case_variant_of_a_refused_folder_is_refused(tmp_path, user_home):  # 
     assert check(tmp_path.parent / tmp_path.name.swapcase()).startswith("That folder holds")
     assert check(user_home.parent / "USER-HOME") == powers.WHOLE_HOME
     assert check(home.parent / "Project") is None or not (home.parent / "Project").exists()
+
+
+def test_the_probes_answers_are_what_claude_code_does():  # Task 1's probe, run 2026-10-07 on Claude Code 2.1.263
+    from ai_browser.app import powers
+
+    assert powers.SUBAGENT_TOOL == "Task"  # R4: `--tools Agent` lists nothing; `--tools Task` lists Task
+    assert "Task" in powers.TOOLS and "Agent" not in powers.TOOLS and "Task" in powers.FREE
+    assert powers.SUBAGENTS >= {"Agent", "Task"}  # its uses still stream as "Agent": both names are read
+    assert powers.SANDBOX is True and powers.SANDBOX_NETWORK is True  # R1: held; curl got no network
+    assert powers.UNTRUSTED_SOURCES == ""  # R2: no hook ran and no CLAUDE.md loaded
+    assert powers.ASK_ALL is True  # R3: without the ask rule, in-folder reads, `ls` and `echo && echo` went unasked
