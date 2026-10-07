@@ -439,6 +439,55 @@ async def test_a_third_tab_of_its_own_reuses_the_oldest_and_opens_none(own_brows
 
 
 @CHROME
+async def test_a_reused_tab_that_cant_load_leaves_the_agent_where_it_was(own_browser):
+    from ai_browser.browser import StepBlocked
+    from ai_browser.steps import parse_steps
+
+    make, base, cdp = own_browser
+    placer = RecordingPlacer()
+    browser = await make(placer=placer)
+    page = await browser.open(base + "dialogs.html")
+    first = browser.current
+    changes = next(line.split()[0] for line in page.splitlines() if '"Make changes"' in line)
+    await browser.act(parse_steps([f"click {changes}"]))  # the page now asks before leaving
+    await browser.open(base + "form.html", new_tab=True)
+    second = browser.current
+    for _ in range(2):  # and again: the oldest is still the first, and nothing moved
+        with pytest.raises(StepBlocked) as blocked:
+            await browser.open(base + "privacy.html", new_tab=True)
+        said = str(blocked.value)
+        assert said.startswith(f"(tried your oldest tab {first.key}: at most 2 tabs of your own) ") and \
+            "asks before leaving" in said
+        assert browser.current is second and list(browser.owned) == [first.key, second.key]
+        assert await location(browser, first) == base + "dialogs.html"
+        assert await location(browser, second) == base + "form.html"
+    assert placer.opened == [first.target, second.target]
+
+
+@CHROME
+@pytest.mark.parametrize("url", ["file:///etc/hosts", ""])
+async def test_a_refused_address_changes_nothing_even_at_the_limit(own_browser, url):
+    from ai_browser.browser import BrowserError
+
+    make, base, cdp = own_browser
+    placer = RecordingPlacer()
+    browser = await make(placer=placer)
+    await browser.open(base + "form.html")
+    first = browser.current
+    with pytest.raises(BrowserError):
+        await browser.open(url, new_tab=True)  # below the limit: no tab opens
+    assert browser.current is first and placer.opened == [first.target]
+    await browser.open(base + "privacy.html", new_tab=True)
+    second = browser.current
+    with pytest.raises(BrowserError):
+        await browser.open(url, new_tab=True)  # at the limit: the oldest isn't touched
+    assert browser.current is second and list(browser.owned) == [first.key, second.key]
+    assert await location(browser, first) == base + "form.html"
+    assert await location(browser, second) == base + "privacy.html"
+    assert placer.opened == [first.target, second.target]
+
+
+@CHROME
 async def test_without_new_tab_the_page_opens_in_the_current_tab_as_before(own_browser):
     make, base, cdp = own_browser
     placer = RecordingPlacer()
@@ -478,7 +527,7 @@ async def test_a_handed_tab_neither_counts_nor_is_reused(own_browser):
     await browser.open(base + "popup.html", new_tab=True)
     third = browser.current
     assert users.adopted and placer.opened == [second.target, third.target]  # the handed tab didn't count
-    await browser.tabs("switch", users.key)  # the agent works in the user's tab, then wants another page
+    assert users.used < second.used < third.used  # the handed tab is the one used least recently, yet not reused
     out = await browser.open(base + "privacy.html", new_tab=True)
     assert out.splitlines()[0] == reused(second) and browser.current is second
     assert placer.opened == [second.target, third.target]

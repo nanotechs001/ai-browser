@@ -46,6 +46,7 @@ CF_POLL = 0.5
 # these reuses the oldest. Tabs the user handed over never count; tabs its pages opened do.
 MAX_OWN_TABS = 2
 REUSED = "(opened in your oldest tab {key}: at most {limit} tabs of your own)\n"
+TRIED = "(tried your oldest tab {key}: at most {limit} tabs of your own) "  # before the error when it couldn't
 
 
 class BrowserError(RuntimeError):
@@ -420,20 +421,39 @@ class Browser:
     async def _new_tab(self, url: str | None = None) -> str:
         """Work in a new tab of ours, opening `url` there; returns a note. With MAX_OWN_TABS of our own already open,
         no tab opens (in the user's Brave, no window): the oldest of ours, the one switched to least recently, opens
-        `url` (about:blank without one) instead, and the note says so. The user's handed tabs are never reused."""
-        if url:
+        `url` (about:blank without one) instead, and the note says so. The user's handed tabs are never reused. When
+        the oldest can't open `url`, the session goes back to the tab it was in (nothing it relies on moved) and the
+        error says which tab was tried."""
+        if url is not None:  # "" too: refused as open("") is
             self._check_url(url)  # before a tab exists, so a refused URL leaves nothing behind
         ours = [tab for tab in self.owned.values() if not tab.adopted]
         if len(ours) >= MAX_OWN_TABS:
             oldest = min(ours, key=lambda tab: tab.used)
+            previous, used = self.current, oldest.used
             await self._switch(oldest)
-            await self._navigate(url or "about:blank")
+            try:
+                await self._navigate(url if url is not None else "about:blank")
+            except BaseException as exc:
+                await self._back_to(previous)
+                oldest.used = used  # still the oldest
+                if isinstance(exc, BrowserError):
+                    raise type(exc)(TRIED.format(key=oldest.key, limit=MAX_OWN_TABS) + str(exc)) from None
+                raise
             return REUSED.format(key=oldest.key, limit=MAX_OWN_TABS)
         tab = await self.open_worker(background=self.mode == "chrome")
         await self._switch(tab)
-        if url:
+        if url is not None:
             await self._navigate(url)
         return ""
+
+    async def _back_to(self, previous: Tab | None) -> None:
+        """Work in `previous` again, the tab in use before; if it went meanwhile, the next call carries on as after
+        any closed tab (ensure_tab)."""
+        if previous is not None and self.owned.get(previous.key) is previous:
+            self._lost = None
+            await self._switch(previous)
+        else:
+            self.current, self._lost = None, previous.key if previous is not None else None
 
     async def open_worker(self, background: bool | None = None) -> Tab:
         """A new tab of ours (closed with the session) that does not become the working tab: Website QA uses these.
@@ -996,7 +1016,7 @@ class Browser:
         if action == "list":
             return await self._tab_list()
         if action == "new":
-            note = await self._new_tab(url)
+            note = await self._new_tab(url or None)  # url optional: none (or "") is a blank tab
             return note + await self.observe()
         if action == "switch" and tab and tab.startswith("h") and tab not in self._handed_keys and self.handed:
             await self._tab_list()  # h keys come from the list: read it now
