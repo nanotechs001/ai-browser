@@ -197,3 +197,69 @@ def test_the_safe_uses_of_find_and_git_still_offer_always(project):  # F2 keeps 
                               ("git checkout main", "Bash(git checkout:*)"), ("git branch topic", "Bash(git branch:*)"),
                               ("git reset src/app.py", "Bash(git reset:*)")):
         assert decide(command, project) == "ask" and rule(command) == expected, command
+
+
+# Auto-approve in its folder (the user's choice, 2026-10-07): a command whose job is reaching a site, named by a short
+# list, keeps its card where no sandbox stops it (Windows, Linux). Read from the words, never run.
+REACHES = ["curl https://example.com", "curl -sS -o page.html https://example.com", "/usr/bin/curl https://x.example",
+           "CURL.EXE https://x.example", "wget https://example.com/a.zip", "nc example.com 80", "ftp example.com",
+           "http GET example.com", "https example.com", "gh pr list", "brew install jq", "git push",
+           "git push origin main", "git pull", "git fetch --all", "git clone https://github.com/x/y",
+           "git ls-remote origin", "git submodule update --init", "npm install", "npm i left-pad", "npm ci",
+           "npm publish", "pnpm install", "pnpm add react", "yarn add react", "yarn install", "bun install",
+           "bun add zod", "yarn", "pip install requests", "pip3 install requests", "pip download requests",
+           "python -m pip install requests", "python3.12 -m pip install requests", "uv pip install requests",
+           "uv add httpx", "uv sync", "poetry add httpx", "poetry install", "cargo install ripgrep", "cargo add serde",
+           "cargo publish", "go get example.com/mod", "go install example.com/mod@latest", "docker pull alpine",
+           "docker push me/app", "docker login", "npx create-vite app", "pnpm dlx create-vite app", "uvx ruff",
+           "ls; curl https://example.com", "not 'closed"]
+STAYS = ["npm test", "npm run build", "pytest -q", "python app.py", "git commit -m 'Fix'", "git status", "ls -la",
+         "make", "cargo build", "go test ./...", "docker ps", "pip list", "uv run pytest", "bun test", "yarn test",
+         "echo curl", "grep -r wget src", "cat curl.txt", "poetry run pytest", "python -m pytest", "touch notes.md",
+         "pnpm exec vitest"]
+
+
+@pytest.mark.parametrize("command", REACHES)
+def test_a_command_whose_job_is_reaching_a_site_is_named(command):  # auto-approve, no sandbox
+    from ai_browser.app.powers import reaches_network
+
+    assert reaches_network(command) is True  # one that isn't one plain command may too
+
+
+@pytest.mark.parametrize("command", STAYS)
+def test_an_ordinary_command_is_not(command):
+    from ai_browser.app.powers import reaches_network
+
+    assert reaches_network(command) is False
+
+
+def test_auto_approve_takes_only_the_asks_of_the_folders_own_tools(project):  # the user's choice, 2026-10-07
+    from ai_browser.app.powers import AUTO_TOOLS, NETWORK, auto_approves, classify
+
+    def auto(tool, data, sandbox=False, moved=False):
+        return auto_approves(tool, data, classify(tool, data, project, moved=moved), sandbox=sandbox)
+
+    assert AUTO_TOOLS == {"Bash", "Edit", "Write", "Read", "Glob", "Grep"}
+    edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
+    for tool, data in (("Bash", {"command": "npm test"}), ("Bash", {"command": "python -m pytest"}), ("Edit", edit),
+                       ("Write", {"file_path": str(project / "notes.md"), "content": "x"}),
+                       ("Bash", {"command": "cd src"})):
+        assert auto(tool, data) and auto(tool, data, sandbox=True), (tool, data)
+    assert auto("Bash", {"command": "ls"}, moved=True)  # after a cd: judged from the folder, as the rules are
+    outside = str(project.parent / "outside" / "secret.txt")
+    for tool, data in (("Bash", {"command": "rm x"}), ("Bash", {"command": "cat ../outside/secret.txt"}),
+                       ("Bash", {"command": "sudo ls"}), ("Bash", {"command": "npm test && ls"}),
+                       ("Bash", {"command": "git push --force"}), ("Bash", {"command": "python -c 'print(1)'"}),
+                       ("Bash", {"command": "ls", "dangerouslyDisableSandbox": True}),
+                       ("Bash", {"command": "cd"}), ("Bash", {"command": "cd -"}), ("Bash", {"command": "popd"}),
+                       ("Bash", {"command": "pushd src"}),  # a move it can't follow: its card
+                       ("Edit", {**edit, "file_path": str(project / ".git" / "config")}),
+                       ("Write", {"file_path": outside, "content": "x"}), ("Read", {"file_path": outside}),
+                       ("Grep", {"pattern": "x", "path": outside}),
+                       ("WebFetch", {"url": "https://example.com", "prompt": "x"}), ("WebSearch", {"query": "x"}),
+                       (NETWORK, {"host": "example.com"}), ("mcp__clickup__create_task", {"name": "x"}),
+                       ("Bash", {"command": "ls"})):  # allowed already: nothing for auto-approve to do
+        assert not auto(tool, data) and not auto(tool, data, sandbox=True), (tool, data)
+    for command in ("curl https://example.com", "git push", "npm install"):  # no sandbox: its card
+        assert not auto("Bash", {"command": command}), command
+        assert auto("Bash", {"command": command}, sandbox=True), command  # the sandbox asks before it reaches a site

@@ -164,3 +164,26 @@ async def test_a_huge_edit_never_rides_in_the_agents_row(fake_claude, tmp_path, 
         assert agent.permission["input"] == {} and agent.permission["card"]["hidden"] > 0
     finally:
         await agents.close_all()
+
+
+async def test_auto_approve_is_each_agents_own_switch(fake_claude, tmp_path, project):  # the user's choice, 2026-10-07
+    agents, log = manager(fake_claude, tmp_path, [INIT, use("u1", "Bash", {"command": "npm test"}),
+                                                  ask("Bash", {"command": "npm test"}, tool_id="u1"), RESULT])
+    agents.rules.trust(project)
+    try:
+        agent = await agents.create("test it", folder=str(project), auto=True)
+        assert agent.auto is True and agent.bridge.auto is True
+        assert agents.snapshot()["agents"][0]["auto"] is True  # its row says so
+        await wait_for(lambda: agent.state == "your_turn")
+        assert {"type": "auto", "id": "u1"} in agents.events_of(agent.id)  # the mark, for pages opened later
+        assert [answer["behavior"] for answer in answers(log)] == ["allow"]
+        plain = await agents.create("look around", folder=str(project))
+        odd = await agents.create("look around", folder=str(project), auto="yes")
+        assert (plain.auto, plain.bridge.auto, odd.auto, odd.bridge.auto) == (False, False, False, False)
+        feed = agents.subscribe()
+        assert agents.set_auto(plain.id, True) is True and plain.auto is True and plain.bridge.auto is True
+        assert [message["agent"]["auto"] for message in drain(feed) if message["type"] == "agent"] == [True]
+        assert agents.set_auto(plain.id, False) is True and plain.auto is False and plain.bridge.auto is False
+        assert agents.set_auto("a99", True) is False
+    finally:
+        await agents.close_all()

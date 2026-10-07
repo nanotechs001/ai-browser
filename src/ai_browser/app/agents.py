@@ -186,12 +186,13 @@ class Agent:
     said: str = field(default="", repr=False)
     workspace: str | None = None  # the new look: its workspace, a filter only (in memory: ids start again each run)
     web: str = "web"  # the new look's Web ▾: "web", "brave" or "none"
+    auto: bool = False  # Auto-approve in its folder: the user's switch (the composer's, the drawer's), off by default
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
                                          "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
-                                         "result", "files", "workspace", "web")
+                                         "result", "files", "workspace", "web", "auto")
 
     @property
     def number(self) -> int:
@@ -274,15 +275,18 @@ class AgentManager:
     async def create(self, text: str, skills=(), model: str = "sonnet", adopt: str | None = None,
                      tab: dict | None = None, servers: list[str] | None = None,
                      account: str | None = None, folder: str | None = None, workspace: str | None = None,
-                     files=(), web: str = "web") -> Agent:
+                     files=(), web: str = "web", auto: bool = False) -> Agent:
         """A new agent for `text`; with `adopt`, it works in that tab of the user's (started from the panel). Its MCP
         servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list). It runs on
         `account`, else on the default account for new agents; ValueError for an account that isn't listed. With
         `folder` it works there (agent powers, Decision 6): a folder no task may use, or one whose "Trust this
-        folder?" isn't answered yet, is a ValueError too. Without, it works in its own scratch folder."""
+        folder?" isn't answered yet, is a ValueError too. Without, it works in its own scratch folder. `auto`:
+        Auto-approve in its folder, only when the user's own switch says True (the Brain and templates never pass
+        it)."""
         chosen = self._account_row(account)  # first: a refused account leaves no agent and no number behind
         work, trusted = self._folder_for(folder)  # and so does a refused folder
         web = web if web in powers.WEB_CHOICES else "web"
+        auto = auto is True
         agent_id = f"a{self._seq + 1}"
         scratch = self.home / "app" / "agents" / agent_id / "work"  # the bridge's own path when no folder is chosen
         try:  # the attached files, into its folder's attachments/
@@ -300,11 +304,11 @@ class AgentManager:
                               tools=self.tools_for(chosen["id"]), servers=servers,
                               on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request),
                               environment=self._environment(chosen["id"]), work=work, rules=self.rules, web=web,
-                              trusted=trusted)
+                              trusted=trusted, auto=auto)
         if self.accounts is not None:  # its account must be signed in before its Claude Code starts
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
         agent = Agent(agent_id, _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge, account=chosen,
-                      task=text, folder=work, trusted=trusted, workspace=workspace, web=web)
+                      task=text, folder=work, trusted=trusted, workspace=workspace, web=web, auto=auto)
         if work is not None:
             with contextlib.suppress(OSError):  # a read-only home: the folder isn't listed as recent, nothing more
                 self.rules.note_used(work)
@@ -506,6 +510,16 @@ class AgentManager:
             agent.workspace = None
             self._changed(agent)
         return [agent.id for agent in moved]
+
+    def set_auto(self, agent_id: str, on: bool) -> bool:
+        """The drawer's Auto-approve in its folder, turned on or off (the user's click: app-only in MESSAGE_RULES),
+        also while the agent works: from its next request. A card already waiting stays. False when it has closed."""
+        agent = self.agents.get(agent_id)
+        if agent is None:
+            return False
+        agent.auto = agent.bridge.auto = on is True
+        self._changed(agent)
+        return True
 
     def set_model(self, agent_id: str, model: str) -> None:
         agent = self.agents.get(agent_id)

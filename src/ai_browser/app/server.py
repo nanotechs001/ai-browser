@@ -181,6 +181,9 @@ MESSAGE_RULES: dict[str, Rule] = {
     "attach_start": APP_ONLY, "attach_chunk": APP_ONLY, "attach_drop": APP_ONLY,
     # the new look's Knowledge: Remove hides a skill from AI Browser's agents (config.json), Bring back shows it
     "skill_block": APP_ONLY,
+    # Auto-approve in its folder (the user's choice, 2026-10-07): the drawer's switch, on or off, the user's click on
+    # one of our pages. The Brain, templates and voice never turn it on (new_task's "auto" is the composer's switch)
+    "agent_auto": APP_ONLY,
 }
 
 
@@ -1379,7 +1382,7 @@ class AppServer:
                 files = self.uploads.take(ws, listed)  # each attached file whole, or nothing starts
                 agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
                                             folder=folder, workspace=self._workspace_of(message), files=files,
-                                            web=web)
+                                            web=web, auto=message.get("auto") is True)  # the composer's switch
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
@@ -1397,6 +1400,8 @@ class AppServer:
             self._job(agents.close(agent_id))  # it may wait for the agent's turn to end
         elif kind == "model" and message.get("model") in MODELS:
             agents.set_model(agent_id, message["model"])
+        elif kind == "agent_auto" and isinstance(message.get("agent"), str) and isinstance(message.get("on"), bool):
+            agents.set_auto(message["agent"], message["on"])  # the drawer's switch: a yes or a no, nothing else
         elif kind == "watch" and self.tabs is not None and isinstance(message.get("target"), str):
             await self.tabs.watch(message["target"])
         elif kind == "events":

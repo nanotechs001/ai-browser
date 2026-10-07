@@ -30,6 +30,7 @@ SENDS = {
     "workspaces", "workspace_save", "workspace_delete", "workspace_assign",  # the new look's workspaces
     "attach_start", "attach_chunk", "attach_drop",  # the new look's Attach
     "skill_block",  # the new look's Knowledge
+    "agent_auto",  # Auto-approve in its folder: the drawer's switch, the user's click only
 }
 RETIRED = {"items", "replied", "thread", "filled", "reader_status", "watcher_caps", "tab_grouped", "pause",
            "ai_keyword"}  # the watcher's own: gone with it

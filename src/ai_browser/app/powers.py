@@ -398,6 +398,62 @@ def moves_folder(command) -> bool:
     return isinstance(command, str) and bool(_MOVES.search(command))
 
 
+# ---- Auto-approve in its folder (the user's choice, 2026-10-07): a switch per task ----------------------------------
+
+AUTO_TOOLS = frozenset({"Bash", "Edit", "Write", "Read", "Glob", "Grep"})  # what it may run without a card
+# Programs whose job is reaching a site, and the uses of others that do (they download, upload or sign in). Where no
+# sandbox holds them (Windows, Linux), these keep their card under auto-approve; on a Mac the sandbox's own card asks
+# before any command reaches a site. A short list of what such a command is for, never a promise about what a program
+# the agent runs may do.
+NETWORK_PROGRAMS = frozenset({"curl", "wget", "nc", "ncat", "netcat", "ftp", "sftp", "scp", "telnet", "http", "https",
+                              "gh", "brew", "npx", "pnpx", "bunx", "uvx", "pipx"})
+NETWORK_USES = frozenset({
+    ("git", "push"), ("git", "pull"), ("git", "fetch"), ("git", "clone"), ("git", "ls-remote"), ("git", "submodule"),
+    *(("npm", use) for use in ("install", "i", "add", "ci", "update", "publish", "exec", "x")),
+    *(("pnpm", use) for use in ("install", "i", "add", "update", "publish", "dlx")),
+    *(("yarn", use) for use in ("install", "add", "upgrade", "publish", "dlx")), ("yarn",),  # yarn alone installs
+    *(("bun", use) for use in ("install", "i", "add", "update", "publish", "x")),
+    ("pip", "install"), ("pip", "download"), ("pip3", "install"), ("pip3", "download"),
+    ("uv", "pip", "install"), ("uv", "pip", "sync"), ("uv", "add"), ("uv", "sync"), ("uv", "tool", "install"),
+    ("poetry", "add"), ("poetry", "install"), ("poetry", "update"),
+    ("cargo", "install"), ("cargo", "add"), ("cargo", "publish"), ("go", "get"), ("go", "install"),
+    ("docker", "pull"), ("docker", "push"), ("docker", "login")})
+_SUFFIX = re.compile(r"\.(?:exe|cmd|bat)$", re.IGNORECASE)  # curl.exe is curl
+
+
+def reaches_network(command) -> bool:
+    """Whether a command's job is reaching a site: a program in NETWORK_PROGRAMS, a use in NETWORK_USES (its first
+    words), or `python -m pip install` (any Python). A command that isn't one plain command may too: True."""
+    words = words_of(command)
+    if words is None:
+        return True
+    program = _SUFFIX.sub("", _program(words[0])).lower()
+    if program in NETWORK_PROGRAMS:
+        return True
+    if (program, *words[1:]) in NETWORK_USES or any((program, *words[1:len(use)]) == use for use in NETWORK_USES
+                                                     if len(use) > 1):
+        return True
+    return words[1:3] in (["-m", "pip"], ["-m", "pip3"]) and len(words) > 3 and words[3] in ("install", "download")
+
+
+def auto_approves(tool: str, data, decision: str, sandbox: bool = False) -> bool:
+    """Whether Auto-approve in its folder runs this request without a card: an "ask" (never "ask_always") of Bash, Edit,
+    Write, Read, Glob or Grep, so a command, an edit or a new file inside the task's folder. Still a card: everything
+    asked every time (deleting, sudo, outside the folder, Git's and Claude Code's own files…), Web Search and Web Fetch,
+    a sandboxed command's reach for a site, the user's own tools; a cd that isn't into a folder inside (cd alone goes
+    home); and with no sandbox to stop it (`sandbox` False), a command whose job is reaching a site."""
+    if decision != "ask" or tool not in AUTO_TOOLS:
+        return False
+    if tool != "Bash":
+        return True
+    command = data.get("command") if isinstance(data, dict) else None
+    if moves_folder(command):
+        words = words_of(command)
+        if words is None or len(words) != 2 or words[0] != "cd" or words[1].startswith("-"):
+            return False
+    return (sandbox and SANDBOX_NETWORK) or not reaches_network(command)
+
+
 # ---- the card: what a request will do, as plain text (Decision 2), and each action's badge (Decision 10) -------------
 
 LINES_SHOWN = 300  # lines of a diff or of a new file a card shows

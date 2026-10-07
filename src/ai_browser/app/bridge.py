@@ -120,7 +120,7 @@ class ClaudeBridge:
                  servers: list[str] | None = None,
                  on_permission: Callable[[dict], Awaitable[str]] | None = None,
                  environment: dict[str, str] | None = None, work: str | Path | None = None,
-                 rules: powers.Rules | None = None, trusted: bool = False, web: str = "web"):
+                 rules: powers.Rules | None = None, trusted: bool = False, web: str = "web", auto: bool = False):
         self.home = Path(home)
         self.agent_id = agent_id
         self.tools = tools  # the user's MCP servers (phase 2): with it, tools outside the allowed ones are asked for
@@ -135,6 +135,10 @@ class ClaudeBridge:
         self.rules = rules  # the user's rules per folder (<home>/permissions.json)
         self.trusted = bool(trusted) and self.chosen  # Decision 7: what of the folder's own Claude Code loads
         self.web = web if web in powers.WEB_CHOICES else "web"  # the new look's Web ▾: the agent's web tools
+        # Auto-approve in its folder (the user's choice, 2026-10-07): the user's switch, off unless they turn it on; it
+        # may change while the agent works (the drawer's switch). Its approvals are marked on their action lines.
+        self.auto = auto is True
+        self._auto_ids: set[str] = set()  # tool use ids it approved before their line came
         self._parents: dict[str, str] = {}  # a sub-agent's tool use id -> its sub-agent tool's id
         self._subagents: dict[str, str] = {}  # the sub-agent tool's id -> its task, as cards and the drawer name it
         self._quiet: set[str] = set()  # TodoWrite's tool use ids: the list is their view, never an action line
@@ -237,7 +241,8 @@ class ClaudeBridge:
                 continue  # a line that isn't an event is never read further
             kind = event.get("type")
             if kind == "control_request" and (event.get("request") or {}).get("subtype") == "can_use_tool":
-                await self._permission(event)  # Claude Code waits for the answer
+                for panel_event in await self._permission(event):  # Claude Code waits for the answer
+                    yield panel_event
                 continue
             if kind == "rate_limit_event":  # undocumented: status, resetsAt, rateLimitType and unifiedWindows are read
                 self._note_shape(event)
@@ -270,19 +275,22 @@ class ClaudeBridge:
         inner = f"; rate_limit_info keys: {_keys(info)}" if isinstance(info, dict) else ""
         log.info("bridge: Claude Code sent %s (keys: %s%s)", kind, _keys(event), inner)
 
-    async def _permission(self, event: dict) -> None:
+    async def _permission(self, event: dict) -> list[dict]:
         """A tool that isn't allowed yet.
         - One of Claude Code's own (agent powers): powers.classify decides, a rule the user saved for this folder may
-          answer, else the user's card does: Allow once, Always allow for this folder, or Deny with a note.
+          answer, Auto-approve in its folder may (the user's switch), else the user's card does: Allow once, Always
+          allow for this folder, or Deny with a note.
         - One of the user's MCP tools: the user's card, as before. A server the user didn't switch on is refused
           without asking.
-        Nothing in a page or a message can answer, and after Stop nothing is asked."""
+        Nothing in a page or a message can answer, and after Stop nothing is asked. Returns the panel events it makes:
+        an action line's "auto" mark when auto-approve ran it without a card."""
         request = event.get("request") or {}
         tool = str(request.get("tool_name", ""))
         data = request.get("input") if isinstance(request.get("input"), dict) else {}
         request_id = str(event.get("request_id", ""))
+        auto = False
         if tool in powers.TOOLS or tool in powers.SUBAGENTS or tool == powers.NETWORK:
-            answer, note = await self._power(request_id, request, tool, data)
+            answer, note, auto = await self._power(request_id, request, tool, data)
             reason = DENIED
         else:
             server = server_of(tool)
@@ -298,6 +306,13 @@ class ClaudeBridge:
                  "response": {"subtype": "success", "request_id": event.get("request_id"), "response": body}}
         self._process.stdin.write((json.dumps(reply) + "\n").encode())
         await self._process.stdin.drain()
+        use = str(request.get("tool_use_id") or "")
+        if not auto or not use:
+            return []
+        if use in self._tools:  # its line came first: it is marked now
+            return [{"type": "auto", "id": use}]
+        self._auto_ids.add(use)  # its line comes later, with the mark
+        return []
 
     async def _ask_user(self, request: dict) -> tuple[str, str]:
         """The user's answer to one card: ("once" | "always" | "deny", a note for the agent). After Stop nothing is
@@ -316,17 +331,21 @@ class ClaudeBridge:
         answer, note = answer if isinstance(answer, tuple) else (answer, "")
         return (answer if answer in ("once", "always") else "deny"), str(note or "")
 
-    async def _power(self, request_id: str, request: dict, tool: str, data: dict) -> tuple[str, str]:
+    async def _power(self, request_id: str, request: dict, tool: str, data: dict) -> tuple[str, str, bool]:
         """One of Claude Code's own tools (Decisions 2 to 5): allowed without asking, by a rule the user saved for this
-        folder (only the whole request matches one: plan decision 1), or by the user's card. Always allow saves the
+        folder (only the whole request matches one: plan decision 1), by Auto-approve in its folder (the user's switch:
+        an "ask" that stays inside the folder, powers.auto_approves), or by the user's card. Always allow saves the
         rule only where the card offered it (Decision 4). After Stop nothing runs, not even what needs no card
-        (Review Focus 3)."""
+        (Review Focus 3). (answer, note, whether auto-approve answered)."""
         if self._stopping:
-            return "deny", ""
+            return "deny", "", False
         decision = powers.classify(tool, data, self.work, moved=self._moved)
         rule = powers.rule_for(tool, data) if decision == "ask" else None
+        auto = False
         if decision == "allow" or (rule is not None and rule in self._rules()):
             answer, note = "once", ""
+        elif self.auto and powers.auto_approves(tool, data, decision, sandbox=powers.sandbox_on()):
+            answer, note, auto = "once", "", True
         else:
             shown = {**powers.card(tool, data, self.work, moved=self._moved, sandbox=powers.sandbox_on()),
                      "scratch": not self.chosen}
@@ -338,7 +357,7 @@ class ClaudeBridge:
                 self._remember(rule)
         if answer != "deny" and tool == "Bash" and powers.moves_folder(data.get("command")):
             self._moved = True  # the shell may be elsewhere now: nothing is harmless until Claude Code starts again
-        return answer, note
+        return answer, note, auto
 
     def _rules(self) -> set[str]:
         """The rules that answer for the user here: the folder's saved ones, and this agent's own."""
@@ -444,6 +463,9 @@ class ClaudeBridge:
             return [] if parent else [{"type": "todos", "todos": powers.todos(data)}]
         line = {"type": "tool", "id": use, "name": name, "summary": _summary(name, data), "badge": powers.badge(full),
                 "at": round(time.time(), 1), **({"sub": parent} if parent else {})}
+        if use in self._auto_ids:  # auto-approve ran it before its line came
+            self._auto_ids.discard(use)
+            line["auto"] = True
         if full in powers.SUBAGENTS and not parent:
             self._subagents[use] = powers.subagent_task(data)
             return [line, {"type": "subagent", "id": use, "task": self._subagents[use], "state": "working"}]

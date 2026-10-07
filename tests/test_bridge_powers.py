@@ -430,3 +430,106 @@ async def test_after_stop_nothing_runs_not_even_a_harmless_or_ruled_command(  # 
             await bridge.stop()  # the user's Stop, while the sub-agent works
     await bridge.close()
     assert shown == [] and behaviors(log) == ["deny", "deny"]  # nothing runs after Stop, and no card shows
+
+
+# Auto-approve in its folder (the user's choice, 2026-10-07): a switch per task.
+async def test_auto_approve_runs_what_stays_in_the_folder_without_a_card_and_marks_it(  # the user's choice
+        fake_claude, tmp_path, project, monkeypatch):
+    from ai_browser.app import powers
+
+    monkeypatch.setattr(powers, "sandbox_on", lambda: False)
+    runner, log, script = fake_claude
+    edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
+    script.write_text(json.dumps([INIT, use("u1", "Bash", {"command": "npm test"}),
+                                  ask("Bash", {"command": "npm test"}, tool_id="u1"), result("u1", "3 passed"),
+                                  use("u2", "Edit", edit), ask("Edit", edit, tool_id="u2"),
+                                  ask("Write", {"file_path": str(project / "notes.md"), "content": "x"}, tool_id="u3"),
+                                  use("u3", "Write", {"file_path": str(project / "notes.md"), "content": "x"}),
+                                  RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, work=project, auto=True)
+    assert bridge.auto is True
+    events = await run(bridge)
+    assert shown == [] and behaviors(log) == ["allow", "allow", "allow"]
+    assert {"type": "auto", "id": "u1"} in events and {"type": "auto", "id": "u2"} in events
+    late = next(event for event in events if event["type"] == "tool" and event["id"] == "u3")
+    assert late["auto"] is True  # asked before its line came: the line carries the mark
+    assert all("auto" not in event for event in events if event["type"] == "tool" and event["id"] != "u3")
+
+
+@pytest.mark.parametrize("sandbox", [False, True])
+async def test_under_auto_approve_what_is_risky_or_reaches_a_site_still_shows_a_card(  # the user's choice
+        fake_claude, tmp_path, project, monkeypatch, sandbox):
+    from ai_browser.app import powers
+
+    monkeypatch.setattr(powers, "sandbox_on", lambda: sandbox)
+    (project / ".git").mkdir()
+    runner, log, script = fake_claude
+    asks = [ask("Bash", {"command": "rm x"}), ask("Bash", {"command": "cat ../outside/secret.txt"}),
+            ask("Edit", {"file_path": str(project / ".git" / "config"), "old_string": "a", "new_string": "b"}),
+            ask("WebFetch", {"url": "https://example.com/", "prompt": "x"}), ask("WebSearch", {"query": "x"}),
+            ask(powers.NETWORK, {"host": "example.com"}), ask("Bash", {"command": "cd"}),
+            ask("mcp__ai-browser__shell", {"command": "ls"})]
+    script.write_text(json.dumps([INIT, *asks, RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"] * len(asks), work=project, auto=True)
+    events = await run(bridge)
+    assert [request["tool"] for request in shown] == [
+        "Bash", "Bash", "Edit", "WebFetch", "WebSearch", powers.NETWORK, "Bash", "mcp__ai-browser__shell"]
+    assert not any(event["type"] == "auto" for event in events)
+
+
+async def test_without_the_sandbox_a_command_that_reaches_a_site_shows_a_card_under_auto(  # Windows, Linux
+        fake_claude, tmp_path, project, monkeypatch):
+    from ai_browser.app import powers
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "curl https://x.example"}),
+                                  ask("Bash", {"command": "git push"}), ask("Bash", {"command": "npm test"}),
+                                  RESULT]), encoding="utf-8")
+    monkeypatch.setattr(powers, "sandbox_on", lambda: False)
+    bridge, shown = bridge_for(tmp_path, runner, ["once", "once"], work=project, auto=True)
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == ["curl https://x.example", "git push"]
+    monkeypatch.setattr(powers, "sandbox_on", lambda: True)  # a Mac: the sandbox asks before either reaches a site
+    log.write_text("", encoding="utf-8")
+    mac, asked = bridge_for(tmp_path, runner, work=project, auto=True, agent_id="a2")
+    await run(mac)
+    assert asked == [] and behaviors(log) == ["allow"] * 3
+
+
+async def test_with_auto_approve_off_everything_asks_as_before(fake_claude, tmp_path, project):
+    runner, log, script = fake_claude
+    edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "npm test"}), ask("Edit", edit), RESULT]),
+                      encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once", "deny"], work=project)
+    assert bridge.auto is False  # off by default
+    events = await run(bridge)
+    assert [request["tool"] for request in shown] == ["Bash", "Edit"] and behaviors(log) == ["allow", "deny"]
+    assert not any(event["type"] == "auto" for event in events)
+
+
+async def test_after_stop_auto_approve_runs_nothing(fake_claude, tmp_path, monkeypatch, project):  # Review Focus 3
+    from ai_browser.app import bridge as bridge_module
+    from ai_browser.app.powers import SUBAGENT_TOOL
+
+    monkeypatch.setattr(bridge_module, "STOP_GRACE", 3)
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([{"ignore_interrupt": True}, INIT,
+                                  use("u1", SUBAGENT_TOOL, {"description": "Research", "prompt": "x"}), {"sleep": 1},
+                                  ask("Bash", {"command": "npm test"}), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, work=project, auto=True)
+    async for event in bridge.send("research it"):
+        if event["type"] == "subagent":
+            await bridge.stop()  # the user's Stop
+    await bridge.close()
+    assert shown == [] and behaviors(log) == ["deny"]
+
+
+async def test_auto_approve_follows_its_switch_while_the_agent_works(fake_claude, tmp_path, project):
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "npm test"}), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"], work=project)
+    await run(bridge)
+    bridge.auto = True  # the drawer's switch, between two requests
+    await run(bridge)
+    assert len(shown) == 1 and behaviors(log) == ["allow", "allow"]

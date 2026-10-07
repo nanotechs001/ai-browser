@@ -148,3 +148,79 @@ async def test_deny_with_a_note_over_the_socket(fake_claude, tmp_path):  # Decis
             assert answers(fake_claude[1]) == [{"behavior": "deny", "message": "The user said no: not now"}]
     finally:
         await server.stop()
+
+
+def test_the_auto_approve_switch_is_app_only():  # the user's choice, 2026-10-07: every new message app-only
+    from ai_browser.app.server import MESSAGE_RULES, may_send
+
+    assert "agent_auto" in MESSAGE_RULES and may_send("app", {"type": "agent_auto"})
+    assert not may_send("none", {"type": "agent_auto"}) and not may_send("watcher", {"type": "agent_auto"})
+
+
+async def test_new_task_takes_auto_and_agent_auto_switches_it(fake_claude, tmp_path):  # the user's choice
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    agents = server.agents.agents
+    try:
+        async with ui_socket(server, url) as ws:
+            await hello(ws)
+            made = [await answer_to(ws, {"type": "new_task", "text": "fix it", **extra, "request": f"r{n}"})
+                    for n, extra in enumerate(({"auto": True}, {}, {"auto": "yes"}, {"auto": 1}))]
+            assert [agents[created["id"]].auto for created in made] == [True, False, False, False]
+            assert [agents[created["id"]].bridge.auto for created in made] == [True, False, False, False]
+            off = made[1]["id"]
+            await ws.send(json.dumps({"type": "agent_auto", "agent": off, "on": True}))
+            await until(ws, lambda heard: heard["type"] == "agent" and heard["agent"]["id"] == off
+                        and heard["agent"]["auto"] is True)
+            assert agents[off].bridge.auto is True
+            for odd in ({"on": "false"}, {"on": 0}, {}):  # not a yes or a no: nothing changes
+                await ws.send(json.dumps({"type": "agent_auto", "agent": off, **odd}))
+            await ws.send(json.dumps({"type": "agent_auto", "agent": "a99", "on": True}))  # no such agent
+            await ws.send(json.dumps({"type": "events", "id": off}))
+            await until(ws, lambda heard: heard["type"] == "agent_events")
+            assert agents[off].auto is True and agents[off].bridge.auto is True
+            await ws.send(json.dumps({"type": "agent_auto", "agent": off, "on": False}))
+            await until(ws, lambda heard: heard["type"] == "agent" and heard["agent"]["id"] == off
+                        and heard["agent"]["auto"] is False)
+            assert agents[off].bridge.auto is False
+    finally:
+        await server.stop()
+
+
+async def test_a_template_run_and_a_brain_started_task_never_auto_approve(fake_claude, tmp_path):  # the Brain's rule
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
+    from test_app_server import TALKING, with_hearing
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    home = tmp_path / "home"
+    agents = AgentManager(home, claude=runner)
+    workflows = WorkflowStore(home)
+    workflows.save({"name": "Weekly report", "instructions": "Write the weekly report"})
+    server = AppServer(home, agents, workflows=workflows, runner=WorkflowRunner(workflows, agents))
+    url = await server.start()
+    try:
+        async with ui_socket(server, url) as ws:
+            await hello(ws)
+            created = await answer_to(ws, {"type": "workflow_run", "slug": "weekly-report", "text": "",
+                                           "auto": True, "request": "r1"})
+            assert agents.agents[created["id"]].auto is False and agents.agents[created["id"]].bridge.auto is False
+    finally:
+        await agents.close_all()
+        await server.stop()
+    talk = {"default": EVENTS, TALKING: [{"result": json.dumps({"say": "I can start an agent.",
+                                                                "action": "start_agent"})}]}
+    server, url, _ = await with_hearing(fake_claude, tmp_path / "brain", talk)
+    try:
+        async with ui_socket(server, url) as ws:
+            await hello(ws)
+            await ws.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "t1", "text": "check the shop"}))
+            answer = (await until(ws, lambda heard: heard["type"] == "brain_answer"))[-1]
+            await ws.send(json.dumps({"type": "brain_confirm", "talk": "k1", "request": "t2", "auto": True,
+                                      "proposal": answer["proposal"]["id"]}))
+            await until(ws, lambda heard: heard["type"] == "created")
+            assert server.agents.agents["a1"].auto is False and server.agents.agents["a1"].bridge.auto is False
+    finally:
+        await server.agents.close_all()
+        await server.stop()
