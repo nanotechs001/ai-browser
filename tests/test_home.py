@@ -631,3 +631,88 @@ async def test_the_title_counts_the_working_agents(home):
     assert await until(js, "document.title === '(1) AI Home'")
     await stack["server"].agents.stop(agent.id)
     assert await until(js, "document.title === 'AI Home'")
+
+
+# ---- pictures pasted into AI Home's boxes (the review of look-3, F1: "any chat") -----------------------------------
+
+HOME_CHIPS = "[...document.querySelectorAll('{list} .attached-file')]"
+HINT = "document.getElementById('hint').textContent"
+
+
+def chips_done(chips, count):
+    return f"{chips}.length === {count} && {chips}.every(chip => chip.dataset.state === 'done')"
+
+
+@CHROME
+async def test_ai_homes_new_task_takes_pasted_and_dropped_files(home):
+    from test_app_server import told
+    from test_mission_look import DROP, ELEVEN, PASTE, PICTURE
+
+    js, stack = home
+    chips = HOME_CHIPS.format(list="#attached")
+    assert await js(f"({PASTE})('#task', {json.dumps(PICTURE)})") is True
+    assert await js(f"({PASTE})('#task', [], 'words')") is False  # text stays text
+    assert await js(f"({DROP})('.new-task', [['notes.txt', 50, 'text/plain']])") == [True, True]
+    assert await until(js, chips_done(chips, 2), 15)
+    await js(f"({PASTE})('#task', [['big.png', 21000000, 'image/png']])")
+    assert await until(js, f"{HINT} === 'big.png is over 20 MB'")
+    await js(f"({PASTE})('#task', {json.dumps(ELEVEN)})")
+    assert await until(js, f"{HINT} === 'At most 10 files at once'")
+    assert await until(js, chips_done(chips, 10), 15)
+    await js("document.getElementById('task').value = 'look at these';"
+             " document.getElementById('start').click(); true")
+    folder = stack["home"] / "app" / "agents" / "a1" / "work" / "attachments"
+    for _ in range(80):
+        if folder.is_dir() and len(list(folder.iterdir())) == 10:
+            break
+        await asyncio.sleep(0.1)
+    assert {"image.png", "notes.txt"} <= {path.name for path in folder.iterdir()}
+    for _ in range(80):
+        if told(stack["log"]):
+            break
+        await asyncio.sleep(0.1)
+    assert "- attachments/image.png (a picture: look at it with Read)" in told(stack["log"])[0]
+    assert await until(js, f"{chips}.length === 0")
+
+
+@CHROME
+async def test_ai_homes_agent_chat_takes_pasted_files_and_keeps_them_until_the_app_has_them(home):
+    from conftest import symlink_or_skip
+    from test_app_server import told
+    from test_mission_look import DROP, PASTE, PICTURE
+
+    js, stack = home
+    await stack["server"].agents.create("check the page")  # EVENTS: one answer, then its turn ends
+    row = "#agents .agent[data-id='a1']"
+    assert await until(js, f"document.querySelector(\"{row}\")?.querySelector('.chat') != null")
+    await js(f"document.querySelector(\"{row} .chat\").click(); true")
+    assert await until(js, "!document.getElementById('chat').hidden")
+    chips = HOME_CHIPS.format(list="#chat-attached")
+    assert await js(f"({PASTE})('#chat-input', {json.dumps(PICTURE)})") is True
+    assert await js(f"({PASTE})('#chat-input', [], 'words')") is False  # text stays text
+    assert await js(f"({DROP})('#chat', [['log.txt', 100, 'text/plain']])") == [True, True]
+    assert await until(js, chips_done(chips, 2), 15)
+    await js(f"({PASTE})('#chat-input', [['big.png', 21000000, 'image/png']])")
+    assert await until(js, f"{HINT} === 'big.png is over 20 MB'")
+    await js(f"({PASTE})('#chat-input', {json.dumps([[f'more{number}.png', 10, 'image/png'] for number in range(9)])})")
+    assert await until(js, f"{HINT} === 'At most 10 files at once'")
+    assert await until(js, chips_done(chips, 10), 15)
+    work = stack["home"] / "app" / "agents" / "a1" / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    outside = stack["home"].parent / "outside"
+    outside.mkdir()
+    symlink_or_skip(outside, work / "attachments")  # the app refuses to place them: the page keeps them
+    box = "document.getElementById('chat-input')"
+    await js(f"{box}.value = 'why does it fail here?'; document.getElementById('chat-send').click(); true")
+    assert await until(js, f"{HINT}.startsWith('The attachments folder in that folder leads somewhere else')")
+    assert await js(f"[{chips}.length, {box}.value]") == [10, "why does it fail here?"]  # nothing lost
+    (work / "attachments").unlink()
+    await js("document.getElementById('chat-send').click(); true")
+    assert await until(js, f"{chips}.length === 0 && {box}.value === ''")
+    assert {"image.png", "log.txt"} <= {path.name for path in (work / "attachments").iterdir()}
+    for _ in range(80):
+        if len(told(stack["log"])) == 2:
+            break
+        await asyncio.sleep(0.1)
+    assert told(stack["log"])[1].startswith("why does it fail here?\n\nThe user attached these files.")
+    assert "- attachments/image.png (a picture: look at it with Read)" in told(stack["log"])[1]
