@@ -55,9 +55,9 @@
 .pose[data-state="your_turn"] > .worker :is(.body, .head, .face, .phones, .arm-l, .arm-thumb) {
   animation: mc-hop 2.4s ease-in-out infinite; }
 .pose[data-state="your_turn"] > .worker .sparkle { animation: mc-sparkle 0.8s ease-out 1; }
-/* failed: slumps onto the desk, eyes shut, a sad mouth and a drop of sweat */
-.pose[data-state="failed"] > .worker :is(.body, .head, .face, .phones, .blink, .sweat) {
-  transform: translateY(9px) rotate(-12deg); transform-origin: 50% 90%; }
+/* failed: slumps to one side, eyes shut, a sad mouth and a drop of sweat */
+.pose[data-state="failed"] > .worker :is(.body, .head, .face, .phones, .blink, .sweat) { /* its face stays over the lid */
+  transform: translateY(1px) rotate(-10deg); transform-origin: 50% 90%; }
 .pose[data-state="failed"] > .worker :is(.eyes-open, .mouth-smile) { opacity: 0; }
 .pose[data-state="failed"] > .worker :is(.eyes-shut, .mouth-sad) { opacity: 1; }
 .pose[data-state="failed"] > .worker .sweat { opacity: 1; animation: mc-sweat 3s ease-in infinite; }
@@ -203,9 +203,12 @@
 .desk-art { position: relative; width: 220px; height: 150px; }
 .desk-art > div { position: absolute; }
 .desk-art svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.desk-art .chair { left: 66px; bottom: 50px; width: 58px; height: 66px; z-index: 0; }
+.desk-art .chair { left: 81px; bottom: 50px; width: 58px; height: 66px; z-index: 0; }
 .desk-art > .pose.main { position: static; } /* not a zero-size box: the worker is placed in the desk's own box */
-.desk-art .pose.main > .worker { right: auto; left: 60px; bottom: 50px; }
+/* the worker sits behind its open laptop, at the desk's middle, as high as the desk's box lets it: its whole face
+   (eyes and mouth, to 44 px down) shows over the lid (from 48 px down) and the desk's far edge (50), its body hides
+   behind the desk, and its hands rest on the keys (74 px down) */
+.desk-art .pose.main > .worker { right: auto; left: 75px; bottom: 73px; }
 .desk-art .table { left: 0; bottom: 0; width: 220px; height: 110px; z-index: 2; }
 .table .top { fill: #1b2142; }
 .table .shine { fill: #252c55; }
@@ -213,7 +216,7 @@
 .table .rim { fill: none; stroke: var(--rim); stroke-width: 3; filter: drop-shadow(0 0 6px var(--rim)); }
 .station[data-state="needs_you"] .table .rim { stroke: var(--needs); }
 .station[data-state="failed"] .table .rim { stroke: var(--fail); }
-.desk-art .laptop { left: 98px; bottom: 58px; width: 64px; height: 46px; z-index: 2; }
+.desk-art .laptop { left: 82px; bottom: 69px; width: 56px; height: 33px; z-index: 2; }
 .laptop .lid { position: absolute; inset: 0 0 6px 0; }
 .laptop .lid .shell { fill: #232a4e; stroke: #3a4a86; stroke-width: 1; }
 .laptop .lid .logo { fill: none; stroke: var(--accent-bright); stroke-width: 2; }
@@ -221,7 +224,7 @@
                     background: linear-gradient(180deg, #3a4370, #20284a); }
 .desk-art .mug { left: 30px; bottom: 54px; width: 24px; height: 24px; z-index: 2; }
 .desk-art .plant { right: 18px; bottom: 54px; width: 34px; height: 42px; z-index: 2; }
-.desk-art .subs { left: 150px; bottom: 70px; display: flex; gap: 2px; z-index: 1; } /* above the desk's far edge */
+.desk-art .subs { left: 150px; bottom: 84px; display: flex; gap: 2px; z-index: 1; } /* faces over the far edge */
 .desk-art .subs .pose { position: relative; width: 42px; height: 46px; }
 .desk-art .subs .worker { right: 0; bottom: 0; }
 .desk-art .more { position: absolute; right: 6px; bottom: 98px; z-index: 3; font-size: 11px; color: var(--text-2); }
