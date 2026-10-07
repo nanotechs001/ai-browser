@@ -22,7 +22,9 @@ const RING = 430; // the first ring's radius, in room pixels
 const RING_STEP = 330; // between two rings
 const WIDE = 1.25; // rings are ellipses, wider than deep: desks stand side by side on screen
 const ARC = 240; // degrees of each ring in front of the globe: no desk stands right behind it
-const FIRST_RING = [150, 30, 112, 68, 188, -8]; // degrees, 90 is the front: left, right, front-left, front-right, far
+// Ring 1's seats, in degrees (90 is the front): left, right, front-left, front-right, far left, far right. The far two
+// stand back and out (215°, -35°), so that a full step card (a desk with it is TALL) never hides the desk behind it.
+const FIRST_RING = [150, 30, 112, 68, 215, -35];
 const TALL = 280; // a desk with its step card, in CSS pixels: the card, the gap and the desk
 const CHIPS_PAST = 6; // more desks than this: step cards fold to chips
 const SPARKS = 6; // arrivals in flight at once: any more arrive without a spark

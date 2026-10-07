@@ -452,6 +452,52 @@ async def test_twenty_agents_with_sub_agents_keep_the_room_readable_and_fast(sta
     assert await layouts(stack, js) - before < 10  # open all day: its animations and timers barely lay out
 
 
+NAMES_UNDER_CARDS = """(() => {
+  const area = (r) => Math.max(0, r.right - r.left) * Math.max(0, r.bottom - r.top);
+  const desks = [...document.querySelectorAll('.station:not(.away):not(.leaving)')].map((node) => ({
+    id: node.dataset.id, y: Number(node.dataset.y), step: node.querySelector('.step').getBoundingClientRect(),
+    name: node.querySelector('.nameplate').getBoundingClientRect() }));
+  const covered = [];
+  for (const near of desks) {
+    for (const far of desks) {
+      if (near.y <= far.y) continue; // `near` stands nearer the user: its card is drawn over the desk behind it
+      const wide = Math.min(near.step.right, far.name.right) - Math.max(near.step.left, far.name.left);
+      const high = Math.min(near.step.bottom, far.name.bottom) - Math.max(near.step.top, far.name.top);
+      const share = Math.max(0, wide) * Math.max(0, high) / area(far.name);
+      if (share > 0) covered.push([near.id, far.id, Math.round(share * 100) / 100]);
+    }
+  }
+  return [desks.length, covered];
+})()"""
+
+
+RING_TWO_CHIPS = pytest.mark.xfail(
+    strict=True, raises=AssertionError,
+    reason="a full ring 2 (20 desks): along its sides a chip covers up to 74% of the next desk's name (measured);"
+           " ring 2 and beyond are not re-seated yet")
+
+
+@CHROME
+@pytest.mark.parametrize(("count", "size", "most"), [
+    (5, (1280, 760), 0), (6, (1280, 760), 0), (5, (1440, 960), 0), (6, (1440, 960), 0), (12, (1280, 760), 0.5),
+    pytest.param(20, (1280, 760), 0.5, marks=RING_TWO_CHIPS)])
+async def test_no_step_card_hides_the_name_of_a_desk_behind_it(stack, count, size, most):  # review: ring 1's far seats
+    stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
+    stack["server"].agents.max_working = count  # all of them at work at once, none waiting in line
+    for number in range(count):
+        await stack["server"].agents.create(f"Task number {number}")
+    js = await open_with(stack, size=size)
+    await front(stack, js)
+    working = "document.querySelectorAll('.station[data-state=\"working\"]:not(.away)').length"
+    assert await until(js, f"{working} === {count}", 15)
+    await asyncio.sleep(1.5)  # every desk in its place
+    shown, covered = await js(NAMES_UNDER_CARDS)
+    assert shown == count
+    # a full card (5 and 6 desks) hides no part of a nameplate behind it; a chip (12 and 20) at most half of one
+    assert [one for one in covered if one[2] > most] == [], covered
+    assert await js("document.querySelectorAll('.step[data-mode=\"chip\"]').length") == (count if count > 6 else 0)
+
+
 @CHROME
 async def test_long_words_clip_on_the_step_card_with_a_tooltip(stack):  # Review Focus 1
     step = "Read every page of the site and " + "check each link " * 20
