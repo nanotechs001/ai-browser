@@ -543,12 +543,18 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   agents keep running. An agent stays in its workspace for this run (agent numbers start again after a restart). With a
   workspace picked and none of its missions in the room, the office says "No missions in this workspace". The Calendar
   follows the picked workspace too.
-- **The Usage card:** each account's usage. It shows a percentage only when Claude Code reports one; otherwise it says
-  "Within limits", or "At its limit until 9:00 pm". Click it for Settings → Accounts.
-- **The office (Flow):** one round desk per agent, in rings around a glowing globe.
-  - Each agent is a chibi in a hoodie and headphones at a laptop. It types while it works, waits in line, waves when it
-    needs you, gives a thumbs up when it is done, and slumps when it failed. Its sub-agents are smaller chibis at its
-    desk.
+- **The Usage card:** each account's current session and weekly limits, as Claude Code reports them with each request;
+  the last reading is kept, with its time (in `~/.ai-browser/usage.json`, so it shows after a restart).
+  - For each signed-in account (at most three, Default first): **Current session** and **Weekly**, each a bar with how
+    much is used and when it resets ("14%", "resets 9:30 pm"), and when it was read ("as of 3:12 pm").
+  - Before any agent has worked on an account, the bars are empty and it says "Updates when an agent works".
+  - Once a reset time has passed, it says "Reset at 9:30 pm · updates with your next mission", not the old number.
+  - At a limit, the bar is full: "At its limit until 9:00 pm".
+  - On a narrow window the card is an icon, and its tooltip lists the numbers. Click it for Settings → Accounts.
+- **The office (Flow):** one round desk per agent, in rings around a glowing globe, on the page's plain navy.
+  - Each agent is a chibi in a hoodie and headphones, sitting behind its open laptop with its whole face over the lid.
+    It types while it works, waits in line, waves when it needs you, gives a thumbs up when it is done, and slumps to
+    one side when it failed. Its sub-agents are smaller chibis at its desk.
   - Above the desk, its step card: the current step from its to-do list ("2. Analyze"), the timer, the badge of its
     latest action (Bash, Edit, Web Search, Browser Agent…), ✓ and the time it took once it is done, and the latest
     picture of its tab.

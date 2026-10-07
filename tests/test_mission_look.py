@@ -1361,7 +1361,9 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
 
     readme = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
     for phrase in ("## Mission Control (your AI office)", "`~/.ai-browser/workspaces.json`", "never deletes its files",
-                   "a percentage only when Claude Code reports one", '"Within limits"', "under `attachments/`",
+                   "each account's current session and weekly limits, as Claude Code reports them with each request",
+                   "the last reading is kept, with its time", "`~/.ai-browser/usage.json`",
+                   '"Updates when an agent works"', "under `attachments/`",
                    '"name (2).ext"', "**Brave only**", "**⋯ Options**",
                    "past 12 desks, the oldest finished agents leave the room", "**Ask AI**, in the composer",
                    '"No missions in this workspace"', '"Not sent: attach it again"',
@@ -1376,5 +1378,6 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
                    "scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom"):
         assert phrase in readme, phrase
     for gone in ("brain of glowing points", "WebGL", "no web tools at all", "a file that was not yet sent",
-                 "a command still asks you, with a card, before it reaches a site"):
+                 "a command still asks you, with a card, before it reaches a site",
+                 "a percentage only when Claude Code reports one", '"Within limits"'):  # the polish's Usage card
         assert gone not in readme, gone
