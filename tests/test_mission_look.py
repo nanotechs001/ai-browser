@@ -1565,7 +1565,15 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
                    "On a Mac it asks you first, with a card, every time",
                    "except a command you chose **Always allow** for",
                    "your own tools (Integrations) still run",
-                   "scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom"):
+                   "scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom",
+                   # the user's look, 2026-10-07: nothing under the globe, Watch beside Hand over, pictures in any chat
+                   "Dotted lines run from each desk to the globe's foot",
+                   "**Stop**, **Chat**, **Hand over** and **Watch**",
+                   "**Watch** brings its tab to the front without opening its drawer",
+                   "Its message box takes files as **Build a Mission** does",
+                   "their chips go only once the app has placed them",
+                   "Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it",
+                   '"Pictures go with Build a Mission or an agent\'s chat"', "Pasted text stays text"):
         assert phrase in readme, phrase
     for gone in ("brain of glowing points", "WebGL", "no web tools at all", "a file that was not yet sent",
                  "a command still asks you, with a card, before it reaches a site",

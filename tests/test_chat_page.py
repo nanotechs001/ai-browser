@@ -335,7 +335,9 @@ def test_the_readme_explains_the_floating_chat():
                    "Privacy & Security → Automation → AI Browser → turn on Brave Browser", "**Ask about it:**",
                    "It replaces typing `ai` in Brave's address bar", "**Hand over…**",
                    "the chat never connects by itself", "the Brain only answers, and proposes nothing",
-                   "and for Brave, once more", "The old side panel is gone"):
+                   "and for Brave, once more", "The old side panel is gone",
+                   "A picture pasted into its box, or a file dropped on it, goes with the task",
+                   "The Brain's box takes text only"):
         assert needed in text, needed
     assert "(the floating chat, coming next)" not in text
 
