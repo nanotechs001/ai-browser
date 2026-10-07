@@ -1,7 +1,8 @@
 // The composer's Attach (the new look, Decision 9): at most 10 files, 20 MB each. Each file goes to the app in pieces
 // over the page's line (the pages' CSP allows no other way), shown as a chip with its name, its size and how far it
-// got, and × to drop it. The app stages them until the task starts; Start waits until each one is whole. The name shown
-// is the app's cleaned one, set as text.
+// got, and × to drop it. The app stages them until the task starts; Start waits until each one is whole, and a task
+// takes only the ones it was sent with. A new connection loses them all (the app drops them): each chip says to attach
+// it again. The name shown is the app's cleaned one, set as text.
 "use strict";
 
 import { el } from "./chat.js";
@@ -111,10 +112,17 @@ export function mountUploads({ list, send, note }) {
       if (states.includes("failed")) return "Remove the files that didn't arrive (×), or attach them again";
       return "";
     },
-    clear() { // a task took them: the app moved them into the agent's folder
-      for (const entry of files.values()) entry.chip.remove();
-      files.clear();
-      list.hidden = true;
+    taken(ids) { // a task took these: the app moved them into the agent's folder. Any other chip stays
+      for (const id of ids) {
+        const entry = files.get(id);
+        if (!entry) continue;
+        entry.chip.remove();
+        files.delete(id);
+      }
+      list.hidden = files.size === 0;
+    },
+    lost() { // a new connection: the app dropped every file it held for the old one, so each must be attached again
+      for (const id of [...files.keys()]) fail(id, "Not sent: attach it again");
     },
     onMessage(message) {
       const id = message.upload ?? message.request;

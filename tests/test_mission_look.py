@@ -440,3 +440,72 @@ async def test_the_options_open_above_the_whole_composer_not_over_its_modes(stac
     modes = await js(f"{BOX}(document.querySelector('.modes'))")
     assert pickers[3] <= modes[1], (pickers, modes)  # the pickers end where the modes' row begins: its tabs stay in view
     assert pickers[1] >= 0 and pickers[0] >= 0 and pickers[2] <= NARROW[0]  # and the panel is inside the window
+
+
+DONE = f"{CHIPS}.length > 0 && {CHIPS}.every(chip => chip.dataset.state === 'done')"
+HOLD = ("(() => { const send = WebSocket.prototype.send; const held = [];"  # a new_task waits until window.release()
+        " WebSocket.prototype.send = function (data) {"
+        "   if (!window.released && typeof data === 'string' && data.includes('\"new_task\"')) {"
+        "     held.push([this, data]); return; }"
+        "   return send.call(this, data); };"
+        " window.release = () => { window.released = true; for (const [socket, data] of held.splice(0))"
+        " send.call(socket, data); }; })();")
+
+
+@CHROME
+async def test_a_template_run_leaves_the_attached_files_alone(stack):  # review of Task 13, F1
+    stack["workflows"].save({"name": "Weekly report", "instructions": "Write the weekly report"})
+    js = await open_mission(stack)
+    await js(f"({ATTACH})([['notes.txt', 2000]])")
+    assert await until(js, DONE, 15)
+    await js("document.getElementById('mode-template').click(); true")
+    assert await until(js, "[...document.getElementById('task-template').options].some(option =>"
+                           " option.value === 'weekly-report')")
+    await js("document.getElementById('task-template').value = 'weekly-report';"
+             "document.getElementById('start').click(); true")
+    agents = stack["server"].agents
+    await wait_for(lambda: "a1" in agents.agents)
+    assert await until(js, "!document.getElementById('start').disabled")  # the run's "created" came
+    await js("document.getElementById('mode-build').click(); true")
+    assert await js(DONE) and await js(f"{CHIPS}.length") == 1  # the chip is still there: the app still holds the file
+    await js("document.getElementById('task').value = 'look at this'; document.getElementById('start').click(); true")
+    folder = stack["home"] / "app" / "agents" / "a2" / "work" / "attachments"
+    await wait_for(lambda: (folder / "notes.txt").is_file())  # and the next Start sent it
+    assert await until(js, f"{CHIPS}.length === 0")
+
+
+@CHROME
+async def test_a_file_attached_while_a_start_waits_stays_for_the_next_one(stack):  # review of Task 13, F1
+    js = await open_with(stack, HOLD)
+    await js(f"({ATTACH})([['first.txt', 100]])")
+    assert await until(js, DONE, 15)
+    await js("document.getElementById('task').value = 'one'; document.getElementById('start').click(); true")
+    await js(f"({ATTACH})([['second.txt', 100]])")  # the app hasn't heard the Start yet
+    assert await until(js, f"{CHIPS}.length === 2 && {CHIPS}.every(chip => chip.dataset.state === 'done')", 15)
+    await js("window.release(); true")
+    agents = stack["server"].agents
+    await wait_for(lambda: "a1" in agents.agents)
+    names = f"{CHIPS}.map(chip => chip.querySelector('.name').textContent)"
+    assert await until(js, f"{names}.join() === 'second.txt'")  # only the file that went with the Start left
+    assert await until(js, "!document.getElementById('start').disabled")
+    await js("document.getElementById('task').value = 'two'; document.getElementById('start').click(); true")
+    work = stack["home"] / "app" / "agents"
+    await wait_for(lambda: (work / "a2" / "work" / "attachments" / "second.txt").is_file())
+    assert (work / "a1" / "work" / "attachments" / "first.txt").is_file()
+
+
+@CHROME
+async def test_after_a_reconnect_the_attached_files_must_be_attached_again(stack):  # review of Task 13, F2
+    js = await open_mission(stack)
+    await js(f"({ATTACH})([['a.txt', 100], ['b.txt', 100]])")
+    assert await until(js, f"{CHIPS}.length === 2 && {CHIPS}.every(chip => chip.dataset.state === 'done')", 15)
+    server = stack["server"]
+    for socket in list(server._sockets):  # the line drops: the app forgets every staged file
+        await socket.close()
+    assert await until(js, f"{CHIPS}.every(chip => chip.dataset.state === 'failed')", 15)  # the page said so, on its
+    words = f"{CHIPS}.map(chip => chip.querySelector('.progress').textContent)"           # new connection's snapshot
+    assert await js(words) == ["Not sent: attach it again"] * 2
+    await js("document.getElementById('task').value = 'go'; document.getElementById('start').click(); true")
+    assert await until(js, "document.getElementById('task-note').textContent.startsWith('Remove the files that didn')")
+    await asyncio.sleep(0.5)
+    assert server.agents.agents == {}  # nothing was sent: Start waited for the user to attach them again

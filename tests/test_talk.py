@@ -1048,6 +1048,7 @@ async def test_the_mic_fills_the_box_outside_ask_ai(stack):  # the new look: "vo
     assert await until(js, "document.getElementById('task').value === 'check the shop'")
     await asyncio.sleep(0.5)
     assert talk_calls(stack) == []  # nothing went to the Brain
+    assert stack["server"].agents.agents == {}  # and nothing started: the words wait in the box for the user's Start
     await js("document.getElementById('mode-ask').click(); document.getElementById('task').value = ''; true")
     stack["engine"].answers = ["what is going on"]
     await talk(stack, js)

@@ -24,6 +24,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   const send = (message) => link.send(message);
   let mode = "build";
   let pending = null; // the request waiting for its "created": one press, one agent
+  let taking = []; // the upload ids sent with a pending new_task: only those chips go when it is created
   let timer = null;
   let rows = []; // the accounts
   let templates = []; // the workflows, as Templates lists them
@@ -56,12 +57,14 @@ export function mountComposer({ link, workspaceOf = () => null }) {
 
   function finish() {
     pending = null;
+    taking = [];
     clearTimeout(timer);
     $("start").disabled = false;
   }
 
   function begin(message) { // one press, one request: the button waits for its answer
     pending = `m${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    taking = message.attachments || [];
     $("start").disabled = true;
     if (!send({ ...message, request: pending })) {
       finish();
@@ -193,7 +196,8 @@ export function mountComposer({ link, workspaceOf = () => null }) {
           workspaces = message.workspaces || [];
           fillWorkspaces();
           setMode(mode);
-          if (pending) finish(); // a new connection: an unanswered press can be pressed again
+          uploads.lost(); // a new connection: the app dropped the files staged for the old one
+          if (pending) finish(); // and an unanswered press can be pressed again
           send({ type: "workflows" }); // Use a Template's list
           break;
         case "accounts":
@@ -211,9 +215,11 @@ export function mountComposer({ link, workspaceOf = () => null }) {
           break;
         case "created":
           if (pending && message.request === pending) {
+            const took = taking;
             finish();
             $("task").value = "";
-            uploads.clear(); // the app moved them into the agent's folder
+            uploads.taken(took); // the app moved those into the agent's folder: a template run took none
+            setMode(mode); // the chips show in Build a Mission only
             pickDefault($("task-account"), rows);
           }
           break;
