@@ -92,7 +92,8 @@ export function createDesk(id, onSelect = () => {}) {
   const laptop = el("div", "laptop");
   laptop.append(art("lid", "0 0 56 27", LID), el("div", "keyboard"));
   parts.art.append(art("chair", "0 0 58 66", CHAIR), parts.pose, art("table", "0 0 220 110", TABLE), laptop,
-                   art("mug", "0 0 24 24", MUG), art("plant", "0 0 40 48", PLANT), parts.subs, parts.more, parts.nameplate);
+                   art("mug", "0 0 24 24", MUG), art("plant", "0 0 40 48", PLANT), parts.subs, parts.more,
+                   parts.nameplate);
   node.append(parts.step, parts.art, parts.needs);
   node.addEventListener("click", () => onSelect(id));
   const subs = new Map(); // sub-agent id -> its pose

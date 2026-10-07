@@ -331,7 +331,7 @@ CARDS_UNDER_WORDS = """(() => {
 @CHROME
 @pytest.mark.parametrize("size", [WIDE, (1280, 760), MIDDLE, NARROW])  # three columns (widest, narrowest), two, one
 @pytest.mark.parametrize("count", [5, 6, 12, 20])
-async def test_no_step_card_sits_under_the_switch(stack, count, size):  # Task 11's far desks; the switch is all that's left
+async def test_no_step_card_sits_under_the_switch(stack, count, size):  # Task 11's far desks; only the switch is left
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
     stack["server"].agents.max_working = count  # all of them at work at once, none waiting in line
     for number in range(count):
@@ -348,8 +348,8 @@ async def test_no_step_card_sits_under_the_switch(stack, count, size):  # Task 1
 
 
 @CHROME
-# with the heading and the sign gone the room grows into the box's top, where only the switch's band is kept clear, up to
-# the width it has: measured 0.5545 at 1280x760 (0.4545 under the heading) and 0.6609 at 1440x900 (0.6409)
+# with the heading and the sign gone the room grows into the box's top, where only the switch's band is kept clear,
+# up to the width it has: measured 0.5545 at 1280x760 (0.4545 under the heading) and 0.6609 at 1440x900 (0.6409)
 @pytest.mark.parametrize(("count", "size", "least"), [(5, (1280, 760), 0.54), (6, (1280, 760), 0.54), (5, WIDE, 0.65)])
 async def test_a_few_desks_fill_the_room_below_the_switch_and_stay_in_view(stack, count, size, least):
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")

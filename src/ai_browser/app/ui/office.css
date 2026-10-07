@@ -56,8 +56,8 @@
   animation: mc-hop 2.4s ease-in-out infinite; }
 .pose[data-state="your_turn"] > .worker .sparkle { animation: mc-sparkle 0.8s ease-out 1; }
 /* failed: slumps to one side, eyes shut, a sad mouth and a drop of sweat */
-.pose[data-state="failed"] > .worker :is(.body, .head, .face, .phones, .blink, .sweat) { /* its face stays over the lid */
-  transform: translateY(1px) rotate(-10deg); transform-origin: 50% 90%; }
+.pose[data-state="failed"] > .worker :is(.body, .head, .face, .phones, .blink, .sweat) {
+  transform: translateY(1px) rotate(-10deg); transform-origin: 50% 90%; } /* its face stays over the lid */
 .pose[data-state="failed"] > .worker :is(.eyes-open, .mouth-smile) { opacity: 0; }
 .pose[data-state="failed"] > .worker :is(.eyes-shut, .mouth-sad) { opacity: 1; }
 .pose[data-state="failed"] > .worker .sweat { opacity: 1; animation: mc-sweat 3s ease-in infinite; }
@@ -86,7 +86,7 @@
 }
 
 /* ---- the room ------------------------------------------------------------------------------------------------- */
-/* the room is the page's plain navy (the user's hand check: no back wall, no grid): --bg, and --bg-deep in the corners */
+/* the room is the page's plain navy (the user's hand check: no back wall, no grid): --bg, --bg-deep in its corners */
 .scene { position: relative; overflow: hidden; isolation: isolate;
          background: radial-gradient(ellipse at 50% 40%, var(--bg) 55%, var(--bg-deep)); }
 .viewport { position: absolute; inset: 0; perspective: 1800px; perspective-origin: 50% 20%; overflow: hidden;
