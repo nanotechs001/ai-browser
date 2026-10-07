@@ -1,4 +1,5 @@
-"""Map sandbox paths under /work to the host folder that backs them, refusing escapes.
+"""Map sandbox paths under /work to the host folder that backs them, refusing escapes. Without Docker (the no-Docker
+spec) there is no virtual /work: a WorkDir made with virtual=False names its files by their real paths.
 
 The sandboxed shell can change the work folder at any moment, so host-side reads and writes open every path step
 without following symbolic links: a link swapped in after a check cannot point them at the user's own files."""
@@ -20,22 +21,33 @@ _FOLDER = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW"
 
 
 class PathError(ValueError):
-    """A path outside /work, or one the sandbox could have redirected."""
+    """A path outside the work folder, or one the sandbox could have redirected."""
 
 
 class WorkDir:
-    def __init__(self, host_root: Path, task_id: str):
-        self.host_root = Path(host_root)
+    def __init__(self, host_root: Path, task_id: str, virtual: bool = True):
+        self.virtual = virtual  # Docker's shell sees the folder as /work; without Docker, paths are real
+        self.host_root = Path(host_root) if virtual else Path(os.path.abspath(host_root))
         self.task_id = task_id
         self.host_task = self.host_root / task_id
-        self.sandbox_task = f"{SANDBOX_ROOT}/{task_id}"
+        self.root = SANDBOX_ROOT if virtual else str(self.host_root)  # the work folder, as the agent names it
+        self.sandbox_task = f"{SANDBOX_ROOT}/{task_id}" if virtual else str(self.host_task)
         self.host_task.mkdir(parents=True, exist_ok=True)
         # copies of uploads sit next to the work folder, where no container can see or swap them
         self.staging = self.host_root.parent / "uploads" / task_id
         self._snapshots = 0
 
     def _relative(self, path: str) -> PurePosixPath:
-        """Path relative to /work; relative inputs are relative to the task folder."""
+        """Path relative to the work folder (/work, or its real path without Docker); relative inputs are relative to
+        the task folder."""
+        if not self.virtual and Path(path).is_absolute():
+            try:
+                rel = Path(os.path.normpath(path)).relative_to(self.host_root)
+            except ValueError:
+                raise PathError(f"{path!r}: files must be under {self.root}") from None
+            return PurePosixPath(rel.as_posix())
+        if not self.virtual and path.startswith("/"):  # Windows: no drive, so not a real path of the work folder
+            raise PathError(f"{path!r}: files must be under {self.root}")
         if path.startswith("/"):
             norm = posixpath.normpath(path)
             if norm != SANDBOX_ROOT and not norm.startswith(SANDBOX_ROOT + "/"):
@@ -43,17 +55,20 @@ class WorkDir:
             return PurePosixPath(norm).relative_to(SANDBOX_ROOT)
         rel = PurePosixPath(posixpath.normpath(f"{self.task_id}/{path}"))
         if rel.parts and rel.parts[0] == "..":
-            raise PathError(f"{path!r}: files must be under /work")
+            raise PathError(f"{path!r}: files must be under {self.root}")
         return rel
 
     def to_host(self, path: str) -> Path:
         host = self.host_root / self._relative(path)
         if not host.resolve().is_relative_to(self.host_root.resolve()):
-            raise PathError(f"{path!r}: points outside /work")
+            raise PathError(f"{path!r}: points outside {self.root}")
         return host
 
     def to_sandbox(self, path: str) -> str:
+        """The path as the agent names it: under /work, or its real path without Docker."""
         rel = self._relative(path).as_posix()
+        if not self.virtual:
+            return str(self.host_root if rel == "." else self.host_root / rel)
         return SANDBOX_ROOT if rel == "." else f"{SANDBOX_ROOT}/{rel}"
 
     def _open(self, path: str, flags: int) -> BinaryIO:

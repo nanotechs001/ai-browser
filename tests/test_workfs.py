@@ -217,3 +217,39 @@ def test_windows_writes_new_folders_and_reads_exact_bytes(work):
         work.write_text("CON", "x")
     with pytest.raises(PathError, match="not a valid file name on Windows"):
         work.write_text("notes:hidden", "x")  # also an alternate data stream
+
+
+@pytest.fixture
+def real(tmp_path):
+    """The work folder without Docker (the no-Docker spec): real paths, no virtual /work."""
+    return WorkDir(tmp_path / "work", "t1", virtual=False)
+
+
+def test_without_docker_the_work_folder_has_real_paths(real, tmp_path):
+    root = tmp_path / "work"
+    assert (real.root, real.sandbox_task, real.host_task) == (str(root), str(root / "t1"), root / "t1")
+    assert real.to_sandbox("out/data.csv") == str(root / "t1" / "out" / "data.csv")
+    assert real.to_sandbox(str(root)) == str(root)
+    assert real.to_host(str(root / "t1" / "a.txt")) == root / "t1" / "a.txt"
+    assert real.to_host(str(root / "shared.txt")) == root / "shared.txt"
+    assert real.write_text("a/b.txt", "hi") == str(root / "t1" / "a" / "b.txt")
+    assert real.read_text(str(root / "t1" / "a" / "b.txt"), 100) == "hi"
+    assert real.read_text("a/b.txt", 100) == "hi"
+
+
+@pytest.mark.parametrize("bad", ["../../etc/passwd", "/work/t1/a.txt", "{root}/../outside.txt", "{root}x/a",
+                                 "/etc/passwd"])
+def test_without_docker_a_path_outside_the_work_folder_is_refused(real, tmp_path, bad):
+    with pytest.raises(PathError, match="must be under"):
+        real.to_host(bad.format(root=tmp_path / "work"))
+
+
+def test_without_docker_a_link_out_of_the_work_folder_is_refused(real, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").write_text("x", encoding="utf-8")
+    symlink_or_skip(outside, real.host_task / "link")
+    with pytest.raises(PathError):
+        real.to_host(str(real.host_task / "link" / "secret"))
+    with pytest.raises(PathError, match="symbolic link"):
+        real.read_text("link/secret", 100)
