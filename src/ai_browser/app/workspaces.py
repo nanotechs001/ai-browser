@@ -1,8 +1,10 @@
 """Workspaces (the new look, Decision 6): named groups of agents and templates, which filter Mission Control's
 Dashboard, My Missions and Templates. Kept in <home>/workspaces.json (mode 0600): each workspace's id, name and its
 templates (workflow slugs). Agents are grouped in memory only, on the agent itself (its `workspace`): their ids start
-again with every run, so a saved one would group another agent after a restart. A missing, unreadable or broken file
-reads as no workspaces, and a broken row is skipped. Deleting a workspace removes the grouping only."""
+again with every run, so a saved one would group another agent after a restart. A missing or blank file is no
+workspaces, and a broken row is skipped. A file that is there but can't be read, or isn't JSON, shows as no workspaces
+and is never written over: every change is refused with words until the user fixes or removes it. Deleting a
+workspace removes the grouping only."""
 
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ TOO_LONG = f"A workspace's name is at most {NAME_LIMIT} characters"
 TAKEN = "There is a workspace named {name} already"
 TOO_MANY = f"At most {MOST} workspaces"
 GONE = "That workspace was deleted"
+UNREADABLE = "Couldn't read your workspaces file: {path} ({why}). Fix it or remove it, then try again."
 
 
 def clean_name(name) -> str:
@@ -41,11 +44,23 @@ class Workspaces:
     def __init__(self, home):
         self.path = Path(home) / FILE
 
-    def _read(self) -> list[dict]:
+    def _load(self) -> list[dict]:
+        """The workspaces, for a change: ValueError (UNREADABLE) when the file is there but can't be read or isn't
+        JSON, so that a change never writes over it."""
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            text = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return []
+        except OSError as exc:
+            raise ValueError(UNREADABLE.format(path=self.path, why=exc.strerror or exc)) from None
+        except ValueError:  # not UTF-8 text
+            raise ValueError(UNREADABLE.format(path=self.path, why="it isn't text")) from None
+        if not text.strip():  # blank: nothing in it to lose
+            return []
+        try:
+            data = json.loads(text)
+        except ValueError:
+            raise ValueError(UNREADABLE.format(path=self.path, why="it isn't valid JSON")) from None
         rows = data.get("workspaces") if isinstance(data, dict) else None
         out, seen = [], set()
         for row in rows if isinstance(rows, list) else []:
@@ -61,6 +76,13 @@ class Workspaces:
             seen.add(row["id"])
             out.append({"id": row["id"], "name": name, "templates": list(dict.fromkeys(templates))})
         return out[:MOST]
+
+    def _read(self) -> list[dict]:
+        """The workspaces, for display: a file that can't be read shows as none."""
+        try:
+            return self._load()
+        except ValueError:
+            return []
 
     def _write(self, rows: list[dict]) -> None:
         text = json.dumps({"workspaces": rows}, indent=1, ensure_ascii=False) + "\n"
@@ -78,7 +100,7 @@ class Workspaces:
             raise ValueError(TAKEN.format(name=name))
 
     def create(self, name) -> dict:
-        rows = self._read()
+        rows = self._load()
         name = clean_name(name)
         self._free(rows, name)
         if len(rows) >= MOST:
@@ -92,7 +114,7 @@ class Workspaces:
         return row
 
     def rename(self, workspace_id, name) -> dict:
-        rows = self._read()
+        rows = self._load()
         row = next((one for one in rows if one["id"] == workspace_id), None)
         if row is None:
             raise ValueError(GONE)
@@ -103,7 +125,7 @@ class Workspaces:
         return row
 
     def delete(self, workspace_id) -> bool:
-        rows = self._read()
+        rows = self._load()
         kept = [row for row in rows if row["id"] != workspace_id]
         if len(kept) == len(rows):
             return False
@@ -114,7 +136,7 @@ class Workspaces:
         """Put a template in one workspace, or in none (None): a template is in at most one."""
         if not isinstance(slug, str) or not _SLUG.fullmatch(slug):
             raise ValueError("Not a template")
-        rows = self._read()
+        rows = self._load()
         if workspace_id is not None and not any(row["id"] == workspace_id for row in rows):
             raise ValueError(GONE)
         for row in rows:

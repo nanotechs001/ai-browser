@@ -91,6 +91,41 @@ def test_a_broken_file_reads_as_none_and_a_broken_row_is_skipped(tmp_path):
     assert workspaces.list() == [{"id": "w1234abcd", "name": "Fine", "templates": ["a"]}]
 
 
+@pytest.mark.parametrize("broken", [b'{"workspaces": [{"id": "w1234abcd", "name": "Mine"', b"\xff\xfe not text",
+                                    "unreadable"])
+def test_a_file_that_cant_be_read_is_never_written_over(tmp_path, broken):  # the final review, F7
+    import os
+
+    path = tmp_path / "home" / "workspaces.json"
+    path.parent.mkdir(parents=True)
+    kept = b'{"workspaces": [{"id": "w1234abcd", "name": "Mine", "templates": []}]}' if broken == "unreadable" \
+        else broken
+    path.write_bytes(kept)
+    if broken == "unreadable":
+        if os.name == "nt" or os.geteuid() == 0:
+            pytest.skip("a file only the owner can't read: POSIX, not as root")
+        path.chmod(0)
+    workspaces = store(tmp_path)
+    try:
+        assert workspaces.list() == []  # for display: no workspaces
+        for change in (lambda: workspaces.create("Research"), lambda: workspaces.rename("w1234abcd", "Other"),
+                       lambda: workspaces.delete("w1234abcd"), lambda: workspaces.assign_template("weekly", None)):
+            with pytest.raises(ValueError, match=r"^Couldn't read your workspaces file: .*workspaces\.json .*"
+                                                 r"Fix it or remove it, then try again\.$"):
+                change()
+    finally:
+        path.chmod(0o600)
+    assert path.read_bytes() == kept  # never replaced
+
+
+def test_a_missing_or_blank_file_is_no_workspaces_and_can_be_written(tmp_path):  # the final review, F7
+    workspaces = store(tmp_path)
+    assert workspaces.create("First")["name"] == "First"  # no file yet
+    path = tmp_path / "home" / "workspaces.json"
+    path.write_text("  \n", encoding="utf-8")  # blank: nothing in it to lose
+    assert workspaces.create("Second")["name"] == "Second" and [row["name"] for row in workspaces.list()] == ["Second"]
+
+
 from test_app_server import recv, started, until, wait_for  # noqa: E402
 from test_bridge import EVENTS  # noqa: E402
 from ui_socket import ui_socket  # noqa: E402
