@@ -213,7 +213,7 @@ def _doctor_setup() -> int:
     problem = config_problem(home())
     if problem:  # the skills the user blocked would load again, with no other sign
         report("✗", "config", problem, True)
-    report("-", "Docker", "not checked here: run `uv run ai-browser doctor`")
+    report("-", "Docker", f"not checked here: run `{platforms.command('doctor')}`")
     _desktop_check(report)
     print("some checks failed" if failed else "all good")
     return 1 if failed else 0
@@ -237,7 +237,7 @@ def _desktop_check(report) -> None:
     downloaded without that yes."""
     from .desktop import layout
     from .desktop.download import SetupError
-    from .desktop.release import SETUP_COMMAND, VERSION, asset_for, offer
+    from .desktop.release import VERSION, asset_for, offer, setup_command
     from .desktop.setup import set_up
 
     root = home()
@@ -254,7 +254,7 @@ def _desktop_check(report) -> None:
     now = (f"AI Browser's own app uses Electron {built.get('electron')}, and {VERSION} is out" if built is not None
            else "AI Browser's own app isn't set up: AI Browser opens in a browser window")
     if not _interactive():
-        report("-", "app", f"{now}. To set it up, run `{SETUP_COMMAND}` in a terminal (it asks first)")
+        report("-", "app", f"{now}. To set it up, run `{setup_command()}` in a terminal (it asks first)")
         return
     report("-", "app", now)
     print("\n".join(offer(asset, layout.folder(root))))
@@ -266,7 +266,7 @@ def _desktop_check(report) -> None:
     except SetupError as exc:
         report("✗", "app", str(exc), True)
         return
-    report("✓", "app", "AI Browser's own app is ready: start it with `uv run ai-browser app`")
+    report("✓", "app", f"AI Browser's own app is ready: start it {platforms.start_words()}")
 
 
 async def _doctor() -> int:
@@ -289,7 +289,7 @@ async def _doctor() -> int:
         report(False, "Docker", str(exc))
         return 1
     if boxes._docker("image", "inspect", IMAGE, check=False).returncode != 0:
-        report(False, "image", f"{IMAGE} is missing; run: uv run ai-browser build")
+        report(False, "image", f"{IMAGE} is missing; run: {platforms.command('build')}")
         return 1
     report(True, "image", IMAGE)
 

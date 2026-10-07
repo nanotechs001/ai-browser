@@ -19,6 +19,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import platforms
 from .config import CDP_PORT, IMAGE
 
 PROFILE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
@@ -86,7 +87,7 @@ class Sandboxes:
     def check(self) -> None:
         self._docker("info", "--format", "{{.ServerVersion}}", timeout=20)
         if self._docker("image", "inspect", self.image, check=False).returncode != 0:
-            raise DockerError(f"The sandbox image {self.image} is missing. Run: uv run ai-browser build")
+            raise DockerError(f"The sandbox image {self.image} is missing. Run: {platforms.command('build')}")
 
     def build(self, context: Path) -> None:
         if subprocess.run(["docker", "build", "-t", self.image, str(context)]).returncode != 0:

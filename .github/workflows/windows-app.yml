@@ -30,3 +30,5 @@ jobs:
           if-no-files-found: error
       - name: Check that it starts (after the upload, so the zip is there either way)
         run: uv run --no-sync python packaging/windows_app.py check "dist/AI Browser" --bundled
+      - name: Start AI Browser.exe app for real, with the start log on (its own app must show a connected page)
+        run: uv run --no-sync python packaging/windows_app.py start "dist/AI Browser"

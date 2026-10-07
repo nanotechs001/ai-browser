@@ -84,8 +84,8 @@ def test_no_npm_package_at_run_time():
     assert not {"dependencies", "devDependencies", "optionalDependencies", "scripts"} & set(package)
     for name in ("main.js", "preload.js", "policy.js", "line.js", "thispage.js"):
         modules = set(re.findall(r'require\("([^"]+)"\)', text(name)))
-        assert modules <= {"electron", "node:fs", "node:net", "node:path", "node:child_process", "./policy.js",
-                           "./line.js", "./thispage.js"}, (name, modules)
+        assert modules <= {"electron", "node:fs", "node:net", "node:os", "node:path", "node:child_process",
+                           "./policy.js", "./line.js", "./thispage.js"}, (name, modules)
     # thispage.js alone runs a program: its one fixed command, with execFile, never through a shell
     assert set(re.findall(r'require\("([^"]+)"\)', text("thispage.js"))) == {"node:child_process", "node:path"}
     assert not [name for name in ("main.js", "preload.js", "policy.js", "line.js") if "child_process" in text(name)]
@@ -111,6 +111,13 @@ def test_the_windows_script_only_reads_the_front_brave_window():  # Safety: UI A
                   "Invoke-WebRequest", "DownloadString", "-TypeDefinition", "Stop-Process", "Click", "param(",
                   "$args", "$env:", "Read-Host", "Set-Item", "New-Item", "Remove-Item", "Out-File"):
         assert never not in script, never
+
+
+def test_the_app_finds_its_profile_and_its_start_hint_as_policy_says():
+    main = text("main.js")
+    assert ("policy.profileFor({ execPath: process.execPath, platform: process.platform, env: process.env,"
+            in main)  # where the packaged exe's app keeps its profile: <home>/desktop-profile (test_desktop_js)
+    assert "policy.startHint(policy.packaged(" in main and "uv run ai-browser" not in main
 
 
 def test_the_menu_bar_icon_closing_and_quitting():  # Review Focus 4
@@ -170,9 +177,11 @@ def test_the_readme_explains_the_app():
 
 
 def test_a_windows_api_this_electron_may_lack_never_stops_the_start():
-    # begin() adds the Start menu entry first on Windows: a call that throws there would end every start. The toast
-    # activator's setter can't be confirmed for Electron 44, so it runs only where it exists (the entry carries the
-    # same CLSID either way).
-    entry = re.search(r"function startMenuEntry\(\) \{\n(.*?)\n\}\n", text("main.js"), re.S).group(1)
+    # begin() adds the Start menu entry first on Windows: a call that throws there would end every start
+    # (policy.startMenuEntry never throws: test_desktop_js). The toast activator's setter can't be confirmed for
+    # Electron 44, so it runs only where it exists (the entry carries the same CLSID either way).
+    entry = re.search(r"function startMenuEntry\(app, shell, execPath\) \{\n(.*?)\n\}\n", text("policy.js"),
+                      re.S).group(1)
     assert 'if (typeof app.setToastActivatorCLSID === "function") app.setToastActivatorCLSID(TOAST_CLSID);' in entry
     assert entry.count("app.setToastActivatorCLSID(") == 1 and "toastActivatorClsid: TOAST_CLSID" in entry
+    assert "policy.startMenuEntry(app, shell, process.execPath)" in text("main.js")
