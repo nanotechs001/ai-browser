@@ -271,6 +271,36 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .removed-list li { display: flex; gap: 8px; align-items: center; }
 .knowledge-note:empty { display: none; }
 
+/* ---- the menu's workspaces, and the Usage card ---------------------------------------------------------------- */
+.workspace-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.workspace { position: relative; display: flex; align-items: center; gap: 2px; }
+.workspace-pick { flex: 1; min-width: 0; gap: 12px; padding: 7px 10px 7px 14px; border: 1px solid transparent;
+                  background: transparent; color: var(--text-2); text-align: left; }
+.workspace-pick[aria-pressed="true"] { background: var(--selected); border-color: #2a4380; color: var(--text); }
+.workspace-pick .name { flex: 1; }
+.workspace .count { min-width: 22px; padding: 1px 6px; border-radius: 6px; background: var(--soft); font-size: 12px;
+                    text-align: center; }
+.workspace-more { padding: 4px 6px; }
+.workspace-menu { position: absolute; right: 0; top: 100%; z-index: 4; display: flex; flex-direction: column; gap: 4px;
+                  padding: 6px; border-radius: 10px; background: var(--card); border: 1px solid var(--line-strong);
+                  box-shadow: var(--shadow); }
+.workspace-new { width: 100%; gap: 12px; padding: 7px 14px; border: 0; background: transparent; color: var(--text-2); }
+.workspace-name { width: 100%; }
+.workspace-note { margin: 4px 0 0; font-size: 12px; }
+.workspace-note:empty { display: none; }
+.usage { align-items: center; gap: 8px; }
+.usage-lines { display: flex; flex-direction: column; min-width: 0; }
+.usage-line { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-line:is(.limit, .high) { color: var(--needs); }
+.usage-line.out { color: var(--muted); }
+.usage-ring { flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
+              background: conic-gradient(var(--accent-2) calc(var(--p, 0) * 1%), #263354 0); }
+.usage-ring::before { content: ""; grid-area: 1 / 1; width: 44px; height: 44px; border-radius: 50%;
+                      background: var(--card); }
+.usage-ring-text { grid-area: 1 / 1; font-size: 13px; font-weight: 700; }
+:is(.mission, .workflow) select.move { flex: none; width: 150px; } /* one width on every row: the columns line up */
+.usage-icon { display: none; }
+
 /* ---- narrow windows, last so they win: the right column folds under the centre, then the menu shrinks to icons -- */
 @media (max-width: 1279px) {
   .mc { grid-template-columns: 248px minmax(0, 1fr); grid-template-areas: "menu centre" "menu side";
@@ -283,4 +313,11 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
   .menu { padding: 14px 8px; align-items: center; }
   .menu :is(.label, kbd, .counts), .workspaces :is(.count, .head, .name), .usage .usage-words { display: none; }
   .new-mission, .page-link { justify-content: center; padding: 10px; }
+  .workspaces { width: 100%; }
+  .workspace-more { display: none; } /* rename and delete wait for the wide menu */
+  .workspace-pick, .workspace-new { justify-content: center; padding: 9px; }
+  .workspace-note { overflow-wrap: anywhere; }
+  .usage { justify-content: center; padding: 10px; }
+  .usage .usage-icon { display: block; }
+  .usage .usage-ring { display: none; } /* 56 px does not fit a 64 px menu: the number is a click away */
 }

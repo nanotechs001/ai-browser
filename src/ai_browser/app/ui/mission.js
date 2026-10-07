@@ -15,7 +15,9 @@ import { createScene } from "./scene.js";
 import { mountSide } from "./side.js";
 import { stateOf, toolLabel } from "./step.js";
 import { mountTalk } from "./talk.js";
+import { mountUsage } from "./usage.js";
 import { createVoice } from "./voice.js";
+import { fillMove, mountWorkspaces } from "./workspaces.js";
 
 const $ = (id) => document.getElementById(id);
 const PAGES = ["dashboard", "missions", "templates", "knowledge", "integrations", "history"];
@@ -31,6 +33,7 @@ let brainKnown = false;
 let selected = null; // the agent picked for the right column
 let eventsFor = null; // whose actions the right column asked for
 let workspace = null; // the workspace the menu filters by (null: every agent)
+let workspaceRows = []; // the workspaces, as the app lists them
 let page = "dashboard";
 let view = "flow";
 let defaultModel = "sonnet"; // ai-browser app --model, until the user picks one (the app remembers the pick)
@@ -84,13 +87,57 @@ const side = mountSide({ send, openDrawer, openHistory: () => showPage("history"
 const list = mountList($("view-list"), { onOpen: select });
 const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI, Build a Mission, Use a Template
 parts.push(composer);
-const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible: inWorkspace });
+const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible: inWorkspace,
+                                                     decorate: (row, agent) => moveFor(row, { agent: agent.id },
+                                                                                       agent.workspace) });
 const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
 parts.push(missions, history);
-const templates = mountTemplates($("page-templates"), link);
+const templates = mountTemplates($("page-templates"), link, {
+  inWorkspace: (slug) => !workspace || workspaceOfTemplate(slug) === workspace,
+  decorate: (row, slug) => moveFor(row.querySelector(".row") || row, { template: slug }, workspaceOfTemplate(slug)),
+});
 parts.push(templates, mountKnowledge($("page-knowledge"), link, { tabs: () => tabs,
                                                                    model: () => $("task-model").value }),
            mountIntegrations($("page-integrations"), link));
+
+const spaces = mountWorkspaces($("workspaces"), { send, onFilter: setWorkspace });
+const usage = mountUsage($("usage"));
+parts.push(spaces, {
+  onMessage(message) {
+    if (message.type === "snapshot" || message.type === "workspaces") {
+      workspaceRows = message.workspaces || [];
+      templates.refresh();
+      renderAll();
+    }
+    if (message.type === "snapshot" || message.type === "accounts") usage.render(message.accounts || []);
+  },
+});
+
+function workspaceOfTemplate(slug) {
+  return workspaceRows.find((row) => (row.templates || []).includes(slug))?.id || null;
+}
+
+function moveFor(container, target, current) { // Workspace ▾: moves an agent or a template (a filter, no right)
+  let select = container.querySelector(":scope > select.move");
+  if (!select) {
+    select = el("select", "move");
+    select.setAttribute("aria-label", "Workspace");
+    select.addEventListener("change", () => link.send({ type: "workspace_assign", ...target,
+                                                        workspace: select.value || null }));
+    container.append(select);
+  }
+  fillMove(select, workspaceRows, current);
+}
+
+function setWorkspace(id) { // the menu's filter: the Dashboard, My Missions and Templates show only this one's
+  workspace = id;
+  spaces.setActive(id);
+  scene.setFilter(inWorkspace);
+  composer.workspaceChanged();
+  templates.refresh();
+  renderAll();
+}
+
 talk = mountTalk({
   panel: $("talk"),
   micButton: $("mic"),

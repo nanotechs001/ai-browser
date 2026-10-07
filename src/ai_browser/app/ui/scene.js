@@ -259,6 +259,9 @@ export function createScene(root, { onSelect = () => {} } = {}) {
     shownKey = ids.join(" ");
     for (const id of ids) fillOne(id, ids.length);
     room.dataset.empty = String(!ids.length);
+    // the empty note: agents exist and the workspace picked hides them all, or no agent exists at all
+    const words = rows.size ? "No missions in this workspace" : "Start a mission below";
+    if (empty.textContent !== words) empty.textContent = words;
     apply();
   }
 

@@ -699,3 +699,278 @@ def test_skill_block_is_app_only():  # the spec's Safety: no new right
 
     assert "skill_block" in MESSAGE_RULES and may_send("app", {"type": "skill_block"})
     assert not may_send("none", {"type": "skill_block"})
+
+
+# ---- workspaces and the Usage card (Task 16) -------------------------------------------------------------------------
+
+def press_enter(selector):
+    return (f"(() => {{ const box = document.querySelector({json.dumps(selector)});"
+            " box.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); return true; })()")
+
+
+@CHROME
+async def test_workspaces_are_made_renamed_and_filter_the_pages(stack):
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    agents = stack["server"].agents
+    for name in ("research the market", "plan the launch"):
+        await agents.create(name)
+    stack["workflows"].save({"name": "Weekly report", "instructions": "Write it"})
+    js = await open_mission(stack)
+    box = "#workspaces input.workspace-name"
+    await js("document.querySelector('#workspaces .workspace-new').click(); true")
+    assert await until(js, f"document.querySelector({json.dumps(box)}) !== null")
+    await js(f"document.querySelector({json.dumps(box)}).value = 'Research'; true")
+    await js(press_enter(box))
+    pick = "document.querySelector('#workspaces .workspace-pick')"
+    assert await until(js, f"{pick}?.querySelector('.name').textContent === 'Research'")
+    [research] = stack["server"].workspaces.list()
+    assert await js(f"{pick}.querySelector('.count').textContent") == "0"
+    await js(f"{page_link('missions')}.click(); true")
+    move = "document.querySelector('#page-missions .mission[data-id=\"a1\"] select.move')"
+    assert await until(js, f"{move} !== null")
+    await js(f"{move}.value = {json.dumps(research['id'])}; {move}.dispatchEvent(new Event('change')); true")
+    await wait_for(lambda: agents.agents["a1"].workspace == research["id"])
+    await js(f"{page_link('templates')}.click(); true")
+    template = "document.querySelector('#page-templates .workflow[data-slug=\"weekly-report\"] select.move')"
+    assert await until(js, f"{template} !== null")
+    await js(f"{template}.value = {json.dumps(research['id'])}; {template}.dispatchEvent(new Event('change')); true")
+    assert await until(js, f"{pick}.querySelector('.count').textContent === '2'")  # an agent and a template
+    await js(f"{pick}.click(); {page_link('dashboard')}.click(); true")  # the filter
+    shown = "[...document.querySelectorAll('.station:not(.away)')].map(node => node.dataset.id)"
+    assert await until(js, f"JSON.stringify({shown}) === '[\"a1\"]'")
+    await js(f"{page_link('missions')}.click(); true")
+    assert await js("[...document.querySelectorAll('#page-missions .mission:not([hidden])')]"
+                    ".map(row => row.dataset.id)") == ["a1"]
+    assert await js("document.getElementById('task-workspace').value") == research["id"]  # new missions go there
+    await js("document.querySelector('#workspaces .workspace-more').click();"
+             "document.querySelector('#workspaces .rename').click(); true")
+    assert await until(js, f"document.querySelector({json.dumps(box)}) !== null")
+    await js(f"document.querySelector({json.dumps(box)}).value = 'Deep research'; true")
+    await js(press_enter(box))
+    assert await until(js, f"{pick}?.querySelector('.name').textContent === 'Deep research'")
+    await js(f"{pick}.click(); true")  # picked again: every agent
+    assert await until(js, "document.querySelectorAll('#page-missions .mission:not([hidden])').length === 2")
+
+
+@CHROME
+async def test_a_workspace_deleted_while_its_agents_run_keeps_them_in_the_room(stack):  # Review Focus 4
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    research = stack["server"].workspaces.create("Research")
+    agent = await stack["server"].agents.create("keep working", workspace=research["id"])
+    js = await open_mission(stack)
+    pick = "document.querySelector('#workspaces .workspace-pick')"
+    assert await until(js, f"{pick}?.querySelector('.count').textContent === '1'")
+    await js(f"{pick}.click(); true")  # the room shows only this workspace
+    assert await until(js, f"{station('a1')} !== null && !{station('a1')}.classList.contains('away')")
+    await js("document.querySelector('#workspaces .workspace-more').click();"
+             "const del = document.querySelector('#workspaces .delete'); del.click(); del.click(); true")
+    assert await until(js, "document.querySelectorAll('#workspaces .workspace').length === 0")
+    assert await until(js, f"!{station('a1')}.classList.contains('away')")  # the filter went with it
+    assert agent.state == "working" and agent.workspace is None  # still at work, ungrouped
+
+
+@CHROME
+async def test_the_usage_card_never_makes_up_a_number(stack):  # Review Focus 3
+    import time
+
+    accounts, server = stack["accounts"], stack["server"]
+    js = await open_mission(stack)
+    usage = "document.getElementById('usage')"
+    line = f"{usage}.querySelector('.usage-line')"
+    assert await until(js, f"{line}?.textContent === 'Default · Within limits'")
+    assert await js(f"{usage}.querySelector('.usage-ring').hidden") is True
+    assert "%" not in await js(f"{usage}.textContent")  # Claude Code reported no number: none is shown
+    later = time.time() + 3600
+    accounts.set_limit("default", later)
+    server._accounts_changed()
+    assert await until(js, f"{line}.textContent.startsWith('Default · At its limit until ')")
+    assert "%" not in await js(f"{usage}.textContent")
+    accounts._limits.clear()
+    accounts.set_usage("default", 64.0, later, "five_hour")
+    server._accounts_changed()
+    assert await until(js, f"{line}.textContent.startsWith('Default · 64% used · resets ')")
+    assert await js(f"{usage}.querySelector('.usage-ring').hidden") is False
+    assert await js(f"{usage}.querySelector('.usage-ring-text').textContent") == "64%"
+
+
+@CHROME
+async def test_the_usage_card_opens_settings_at_accounts(stack):
+    from test_tab_menu import active_is, click_in, connected, frame, pick, window_page
+
+    js = await window_page(stack)
+    await pick(js, "/mission")
+    assert await until(js, connected("/mission"))
+    await click_in(js, "/mission", "#usage")
+    assert await until(js, f"{active_is('/settings')} && {connected('/settings')}")
+    assert await until(js, f"{frame('/settings')}.location.hash === '#accounts-section'")
+
+
+# ---- the controller's rulings for Task 16 ------------------------------------------------------------------------------
+
+@CHROME
+async def test_the_rooms_note_follows_whether_any_agent_exists_at_all(stack):  # carried from Task 11's review
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    server = stack["server"]
+    research = server.workspaces.create("Research")
+    server.workspaces.create("Empty")  # nothing in it
+    await server.agents.create("keep working", workspace=research["id"])
+    js = await open_mission(stack)
+    note = "document.querySelector('.empty-note')"
+    shown = f"getComputedStyle({note}).display !== 'none'"
+
+    def pick(name):
+        return ("[...document.querySelectorAll('#workspaces .workspace-pick')]"
+                f".find(button => button.querySelector('.name').textContent === {json.dumps(name)})")
+
+    assert await until(js, f"{pick('Empty')} !== undefined && {station('a1')} !== null")
+    assert await until(js, f"!({shown})")  # an agent stands in the room: no note
+    await js(f"{pick('Empty')}.click(); true")  # agents exist, none in this workspace
+    assert await until(js, shown)
+    assert await js(f"{note}.textContent") == "No missions in this workspace"
+    assert await js("document.querySelector('.room').dataset.empty") == "true"
+    await js(f"{pick('Empty')}.click(); true")  # picked again: every agent, and no note
+    assert await until(js, f"!({shown})")
+    await js(f"{pick('Empty')}.click(); true")
+    assert await until(js, shown)
+    await server.agents.close("a1")  # no agent anywhere: the room says how to start one
+    assert await until(js, f"{note}.textContent === 'Start a mission below' && {shown}")
+
+
+@CHROME
+async def test_the_usage_card_shows_an_icon_when_the_menu_shrinks_to_icons(stack):  # carried from Task 12's review
+    import time
+
+    accounts, server = stack["accounts"], stack["server"]
+    usage = "document.getElementById('usage')"
+    mark = f"{usage}.querySelector('.usage-icon')"
+    js = await open_with(stack, size=NARROW)
+    assert await until(js, f"{usage}.querySelector('.usage-line') !== null")
+    menu = await js(f"{BOX}(document.getElementById('menu'))")
+
+    async def narrow_card():
+        card = await js(f"{BOX}({usage})")
+        assert menu[0] <= card[0] and card[2] <= menu[2], card  # inside the menu, never wider than it
+        assert card[2] - card[0] >= 36 and card[3] - card[1] >= 36, card  # a button to press, not an empty pill
+        assert await js(f"getComputedStyle({usage}.querySelector('.usage-words')).display") == "none"
+        icon = await js(f"{BOX}({mark})")
+        assert icon[2] - icon[0] >= 16 and icon[3] - icon[1] >= 16, icon  # an icon, seen
+        assert card[0] <= icon[0] and icon[2] <= card[2] and card[1] <= icon[1] and icon[3] <= card[3], (card, icon)
+        assert await js("document.documentElement.scrollWidth <= innerWidth")
+
+    await narrow_card()
+    accounts.set_usage("default", 64.0, time.time() + 3600, "five_hour")  # a number was reported: no ring bursts out
+    server._accounts_changed()
+    assert await until(js, f"{usage}.querySelector('.usage-ring-text').textContent === '64%'")
+    await narrow_card()
+    js = await open_with(stack, size=WIDE)  # at full width the words say it, not the icon
+    assert await until(js, f"{usage}.querySelector('.usage-line') !== null")
+    assert await js(f"getComputedStyle({mark}).display") == "none"
+
+
+@CHROME
+async def test_moving_an_agent_never_waits_for_an_answer(stack):  # from Task 6: an unknown agent gets no reply
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    server = stack["server"]
+    agents = server.agents
+    research = server.workspaces.create("Research")
+    for name in ("one", "two"):
+        await agents.create(name)
+    asked, real = [], agents.set_workspace
+
+    def set_workspace(agent_id, workspace_id):  # the app finds no agent a1, and (as with an unknown one) says nothing
+        asked.append((agent_id, workspace_id))
+        return False if agent_id == "a1" else real(agent_id, workspace_id)
+
+    agents.set_workspace = set_workspace
+    js = await open_mission(stack)
+    await js(f"{page_link('missions')}.click(); true")
+
+    def move(agent_id):
+        return f"document.querySelector('#page-missions .mission[data-id=\"{agent_id}\"] select.move')"
+
+    assert await until(js, f"{move('a1')} !== null && {move('a2')} !== null")
+    await js(f"{move('a1')}.value = {json.dumps(research['id'])}; {move('a1')}.dispatchEvent(new Event('change')); true")
+    await wait_for(lambda: asked == [("a1", research["id"])])
+    assert await js(f"{move('a1')}.disabled") is False  # nothing waits for an answer that never comes
+    assert await js("document.getElementById('task-note').textContent") == ""
+    await js(f"{move('a2')}.value = {json.dumps(research['id'])}; {move('a2')}.dispatchEvent(new Event('change')); true")
+    await wait_for(lambda: agents.agents["a2"].workspace == research["id"])  # the next move goes at once
+    assert asked[-1] == ("a2", research["id"])
+    assert await until(js, f"{move('a2')}.value === {json.dumps(research['id'])} && !{move('a2')}.disabled")
+
+
+@CHROME
+async def test_workspace_menus_keep_one_width_and_the_columns_still_line_up(stack):  # Task 14's alignment test, with it
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    server = stack["server"]
+    short, other = server.workspaces.create("QA"), server.workspaces.create("Docs")
+    for words, workspace in (("one", short["id"]), ("two", other["id"]), ("three", None)):
+        await server.agents.create(words, workspace=workspace)
+    js = await open_mission(stack)
+    await js(f"{page_link('missions')}.click(); true")
+    rows = "[...document.querySelectorAll('#page-missions .mission:not([hidden])')]"
+
+    def edges(part, side):  # one edge of one part, for each row shown
+        return f"{rows}.map(row => Math.round(row.querySelector('{part}').getBoundingClientRect().{side}))"
+
+    async def lined_up():
+        for part, side in (("select.move", "left"), ("select.move", "right"), (".meta", "left"), (".chip", "right"),
+                           (".time", "left")):
+            found = await js(edges(part, side))
+            assert len(set(found)) == 1, (part, side, found)  # the same place in every row, whatever the name says
+        [width] = set(await js(f"{rows}.map(row => Math.round(row.querySelector('select.move')"
+                               ".getBoundingClientRect().width))"))
+        return width
+
+    assert await until(js, f"{edges('select.move', 'left')}.length === 3")
+    assert await js(f"{rows}.map(row => row.querySelector('select.move').value)") \
+        == ["", other["id"], short["id"]]  # newest first: three different things to say
+    before = await lined_up()
+    assert before > 0
+    server.workspaces.create("A workspace with a very long name indeed")  # a longer name: no wider a menu
+    server._send_all(server._workspaces_message())
+    assert await until(js, f"{rows}.every(row => row.querySelector('select.move').options.length === 4)")
+    assert await lined_up() == before
+
+
+@CHROME
+async def test_the_shrunk_menu_lists_workspaces_as_icons_that_fit(stack):  # found by looking at a screenshot
+    server = stack["server"]
+    server.workspaces.create("Research")
+    server.workspaces.create("Launch plan")
+    js = await open_with(stack, size=NARROW)
+    assert await until(js, "document.querySelectorAll('#workspaces .workspace-pick').length === 2")
+    menu = await js(f"{BOX}(document.getElementById('menu'))")
+    assert await js("document.getElementById('menu').scrollWidth <= document.getElementById('menu').clientWidth")
+    for selector in ("#workspaces .workspace-pick", "#workspaces .workspace-new", "#usage"):
+        box = await js(f"{BOX}(document.querySelector({json.dumps(selector)}))")
+        assert menu[0] <= box[0] and box[2] <= menu[2], (selector, box, menu)  # inside the menu
+        assert abs((box[0] + box[2]) / 2 - (menu[0] + menu[2]) / 2) <= 2, (selector, box, menu)  # as centred as the rest
+        assert box[2] - box[0] >= 36, (selector, box)  # a button to press
+    assert await js("getComputedStyle(document.querySelector('#workspaces .workspace-pick .name')).display") == "none"
+
+
+@CHROME
+async def test_a_settings_tab_already_open_moves_to_accounts_without_reloading_and_only_for_a_plain_section(stack):
+    import asyncio
+
+    from test_tab_menu import active_is, click_in, connected, frame, in_frame, pick, window_page
+
+    js = await window_page(stack)
+    await pick(js, "/settings")
+    assert await until(js, connected("/settings"))
+    assert await js(f"(() => {{ const page = {frame('/settings')}; page.marker = 'same page'; return page.marker; }})()") \
+        == "same page"
+    await pick(js, "/mission")
+    assert await until(js, connected("/mission"))
+    for section in ("#Accounts", "#a b", "#<img src=x>", "#1x", "#" + "a" * 50):  # not a plain section: dropped
+        path = json.dumps("/settings" + section)
+        await in_frame(js, "/mission", f"parent.postMessage({{type: 'tab', path: {path}}}, location.origin); true")
+        assert await until(js, active_is("/settings"))
+        assert await js(f"{frame('/settings')}.location.hash") == "", section
+        await pick(js, "/mission")
+    await click_in(js, "/mission", "#usage")
+    assert await until(js, f"{active_is('/settings')} && {frame('/settings')}.location.hash === '#accounts-section'")
+    assert await js(f"{frame('/settings')}.marker") == "same page"  # its section moved: the page was not reloaded
+    await asyncio.sleep(0.2)
+    assert await js(f"{frame('/settings')}.document.getElementById('status')?.dataset.state") == "connected"
