@@ -349,3 +349,62 @@ def test_deleting_a_workflow_waits_out_a_short_hold(tmp_path, monkeypatch):
     monkeypatch.setattr(platforms, "WINDOWS", True)
     store.delete(saved.slug)
     assert held and store.get(saved.slug) is None
+
+
+def test_a_schedules_moments_for_the_calendar():
+    from ai_browser.brain.workflows import Schedule
+
+    monday = local(2026, 10, 5, 0, 0)  # a Monday, local time
+    week = monday + 7 * 86400
+    weekdays = Schedule.parse("weekdays 09:00").moments(monday, monday, week)
+    assert [datetime.datetime.fromtimestamp(moment).strftime("%a %H:%M") for moment in weekdays] == [
+        "Mon 09:00", "Tue 09:00", "Wed 09:00", "Thu 09:00", "Fri 09:00"]
+    assert len(Schedule.parse("daily 09:00").moments(monday, monday, week, most=3)) == 3
+    every = Schedule.parse("every 2h")
+    assert every.moments(monday, monday, monday + 7 * 3600) == [monday + 7200, monday + 14400, monday + 21600]
+    assert every.moments(monday, monday + 3 * 3600, monday + 5 * 3600) == [monday + 14400]  # from the last run
+    assert every.moments(monday, monday, week, most=1) == [monday + 7200]
+
+
+def test_the_runner_lists_the_next_runs_of_scheduled_templates(tmp_path):
+    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
+
+    store = WorkflowStore(tmp_path)
+    store.save({"name": "Morning report", "instructions": "Write it", "trigger": "schedule",
+                "schedule": "daily 09:00"})
+    store.save({"name": "Check often", "instructions": "Check", "trigger": "schedule", "schedule": "every 2h"})
+    store.save({"name": "By hand", "instructions": "Do it"})
+    now = local(2026, 10, 5, 8, 0)
+    rows = {row["slug"]: row for row in WorkflowRunner(store, None, clock=lambda: now).upcoming()}
+    assert set(rows) == {"morning-report", "check-often"}
+    morning = rows["morning-report"]
+    assert morning["runs"][0] == local(2026, 10, 5, 9, 0) and 61 <= len(morning["runs"]) <= 63
+    assert morning["every"] is None and morning["schedule"] == "daily 09:00"
+    assert rows["check-often"] == {"slug": "check-often", "name": "Check often", "schedule": "every 2h",
+                                   "every": 7200, "runs": [now + 7200]}
+
+
+async def test_pages_get_the_next_runs_with_the_workflows(fake_claude, tmp_path):
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
+
+    home = tmp_path / "home"
+    agents = AgentManager(home, claude=fake_claude[0])
+    workflows = WorkflowStore(home)
+    workflows.save({"name": "Morning report", "instructions": "Write it", "trigger": "schedule",
+                    "schedule": "daily 09:00"})
+    server = AppServer(home, agents, workflows=workflows, runner=WorkflowRunner(workflows, agents))
+    url = await server.start()
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+            await ws.send(json.dumps({"type": "workflows"}))
+            while True:
+                message = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if message["type"] == "workflows_snapshot":
+                    break
+            [row] = message["next_runs"]
+            assert row["slug"] == "morning-report" and len(row["runs"]) >= 61
+    finally:
+        await server.stop()

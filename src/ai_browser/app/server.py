@@ -1687,7 +1687,8 @@ class AppServer:
         workflows = [{**workflow.public(), "path": str(self.workflows.path_of(workflow.slug)),
                       "note": self.runner.notes.get(workflow.slug, "") if self.runner else ""}
                      for workflow in self.workflows.all()]
-        return {"type": "workflows_snapshot", "workflows": workflows, "problems": self.workflows.problems()}
+        return {"type": "workflows_snapshot", "workflows": workflows, "problems": self.workflows.problems(),
+                "next_runs": self.runner.upcoming() if self.runner is not None else []}  # the Calendar's
 
     def _attach_command(self, ws: WebSocket, queue: asyncio.Queue, kind: str, message: dict) -> None:
         """The composer's Attach: a file comes in pieces, staged for this page until its task starts (or it is
