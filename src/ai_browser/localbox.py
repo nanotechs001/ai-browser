@@ -10,12 +10,15 @@ user's logins, cookies or history, and never one of the user's own profile folde
 - Its downloads stay in the sandbox's folders, never the user's Downloads, even while no session is connected.
 - Lock files a browser left are cleared only once its process is gone. A process counts as the profile's browser only
   when its command line names the profile (macOS, Linux), or this process started it for this profile.
-- A profile folder that is a link, or one of the user's own browser folders, is refused before anything is touched.
+- Folders that are links (the sandboxes folder, a profile's, its profile, Default, Preferences), and the user's own
+  browser folders, are refused before anything is touched, again once the profile's lock is held, and the
+  preferences are written without following a link.
 It is a separate profile on this computer, not a separate machine: Settings and the README say so."""
 
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import secrets
@@ -82,20 +85,79 @@ def _answers(profile: Path) -> bool:
     return found is not None and _listening(found[0])
 
 
-def _keep_downloads_in(profile: Path, folder: Path) -> None:
-    """Downloads land in the sandbox's own folder even while no session says where: CDP's download choice ends with the
-    session that set it, and the browser's own default is the user's Downloads folder. The profile's preference,
-    written before each start (the browser isn't running then), names the sandbox's folder instead."""
-    path = profile / "Default" / "Preferences"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
+def _is_link(path: Path) -> bool:
+    """Whether the last step of the path is a link (a symbolic link, or a Windows junction: the real path of the step
+    isn't its parent's real path plus its name)."""
+    return path.is_symlink() or os.path.realpath(path) != os.path.join(os.path.realpath(path.parent), path.name)
+
+
+def _link_words(name: str) -> str:
+    return (f"the sandbox folders for profile {name} include a link, or one of your own browser's folders: AI Browser "
+            "won't use or change them. Remove the link, then try again")
+
+
+def _preferences(data: object, folder: Path) -> bytes:
     data = data if isinstance(data, dict) else {}
     for key in ("download", "savefile"):
         data[key] = {**(data.get(key) if isinstance(data.get(key), dict) else {}), "default_directory": str(folder)}
     data["download"]["prompt_for_download"] = False
-    write_atomic(path, json.dumps(data).encode("utf-8"), 0o600)
+    return json.dumps(data).encode("utf-8")
+
+
+def _keep_downloads_in(profile: Path, folder: Path) -> None:
+    """Downloads land in the sandbox's own folder even while no session says where: CDP's download choice ends with the
+    session that set it, and the browser's own default is the user's Downloads folder. The profile's preference,
+    written before each start (the browser isn't running then), names the sandbox's folder instead. Nothing here
+    follows a link, in case one was put there after the checks (to the user's real profile, say): each step is opened
+    from the one before it (macOS, Linux); Windows can't, so it checks each step right before the write. Also the
+    profile's mode: none of the user's other programs' business (mkdir's mode is cut by the umask)."""
+    words = _link_words(profile.parent.name)
+    path = profile / "Default" / "Preferences"
+    if platforms.WINDOWS:
+        if any(_is_link(step) for step in (profile, profile / "Default", path)):
+            raise ChromeError(words)
+        os.chmod(profile, 0o700)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        write_atomic(path, _preferences(data, folder), 0o600)
+        return
+    folder_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        root = os.open(profile, folder_flags)
+        try:
+            os.fchmod(root, 0o700)
+            with contextlib.suppress(FileExistsError):
+                os.mkdir("Default", 0o700, dir_fd=root)
+            default = os.open("Default", folder_flags, dir_fd=root)
+        finally:
+            os.close(root)
+        try:
+            try:
+                with os.fdopen(os.open("Preferences", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=default), "rb") as handle:
+                    data = json.loads(handle.read().decode("utf-8"))
+            except (OSError, ValueError) as exc:
+                if getattr(exc, "errno", None) == errno.ELOOP:
+                    raise
+                data = {}
+            temp = f".Preferences.{os.getpid()}.tmp"
+            try:
+                with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600,
+                                       dir_fd=default), "wb") as handle:
+                    os.fchmod(handle.fileno(), 0o600)
+                    handle.write(_preferences(data, folder))
+                os.rename(temp, "Preferences", src_dir_fd=default, dst_dir_fd=default)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.unlink(temp, dir_fd=default)
+                raise
+        finally:
+            os.close(default)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):  # a link (macOS says ENOTDIR for a linked folder)
+            raise ChromeError(words) from None
+        raise
 
 
 def _lock_pid(profile: Path) -> int | None:
@@ -149,9 +211,10 @@ class LocalSandboxes:
             raise ValueError(f"profile {profile!r}: use lowercase letters, digits and dashes (max 31)")
         folder = self._folder(profile)
         self._refuse_unsafe(folder)
+        folder.mkdir(parents=True, exist_ok=True)
         work_host = folder / "work"
-        work_host.mkdir(parents=True, exist_ok=True)
-        with self._one_start(folder):
+        with self._one_start(folder):  # (which checks again, with the lock held)
+            work_host.mkdir(exist_ok=True)
             port, created = self._running_port(folder), False
             if port is None:
                 port, created = self._launch(folder, fresh), True
@@ -160,15 +223,14 @@ class LocalSandboxes:
 
     @staticmethod
     def _unsafe(folder: Path) -> str | None:
-        """Why the profile's folders can't be used, or None: a link (a way into some other folder, maybe a browser's of
-        the user), or one of the user's own browser folders. Checked before anything is touched: launch refuses those
-        too, but only after the locks, the preferences and the mode of the folder were changed."""
+        """Why the profile's folders can't be used, or None: a link anywhere on the way (a way into some other folder,
+        maybe a browser's of the user), or one of the user's own browser folders. Checked before anything is touched
+        (launch refuses those too, but only after locks, preferences and modes were changed) and again once the lock is
+        held: a link may appear while a start waits."""
         profile = folder / "profile"
-        if (folder.is_symlink() or profile.is_symlink() or os.path.realpath(profile) !=
-                os.path.join(os.path.realpath(folder), "profile") or
-                any(_same_folder(profile, own) for own in own_browser_dirs())):
-            return (f"the sandbox folder for profile {folder.name} is a link, or one of your own browser's folders: AI "
-                    "Browser won't use or change it. Remove the link, then try again")
+        steps = (folder.parent, folder, profile, profile / "Default", profile / "Default" / "Preferences")
+        if any(_is_link(step) for step in steps) or any(_same_folder(profile, own) for own in own_browser_dirs()):
+            return _link_words(folder.name)
         return None
 
     def _refuse_unsafe(self, folder: Path) -> None:
@@ -182,12 +244,16 @@ class LocalSandboxes:
         one. The wait covers a holder's worst case (it waits for an answer, launches, then stops what didn't answer).
         A lock is per open file: a start that has to stop its browser calls _end, never stop."""
         deadline = time.monotonic() + ANSWER_WAIT + READY_TIMEOUT + STOP_WAIT + KILL_WAIT + LOCK_MARGIN
-        while (lock := platforms.lock_file(folder / "start.lock")) is None:
+        while True:
+            self._refuse_unsafe(folder)  # before each try: opening the lock file follows a link that came meanwhile
+            if (lock := platforms.lock_file(folder / "start.lock")) is not None:
+                break
             if time.monotonic() > deadline:
                 raise ChromeError(f"another start or stop of the sandbox browser for profile {folder.name} didn't "
                                   "finish: try again")
             time.sleep(0.1)
         try:
+            self._refuse_unsafe(folder)  # and with the lock held: nothing below follows a link that came while waiting
             yield
         finally:
             lock.close()
@@ -255,11 +321,14 @@ class LocalSandboxes:
             raise ChromeError(NO_BROWSER)
         profile = folder / "profile"
         profile.mkdir(parents=True, exist_ok=True)
-        os.chmod(profile, 0o700)  # mkdir's mode is cut by the umask: none of the user's other programs' business
         (folder / "downloads").mkdir(exist_ok=True)  # there before the browser could write a download to its place
-        _keep_downloads_in(profile, folder / "downloads")
         flags = FLAGS + (MAC_FLAGS if sys.platform == "darwin" else ())
-        process = launch(profile, headless=True, extra_args=flags, binary=binary, detach=True)
+        try:
+            _keep_downloads_in(profile, folder / "downloads")  # (and the profile's mode)
+            process = launch(profile, headless=True, extra_args=flags, binary=binary, detach=True)
+        except BaseException:
+            self._discard(folder, fresh)
+            raise
         _launched[process.pid] = process
         write_atomic(folder / RECORD, json.dumps({"pid": process.pid, "binary": binary, "fresh": fresh}).encode(
             "utf-8"), 0o600)
@@ -270,12 +339,19 @@ class LocalSandboxes:
                 return found[0]
             if process.poll() is not None:
                 self._clear(folder)
+                self._discard(folder, fresh)
                 raise ChromeError(f"the sandbox browser ({Path(binary).name}) stopped as it started (exit "
                                   f"{process.returncode}): try again, or run `{platforms.command('doctor')}`")
             if time.monotonic() > deadline:
                 self._end(folder)  # (not stop: this start holds the lock)
                 raise ChromeError(f"the sandbox browser ({Path(binary).name}) didn't answer within {READY_TIMEOUT}s")
             time.sleep(0.1)
+
+    def _discard(self, folder: Path, fresh: bool) -> None:
+        """A throwaway whose browser never ran leaves no profile behind: its record, which would tell stop, is gone."""
+        self._refuse_unsafe(folder)
+        if fresh and (folder / "profile").exists():
+            platforms.rmtree(folder / "profile")
 
     def ws_url(self, info: SandboxInfo) -> str:
         found = _port_of(self._folder(info.profile) / "profile")
@@ -309,12 +385,12 @@ class LocalSandboxes:
         folder = self._folder(profile)
         if not PROFILE_RE.match(profile) or not folder.is_dir():
             return
-        self._refuse_unsafe(folder)
-        with self._one_start(folder):
+        with self._one_start(folder):  # (which refuses a link, before and after it takes the lock)
             self._end(folder)
 
     def _end(self, folder: Path) -> None:
         """stop's work, with the profile's start lock held by the caller."""
+        self._refuse_unsafe(folder)  # before it clears or removes anything
         profile = folder / "profile"
         throwaway = self._record(folder).get("fresh") is True  # never from the name: a named profile keeps its logins
         pid = self._owner(folder)

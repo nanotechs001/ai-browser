@@ -269,43 +269,165 @@ def test_a_launched_process_that_ended_doesnt_hide_a_live_holder_of_its_pid(boxe
         holder.wait()
 
 
-@pytest.mark.parametrize("how", ["profile is a link", "folder is a link", "is a browser folder"])
-def test_a_link_or_the_users_browser_folder_is_refused_before_anything_changes(boxes, tmp_path, monkeypatch, how):  # I3
-    def never(*args, **kwargs):
-        raise AssertionError("a browser started")
+def never(*args, **kwargs):
+    raise AssertionError("a browser started")
 
+
+@pytest.fixture
+def stand_in(tmp_path, monkeypatch):
+    """A stand-in for one of the user's own browser folders (with the files a running browser keeps), and no browser
+    started or user folder named by anything the test does."""
     monkeypatch.setattr(localbox, "launch", never)
     monkeypatch.setattr(localbox, "own_browser_dirs", lambda: [])
-    stand_in = tmp_path / "UserBrowser"  # a stand-in for one of the user's own browser folders
-    (stand_in / "Default").mkdir(parents=True)
-    (stand_in / "Default" / "Preferences").write_text('{"download": {"default_directory": "/me/Downloads"}}',
-                                                      encoding="utf-8")
-    (stand_in / "DevToolsActivePort").write_text("9\n/devtools/browser/x\n", encoding="utf-8")
-    (stand_in / "lockfile").write_text("", encoding="utf-8")
-    symlink_or_skip("host-1", stand_in / "SingletonLock")
-    os.chmod(stand_in, 0o755)
+    folder = tmp_path / "UserBrowser"
+    (folder / "Default").mkdir(parents=True)
+    (folder / "Default" / "Preferences").write_text('{"download": {"default_directory": "/me/Downloads"}}',
+                                                    encoding="utf-8")
+    (folder / "DevToolsActivePort").write_text("9\n/devtools/browser/x\n", encoding="utf-8")
+    (folder / "lockfile").write_text("", encoding="utf-8")
+    symlink_or_skip("host-1", folder / "SingletonLock")
+    os.chmod(folder, 0o755)
+    return folder
+
+
+@pytest.mark.parametrize("how", ["profile is a link", "folder is a link", "is a browser folder", "Default is a link",
+                                 "Preferences is a link"])
+def test_a_link_or_the_users_browser_folder_is_refused_before_anything_changes(boxes, tmp_path, monkeypatch, stand_in,
+                                                                               how):  # I3, R2
     folder = boxes.home / "sandboxes" / "pytest"
     (boxes.home / "sandboxes").mkdir(parents=True)
     if how == "profile is a link":
         folder.mkdir()
         symlink_or_skip(stand_in, folder / "profile")
-        watched = stand_in
+        watched = [stand_in]
     elif how == "folder is a link":
         (tmp_path / "elsewhere").mkdir()
         shutil.copytree(stand_in, tmp_path / "elsewhere" / "profile", symlinks=True)
         symlink_or_skip(tmp_path / "elsewhere", folder)
-        watched = tmp_path / "elsewhere"
-    else:
+        watched = [tmp_path / "elsewhere"]
+    elif how == "is a browser folder":
         shutil.copytree(stand_in, folder / "profile", symlinks=True)
         monkeypatch.setattr(localbox, "own_browser_dirs", lambda: [folder / "profile"])
-        watched = folder / "profile"
-    before = _tree(watched)
+        watched = [folder / "profile"]
+    elif how == "Default is a link":  # a link one level deeper: the user's real Default, Preferences and all
+        (folder / "profile").mkdir(parents=True)
+        symlink_or_skip(stand_in / "Default", folder / "profile" / "Default")
+        watched = [stand_in, folder / "profile"]
+    else:
+        (folder / "profile" / "Default").mkdir(parents=True)
+        symlink_or_skip(stand_in / "Default" / "Preferences", folder / "profile" / "Default" / "Preferences")
+        watched = [stand_in, folder / "profile"]
+    before = [_tree(path) for path in watched]
     with pytest.raises(ChromeError, match="won't use"):
         boxes.start("pytest")
     with pytest.raises(ChromeError, match="won't use"):
         boxes.stop("aib-pytest")
-    assert _tree(watched) == before and not (folder / "work").exists() and not (folder / "start.lock").exists()
+    assert [_tree(path) for path in watched] == before
+    assert not (folder / "work").exists() and not (folder / "start.lock").exists()
+    assert (stand_in / "Default" / "Preferences").read_text(encoding="utf-8").count("/me/Downloads") == 1
     assert boxes.running() == [] and not boxes.is_running("aib-pytest")
+
+
+@pytest.mark.parametrize("how", ["profile", "folder"])
+@pytest.mark.parametrize("call", ["start", "stop"])
+def test_a_link_that_appears_while_a_start_or_stop_waits_for_the_lock_is_refused(boxes, tmp_path, stand_in, how,
+                                                                                 call):  # R1
+    name = "fresh-abcdef" if call == "stop" else "pytest"  # a throwaway: stop would remove its profile
+    folder = boxes.home / "sandboxes" / name
+    (folder / "profile").mkdir(parents=True)
+    (folder / "browser.json").write_text(json.dumps({"pid": 0, "binary": "x", "fresh": True}), encoding="utf-8")
+    shutil.copytree(stand_in, tmp_path / "elsewhere" / "profile", symlinks=True)
+    shutil.copy(folder / "browser.json", tmp_path / "elsewhere" / "browser.json")
+    watched = [stand_in] if how == "profile" else [tmp_path / "elsewhere"]
+    opened = []
+    real = platforms.lock_file
+
+    def lock_file(path):
+        if not opened:  # another opener holds the lock; the link appears while this one waits; then it lets go
+            opened.append(path)
+            if how == "profile":
+                shutil.rmtree(folder / "profile")
+                symlink_or_skip(stand_in, folder / "profile")
+            else:
+                shutil.rmtree(folder)
+                symlink_or_skip(tmp_path / "elsewhere", folder)
+            return None
+        return real(path)
+
+    before = [_tree(path) for path in watched]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(platforms, "lock_file", lock_file)
+        with pytest.raises(ChromeError, match="won't use"):
+            getattr(boxes, call)(name if call == "start" else f"aib-{name}")
+    assert [_tree(path) for path in watched] == before
+
+
+def test_the_end_of_a_stop_refuses_a_link_before_it_clears_or_removes_anything(boxes, tmp_path, stand_in):  # R1
+    folder = boxes.home / "sandboxes" / "fresh-abcdef"
+    folder.mkdir(parents=True)
+    symlink_or_skip(stand_in, folder / "profile")
+    (folder / "browser.json").write_text(json.dumps({"pid": 0, "binary": "x", "fresh": True}), encoding="utf-8")
+    before = _tree(stand_in)
+    with pytest.raises(ChromeError, match="won't use"):
+        boxes._end(folder)
+    assert _tree(stand_in) == before and (folder / "browser.json").is_file()
+
+
+@pytest.mark.posix_only
+@pytest.mark.parametrize("how", ["Default", "Preferences"])
+def test_the_download_folder_is_never_written_through_a_link(tmp_path, stand_in, how):  # R2: swapped in later
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    if how == "Default":
+        symlink_or_skip(stand_in / "Default", profile / "Default")
+    else:
+        (profile / "Default").mkdir()
+        symlink_or_skip(stand_in / "Default" / "Preferences", profile / "Default" / "Preferences")
+    before = _tree(stand_in)
+    with pytest.raises(ChromeError, match="won't use"):
+        localbox._keep_downloads_in(profile, tmp_path / "downloads")
+    assert _tree(stand_in) == before
+
+
+def test_a_link_in_place_of_the_sandboxes_folder_is_refused(boxes, tmp_path, stand_in):  # R3
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "pytest").mkdir(parents=True)
+    shutil.copytree(stand_in, elsewhere / "pytest" / "profile", symlinks=True)
+    boxes.home.mkdir()
+    symlink_or_skip(elsewhere, boxes.home / "sandboxes")
+    before = _tree(elsewhere)
+    with pytest.raises(ChromeError, match="won't use"):
+        boxes.start("pytest")
+    with pytest.raises(ChromeError, match="won't use"):
+        boxes.stop("aib-pytest")
+    assert _tree(elsewhere) == before and boxes.running() == [] and not boxes.is_running("aib-pytest")
+
+
+@pytest.mark.parametrize("how", ["stops as it starts", "can't start"])
+def test_a_throwaway_whose_browser_never_ran_keeps_no_profile_but_a_named_one_keeps_its_own(boxes, monkeypatch,
+                                                                                          how):  # R4
+    # a real launch, of a program that isn't a browser: python refuses --user-data-dir and exits
+    binary = sys.executable if how == "stops as it starts" else str(boxes.home / "no-such-browser")
+    monkeypatch.setattr(localbox, "sandbox_binary", lambda: binary)
+    with pytest.raises((ChromeError, OSError)):
+        boxes.start(fresh=True)
+    root = boxes.home / "sandboxes"
+    (folder,) = list(root.iterdir())
+    assert folder.name.startswith("fresh-") and (folder / "work").is_dir() and not (folder / "profile").exists()
+    with pytest.raises((ChromeError, OSError)):
+        boxes.start("pytest")
+    assert (root / "pytest" / "profile").is_dir()  # its logins, if any, stay
+
+
+def test_a_throwaway_folder_that_is_a_link_is_never_removed_through_the_link(boxes, stand_in, monkeypatch):  # R4
+    monkeypatch.setattr(localbox.secrets, "token_hex", lambda n: "abcdef")
+    folder = boxes.home / "sandboxes" / "fresh-abcdef"
+    folder.mkdir(parents=True)
+    symlink_or_skip(stand_in, folder / "profile")
+    before = _tree(stand_in)
+    with pytest.raises(ChromeError, match="won't use"):
+        boxes.start(fresh=True)
+    assert _tree(stand_in) == before
 
 
 @BROWSER
