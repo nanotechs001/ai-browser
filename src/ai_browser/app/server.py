@@ -1911,9 +1911,7 @@ class AppServer:
 
     def _skills(self) -> list:
         if self._catalog is None:  # the same skills the agents' engines see
-            self._catalog = Catalog.discover(Path.home() / ".claude",
-                                             platforms.claude_desktop_dir(),
-                                             project_root() / "skills", set(load_config(self.home).blocked_skills))
+            self._catalog = Catalog.of_user(project_root() / "skills", set(load_config(self.home).blocked_skills))
         return self._catalog.all()
 
     def _skills_summary(self) -> dict:

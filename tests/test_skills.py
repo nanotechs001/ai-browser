@@ -199,3 +199,27 @@ def test_the_website_qa_skill_says_where_qa_crawls():
     assert "only when the user asks for their own browser" in section and "sandbox_start(chrome=true)" in section
     assert ("**Bot checks:** if qa or open stops at a bot check, stop and tell the user. Never switch browsers, "
             "profiles or tools to get past it: the user solves it, or skips the site.") in section  # wave 1's line
+
+
+async def test_no_tests_skill_catalog_reads_the_users_own_folders(tmp_path, tmp_path_factory, monkeypatch):
+    """The final review, F12: tests never touch ~/.claude, and Mission Control's pages ask for the skills on every
+    snapshot. The app's catalog and an engine's own (where no catalog is handed in) read throwaway folders."""
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.server import AppServer
+    from ai_browser.engine import Engine
+    from conftest import REAL_HOME
+
+    roots = []
+
+    def spy(cls, claude_home, app_support, *rest):  # where it would read, never read here
+        roots.extend([claude_home, app_support])
+        return Catalog([], set())
+
+    monkeypatch.setattr(Catalog, "discover", classmethod(spy))
+    AppServer(tmp_path / "home", AgentManager(tmp_path / "home"))._skills()
+    assert Engine(home=tmp_path / "engine").catalog is not None
+    assert len(roots) == 4
+    spare = tmp_path_factory.getbasetemp().resolve()  # pytest's own temporary folders (under the home on Windows)
+    for root in roots:
+        where = Path(os.path.realpath(root))
+        assert not where.is_relative_to(REAL_HOME.resolve()) or where.is_relative_to(spare), root

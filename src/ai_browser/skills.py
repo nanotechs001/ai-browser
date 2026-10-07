@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
+from . import platforms
 from .config import READ_LIMIT
 
 FILE_LIST_LIMIT = 30
@@ -64,6 +65,12 @@ def _one_line(text) -> str:
     return " ".join(str(text or "").split())
 
 
+def user_folders() -> tuple[Path, Path]:
+    """Where the user's own skills are: Claude Code's folder (~/.claude: personal skills and plugins) and the Claude
+    desktop app's (the skills synced from claude.ai). The test suite points it at a throwaway folder."""
+    return Path.home() / ".claude", platforms.claude_desktop_dir()
+
+
 class Catalog:
     def __init__(self, sources: list[SkillSource], blocked: set[str]):
         self.sources = [source for source in sources if source.host_root.is_dir()]
@@ -94,6 +101,12 @@ class Catalog:
             has_scripts=(folder / "scripts").is_dir(),
             mount=source.mount,
         )
+
+    @classmethod
+    def of_user(cls, project_skills: Path, blocked: set[str]) -> "Catalog":
+        """The skills an agent sees: the user's own (user_folders) and the project's."""
+        claude_home, app_support = user_folders()
+        return cls.discover(claude_home, app_support, project_skills, blocked)
 
     @classmethod
     def discover(cls, claude_home: Path, app_support: Path, project_skills: Path, blocked: set[str]) -> "Catalog":
