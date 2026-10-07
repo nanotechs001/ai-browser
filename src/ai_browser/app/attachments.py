@@ -24,10 +24,10 @@ MAX_FILES = 10
 MAX_BYTES = 20_000_000  # 20 MB, as the pages count megabytes (1 MB is 1,000,000 bytes)
 CHUNK_CHARS = 1_048_576  # base64 characters in one piece: 768 KiB of the file
 FOLDER = "attachments"
-NAME_LIMIT = 120
+NAME_BYTES = 200  # a saved name's most UTF-8 bytes: with " (999)" it stays well under the 255 file systems allow
 IMAGES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
 UPLOAD_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
-_UNSAFE = re.compile(r'[\x00-\x1f\x7f-\x9f<>:"/\\|?*​-‏‪-‮⁦-⁩﻿]')
+_UNSAFE = re.compile(r'[\x00-\x1f\x7f-\x9f<>:"/\\|?*​-‏‪-‮⁦-⁩﻿\ud800-\udfff]')  # lone surrogates: no UTF-8
 _RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$)$", re.IGNORECASE)
 TOO_MANY = f"At most {MAX_FILES} files at once"
 TOO_BIG = "{name} is over 20 MB"
@@ -41,11 +41,17 @@ OUTSIDE = "The attachments folder in that folder leads somewhere else: rename or
 FULL = "There are too many files named {name} in attachments already"
 
 
+def _cut(text: str, most: int) -> str:
+    """At most `most` UTF-8 bytes of `text`, cut between characters, never inside one."""
+    return text.encode("utf-8")[:max(most, 0)].decode("utf-8", "ignore")
+
+
 def clean_name(name) -> str:
-    """A file's name as it is saved: its last part only (so "../x" is "x"), control characters, direction marks and
-    <>:"/\\|?* turned into "_", whitespace squeezed, no dot or space at either end, at most NAME_LIMIT characters
-    with its extension kept, and last of all Windows' reserved device names made plain: Windows reads the part before
-    the FIRST dot (so "con.tar.gz" and "NUL.txt.bak" count, and "con .txt" too). Never empty, never "." or ".."."""
+    """A file's name as it is saved: its last part only (so "../x" is "x"), control characters, direction marks, lone
+    surrogates and <>:"/\\|?* turned into "_", whitespace squeezed, no dot or space at either end, Windows' reserved
+    device names made plain (Windows reads the part before the FIRST dot, so "con.tar.gz" and "NUL.txt.bak" count, and
+    "con .txt" too), and at most NAME_BYTES bytes in UTF-8 with its extension kept: each part cut between characters
+    and left without a space or dot at its end. Never empty, never "." or ".."."""
     text = unicodedata.normalize("NFC", name) if isinstance(name, str) else ""
     text = re.split(r"[\\/]", text)[-1]
     text = " ".join(_UNSAFE.sub("_", text).split()).strip(" .")
@@ -54,13 +60,13 @@ def clean_name(name) -> str:
         stem, suffix = text, ""
     if not stem.strip(" ."):
         stem = "file"
-    suffix = suffix[:16]
-    stem = stem[:NAME_LIMIT - len(suffix) - 1].rstrip(" .") or "file"
-    cleaned = f"{stem}.{suffix}" if suffix else stem
-    head, dot, rest = cleaned.partition(".")
+    suffix = suffix[:16].rstrip(" .")
+    head, dot, rest = stem.partition(".")  # the name's part before its first dot
     if _RESERVED.fullmatch(head.rstrip(" .")):
-        head = "file"
-    return head + dot + rest
+        stem = "file" + dot + rest
+    room = NAME_BYTES - (len(suffix.encode("utf-8")) + 1 if suffix else 0)
+    stem = _cut(stem, room).rstrip(" .") or "file"
+    return f"{stem}.{suffix}" if suffix else stem
 
 
 def _numbered(name: str, number: int) -> str:
@@ -84,8 +90,9 @@ def note(names) -> str:
 def place(work, files) -> list[str]:
     """Move staged files into <work>/attachments, each under its cleaned name or "name (2).ext": opened with O_EXCL
     (and O_NOFOLLOW where there is one), so nothing is overwritten, even in a race, and nothing is written through a
-    link. An attachments folder that is a link, or leads outside `work`, is refused (ValueError). Returns the names
-    used, in order."""
+    link. An attachments folder that is a link, or leads outside `work`, is refused (ValueError). All or none: a
+    failure removes the files this call made and keeps every staged copy, so the start can be tried again. Returns the
+    names used, in order."""
     if not files:
         return []
     root = Path(os.path.realpath(work))
@@ -96,27 +103,30 @@ def place(work, files) -> list[str]:
     if Path(os.path.realpath(folder)) != folder:
         raise ValueError(OUTSIDE)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | platforms.O_BINARY
-    saved = []
-    for staged, name in files:
-        for number in range(1, 1000):
-            used = _numbered(name, number)
-            try:
-                fd = os.open(folder / used, flags, 0o600)
-                break
-            except FileExistsError:
-                continue
-        else:
-            raise ValueError(FULL.format(name=name))
-        try:
+    saved, created = [], []
+    try:
+        for staged, name in files:
+            for number in range(1, 1000):
+                used = _numbered(name, number)
+                try:
+                    fd = os.open(folder / used, flags, 0o600)
+                    break
+                except FileExistsError:
+                    continue
+            else:
+                raise ValueError(FULL.format(name=name))
+            created.append(folder / used)
             with os.fdopen(fd, "wb") as out, open(staged, "rb") as source:
                 shutil.copyfileobj(source, out, 1 << 20)
-        except OSError:
+            saved.append(used)
+    except BaseException:  # all or none: what this call made goes (O_EXCL made each), every staged copy stays
+        for path in created:
             with contextlib.suppress(OSError):
-                os.unlink(folder / used)
-            raise
+                os.unlink(path)
+        raise
+    for staged, _ in files:  # every file placed: now the staged copies go
         with contextlib.suppress(OSError):
             os.unlink(staged)
-        saved.append(used)
     return saved
 
 

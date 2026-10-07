@@ -15,11 +15,26 @@ from conftest import file_mode, symlink_or_skip
     ("con.txt", "file.txt"), ("NUL", "file"), ("archive.tar.gz", "archive.tar.gz"),
     ("con .txt", "file.txt"), ("nul..txt", "file.txt"), ("con.tar.gz", "file.tar.gz"), ("NUL.txt.bak", "file.txt.bak"),
     ("COM¹.txt", "file.txt"), ("CONIN$.txt", "file.txt"), ("conout$", "file"), ("console.txt", "console.txt"),
-    ("x" * 300 + ".png", "x" * 116 + ".png")])
+    ("a\ud800b.txt", "a_b.txt"),  # a lone surrogate (JSON allows one) has no UTF-8: it can't be measured or saved
+    ("x" * 300 + ".png", "x" * 196 + ".png")])  # at most 200 bytes (the final review, F8)
 def test_strange_names_are_cleaned(given, saved):  # Review Focus 5
     from ai_browser.app.attachments import clean_name
 
     assert clean_name(given) == saved
+
+
+@pytest.mark.parametrize("given", ["文" * 120 + ".txt", "😀" * 80, "😀" * 70 + "." + "😀" * 15 + " " + "😀" * 5,
+                                   "é" * 150 + ".résumé"])  # the third's extension is cut at a space
+def test_a_long_name_is_cut_by_bytes_never_inside_a_character(given):  # the final review, F8
+    from ai_browser.app.attachments import clean_name
+
+    saved = clean_name(given)
+    assert len(saved.encode("utf-8")) <= 200 and saved == saved.strip(" .")  # a whole name: it ends cleanly
+    assert given.startswith(saved.rpartition(".")[0] or saved)  # its stem's start, whole characters only
+    stem, dot, suffix = saved.rpartition(".")
+    assert not dot or suffix == suffix.rstrip(" .")  # a cut suffix ends cleanly too
+    if "." in given:
+        assert dot and given.rpartition(".")[2].startswith(suffix)  # its extension kept
 
 
 def staged(tmp_path, *contents):
@@ -46,6 +61,37 @@ def test_files_land_in_attachments_and_a_duplicate_is_renamed_never_overwritten(
     assert (work / "attachments" / "notes (3).txt").read_bytes() == b"second"
     assert file_mode(work / "attachments" / "shot.png") in (None, 0o600)
     assert not one.exists() and not three.exists()  # moved, not copied
+
+
+@pytest.mark.parametrize("failure", ["a full disk", "no free name"])
+def test_files_are_placed_all_or_none(tmp_path, monkeypatch, failure):  # the final review, F8
+    import shutil
+
+    from ai_browser.app import attachments
+
+    work = tmp_path / "project"
+    (work / "attachments").mkdir(parents=True)
+    one, two = staged(tmp_path, b"first", b"second")
+    if failure == "a full disk":
+        copy, calls = shutil.copyfileobj, []
+
+        def copy_until_full(source, out, length=0):
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError(28, "No space left on device")
+            return copy(source, out, length)
+
+        monkeypatch.setattr(attachments.shutil, "copyfileobj", copy_until_full)
+        problem = OSError
+    else:
+        for number in range(1, 1000):  # every name the second file could take is the user's already
+            (work / "attachments" / attachments._numbered("y.txt", number)).write_bytes(b"theirs")
+        problem = ValueError
+    before = sorted(path.name for path in (work / "attachments").iterdir())
+    with pytest.raises(problem):
+        attachments.place(work, [(one, "x.txt"), (two, "y.txt")])
+    assert sorted(path.name for path in (work / "attachments").iterdir()) == before  # neither file
+    assert one.read_bytes() == b"first" and two.read_bytes() == b"second"  # both kept, to try again
 
 
 def test_a_scratch_folder_is_made_on_the_way(tmp_path):
