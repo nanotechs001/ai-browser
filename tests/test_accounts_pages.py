@@ -220,6 +220,39 @@ async def test_the_brains_card_continues_on_another_account(home):
     assert await until(js, f"{card}.hidden === true")
 
 
+HOLD_BRAIN = ("(() => { const send = WebSocket.prototype.send;"  # Continue's account_brain never leaves the page
+              " WebSocket.prototype.send = function (data) {"
+              "   if (typeof data === 'string' && data.includes('\"account_brain\"')) return;"
+              "   return send.call(this, data); }; })(); true")
+
+
+@CHROME
+async def test_usage_readings_never_redraw_the_brains_card(home):  # the polish's follow-up: its pick and its wait stay
+    js, stack = home
+    server, accounts = stack["server"], stack["accounts"]
+    work, personal = accounts.add("Work"), accounts.add("Personal")
+    sign_in(work.folder)
+    sign_in(personal.folder)
+    await server._refresh_accounts()
+    server._brain_limit_hit({"account": "default", "resets_at": None})
+    card = "document.getElementById('brain-limit')"
+    pick = f"{card}.querySelector('.continue-on')"
+    assert await until(js, f"{card}.hidden === false && {pick}?.options.length === 2")
+    await js(f"window.kept = {pick}; {pick}.value = {json.dumps(personal.id)};"
+             f" {pick}.dispatchEvent(new Event('change')); {HOLD_BRAIN}")
+    await js(f"{card}.querySelector('.continue').click(); true")  # it waits for the app: disabled
+    assert await js(f"{card}.querySelector('.continue').disabled") is True
+    for used in (10.0, 11.0, 12.0):  # an agent at work: a reading with each request, and every page hears it
+        accounts.set_windows("default", {"five_hour": {"used": used, "resets_at": time.time() + 3600}})
+        server.agents.on_usage("default")
+        await asyncio.sleep(0.3)
+    assert await js(f"window.kept === {pick} && {pick}.value === {json.dumps(personal.id)}")
+    assert await js(f"{card}.querySelector('.continue').disabled") is True
+    assert await js(f"{card}.querySelector('.account-ask-head').textContent") == (
+        "The Brain hit its limit on Default. Continue on Personal?")
+    assert accounts.brain_id() == "default"
+
+
 @CHROME
 async def test_the_tools_section_shows_one_accounts_tools_at_a_time(home):
     js, stack = home

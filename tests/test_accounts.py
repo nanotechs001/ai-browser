@@ -32,6 +32,20 @@ def test_a_missing_or_bad_file_means_default_only(tmp_path):
     assert [account.id for account in accounts.list()] == ["default"]
 
 
+def test_a_file_too_deep_for_the_parser_means_default_only(tmp_path):  # the polish's follow-up: the app always starts
+    from ai_browser.accounts import Accounts, _logged_in
+
+    deep = "[" * 100_000 + "]" * 100_000
+    (tmp_path / "usage.json").write_text(json.dumps({"accounts": {}}), encoding="utf-8")  # read as it starts
+    for text in (deep, '{"accounts": ' + deep + "}", '{"default": ' + '{"x": ' * 50_000 + "1" + "}" * 50_001):
+        (tmp_path / "accounts.json").write_text(text, encoding="utf-8")
+        accounts = Accounts(tmp_path)
+        assert [account.id for account in accounts.list()] == ["default"]
+        assert accounts.default_id() == accounts.brain_id() == "default" and accounts.get("default") is not None
+    assert _logged_in(deep.encode()) == {"signed_in": None, "plan": None}  # `claude auth status`, however odd
+    assert _logged_in(("Signed in\n" + deep).encode()) == {"signed_in": None, "plan": None}
+
+
 def test_accounts_json_round_trip(tmp_path):
     from ai_browser.accounts import Accounts
 

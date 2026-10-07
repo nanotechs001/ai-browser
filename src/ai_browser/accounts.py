@@ -88,7 +88,7 @@ def _logged_in(out: bytes) -> dict:
     for candidate in (text, *reversed(text.splitlines())):
         try:
             data = json.loads(candidate)
-        except ValueError:
+        except (ValueError, RecursionError):  # not JSON, or too deep for the parser
             continue
         if isinstance(data, dict) and isinstance(data.get("loggedIn"), bool):
             plan = data.get("subscriptionType")
@@ -116,9 +116,11 @@ class Accounts:
     # ---- reading -----------------------------------------------------------------------------------------------
 
     def _read(self) -> dict:
+        """accounts.json as a dict; {} for a file that can't be read, however odd (too deep for the parser): the app
+        always starts, with Default."""
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError, RecursionError):
             return {}
         return data if isinstance(data, dict) else {}
 
