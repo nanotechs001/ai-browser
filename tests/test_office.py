@@ -376,7 +376,8 @@ async def test_the_workers_sit_at_the_desk_and_sub_agents_show_over_its_far_edge
     art, worker, sub, table = [await js(box(part)) for part in (".desk-art", ".pose.main .worker",
                                                                  ".subs .worker", ".table")]
     assert art[0] <= worker[0] and worker[2] <= art[2] and art[1] <= worker[1] and worker[3] <= art[3]  # in its desk
-    assert worker[3] - art[1] > 90 and worker[1] < table[1]  # behind the desk's rim, its head above the desk's box
+    assert worker[3] - art[1] > 0.6 * (art[3] - art[1])  # behind the desk's rim, at any zoom: 0.6 of its art's height
+    assert worker[1] < table[1]  # its head above the desk's box
     assert sub[1] < table[1] < sub[3]  # a sub-agent too: its head over the desk's far edge, not wholly behind it
 
 

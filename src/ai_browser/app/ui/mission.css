@@ -1,65 +1,184 @@
-/* Mission Control. Colours, type and radii: theme.css (the room is always dark, like the mockup). */
+/* Mission Control (the new look): the left menu, the centre (the heading, the Flow · List · Calendar switch, the
+   office, the menu's pages, the composer), the right column, and the drawer. Colours, type and radii: theme.css; the
+   office itself: office.css; the composer: composer.css. Narrow windows fold the right column under the centre, then
+   shrink the menu to icons. */
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; }
-body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); }
-h1 { font-size: 17px; font-weight: 600; margin: 0; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); overflow: hidden; }
+h1 { font-size: 17px; font-weight: 700; margin: 0; }
+h2, h3 { margin: 0; }
 button, select, textarea, input { font: inherit; color: inherit; }
-button, .button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 4px 12px;
-                  cursor: pointer; text-decoration: none; display: inline-block; }
+button, .button { border: 1px solid var(--line); background: var(--card); border-radius: var(--radius-sm);
+                  padding: 5px 12px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+                  gap: 6px; }
 button:hover:not(:disabled), .button:hover { background: var(--soft); }
 button:disabled { opacity: 0.5; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+button.primary { background: linear-gradient(180deg, #2f62ff, #1f41f9); border-color: #407ef6; color: var(--accent-fg);
+                 box-shadow: 0 0 18px var(--glow); }
+button.primary:hover:not(:disabled) { background: linear-gradient(180deg, #3d6dff, #2a4dff); }
 button.ghost, .button.ghost { background: transparent; border-color: transparent; }
-select { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 4px 8px; }
-kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent-2); }
+select, input[type="text"], input[type="search"] { border: 1px solid var(--line); background: var(--field);
+                                                   border-radius: var(--radius-sm); padding: 5px 8px; }
+kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 5px; padding: 0 5px; }
 [hidden] { display: none !important; }
 .muted { color: var(--muted); font-size: 13px; }
+.clip { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
 .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-.chip { font-size: 12px; border-radius: 999px; padding: 1px 8px; background: var(--soft); }
+.chip { font-size: 12px; border-radius: 999px; padding: 1px 8px; background: var(--soft); white-space: nowrap; }
+.chip.working { color: var(--work); background: rgba(91, 144, 255, 0.15); }
+.chip.your_turn { color: var(--ok); background: rgba(42, 240, 185, 0.12); }
+.chip.needs_you { color: var(--needs); background: rgba(255, 181, 71, 0.15); }
+.chip.failed { color: var(--fail); background: rgba(255, 93, 108, 0.15); }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; flex: none; }
-.dot[data-state="connected"] { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.dot[data-state="connected"] { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
 .dot[data-state="disconnected"] { background: var(--fail); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.empty { color: var(--muted); font-size: 14px; margin: 6px 2px; }
 
-.scene { position: fixed; inset: 0; } /* until Task 12's layout */
-.drawer-brain { display: flex; flex-direction: column; gap: 8px; }
+/* ---- the three columns --------------------------------------------------------------------------------------- */
+.mc { display: grid; grid-template-columns: 248px minmax(0, 1fr) 330px; grid-template-areas: "menu centre side";
+      height: 100vh; }
+.menu { grid-area: menu; }
+.centre { grid-area: centre; }
+.side { grid-area: side; }
 
-/* ---- the heads-up display ---------------------------------------------------------------------------------------- */
-.hud { position: fixed; z-index: 2; }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(10px);
-         box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4); }
-.top { left: 0; right: 0; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-       padding: 12px 20px; background: linear-gradient(180deg, rgba(11, 12, 19, 0.85), transparent); flex-wrap: wrap; }
-.brand, .tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.list-panel { top: 60px; right: 20px; width: 300px; max-height: calc(100vh - 160px); overflow: auto; padding: 8px;
-              display: flex; flex-direction: column; gap: 4px; }
-.list-panel button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent;
-                     border-color: transparent; }
-.list-panel button .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.list-panel .empty { margin: 6px 8px; }
-.drawer { top: 60px; right: 20px; bottom: 96px; width: min(440px, calc(100vw - 40px)); display: flex;
-          flex-direction: column; overflow: hidden; }
+/* ---- the left menu --------------------------------------------------------------------------------------------- */
+.menu { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; display: flex;
+        flex-direction: column; gap: 6px; padding: 18px 16px; background: var(--bar);
+        border-right: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; }
+.counts { margin: 0 0 12px 19px; font-size: 12px; }
+.new-mission { width: 100%; padding: 11px 14px; border-radius: 12px; font-weight: 600; margin-bottom: 12px; }
+.new-mission .label { flex: 1; text-align: left; }
+.new-mission kbd { border-color: rgba(255, 255, 255, 0.35); }
+.pages { list-style: none; margin: 0; padding: 0 0 12px; display: flex; flex-direction: column; gap: 2px;
+         border-bottom: 1px solid var(--line); }
+.page-link { width: 100%; padding: 9px 14px; gap: 14px; border: 1px solid transparent; background: transparent;
+             color: var(--text-2); text-align: left; }
+.page-link:hover:not(:disabled) { background: rgba(255, 255, 255, 0.04); color: var(--text); }
+.page-link[aria-current="page"] { background: var(--selected); border-color: #2a4380; color: var(--text);
+                                  box-shadow: inset 3px 0 0 var(--accent-bright); }
+.workspaces { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.workspaces:empty { display: none; }
+.usage { margin-top: auto; width: 100%; padding: 12px 14px; text-align: left; justify-content: space-between;
+         background: var(--card); border-color: var(--line); border-radius: 12px; }
+.usage-words { display: flex; flex-direction: column; min-width: 0; }
+.usage-title { font-weight: 600; }
+
+/* ---- the centre: the heading, the switch, the views and the menu's pages ---------------------------------------- */
+.centre { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
+.page { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px; }
+.page.dashboard { position: relative; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.heading { position: absolute; left: 32px; top: 26px; z-index: 2; max-width: 520px; pointer-events: none; }
+.heading .eyebrow { margin: 0; }
+.heading h2 { font-size: 40px; font-weight: 800; letter-spacing: -0.01em; margin: 6px 0 8px; }
+.heading .lede { margin: 0; color: var(--text-2); font-size: 16px; }
+.switch-views { position: absolute; right: 24px; top: 24px; z-index: 3; display: flex; gap: 4px; padding: 4px;
+                border-radius: 12px; background: rgba(12, 22, 44, 0.85); border: 1px solid var(--line); }
+.switch-views button { gap: 8px; border: 1px solid transparent; background: transparent; padding: 7px 14px;
+                       border-radius: 9px; color: var(--text-2); }
+.switch-views [aria-selected="true"] { background: linear-gradient(180deg, #1c3fd0, #1736cb); border-color: #3a6af0;
+                                       color: var(--text); box-shadow: 0 0 14px var(--glow); }
+.view-flow { position: relative; flex: 1; min-height: 0; }
+.view-flow .scene { position: absolute; inset: 0; }
+.view-flow .help { position: absolute; left: 20px; bottom: 10px; margin: 0; max-width: calc(100% - 40px);
+                   color: var(--dim); font-size: 12px; pointer-events: none; } /* the room's keys, as before */
+/* the List and the Calendar start below the heading (up to 162 px down) */
+.view-list, .view-calendar { flex: 1; min-height: 0; overflow-y: auto; padding: 176px 28px 20px; }
+@media (max-width: 899px) {
+  .view-flow .help { display: none; }
+  .heading { left: 20px; top: 18px; }
+  .heading h2 { font-size: 26px; }
+  .heading .lede { display: none; }
+  .switch-views { right: 12px; top: 66px; }
+  .switch-views button { padding: 6px 9px; }
+  .sign { top: 118px; right: 4%; padding: 6px 10px; font-size: 22px; } /* under the switch, smaller */
+  .view-list, .view-calendar { padding-top: 120px; }
+}
+
+/* ---- an agent as a row: the List view, My Missions ---------------------------------------------------------------- */
+.missions-list { display: flex; flex-direction: column; gap: 8px; }
+.mission { display: flex; align-items: center; gap: 8px; }
+.mission .open { flex: 1; min-width: 0; display: grid; grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1fr) auto auto;
+                 gap: 12px; align-items: center; padding: 10px 14px; text-align: left; border-radius: 12px;
+                 background: var(--card); border: 1px solid var(--line); }
+.mission .words, .mission .meta { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.mission .step-words { color: var(--text-2); font-size: 13px; }
+.mission .time { font-variant-numeric: tabular-nums; }
+@media (max-width: 899px) {
+  .mission .open { grid-template-columns: 44px minmax(0, 1fr) auto; }
+  .mission :is(.meta, .time) { display: none; }
+}
+
+/* ---- the right column ----------------------------------------------------------------------------------------- */
+.side { height: 100vh; overflow-y: auto; min-width: 0; display: flex; flex-direction: column; gap: 14px;
+        padding: 18px 16px; border-left: 1px solid var(--line); }
+.side .panel { padding: 16px 18px; min-width: 0; }
+.side h3 { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
+.progress-line { display: flex; justify-content: space-between; gap: 8px; color: var(--text-2); }
+.bar { height: 8px; border-radius: 999px; background: #1c2b4a; overflow: hidden; margin: 10px 0 14px; }
+.bar > span { display: block; height: 100%; width: 0; border-radius: inherit;
+              background: linear-gradient(90deg, #3c7bff, #5c9dfd); box-shadow: 0 0 12px var(--glow);
+              transition: width 0.4s ease; }
+.groups { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+          text-align: center; }
+.group { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.group .count { font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.group .count::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
+.group.working .count::before { background: var(--work); }
+.group.pending .count::before { width: 5px; height: 5px; background: transparent; border: 2px solid var(--wait); }
+.avatar { width: 44px; height: 44px; border-radius: 50%; overflow: hidden; flex: none; display: grid;
+          place-items: center; background: radial-gradient(circle at 50% 35%, #2a3c78, #101a3a);
+          border: 2px solid #2b3f7c; }
+.avatar .avatar-art { width: 100%; height: 100%; }
+.avatar:empty { visibility: hidden; }
+.current-head { display: flex; gap: 12px; align-items: flex-start; }
+.current .avatar { width: 64px; height: 64px; }
+.current-words { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.current-top { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.current-top strong { flex: 1; font-size: 16px; }
+.timer { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.side .step-badge { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px;
+                    border-radius: 9px; background: rgba(28, 44, 88, 0.9); border: 1px solid #253a6e; font-size: 13px; }
+.side .step-badge .icon { width: 15px; height: 15px; }
+.needs { margin: 10px 0 0; color: var(--needs); font-size: 13px; }
+.running { margin-top: 12px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+           background: rgba(10, 20, 40, 0.6); }
+.running-label { color: var(--text-2); }
+.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.checklist li { display: flex; gap: 10px; align-items: center; min-width: 0; color: var(--text-2); }
+.checklist .mark { width: 18px; height: 18px; flex: none; border-radius: 50%; display: grid; place-items: center;
+                   font-size: 11px; border: 2px solid var(--wait); color: transparent; }
+.checklist .done .mark { border-color: var(--ok); background: var(--ok); color: #04261c; font-weight: 800; }
+.checklist .current { color: var(--accent-2); font-weight: 600; }
+.checklist .current .mark { border-color: var(--accent-2); box-shadow: 0 0 8px var(--glow); }
+.current-buttons { margin-top: 12px; }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; }
+.activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.activity-row { width: 100%; display: grid; grid-template-columns: 40px 10px minmax(0, 1fr) auto; gap: 10px;
+                align-items: center; padding: 6px 4px; border: 0; background: none; text-align: left; }
+.activity-row .avatar { width: 40px; height: 40px; }
+.activity-row .dot { background: var(--ok); }
+.activity-row:is(.step, .started) .dot { background: var(--work); }
+.activity-row.needs .dot { background: var(--needs); }
+.activity-row.failed .dot { background: var(--fail); }
+.activity-row .words { display: flex; flex-direction: column; min-width: 0; }
+.activity-row .when { font-size: 12px; white-space: nowrap; }
+
+/* ---- the drawer: an agent's state, its card, its chat; or the Brain's inbox -------------------------------------- */
+.drawer { position: fixed; z-index: 10; top: 12px; right: 12px; bottom: 12px; width: min(440px, calc(100vw - 24px));
+          display: flex; flex-direction: column; overflow: hidden; background: rgba(10, 20, 42, 0.97);
+          box-shadow: var(--shadow); }
 .drawer > header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .drawer > header strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #drawer-body { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.task-bar { left: 50%; bottom: 18px; transform: translateX(-50%); width: min(720px, calc(100vw - 32px)); display: flex;
-            align-items: flex-end; gap: 8px; padding: 8px 10px; }
-.task-bar textarea { flex: 1; border: none; outline: none; resize: none; background: transparent; font-size: 15px;
-                     field-sizing: content; max-height: 140px; min-height: 26px; padding: 3px 4px; }
-.help { left: 50%; bottom: 76px; transform: translateX(-50%); margin: 0; color: var(--muted); font-size: 12px;
-        white-space: nowrap; opacity: 0.8; pointer-events: none; }
-@media (max-width: 720px), (max-height: 560px) { .help { display: none; } }
-
-/* ---- the drawer's agent: its chat, as in AI Home ---------------------------------------------------------------- */
-#drawer-body .status { font: 12px ui-monospace, Menlo, monospace; }
+#drawer-body .status { font: 12px var(--mono); }
 #drawer-body .buttons { margin-top: 0; }
-.chip.needs_you { background: color-mix(in srgb, var(--needs) 22%, transparent); color: var(--needs); }
-.chip.working { background: color-mix(in srgb, var(--work) 18%, transparent); color: var(--work); }
-.chip.failed { background: color-mix(in srgb, var(--fail) 18%, transparent); color: var(--fail); }
-.permission-slot:empty { display: none; }
-/* Your tabs, in an agent's drawer (tablist.js mountYourTabs): the user's own tabs, each with Give to this agent */
+#drawer-body .moved { color: var(--ok); }
+.drawer-brain { display: flex; flex-direction: column; gap: 8px; }
+.permission-slot:empty, .ask-slot:empty { display: none; }
 .your-tabs { border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; }
 .your-tabs summary { cursor: pointer; font-size: 13px; }
 .your-tabs p { margin: 6px 0 0; font-size: 13px; }
@@ -83,65 +202,35 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .action .name { font-weight: 600; margin-right: 6px; }
 .action .summary, .action .ms { color: var(--muted); }
 .action .ms { margin-left: 6px; font-size: 12px; }
-.action pre { margin: 4px 0 0; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap; color: var(--muted); }
-.composer { display: flex; gap: 8px; align-items: flex-end; }
-.composer textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px;
-                     background: var(--bg); field-sizing: content; max-height: 140px; }
-.task-bar .note { position: absolute; left: 14px; top: -24px; }
-
-/* ---- talking to the Brain: the mic button and the talk panel ---------------------------------------------------- */
-.task-bar .mic { display: inline-grid; place-items: center; width: 34px; height: 30px; padding: 0; flex: none; }
-.task-bar .mic svg { width: 18px; height: 18px; fill: currentColor; }
-.task-bar .mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
-                                      box-shadow: 0 0 0 3px rgba(79, 141, 253, 0.35); }
-.talk { left: 50%; bottom: 76px; transform: translateX(-50%); width: min(720px, calc(100vw - 32px)); max-height: 42vh;
-        overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
-.talk:not([hidden]) ~ .help { display: none; }
-.talk-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.talk-log li { white-space: pre-wrap; word-break: break-word; }
-.talk-log li.you { color: var(--muted); }
-.talk-status:empty, .talk-notice:empty, .talk-card:empty { display: none; }
-.talk-notice { color: var(--needs); font-size: 13px; }
-.talk-card { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-.talk-card p { margin: 0; }
-.talk-card code { font: 12px ui-monospace, Menlo, monospace; background: var(--soft); border-radius: 4px;
-                  padding: 0 4px; }
-.talk-card textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 8px;
-                      padding: 6px 8px; background: var(--bg); }
-.talk-card progress { width: 100%; }
-.talk-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap; }
-.talk-card .talk-state, .talk-card .talk-hint { font-size: 13px; }
-.talk-card .row { margin-top: 0; }
-.talk-form { display: flex; gap: 8px; }
-.talk-form input { flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
-                   background: var(--bg); }
-.talk-note { margin: 0; font-size: 12px; }
-/* AI accounts: the drawer's account, its move line, and its ask at a limit (accountui.js) */
+.action pre { margin: 4px 0 0; font: 12px/1.45 var(--mono); white-space: pre-wrap; color: var(--muted); }
+.action .badge { font-size: 11px; border-radius: 999px; padding: 0 6px; margin-right: 6px; background: var(--soft); }
+.action .at { color: var(--muted); margin-left: 6px; font-size: 12px; }
+.action.sub { margin-left: 14px; }
+.composer-line { display: flex; gap: 8px; align-items: flex-end; }
+.composer-line textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px;
+                          background: var(--bg); field-sizing: content; max-height: 140px; }
 .chip.account { background: transparent; border: 1px solid var(--line); }
-#drawer-body .moved { color: var(--ok); }
-.ask-slot:empty { display: none; }
 .account-ask { border-color: var(--needs); display: flex; flex-direction: column; gap: 6px; }
 .account-ask p { margin: 0; }
 .account-ask-head { font-weight: 600; }
 .account-ask-buttons, .account-move { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-
-/* Agent powers: the drawer's plan and sub-agents, and each action's badge and time. */
 #drawer-body .plan h3, #drawer-body .subagents h3 { font-size: 12px; font-weight: 600; margin: 0 0 4px;
                                                      color: var(--muted); }
 #drawer-body .plan-items, #drawer-body .subagent-items { margin: 0; padding: 0; list-style: none; font-size: 13px; }
 #drawer-body .plan-items .completed, #drawer-body .subagent-items .done { color: var(--muted); }
 #drawer-body .plan-items .in_progress, #drawer-body .subagent-items .working { font-weight: 600; }
 #drawer-body .plan-progress { margin: 0 0 4px; }
-.action .badge { font-size: 11px; border-radius: 999px; padding: 0 6px; margin-right: 6px; background: var(--soft); }
-.action .at { color: var(--muted); margin-left: 6px; font-size: 12px; }
-.action.sub { margin-left: 14px; }
 
-/* Agent powers: the task's folder, the typed path and "Trust this folder?". */
-.folder-ask { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-.folder-ask .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.folder-ask .folder-typed { flex: 1; min-width: 200px; }
-.folder-ask p { margin: 0; }
-.folder-ask .folder-path { font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
-#task-folder { max-width: 180px; }
-.task-bar { flex-wrap: wrap; }
-.task-bar .folder-ask { flex: 1 0 100%; order: 10; }
+/* ---- narrow windows, last so they win: the right column folds under the centre, then the menu shrinks to icons -- */
+@media (max-width: 1279px) {
+  .mc { grid-template-columns: 248px minmax(0, 1fr); grid-template-areas: "menu centre" "menu side";
+        grid-template-rows: max(640px, 100vh) auto; overflow-x: hidden; overflow-y: auto; }
+  .side { height: auto; overflow: visible; border-left: 0; border-top: 1px solid var(--line); display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; }
+}
+@media (max-width: 899px) {
+  .mc { grid-template-columns: 64px minmax(0, 1fr); }
+  .menu { padding: 14px 8px; align-items: center; }
+  .menu :is(.label, kbd, .counts), .workspaces :is(.count, .head, .name), .usage .usage-words { display: none; }
+  .new-mission, .page-link { justify-content: center; padding: 10px; }
+}

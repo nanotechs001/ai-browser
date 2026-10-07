@@ -14,7 +14,8 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from test_bridge import EVENTS
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
-from test_mission import BUBBLES, LOCAL_VOICE, SLOW_VOICE, WORKING, needs_reply, open_with, station, voice_on
+from test_mission import (BUBBLES, LOCAL_VOICE, SLOW_VOICE, WORKING, needs_reply, open_drawer, open_with, station,
+                          voice_on)
 from test_oneshot import oneshots
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
@@ -359,12 +360,12 @@ async def test_space_keeps_its_job_in_text_boxes_and_on_buttons(stack):
     assert await until(js, "document.getElementById('task').value === ' '")  # it typed a space
     await js(f"document.getElementById('task').value = ''; {station('a1')}.focus(); true")
     await tap(stack, js, SPACE, " ")
-    assert await until(js, "!document.getElementById('drawer').hidden")  # it pressed the focused station
+    assert await until(js, f"{station('a1')}.classList.contains('selected')")  # it pressed the focused desk
     await asyncio.sleep(0.5)
     assert await js("window.micOpen") == 0 and await js(f"{PANEL}.dataset.state") == "idle"
     await js("document.getElementById('task').focus(); true")
     for kind in ("mousePressed", "mouseReleased"):  # a click on the room, away from every control
-        await stack["cdp"].send("Input.dispatchMouseEvent", {"type": kind, "x": 40, "y": 300, "button": "left",
+        await stack["cdp"].send("Input.dispatchMouseEvent", {"type": kind, "x": 420, "y": 40, "button": "left",
                                                              "clickCount": 1}, session_id=js.session)
     assert await js("document.activeElement === document.body")  # it gives Space back to talking
     await talk(stack, js)
@@ -377,7 +378,7 @@ async def test_esc_throws_the_turn_away_and_does_nothing_else(stack):
     await stack["server"].agents.create("Fix the footer")
     js = await open_talk(stack, mic())
     assert await until(js, f"{station('a1')} !== null")
-    await js(f"{station('a1')}.click(); true")  # the drawer opens (a script's click leaves the keys with the page)
+    await js(open_drawer("a1"))  # the drawer opens (a script's click leaves the keys with the page)
     assert await until(js, "!document.getElementById('drawer').hidden")
     await key_down(stack, js, SPACE, " ")
     assert await until(js, f"{PANEL}.dataset.state === 'listening'")
@@ -861,9 +862,9 @@ async def test_numbers_show_on_stations_the_list_and_the_drawer(stack):
     js = await open_with(stack)
     assert await until(js, f"{station('a1', '.nameplate')}?.textContent === '1 · Fix the footer'")
     assert (await js(f"{station('a1')}.getAttribute('aria-label')")).startswith("1 · Fix the footer: ")
-    assert await js("document.querySelector('#list button[data-id=\"a1\"] .grow').textContent") == \
+    assert await js("document.querySelector('#view-list .mission[data-id=\"a1\"] .label').textContent") == \
         "1 · Fix the footer"
-    await js(f"{station('a1')}.click(); true")
+    await js(open_drawer("a1"))
     assert await until(js, "document.getElementById('drawer-title').textContent === '1 · Fix the footer'")
     await agents.close("a1")
     assert await until(js, f"{station('a1')} === null")

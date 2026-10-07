@@ -125,7 +125,8 @@ async def test_a_refused_continue_on_in_mission_control_can_be_clicked_again(she
     work = await limited_agent(js, stack)
     await pick(js, "/mission")
     assert await until(js, connected("/mission"))
-    await js(f"{frame('/mission')}.document.querySelector('.station[data-id=\"a1\"]').click(); true")
+    await js(f"{frame('/mission')}.document.querySelector('.station[data-id=\"a1\"]').click();"
+             f" {frame('/mission')}.document.getElementById('current-chat').click(); true")  # pick it, then Chat
     assert await until(js, f"{DRAWER_ASK}?.textContent === 'Continue on Work'")  # the drawer asks as the row does
     stack["accounts"].remove(work.id)  # forgotten behind this page's back: it still offers it
     await click_in(js, "/mission", "#drawer:not([hidden]) .account-ask .continue")

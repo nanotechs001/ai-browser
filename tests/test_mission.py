@@ -37,6 +37,11 @@ def key(name):
     return f"document.dispatchEvent(new KeyboardEvent('keydown', {{key: {json.dumps(name)}, bubbles: true}})); true"
 
 
+def open_drawer(agent_id):
+    """A desk picked, then its Chat: its drawer. A click alone picks it for the right column (plan decision 11)."""
+    return f"{station(agent_id)}.click(); document.getElementById('current-chat').click(); true"
+
+
 @CHROME
 async def test_every_agent_has_a_station_and_names_stay_text(mission):
     js, stack = mission
@@ -133,14 +138,14 @@ async def test_the_drawer_shows_the_chat_and_closes_an_agent(mission):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create(f"Fix the footer {HOSTILE}")
     assert await until(js, f"{station('a1')} !== null")
-    await js(f"{station('a1')}.click(); true")
+    await js(open_drawer("a1"))
     chat = "document.querySelector('#drawer:not([hidden]) .messages')"
     assert await until(js, f"{chat}?.textContent.includes('Fix the footer')")
     assert "<img" in await js("document.getElementById('drawer-title').textContent")
     assert await js("[...document.images].filter(img => !img.closest('.monitor')).length") == 0
     await js(key("Escape"))
     assert await js("document.getElementById('drawer').hidden")
-    await js(f"{station('a1')}.click(); true")
+    await js(open_drawer("a1"))
     await js("document.querySelector('#drawer .close').click(); true")
     assert await until(js, "document.querySelectorAll('.station').length === 0")
     assert await until(js, "document.getElementById('drawer').hidden")
@@ -425,28 +430,6 @@ async def test_a_trackpad_zooms_gently(mission):
     assert 0.9 <= float(await js("document.querySelector('.room').dataset.scale")) < 1
 
 
-@CHROME
-async def test_the_list_follows_creation_and_gives_way_to_the_drawer(stack):
-    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
-    for name in ("first", "second", "third"):
-        await stack["server"].agents.create(name)
-    js = await open_mission(stack)
-    await stack["server"].agents.create("fourth")
-    assert await until(js, "document.querySelectorAll('#list button').length === 4")
-    assert await js("[...document.querySelectorAll('#list button')].map(row => row.dataset.id)") == \
-        ["a1", "a2", "a3", "a4"]
-    await js("document.getElementById('list-button').click(); true")
-    assert await js("document.getElementById('list').hidden") is False
-    await js("document.querySelector('#list button[data-id=\"a2\"]').click(); true")
-    assert await until(js, "!document.getElementById('drawer').hidden")
-    assert await js("document.getElementById('list').hidden") is True  # the drawer takes its place
-    assert await js("document.getElementById('list-button').getAttribute('aria-expanded')") == "false"
-    await js(key("Escape"))
-    await js("document.getElementById('list-button').click(); true")
-    await js(key("Escape"))
-    assert await js("document.getElementById('list').hidden") is True
-
-
 SLOW_VOICE = ("window.spoken = []; let current = null;"
               "window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };"
               "speechSynthesis.getVoices = () => [{name: 'Samantha', lang: 'en-US', localService: true}];"
@@ -519,7 +502,7 @@ async def test_watch_says_it_brings_the_agents_tab_to_the_front(mission):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("Fix the footer")
     assert await until(js, f"{station('a1')} !== null")
-    await js(f"{station('a1')}.click(); true")
+    await js(open_drawer("a1"))
     assert await until(js, "document.querySelector('#drawer .watch')?.title === "
                            "\"Bring this agent's tab to the front\"")
 

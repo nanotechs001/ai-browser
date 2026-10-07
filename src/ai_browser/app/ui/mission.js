@@ -1,41 +1,58 @@
-// Mission Control: the user's AI team at work. One station per agent in a 3D room (scene.js), the Brain in the
-// middle, on the same line to the app as AI Home (link.js), sending only the messages AI Home sends.
-import { askBox, askError, askKey, fillPicker, pickDefault } from "./accountui.js";
-import { mountBrain } from "./brainui.js";
-import { checkCard } from "./check.js";
-import { agentLabel, createChat } from "./chat.js";
-import { connect } from "./link.js";
-import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
-import { permissionCard } from "./permission.js";
-import { renderPlan, renderSubagents } from "./plan.js";
+// Mission Control (the new look): the user's AI office. The left menu (the line's light, the counts, New Mission, the
+// pages, the workspaces and the Usage card), the centre (the heading, the Flow · List · Calendar switch, the office of
+// scene.js, the menu's pages and the composer), and the right column (side.js) for the agent picked. On the same line
+// to the app as AI Home (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
+import { askError, fillPicker, pickDefault } from "./accountui.js";
+import { el } from "./chat.js";
+import { mountDrawer } from "./drawer.js";
 import { mountFolderPicker } from "./folderpick.js";
-import { COLORS, createScene, STATES, toolLabel } from "./scene.js";
+import { icon } from "./icons.js";
+import { connect } from "./link.js";
+import { guardCloseKey, guardLinks, openTab } from "./nav.js";
+import { mountList } from "./pages.js";
+import { createScene } from "./scene.js";
+import { mountSide } from "./side.js";
+import { stateOf, toolLabel } from "./step.js";
 import { mountTalk } from "./talk.js";
-import { mountYourTabs } from "./tablist.js";
 import { createVoice } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
+const PAGES = ["dashboard", "missions", "templates", "knowledge", "integrations", "history"];
+const VIEWS = ["flow", "list", "calendar"];
+const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
 const agents = new Map(); // id -> the agent, as the app describes it
-const listRows = new Map(); // id -> its row in the List, updated in place
-const drawer = { id: null, parts: null, chat: null, brain: null, yourTabs: null }; // an agent, or the Brain
 const brainItems = new Map(); // the Brain's inbox: id -> item
 const brainState = { busy: false, what: "" }; // what the Brain is doing now
+const parts = []; // the menu's pages and cards: each may take every message (onMessage), the agents and the page shown
 let speaking = false; // the voice is reading an update aloud
 let agentsKnown = false; // the first snapshot is what was there already: only changes after it become updates
 let brainKnown = false;
-let selected = null;
+let selected = null; // the agent picked for the right column
+let eventsFor = null; // whose actions the right column asked for
+let workspace = null; // the workspace the menu filters by (null: every agent)
+let page = "dashboard";
+let view = "flow";
 let pending = null; // the new_task request waiting for its "created": one Start, one agent
 let pendingTimer = null;
 let defaultModel = "sonnet"; // ai-browser app --model, until the user picks one (the app remembers the pick)
 let talkState = "idle"; // the talk panel's state (talk.js): the Brain listens while the user talks
-let talk = null; // the talk panel, mounted once the line to the app exists
+let talk = null; // the talk panel, mounted once the line to the app exists (connect calls setStatus at once)
 let tabs = []; // the browser's tab list (snapshot.tabs, then each "tabs" message): the drawer's Your tabs
 let tabScope = null; // which profile that list comes from, and how many tabs it leaves out (only numbers)
-let browser = null; // where agents browse: {kind, name, state} (snapshot.browser, then each "browser" message)
+let browser = null; // where agents browse: {kind, name, state}
 let accountRows = []; // Settings → Accounts as the app lists them: names and "signed in", never an email
+let tabHidden = false; // the tab menu shows another tab (app.js tells its frames)
+let paused = false;
+
+for (const node of document.querySelectorAll("[data-icon]")) node.prepend(icon(node.dataset.icon));
+$("new-key").textContent = MAC ? "⌘ K" : "Ctrl K";
+
+function inWorkspace(agent) { // the menu's workspace filter: every agent while none is picked
+  return !workspace || agent?.workspace === workspace;
+}
 
 const scene = createScene($("scene"), { onSelect: select });
-const brainButton = scene.globe; // the globe is the Brain's seat: click it for its inbox
+scene.setFilter(inWorkspace);
 const brainLabel = el("div", "brain-label");
 const brainCount = el("span", "count");
 brainCount.id = "brain-count";
@@ -58,12 +75,15 @@ const voice = createVoice({
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
-const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
-                                  (message) => link.send(message)); // agent powers: the task's folder
+const send = (message) => link.send(message);
+const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") }, send); // agent powers
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
-// Shown again (its tab, or the window after the user signed in in a terminal): each account's status, now
-window.addEventListener("focus", () => link.send({ type: "accounts" }));
+window.addEventListener("focus", () => link.send({ type: "accounts" })); // shown again: each account's status, now
+const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: () => accountRows,
+                             browserOf: () => ({ tabs, scope: tabScope, browser }) });
+const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
+const list = mountList($("view-list"), { onOpen: select });
 talk = mountTalk({
   panel: $("talk"),
   micButton: $("mic"),
@@ -73,24 +93,13 @@ talk = mountTalk({
     talkState = state;
     renderBrain();
   },
-  openAgent: (id, options) => select(id, options),
-  openBrain: () => openBrain(),
+  openAgent: (id, options) => openDrawer(id, options),
+  openBrain: () => drawer.openBrain(),
   model: () => $("task-model").value, // the model last picked here or in AI Home
 });
 
-function el(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
 function setText(node, text) {
   if (node.textContent !== text) node.textContent = text;
-}
-
-function stateOf(agent) {
-  return agent.permission || agent.check ? "needs_you" : agent.state;
 }
 
 function setStatus(state) {
@@ -109,41 +118,19 @@ function applySettings(settings) { // the model picked last, here or in AI Home:
 
 // ---- the agents ----------------------------------------------------------------------------------------------
 
-function renderCounts() {
+function renderCounts() { // "1 active task · 3 completed", and who needs the user or failed (plan decision 19)
   const states = [...agents.values()].map(stateOf);
-  const count = (state) => states.filter((one) => one === state).length;
+  if (!states.length) {
+    setText($("counts"), "No agents yet");
+    return;
+  }
+  const count = (...wanted) => states.filter((one) => wanted.includes(one)).length;
+  const active = count("working", "waiting", "needs_you");
+  const words = [`${active} active task${active === 1 ? "" : "s"}`, `${count("your_turn")} completed`];
   const needs = count("needs_you");
-  const parts = [[count("working"), "working"], [count("waiting"), "waiting"],
-                 [needs, needs === 1 ? "needs you" : "need you"], [count("your_turn"), "done"],
-                 [count("failed"), "failed"], [count("stopped"), "stopped"]];
-  setText($("counts"), states.length ? parts.filter(([number]) => number).map(([number, word]) => `${number} ${word}`)
-    .join(" · ") : "No agents yet");
-}
-
-function listRow(agent) {
-  let row = listRows.get(agent.id);
-  if (!row) {
-    row = el("button", "");
-    row.dataset.id = agent.id;
-    row.created = Number(agent.created) || Infinity;
-    row.parts = { dot: el("span", "dot"), name: el("span", "grow"), state: el("span", "chip") };
-    row.append(row.parts.dot, row.parts.name, row.parts.state);
-    row.addEventListener("click", () => select(agent.id));
-    listRows.set(agent.id, row);
-    $("list").querySelector(".empty")?.remove();
-    const later = [...listRows.values()].filter((other) => other !== row && other.created > row.created)
-      .sort((one, two) => one.created - two.created)[0]; // the oldest first, like the stations
-    $("list").insertBefore(row, later || null);
-  }
-  row.parts.dot.style.background = COLORS[agent.color] || COLORS.grey;
-  setText(row.parts.name, agentLabel(agent));
-  setText(row.parts.state, STATES[stateOf(agent)] || stateOf(agent));
-}
-
-function renderEmptyList() {
-  if (!agents.size && !$("list").querySelector(".empty")) {
-    $("list").append(el("p", "empty muted", "No agents yet: give one a task below."));
-  }
+  if (needs) words.push(`${needs} ${needs === 1 ? "needs" : "need"} you`);
+  if (count("failed")) words.push(`${count("failed")} failed`);
+  setText($("counts"), words.join(" · "));
 }
 
 function brief(text) { // an update is a line, never a page of text
@@ -166,193 +153,109 @@ function told(before, agent) { // an agent's change worth a word from the Brain 
   }
 }
 
+function picked() { // the right column's agent: the one picked, else the newest at work, needing you, or any
+  const visible = [...agents.values()].filter(inWorkspace);
+  const newest = (rows) => rows.sort((one, two) => (Number(two.created) || 0) - (Number(one.created) || 0))[0];
+  const chosen = agents.get(selected);
+  return (chosen && inWorkspace(chosen) ? chosen : null)
+    || newest(visible.filter((agent) => stateOf(agent) === "working"))
+    || newest(visible.filter((agent) => stateOf(agent) === "needs_you")) || newest(visible) || null;
+}
+
+function renderSide() {
+  const agent = picked();
+  if (agent && agent.id !== eventsFor) { // its actions, for a checklist without a to-do list
+    eventsFor = agent.id;
+    link.send({ type: "events", id: agent.id });
+  }
+  side.show([...agents.values()].filter(inWorkspace), agent);
+}
+
+function renderAll() {
+  renderCounts();
+  renderSide();
+  list.render(scene.shown().map((id) => agents.get(id)).filter(Boolean));
+  for (const part of parts) part.agents?.(agents);
+}
+
 function update(agent) {
   if (!agent?.id) return;
   const before = agents.get(agent.id);
   if (before && agentsKnown) told(before, agent);
   agents.set(agent.id, agent);
-  const fresh = agentsKnown && !before; // created while this page is open: its arrival plays
-  scene.upsert(agent, { fresh });
-  listRow(agent);
-  if (drawer.id === agent.id) fillDrawer(agent);
-  renderCounts();
+  scene.upsert(agent, { fresh: agentsKnown && !before }); // created while this page is open: its arrival plays
+  drawer.fill(agent);
+  renderAll();
   renderBrain();
 }
 
 function forget(id) {
   agents.delete(id);
   scene.remove(id);
-  listRows.get(id)?.remove();
-  listRows.delete(id);
   if (selected === id) selected = null;
-  if (drawer.id === id) closeDrawer();
-  renderCounts();
-  renderEmptyList();
+  if (drawer.id === id) drawer.close();
+  renderAll();
   renderBrain();
 }
 
-// ---- the Brain ---------------------------------------------------------------------------------------------------
+// ---- the Brain: the globe ------------------------------------------------------------------------------------------
 
-function renderBrain() { // the Brain thinks while it works, beats while something needs the user
+function renderBrain() { // the globe thinks while the Brain works, and glows amber while something needs the user
   const needs = [...brainItems.values()].filter((item) => item.kind === "needs_reply").length;
   const agentsNeed = [...agents.values()].some((agent) => stateOf(agent) === "needs_you");
   const state = talkState === "listening" ? "listening" : speaking ? "speaking"
     : brainState.busy || talkState === "transcribing" ? "thinking" : needs || agentsNeed ? "alert" : "idle";
-  scene.stage.dataset.state = state; // the globe's glow
+  scene.stage.dataset.state = state; // the globe's glow (office.css)
   setText(brainCount, needs ? `${needs} ${needs === 1 ? "needs" : "need"} you` : "");
   setText(brainWhat, brainState.busy ? brainState.what : "");
 }
 
-function showList(on) {
-  $("list").hidden = !on;
-  $("list-button").setAttribute("aria-expanded", String(on));
-}
+// ---- picking an agent, and its drawer --------------------------------------------------------------------------------
 
-function openBrain() {
-  closeDrawer();
-  showList(false); // the drawer takes the List's place
-  setText($("drawer-title"), "The Brain");
-  $("drawer-dot").style.background = "var(--accent)";
-  const root = el("div", "drawer-brain");
-  $("drawer-body").replaceChildren(root);
-  drawer.brain = mountBrain(root, link, { openAgent: (id) => select(id) });
-  $("drawer").hidden = false;
-}
-
-function select(id, options = {}) {
+function select(id) { // a desk, a row or an activity: the right column shows it (plan decision 11)
   selected = id;
   scene.select(id);
-  openAgent(id, options);
+  renderSide();
+  if (agents.has(id) && stateOf(agents.get(id)) === "needs_you") drawer.open(id); // a card waits: one click away
 }
 
-// ---- the drawer: an agent's state, Watch, Stop, Close, its permission card and its chat ------------------------------
-
-function button(className, label, onClick) {
-  const node = el("button", className, label);
-  node.addEventListener("click", onClick);
-  return node;
+function openDrawer(id, options = {}) { // Chat, Hand over, Answer, an activity or a page's Open: the agent's drawer
+  selected = id;
+  scene.select(id);
+  renderSide();
+  drawer.open(id, options);
 }
 
-function openAgent(id, { tabs: showTabs = false } = {}) {
-  const agent = agents.get(id);
-  if (!agent) return;
-  drawer.brain = null;
-  drawer.id = id;
-  const parts = { state: el("span", "chip"), status: el("div", "status muted"), buttons: el("div", "row buttons"),
-                  permission: el("div", "permission-slot"), yourTabs: el("details", "your-tabs"),
-                  messages: el("div", "messages"),
-                  composer: el("div", "composer"), input: el("textarea"), card: null,
-                  account: el("span", "chip account"), moved: el("div", "status muted moved"),
-                  askSlot: el("div", "ask-slot"), ask: null, askKey: "",
-                  folder: el("div", "status muted folder"), plan: el("section", "plan"),
-                  subs: el("section", "subagents") };
-  parts.watch = button("watch", "Watch", () => {
-    const current = agents.get(id);
-    if (current?.working_tab) link.send({ type: "watch", target: current.working_tab });
-  });
-  parts.watch.title = "Bring this agent's tab to the front";
-  parts.stop = button("stop", "Stop", () => link.send({ type: "stop", id }));
-  parts.close = button("close ghost", "Close", () => link.send({ type: "close", id }));
-  parts.close.title = "End this agent and close the tabs it opened (your own tabs stay open)";
-  parts.buttons.append(parts.state, parts.account, parts.watch, parts.stop, parts.close);
-  parts.input.rows = 1;
-  parts.input.placeholder = "Message this agent";
-  parts.input.setAttribute("aria-label", "Message this agent");
-  const sendButton = button("primary", "Send", () => sendChat());
-  parts.composer.append(parts.input, sendButton);
-  parts.input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-      event.preventDefault();
-      sendChat();
-    }
-  });
-  drawer.yourTabs = mountYourTabs(parts.yourTabs, { send: (message) => link.send(message), agentId: () => id });
-  parts.yourTabs.open = showTabs; // folded, unless the Brain pointed here to hand a tab over
-  $("drawer-body").replaceChildren(parts.status, parts.moved, parts.folder, parts.buttons, parts.permission,
-                                   parts.askSlot, parts.plan, parts.subs, parts.yourTabs, parts.messages,
-                                   parts.composer);
-  showList(false); // the drawer takes the List's place
-  drawer.parts = parts;
-  drawer.chat = createChat(parts.messages);
-  drawer.chat.reset("Loading…");
-  fillDrawer(agent);
-  renderYourTabs();
-  $("drawer").hidden = false;
-  link.send({ type: "events", id });
-}
+// ---- the menu's pages, and the switch -----------------------------------------------------------------------------
 
-function fillDrawer(agent) { // the drawer's agent changed: its parts are updated in place
-  const parts = drawer.parts;
-  const state = stateOf(agent);
-  $("drawer-dot").style.background = COLORS[agent.color] || COLORS.grey;
-  setText($("drawer-title"), agentLabel(agent));
-  const paused = Boolean(agent.limit) && state === "failed"; // at a usage limit: paused, not failed
-  setText(parts.state, paused ? "paused" : STATES[state] || state);
-  parts.state.className = `chip ${paused ? "waiting" : state}`;
-  setText(parts.account, agent.account?.name || "");
-  parts.account.hidden = accountRows.length < 2; // one account: nothing to tell apart
-  setText(parts.moved, agent.moved || "");
-  parts.moved.hidden = !agent.moved;
-  const key = askKey(agent, accountRows); // the same ask as AI Home's row
-  if (key !== parts.askKey) {
-    parts.ask?.remove();
-    parts.ask = askBox(agent, accountRows, (message) => link.send(message));
-    if (parts.ask) parts.askSlot.append(parts.ask);
-    parts.askKey = key;
+function showPage(name) {
+  page = PAGES.includes(name) ? name : "dashboard";
+  for (const one of PAGES) $(`page-${one}`).hidden = one !== page;
+  for (const button of document.querySelectorAll(".page-link")) {
+    if (button.dataset.page === page) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
   }
-  setText(parts.status, agent.status || agent.last_action || "");
-  parts.status.hidden = !parts.status.textContent;
-  setText(parts.folder, agent.folder ? `Folder: ${agent.folder}` : "No folder: its own scratch folder");
-  renderPlan(parts.plan, agent.todos); // Decision 9: the agent's plan, live
-  renderSubagents(parts.subs, agent.subagents); // Decision 8: each sub-agent, its task and its current action
-  parts.watch.disabled = !agent.working_tab;
-  parts.stop.hidden = !(agent.state === "working" || agent.state === "waiting" || agent.check);
-  const check = agent.check; // a bot check waiting for the user: the same card as AI Home's
-  if (check && parts.checkCard?.dataset.since !== String(check.since)) {
-    parts.checkCard?.remove();
-    parts.checkCard = checkCard(agent, (message) => link.send(message), {
-      openLive: (url, checked) => openLive(url, checked.id, agentLabel(checked)), // a tab of the window's own
-    });
-    parts.permission.prepend(parts.checkCard);
-  } else if (!check && parts.checkCard) {
-    parts.checkCard.remove();
-    parts.checkCard = null;
+  $("composer").hidden = page !== "dashboard" && page !== "missions";
+  if (page === "dashboard" && view === "flow") scene.refit();
+  for (const part of parts) part.shown?.(page, view);
+}
+
+function showView(name) {
+  view = VIEWS.includes(name) ? name : "flow";
+  for (const one of VIEWS) $(`view-${one}`).hidden = one !== view;
+  for (const tab of $("views-switch").querySelectorAll("[data-view]")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.view === view));
   }
-  const asking = agent.permission; // a tool request waiting for the user: the same card as AI Home's
-  if (asking && parts.card?.dataset.request !== asking.request) {
-    parts.card?.remove();
-    parts.card = permissionCard({ ...asking, agent: agent.id }, (message) => link.send(message), agent.name);
-    parts.permission.append(parts.card);
-  } else if (!asking && parts.card) {
-    parts.card.remove();
-    parts.card = null;
-  }
+  if (view === "flow") scene.refit();
+  for (const part of parts) part.shown?.(page, view);
 }
 
-function renderYourTabs() { // the drawer's Your tabs follows the tab list and the browser's state
-  if (!drawer.yourTabs) return;
-  drawer.yourTabs.render(tabs, { brave: browser?.kind === "brave", connected: browser?.state === "connected",
-                                 name: browser?.name || "Brave", scope: tabScope });
+function newMission() { // New Mission and Command-K (Ctrl+K): the Dashboard, and the cursor in the box
+  showPage("dashboard");
+  $("task").focus();
 }
 
-function sendChat() {
-  const text = drawer.parts?.input.value.trim();
-  if (!text || !drawer.id) return;
-  if (link.send({ type: "send", id: drawer.id, text })) drawer.parts.input.value = "";
-}
-
-function closeDrawer() {
-  $("drawer").hidden = true;
-  drawer.id = null;
-  drawer.parts = null;
-  drawer.chat = null;
-  drawer.brain = null;
-  drawer.yourTabs = null;
-  $("drawer-body").replaceChildren();
-  scene.select(null);
-}
-
-// ---- the task bar ------------------------------------------------------------------------------------------------
+// ---- the task box ------------------------------------------------------------------------------------------------
 
 function note(text) {
   setText($("task-note"), text);
@@ -395,7 +298,8 @@ function start() {
 
 function handle(message) {
   folders.onMessage(message);
-  if (message.type?.startsWith("brain_")) drawer.brain?.onMessage(message); // the inbox in the drawer
+  drawer.onMessage(message);
+  for (const part of parts) part.onMessage?.(message);
   switch (message.type) {
     case "brain_snapshot":
       brainItems.clear();
@@ -438,37 +342,29 @@ function handle(message) {
       tabs = message.tabs || [];
       tabScope = message.tab_scope || null;
       browser = message.browser || null;
-      renderYourTabs();
+      drawer.tabsChanged();
       agentsKnown = true;
-      renderCounts();
-      renderEmptyList();
       defaultModel = message.default_model || defaultModel;
       applySettings(message.settings);
       accountRows = message.accounts || [];
       fillPicker($("task-account"), accountRows);
-      link.send({ type: "accounts" }); // each account's status, now
       if (message.settings?.voice && !$("voice").checked) setVoice(true); // Voice was on: it comes back on
       if (pending) finishStart(); // a new connection: an unanswered Start can be pressed again
       if (drawer.id) link.send({ type: "events", id: drawer.id });
-      link.send({ type: "thumbs" }); // the latest pictures, for a page opened after they were taken
-      link.send({ type: "brain" });
-      link.send({ type: "hearing" }); // can this page talk? (asked again after every reconnect)
-      link.send({ type: "permission_rules" });
+      eventsFor = null; // and the right column asks for its agent's actions again
+      renderAll();
+      for (const kind of ["accounts", "thumbs", "brain", "hearing", "permission_rules"]) link.send({ type: kind });
       break;
     }
     case "agent_event":
-      if (message.id === drawer.id) drawer.chat?.append(message.event);
+      side.event(message.id, message.event);
       break;
     case "agent_events":
-      if (message.id === drawer.id && drawer.chat) {
-        drawer.chat.reset("No messages yet.");
-        for (const event of message.events || []) drawer.chat.append(event);
-      }
+      side.events(message.id, message.events || []);
       break;
     case "accounts":
       accountRows = message.accounts || [];
       fillPicker($("task-account"), accountRows);
-      if (drawer.id && agents.has(drawer.id)) fillDrawer(agents.get(drawer.id));
       break;
     case "created":
       if (pending && message.request === pending) {
@@ -491,11 +387,11 @@ function handle(message) {
     case "tabs":
       tabs = message.tabs || [];
       tabScope = message.tab_scope || null;
-      renderYourTabs();
+      drawer.tabsChanged();
       break;
     case "browser":
       browser = { kind: message.kind, name: message.name, state: message.state };
-      renderYourTabs();
+      drawer.tabsChanged();
       break;
     case "settings":
       applySettings(message);
@@ -515,61 +411,63 @@ function handle(message) {
   }
 }
 
-// ---- moving around ---------------------------------------------------------------------------------------------
+// ---- moving around the room, and the keys ----------------------------------------------------------------------
 
 const KEYS = { ArrowLeft: () => scene.turn(15), ArrowRight: () => scene.turn(-15), ArrowUp: () => scene.turn(0, 4),
                ArrowDown: () => scene.turn(0, -4), "+": () => scene.zoom(1.15), "=": () => scene.zoom(1.15),
                "-": () => scene.zoom(1 / 1.15), "0": () => scene.reset() };
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && (!$("drawer").hidden || !$("list").hidden)) {
-    if (!$("drawer").hidden) closeDrawer();
-    else showList(false);
+  if (event.key === "Escape" && drawer.isOpen) {
+    drawer.close();
     return;
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]")) return;
+  if (page !== "dashboard" || view !== "flow") return;
   const action = KEYS[event.key];
   if (!action) return;
   event.preventDefault();
   action();
 });
 
-const view = scene.viewport;
+document.addEventListener("keydown", (event) => { // Command-K (Ctrl+K elsewhere): a new mission, from anywhere
+  const command = MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (!command || event.altKey || event.shiftKey || String(event.key).toLowerCase() !== "k") return;
+  event.preventDefault();
+  newMission();
+}, true);
+
+const roomView = scene.viewport;
 let drag = null;
-view.addEventListener("pointerdown", (event) => {
+roomView.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || event.target.closest(".station, .stage")) return;
   drag = { x: event.clientX, y: event.clientY, id: event.pointerId };
-  view.setPointerCapture(event.pointerId);
-  view.classList.add("dragging");
+  roomView.setPointerCapture(event.pointerId);
+  roomView.classList.add("dragging");
 });
-view.addEventListener("pointermove", (event) => {
+roomView.addEventListener("pointermove", (event) => {
   if (!drag || event.pointerId !== drag.id) return;
   scene.turn((event.clientX - drag.x) * 0.25, (drag.y - event.clientY) * 0.15);
   drag.x = event.clientX;
   drag.y = event.clientY;
 });
 for (const type of ["pointerup", "pointercancel"]) {
-  view.addEventListener(type, (event) => {
+  roomView.addEventListener(type, (event) => {
     if (drag && event.pointerId === drag.id) {
       drag = null;
-      view.classList.remove("dragging");
+      roomView.classList.remove("dragging");
     }
   });
 }
-view.addEventListener("wheel", (event) => { // in proportion to the scroll: a trackpad sends many small ones
+roomView.addEventListener("wheel", (event) => { // in proportion to the scroll: a trackpad sends many small ones
   event.preventDefault();
   const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1);
   scene.zoom(Math.exp(-Math.max(-300, Math.min(300, delta)) * 0.002));
 }, { passive: false });
-view.addEventListener("dblclick", (event) => {
+roomView.addEventListener("dblclick", (event) => {
   if (!event.target.closest(".station, .stage")) scene.reset();
 });
-
-$("drawer-close").addEventListener("click", closeDrawer);
-$("home-link").addEventListener("click", () => openTab("/home"));
-brainButton.addEventListener("click", openBrain);
-bubble.addEventListener("click", openBrain);
 
 async function setVoice(on) { // Voice: only a voice that runs on this computer; off by default, and remembered
   const result = await voice.setEnabled(on);
@@ -592,10 +490,21 @@ $("task").addEventListener("keydown", (event) => {
 $("task-model").addEventListener("change", () => {
   link.send({ type: "settings_set", key: "model", value: $("task-model").value });
 });
-$("list-button").addEventListener("click", () => showList($("list").hidden));
-let tabHidden = false; // the tab menu shows another tab (app.js tells its frames)
+$("new-mission").addEventListener("click", newMission);
+for (const button of document.querySelectorAll(".page-link")) {
+  button.addEventListener("click", () => showPage(button.dataset.page));
+}
+for (const button of $("views-switch").querySelectorAll("[data-view]")) {
+  button.addEventListener("click", () => showView(button.dataset.view));
+}
+$("usage").addEventListener("click", () => openTab("/settings#accounts-section")); // Settings → Accounts
+scene.globe.addEventListener("click", () => drawer.openBrain());
+bubble.addEventListener("click", () => drawer.openBrain());
 
-function hidden(on) { // its tab or the window is hidden: animations and timers wait (plan decision 16)
+// ---- hidden: its tab or the window. Animations and timers wait (plan decision 16) --------------------------------
+
+function hidden(on) {
+  paused = on;
   document.documentElement.classList.toggle("paused", on);
   scene.pause(on);
 }
@@ -606,7 +515,9 @@ addEventListener("message", (event) => {
   hidden(tabHidden || document.hidden);
 });
 document.addEventListener("visibilitychange", () => hidden(tabHidden || document.hidden));
-
+setInterval(() => {
+  if (!paused) side.tick(); // the step's timer and "2m ago"
+}, 1000);
 renderCounts();
-renderEmptyList();
+renderSide();
 renderBrain();

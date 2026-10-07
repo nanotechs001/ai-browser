@@ -1,0 +1,37 @@
+/* Mission Control's composer, under the office: the talk with the Brain, the task box and its pickers. */
+.composer { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 0 24px 18px; }
+.task-bar { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding: 10px 12px;
+            border-color: var(--line-strong); }
+.task-bar textarea { flex: 1; min-width: 200px; border: none; outline: none; resize: none; background: transparent;
+                     font-size: 15px; field-sizing: content; max-height: 140px; min-height: 26px; padding: 3px 4px; }
+.task-bar .note { position: absolute; left: 14px; top: -22px; }
+#task-folder { max-width: 180px; }
+.mic { width: 34px; height: 32px; padding: 0; justify-content: center; flex: none; }
+.mic svg { width: 18px; height: 18px; fill: currentColor; }
+.mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+                            box-shadow: 0 0 0 3px rgba(79, 141, 253, 0.35); }
+.voice-line { margin: 0; display: flex; gap: 8px; align-items: center; }
+.switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.talk { max-height: 38vh; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.talk-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.talk-log li { white-space: pre-wrap; word-break: break-word; }
+.talk-log li.you { color: var(--muted); }
+.talk-status:empty, .talk-notice:empty, .talk-card:empty { display: none; }
+.talk-notice { color: var(--needs); font-size: 13px; }
+.talk-card { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.talk-card p { margin: 0; }
+.talk-card code { font: 12px var(--mono); background: var(--soft); border-radius: 4px; padding: 0 4px; }
+.talk-card textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 8px;
+                      padding: 6px 8px; background: var(--bg); }
+.talk-card progress { width: 100%; }
+.talk-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap; }
+.talk-card .talk-state, .talk-card .talk-hint { font-size: 13px; }
+.talk-card .row { margin-top: 0; }
+.talk-form { display: flex; gap: 8px; }
+.talk-form input { flex: 1; }
+.talk-note { margin: 0; font-size: 12px; }
+.folder-ask { flex: 1 0 100%; order: 10; display: flex; flex-direction: column; gap: 6px; }
+.folder-ask .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 0; }
+.folder-ask .folder-typed { flex: 1; min-width: 200px; }
+.folder-ask p { margin: 0; }
+.folder-ask .folder-path { font: 12px var(--mono); overflow-wrap: anywhere; }

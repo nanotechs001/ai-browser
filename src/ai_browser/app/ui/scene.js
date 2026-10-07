@@ -27,6 +27,9 @@ const PUSH = 100; // room pixels: in a ring after the first, every odd seat stan
 // stand back and out (215°, -35°), so that a full step card (a desk with it is TALL) never hides the desk behind it.
 const FIRST_RING = [150, 30, 112, 68, 215, -35];
 const TALL = 280; // a desk with its step card, in CSS pixels: the card, the gap and the desk
+const TOP = 190; // CSS pixels kept clear along the box's top, for no step card to sit under the page's words there:
+// Mission Control's heading (to 162 px down), its Flow · List · Calendar switch and the AI OFFICE sign (to 183)
+const FLOOR = 0.15; // the room's smallest zoom to fit in (20 desks in a box 700 px wide fit at about 0.2)
 const CHIPS_PAST = 6; // more desks than this: step cards fold to chips
 const SPARKS = 6; // arrivals in flight at once: any more arrive without a spark
 const SVG = "http://www.w3.org/2000/svg";
@@ -173,7 +176,7 @@ export function createScene(root, { onSelect = () => {} } = {}) {
     const near = screen(extent.near);
     const far = screen(extent.far);
     const middleOfRoom = screen(CENTER.y);
-    return near.y <= height - 12 && far.y - TALL * scale * far.factor >= 8
+    return near.y <= height - 12 && far.y - TALL * scale * far.factor >= TOP
       && middleOfRoom.y - 340 * scale * middleOfRoom.factor >= 8
       && width / 2 - (extent.dx + DESK.w / 2) * scale * near.factor >= 0;
   }
@@ -182,8 +185,8 @@ export function createScene(root, { onSelect = () => {} } = {}) {
     const width = viewport.clientWidth || innerWidth;
     const height = viewport.clientHeight || innerHeight;
     let scale = Math.min(1.2, (width * 0.94) / (2 * extent.dx + DESK.w + 40), height / 820);
-    while (scale > 0.3 && !fits(scale, width, height)) scale -= 0.02;
-    return Math.max(0.3, scale);
+    while (scale > FLOOR && !fits(scale, width, height)) scale -= 0.02;
+    return Math.max(FLOOR, scale);
   }
 
   function apply() {

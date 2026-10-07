@@ -200,14 +200,14 @@ async def test_our_buttons_switch_tabs_and_never_open_a_window(shell):
     pages = await all_pages(stack)
     await click_in(js, "/home", "#mission")  # AI Home's Mission Control button
     assert await until(js, f"{active_is('/mission')} && {connected('/mission')}")
-    await click_in(js, "/mission", "#home-link")  # Mission Control's AI Home button
+    await click_in(js, "/mission", "#usage")  # Mission Control's Usage card: Settings → Accounts
+    assert await until(js, f"{active_is('/settings')} && {connected('/settings')}")
+    await click_in(js, "/settings", "#home-link")
     assert await until(js, active_is("/home"))
     await click_in(js, "/home", "#mission")  # open already: shown again, never a second one
     assert await until(js, active_is("/mission"))
-    await click_in(js, "/mission", "#home-link")
-    assert await until(js, active_is("/home"))
-    await click_in(js, "/home", "#settings")
-    assert await until(js, f"{active_is('/settings')} && {connected('/settings')}")
+    await click_in(js, "/mission", "#usage")
+    assert await until(js, active_is("/settings"))
     await click_in(js, "/settings", "#home-link")
     assert await until(js, active_is("/home"))
     await asyncio.sleep(0.5)

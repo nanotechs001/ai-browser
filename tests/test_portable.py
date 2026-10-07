@@ -159,6 +159,7 @@ def test_text_io_names_its_encoding():
 
 MAC_ONLY = {
     ("platforms.py", "this Mac"),  # this_computer() itself
+    ("app/ui/mission.js", 'MAC ? "⌘ K"'),  # New Mission's key, named so on a Mac only
     # Add (path, snippet) here only for text shown when a platform value says macOS, for example voice-input's
     # macOS microphone lines chosen by hearing_status.platform == "mac".
 }
