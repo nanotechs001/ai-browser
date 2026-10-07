@@ -3,6 +3,7 @@
 // scene.js, the menu's pages and the composer), and the right column (side.js) for the agent picked. On the same line
 // to the app as AI Home (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
 import { askError } from "./accountui.js";
+import { mountCalendar } from "./calendar.js";
 import { el } from "./chat.js";
 import { mountComposer } from "./composer.js";
 import { mountDrawer } from "./drawer.js";
@@ -112,6 +113,13 @@ parts.push(spaces, {
     if (message.type === "snapshot" || message.type === "accounts") usage.render(message.accounts || []);
   },
 });
+parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace }));
+
+function openTemplate(slug) { // a template in the Calendar: Templates, at that template
+  showPage("templates");
+  document.querySelector(`#page-templates .workflow[data-slug="${CSS.escape(slug)}"]`)
+    ?.scrollIntoView({ block: "center" });
+}
 
 function workspaceOfTemplate(slug) {
   return workspaceRows.find((row) => (row.templates || []).includes(slug))?.id || null;

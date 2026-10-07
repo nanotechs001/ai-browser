@@ -974,3 +974,124 @@ async def test_a_settings_tab_already_open_moves_to_accounts_without_reloading_a
     assert await js(f"{frame('/settings')}.marker") == "same page"  # its section moved: the page was not reloaded
     await asyncio.sleep(0.2)
     assert await js(f"{frame('/settings')}.document.getElementById('status')?.dataset.state") == "connected"
+
+
+# ---- the Calendar (Task 17) ------------------------------------------------------------------------------------------
+
+@CHROME
+async def test_the_calendar_shows_scheduled_templates_and_finished_agents(stack):
+    import datetime
+
+    stack["workflows"].save({"name": "Morning report", "instructions": "Write it", "trigger": "schedule",
+                             "schedule": "daily 09:00"})
+    stack["workflows"].save({"name": "Check often", "instructions": "Check", "trigger": "schedule",
+                             "schedule": "every 2h"})
+    await stack["server"].agents.create("Fix the footer")  # the stack's script: done at once
+    await wait_for(lambda: stack["server"].agents.agents["a1"].state == "your_turn")
+    js = await open_mission(stack)
+    await js("document.querySelector('#views-switch [data-view=\"calendar\"]').click(); true")
+    today = datetime.date.today()
+    cell = f"document.querySelector('#view-calendar .day[data-day=\"{today.year}-{today.month}-{today.day}\"]')"
+    assert await until(js, f"{cell}?.querySelector('.entry.agent') !== null")
+    assert (await js(f"{cell}.querySelector('.entry.agent').textContent")).endswith("✓ 1 · Fix the footer")
+    entries = "[...document.querySelectorAll('#view-calendar .entry.template')].map(node => node.textContent)"
+    assert await until(js, f"{entries}.some(text => text.endsWith('09:00 Morning report'))")
+    assert await js(f"{entries}.some(text => text === 'Check often · Every 2h')")
+    assert await js("document.querySelectorAll('#view-calendar .day').length") == 42
+    await js("document.querySelector('#view-calendar [data-mode=\"week\"]').click(); true")
+    assert await js("document.querySelectorAll('#view-calendar .day').length") == 7
+    await js(f"{cell}.querySelector('.entry.agent').click(); true")
+    assert await until(js, "document.getElementById('drawer-title').textContent === '1 · Fix the footer'")
+    await js("document.getElementById('drawer-close').click();"
+             "document.querySelector('#view-calendar .entry.template').click(); true")
+    assert await js("document.getElementById('page-templates').hidden") is False
+
+
+CALENDAR_FUNCTIONS = """import('/calendar.js').then(({ monthGrid, weekDays, everyWords, calendarItems }) => {
+  const at = (month, date, hour = 0, minute = 0) => new Date(2026, month - 1, date, hour, minute);
+  const secs = (date) => date.getTime() / 1000;
+  const days = (grid) => grid.map((date) => `${date.getMonth() + 1}-${date.getDate()}`);
+  const time = (date) => `${date.getMonth() + 1}-${date.getDate()} ${date.getHours()}:${String(date.getMinutes())
+    .padStart(2, '0')}`;
+  const shown = (items) => items.map((item) => [item.kind, item.slug || item.id, item.label, time(item.at),
+                                                 Boolean(item.allDay)]);
+  const grids = [monthGrid(2026, 9), monthGrid(2026, 1), monthGrid(2026, 5)].map((grid) => [
+    grid.length, days(grid)[0], days(grid)[41], grid[0].getDay()]);
+  const week = weekDays(at(10, 7, 15, 30));
+  const rows = [
+    { slug: 'morning', name: 'Morning report', every: null,
+      runs: [secs(at(10, 7, 9)), secs(at(10, 8, 9)), secs(at(10, 9, 9)), secs(at(10, 13, 9))] },
+    { slug: 'often', name: 'Check often', every: 7200, runs: [secs(at(10, 7, 9))] }, // its next run passed an hour ago
+    { slug: 'late', name: 'Check late', every: 7200, runs: [secs(at(10, 8, 2))] },
+  ];
+  const agents = [
+    { id: 'a1', name: 'Fix the footer', state: 'your_turn', finished: secs(at(10, 6, 12)) },
+    { id: 'a2', name: 'Still going', state: 'working' },
+    { id: 'a3', name: 'No time', state: 'failed' },
+    { id: 'a4', name: 'Broke', state: 'failed', finished: secs(at(10, 7, 8, 30)) },
+    { id: 'a5', name: 'Asks', state: 'your_turn', permission: { tool: 'Bash' }, finished: secs(at(10, 7, 8)) },
+  ];
+  return {
+    grids,
+    week: [days(week), week.map((date) => date.getHours() + date.getMinutes())],
+    sunday: days(weekDays(at(10, 11, 23, 59))),
+    across: days(weekDays(at(11, 1))),
+    words: [7200, 1800, 5400, 3600].map(everyWords),
+    items: shown(calendarItems(rows, agents, at(10, 5), at(10, 12), at(10, 7, 10))),
+    later: shown(calendarItems(rows, [], at(10, 9), at(10, 12), at(10, 7, 10))),
+    odd: [calendarItems(null, [], at(10, 5), at(10, 12), at(10, 7, 10)).length,
+          calendarItems([{ slug: 'x', name: 'x', runs: 'no' }, { slug: 'y', name: 'y', runs: [NaN, 'a'] }, {}],
+                        [{ id: 'a9', state: 'your_turn', finished: 'soon' }], at(10, 5), at(10, 12),
+                        at(10, 7, 10)).length],
+  };
+})"""
+
+
+@CHROME
+async def test_the_calendars_days_words_and_items_in_plain_data(stack):  # calendar.js's functions, no page
+    js = await open_mission(stack)
+    found = await js(CALENDAR_FUNCTIONS)
+    assert found["grids"] == [[42, "9-28", "11-8", 1],  # October 2026 starts on a Thursday: from Monday 28 September
+                              [42, "1-26", "3-8", 1],  # February 2026 starts on a Sunday: six days back
+                              [42, "6-1", "7-12", 1]]  # June 2026 starts on a Monday: no days before it
+    assert found["week"] == [[f"10-{day}" for day in range(5, 12)], [0] * 7]  # Monday to Sunday, each from midnight
+    assert found["sunday"] == [f"10-{day}" for day in range(5, 12)]  # a Sunday belongs to the week before it
+    assert found["across"] == ["10-26", "10-27", "10-28", "10-29", "10-30", "10-31", "11-1"]
+    assert found["words"] == ["Every 2h", "Every 30m", "Every 90m", "Every 1h"]
+    morning = lambda day: ["template", "morning", "Morning report", f"10-{day} 9:00", False]  # noqa: E731
+    often = lambda day: ["template", "often", "Check often · Every 2h", f"10-{day} 0:00", True]  # noqa: E731
+    late = lambda day: ["template", "late", "Check late · Every 2h", f"10-{day} 0:00", True]  # noqa: E731
+    assert found["items"] == [  # now is Wednesday 7 October, 10:00: nothing scheduled earlier than that
+        ["agent", "a1", "1 · Fix the footer", "10-6 12:00", False],  # a finished agent stays at its finish time
+        often(7),  # its stale next run (9:00) moved on to 11:00, so today has it
+        ["agent", "a4", "4 · Broke", "10-7 8:30", False],  # finished earlier today: stays
+        often(8), late(8), morning(8), often(9), late(9), morning(9), often(10), late(10), often(11), late(11)]
+    assert found["later"] == [often(9), late(9), morning(9), often(10), late(10), often(11), late(11)]
+    assert found["odd"] == [0, 0]  # rows and agents that say nothing usable draw nothing
+
+
+@CHROME
+async def test_a_calendar_left_open_drops_a_run_once_it_has_passed(stack):  # next_runs is computed when it is sent
+    import time
+
+    source = ("window.minute = []; const every = window.setInterval;"
+              "window.setInterval = (callback, wait, ...rest) => { if (wait === 60000) window.minute.push(callback);"
+              " return every(callback, wait, ...rest); };")  # the page's once-a-minute timers, to run them by hand
+    js = await open_with(stack, source)
+    await js("document.querySelector('#views-switch [data-view=\"calendar\"]').click(); true")
+    now = time.time()
+
+    def row(slug, moment):
+        return {"slug": slug, "name": slug.title(), "schedule": "daily 09:00", "every": None, "runs": [moment]}
+
+    stack["server"]._send_all({"type": "workflows_snapshot", "workflows": [], "problems": [],
+                               "next_runs": [row("past", now - 60), row("soon", now + 2),
+                                             row("tomorrow", now + 86400)]})
+    slugs = "[...document.querySelectorAll('#view-calendar .entry.template')].map(node => node.dataset.slug).sort()"
+    assert await until(js, f"{slugs}.includes('tomorrow')")
+    assert await js(slugs) == ["soon", "tomorrow"]  # a run a minute ago is not drawn
+    await asyncio.sleep(2.5)  # "soon" has passed; nothing told the page
+    assert await js("window.minute.length") >= 1
+    both = await js(f"(() => {{ const before = {slugs}; window.minute.forEach((callback) => callback());"
+                    f" return [before, {slugs}]; }})()")
+    assert both == [["soon", "tomorrow"], ["tomorrow"]]  # its own timer drew it again, without "soon"

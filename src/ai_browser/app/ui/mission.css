@@ -301,6 +301,25 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 :is(.mission, .workflow) select.move { flex: none; width: 150px; } /* one width on every row: the columns line up */
 .usage-icon { display: none; }
 
+/* ---- the Calendar ---------------------------------------------------------------------------------------------- */
+.calendar-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.calendar-title { font-size: 18px; margin: 0 8px; flex: 1; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.calendar-grid .weekday { text-align: center; font-size: 12px; }
+.day { min-height: 92px; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 6px; border-radius: 10px;
+       background: var(--card); border: 1px solid var(--line); }
+.calendar-grid[data-mode="week"] .day { min-height: 260px; }
+.day.other { opacity: 0.45; }
+.day.today { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2); }
+.day .date { font-size: 12px; color: var(--text-2); }
+.entry { display: block; width: 100%; padding: 2px 6px; border-radius: 6px; font-size: 11px; text-align: left;
+         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid transparent; }
+.entry.template { background: rgba(79, 141, 253, 0.16); color: var(--accent-bright); }
+.entry.agent { background: rgba(42, 240, 185, 0.12); color: var(--ok); }
+.entry.agent.failed { background: rgba(255, 93, 108, 0.14); color: var(--fail); }
+.entry.agent.stopped { background: var(--soft); color: var(--muted); }
+.day .more { font-size: 11px; }
+
 /* ---- narrow windows, last so they win: the right column folds under the centre, then the menu shrinks to icons -- */
 @media (max-width: 1279px) {
   .mc { grid-template-columns: 248px minmax(0, 1fr); grid-template-areas: "menu centre" "menu side";
