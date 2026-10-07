@@ -1144,6 +1144,29 @@ async def test_the_calendar_follows_the_menus_workspace_for_templates_as_for_age
     assert await until(js, f"JSON.stringify({slugs}) === '[\"check-often\",\"morning-report\",\"weekly-plan\"]'")
 
 
+@CHROME
+async def test_an_agent_update_that_changes_nothing_drawn_keeps_the_calendars_focus(stack):  # the final review, F2
+    agents = stack["server"].agents
+    await agents.create("Fix the footer")  # the stack's script: done at once
+    await wait_for(lambda: agents.agents["a1"].state == "your_turn")
+    source = ("window.minute = []; const every = window.setInterval;"
+              "window.setInterval = (callback, wait, ...rest) => { if (wait === 60000) window.minute.push(callback);"
+              " return every(callback, wait, ...rest); };")  # the page's once-a-minute timers, to run them by hand
+    js = await open_with(stack, source)
+    await js("document.querySelector('#views-switch [data-view=\"calendar\"]').click(); true")
+    entry = "document.querySelector('#view-calendar .entry.agent[data-agent=\"a1\"]')"
+    assert await until(js, f"{entry} !== null")
+    await js(f"window.picked = {entry}; window.picked.focus(); true")
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    await agents.create("keep working")  # an agent at work: nothing the Calendar draws
+    assert await until(js, "document.getElementById('counts').textContent === '1 active task · 1 completed'")
+    agents._changed(agents.agents["a1"])  # its row sent again, unchanged
+    await asyncio.sleep(0.5)
+    assert await js("window.picked.isConnected && document.activeElement === window.picked")
+    await js("window.minute.forEach((callback) => callback()); true")  # the once-a-minute redraw: nothing changed
+    assert await js("window.picked.isConnected && document.activeElement === window.picked")
+
+
 def test_the_readme_describes_the_new_look():  # what the user reads first
     from pathlib import Path
 

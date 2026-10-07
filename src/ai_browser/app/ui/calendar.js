@@ -141,18 +141,24 @@ export function mountCalendar(root, { onAgent, onTemplate, visible = () => true,
     const shown = days();
     const start = shown[0];
     const end = nextDay(shown.at(-1));
+    const rows = (Array.isArray(nextRuns) ? nextRuns : []).filter((row) => visibleTemplate(row.slug));
+    const items = calendarItems(rows, agents.filter(visible), start, end);
+    const todayKey = dayKey(new Date());
+    // What it would draw: unchanged, the grid stays as it is (a focused entry keeps its focus, a click isn't lost)
+    const signature = JSON.stringify([mode, dayKey(cursor), todayKey, items.map((item) => [
+      item.kind, item.id || item.slug, item.at.getTime(), item.label, item.state || "", Boolean(item.allDay)])]);
+    if (grid.dataset.drawn === signature) return;
+    grid.dataset.drawn = signature;
     title.textContent = mode === "month" ? `${MONTHS[cursor.getMonth()]} ${cursor.getFullYear()}`
       : `${shown[0].getDate()} ${MONTHS[shown[0].getMonth()]} – ${shown[6].getDate()} ${MONTHS[shown[6].getMonth()]}`;
     for (const tab of modes.children) tab.setAttribute("aria-selected", String(tab.dataset.mode === mode));
     const byDay = new Map();
-    const rows = (Array.isArray(nextRuns) ? nextRuns : []).filter((row) => visibleTemplate(row.slug));
-    for (const item of calendarItems(rows, agents.filter(visible), start, end)) {
+    for (const item of items) {
       const key = dayKey(item.at);
       if (!byDay.has(key)) byDay.set(key, []);
       byDay.get(key).push(item);
     }
     grid.dataset.mode = mode;
-    const todayKey = dayKey(new Date());
     grid.replaceChildren(...WEEKDAYS.map((name) => el("div", "weekday muted", name)), ...shown.map((day) => {
       const cell = el("div", "day");
       cell.dataset.day = dayKey(day);
