@@ -1,11 +1,12 @@
 """Without Docker (the no-Docker spec) the sandbox's browser runs on this computer, so it could reach this computer's own
 services and its network's, which Docker's browser couldn't: its loopback was the container's own. So it never opens
-them: loopback, private, link-local, shared (100.64.0.0/10, tailnets) and unspecified addresses, and the names
-localhost, *.localhost and *.local.
+them: loopback, private, link-local, shared (100.64.0.0/10, tailnets) and unspecified addresses, the names
+localhost, *.localhost and *.local, and this computer's own public addresses (any it can bind, and the /64 of its IPv6
+one: a page served over IPv6 learns the visitor's address).
 - An address is judged as written (Chrome writes every address in one form first, so 2130706433 and 0x7f.1 reach it
   as 127.0.0.1).
 - A name an agent opens, and every navigation's, is also looked up: a public name that points here (localtest.me) is
-  refused too.
+  refused too, and so is a name whose lookup is too slow to say (a page can make lookups hang).
 The browser applies it to every request it makes (browser.py: CDP Fetch with PATTERNS), and open, act goto and qa
 say so before anything loads."""
 
@@ -38,12 +39,21 @@ LOOKUP_WAIT = 3.0  # seconds a name's lookup may take; past it, it is refused (a
 # can only fill these four (then every lookup is refused, until they are free), and never stalls agentlink or the
 # sandbox start. ponytail: a lookup stuck in the OS holds its thread until the OS gives up.
 LOOKUPS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="netguard")
-# The requests Chrome pauses for a look (CDP Fetch patterns: * and ? only). Every navigation (Document) pauses, so its
-# name is looked up; any other request pauses only when its address may be private as written. The look decides.
+# The requests Chrome pauses for a look (CDP Fetch patterns: * and ? only, matched against the whole address). Every
+# navigation (Document) pauses, so its name is looked up; any other request pauses only when its address may be private
+# as written. The look decides: a pause that turns out public costs a round trip, a request that never paused is never
+# judged, so these may match too much, never too little. Chrome keeps a user name in an address (http://u@127.0.0.1/),
+# so each form that starts the host has a twin after "*@". A name ending in .local or .localhost has its end matched
+# (a path that ends .local pauses too), not "*.local*", which paused every en.locale.json.
+# Known edge: this computer's own public IPv4 address, or a name that points at it, is judged for a navigation only; as
+# a picture or script it never pauses (every IPv6 address does, "[*"). Behind a router the address a page sees is the
+# router's, not this computer's; only a computer directly on the internet has the case.
+STARTS = ("localhost*", "0.*", "10.*", "127.*", "100.*", "169.254.*", "172.1?.*", "172.2?.*", "172.3?.*", "192.168.*",
+          "24?.*", "25?.*", "[*")
+ENDS = tuple(f"*{name}{after}" for name in (".local", ".localhost") for after in ("/*", ":*", "", "./*", ".:*", "."))
 PATTERNS = [{"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"},
-            *({"urlPattern": pattern, "requestStage": "Request"} for pattern in (
-                "*://localhost*", "*://*.local*", "*://0.*", "*://10.*", "*://127.*", "*://100.*", "*://169.254.*",
-                "*://172.1?.*", "*://172.2?.*", "*://172.3?.*", "*://192.168.*", "*://24?.*", "*://25?.*", "*://[*"))]
+            *({"urlPattern": f"*://{form}", "requestStage": "Request"}
+              for form in (*STARTS, *(f"*@{start}" for start in STARTS), *ENDS))]
 
 
 def exempt(url: str) -> bool:
@@ -129,12 +139,17 @@ def host_of(url: str) -> str:
 
 
 def private_url(url: str) -> bool:
-    """Whether an address names this computer or its network, as written (no lookup)."""
+    """Whether an address names this computer or its network, as written (no lookup). Exact only for an address as
+    Chrome writes it, every address in one form (127.0.0.1 for 2130706433 or 0x7f.1): a raw string someone typed can
+    hold forms this misses (0177.0.0.1). So a caller never treats a raw string as checked: the browser's pause
+    (PATTERNS, judged by this) is the guard."""
     return not exempt(url) and private_host(host_of(url))
 
 
 async def refused(url: str) -> str | None:
-    """The refusal for an address the sandbox's browser never opens, or None: as written, then its name looked up."""
+    """The refusal for an address the sandbox's browser never opens, or None: as written, then its name looked up.
+    Early, plain-worded news for open, act goto and qa, not the guard (see private_url): on a raw string it can miss
+    what Chrome would read differently, and a name can answer differently when the browser asks."""
     if exempt(url):
         return None
     host = host_of(url)

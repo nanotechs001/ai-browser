@@ -33,7 +33,10 @@ PRIVATE = ["http://localhost:8792/home", "http://LOCALHOST./", "http://app.local
            "http://240.0.0.1/", "http://255.255.255.255/", "http://[::]/", "http://[fec0::1]/",
            # an IPv4 address inside an IPv6 one is judged by its IPv4 part: 127.0.0.1, 192.168.1.1, 100.64.0.1
            "http://[::7f00:1]/", "http://[2002:7f00:1::]/", "http://[2002:c0a8:101::]/", "http://[64:ff9b::7f00:1]/",
-           "http://[64:ff9b::c0a8:101]/", "http://[::ffff:6440:1]/"]
+           "http://[64:ff9b::c0a8:101]/", "http://[::ffff:6440:1]/",
+           # with a user name, which Chrome keeps in a navigation's address; and a name's trailing dot
+           "http://u@127.0.0.1:8792/x.png", "http://u:p@192.168.1.1/", "http://u@localhost:5173/", "http://u@[::1]/",
+           "http://u@printer.local/x.js", "http://printer.local./x.js", "http://app.localhost./", "http://u@10.1.2.3/"]
 PUBLIC = ["https://example.com/", "http://93.184.216.34/", "http://172.32.0.1/", "http://100.128.0.1/",
           "http://10.example.com/", "https://localhost.example.com/", "http://[2606:4700::1111]/", "about:blank",
           "data:text/html,hi", "file:///tmp/x.html", "not a url", "",
@@ -182,6 +185,7 @@ def test_the_patterns_pause_every_navigation_and_each_private_form():
     assert all(pattern["requestStage"] == "Request" for pattern in netguard.PATTERNS)
     assert paused("https://example.com/", "Document")  # a navigation is always looked at, so a name is looked up
     assert not paused("https://example.com/logo.png")  # a public picture never waits
+    assert not paused("https://example.com/en.locale.json") and not paused("https://cdn.example.com/localhost.js")
     for url in PRIVATE:
         if url.startswith("http"):
             assert paused(url.lower()), url  # every private form, as Chrome writes it (lower case), waits for a look
