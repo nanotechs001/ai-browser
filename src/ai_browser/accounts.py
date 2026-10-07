@@ -102,6 +102,7 @@ class Accounts:
         self._status: dict[str, tuple[float, dict]] = {}  # account id -> (monotonic time, {"signed_in", "plan"})
         self._locks: dict[str, asyncio.Lock] = {}  # one `claude auth status` per account at a time
         self._limits: dict[str, float] = {}  # account id -> when its usage limit resets (this app run only)
+        self._usage: dict[str, dict] = {}  # account id -> {"used", "resets_at", "kind"}, as reported (this app run)
         self.on_change: Callable[[], None] | None = None  # set by the app: a status changed, so pages hear it
 
     # ---- reading -----------------------------------------------------------------------------------------------
@@ -334,6 +335,23 @@ class Accounts:
         if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool) and resets_at > time.time():
             self._limits[account_id] = float(resets_at)
 
+    def set_usage(self, account_id, used, resets_at=None, kind="") -> None:
+        """How much of this account's limit is used, as Claude Code reported it (a percentage, 0 to 100), kept for this
+        app run. Anything that isn't one is ignored."""
+        if isinstance(used, bool) or not isinstance(used, (int, float)) or not 0 <= used <= 100:
+            return
+        resets = float(resets_at) if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool) else None
+        self._usage[account_id] = {"used": float(used), "resets_at": resets,
+                                   "kind": kind if isinstance(kind, str) else ""}
+
+    def usage(self, account_id) -> dict | None:
+        """The last usage reported for this account, until its reset time passes."""
+        kept = self._usage.get(account_id)
+        if kept is not None and kept["resets_at"] is not None and kept["resets_at"] <= time.time():
+            del self._usage[account_id]
+            return None
+        return kept
+
     # ---- what AI Browser's own pages show ------------------------------------------------------------------------
 
     def command(self, account_id) -> str:
@@ -355,8 +373,11 @@ class Accounts:
         for account in self.list():
             kept = self._status.get(account.id)
             status = kept[1] if kept is not None else UNKNOWN
+            used = self.usage(account.id)
             rows.append({"id": account.id, "name": account.name, "signed_in": status["signed_in"],
                          "plan": status["plan"], "checked": kept is not None, "limit_until": self.limit(account.id),
+                         "used": used["used"] if used else None, "used_resets_at": used["resets_at"] if used else None,
+                         "used_kind": used["kind"] if used else "",
                          "default": account.id == default, "brain": account.id == brain,
                          "command": self.command(account.id)})
         return rows

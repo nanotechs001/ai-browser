@@ -194,6 +194,7 @@ class AgentManager:
         self.accounts = accounts  # AI accounts (Accounts); None: every agent runs on Default, as before
         self.rules = powers.Rules(self.home)  # agent powers: the user's rules and trusted folders, per folder
         self.on_limit: Callable[[str], None] | None = None  # set by the app: an account hit its usage limit
+        self.on_usage: Callable[[str], None] | None = None  # set by the app: an account reported how much is used
         self._asks: dict[str, asyncio.Future] = {}  # agent id -> its tool request waiting for the user
         self.agents: dict[str, Agent] = {}
         self._line: deque[str] = deque()  # agents waiting for a free slot, first come first served
@@ -617,6 +618,9 @@ class AgentManager:
 
     def _on_event(self, agent: Agent, event: dict) -> None:
         kind = event.get("type")
+        if kind == "usage":  # how much of its account's limit is used: the Usage card's, never the chat's
+            self._usage(agent, event)
+            return
         self._record(agent, {"type": "limit"} if kind == "limit" else event)  # the chat names no account or time
         if kind == "tool":
             agent.tools[event.get("id", "")] = (event.get("name", ""), event.get("summary", ""))
@@ -731,6 +735,15 @@ class AgentManager:
         if self.on_limit is not None:
             with contextlib.suppress(Exception):
                 self.on_limit(account)
+
+    def _usage(self, agent: Agent, event: dict) -> None:
+        if self.accounts is None:
+            return
+        account = agent.account["id"]
+        self.accounts.set_usage(account, event.get("used"), event.get("resets_at"), event.get("kind"))
+        if self.on_usage is not None:
+            with contextlib.suppress(Exception):
+                self.on_usage(account)
 
     async def move(self, agent_id: str, account_id: str, tabs=()) -> str:
         """Continue on another account (a click in AI Home or Mission Control; app-only in MESSAGE_RULES). One move
