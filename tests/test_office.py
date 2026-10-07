@@ -464,24 +464,18 @@ NAMES_UNDER_CARDS = """(() => {
       const wide = Math.min(near.step.right, far.name.right) - Math.max(near.step.left, far.name.left);
       const high = Math.min(near.step.bottom, far.name.bottom) - Math.max(near.step.top, far.name.top);
       const share = Math.max(0, wide) * Math.max(0, high) / area(far.name);
-      if (share > 0) covered.push([near.id, far.id, Math.round(share * 100) / 100]);
+      if (share > 0) covered.push([near.id, far.id, share]); // not rounded: a sliver counts
     }
   }
   return [desks.length, covered];
 })()"""
 
 
-RING_TWO_CHIPS = pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="a full ring 2 (20 desks): along its sides a chip covers up to 74% of the next desk's name (measured);"
-           " ring 2 and beyond are not re-seated yet")
-
-
 @CHROME
 @pytest.mark.parametrize(("count", "size", "most"), [
     (5, (1280, 760), 0), (6, (1280, 760), 0), (5, (1440, 960), 0), (6, (1440, 960), 0), (12, (1280, 760), 0.5),
-    pytest.param(20, (1280, 760), 0.5, marks=RING_TWO_CHIPS)])
-async def test_no_step_card_hides_the_name_of_a_desk_behind_it(stack, count, size, most):  # review: ring 1's far seats
+    (16, (1280, 760), 0.5), (20, (1280, 760), 0.5), (20, (1024, 700), 0.5)])
+async def test_no_step_card_hides_the_name_of_a_desk_behind_it(stack, count, size, most):  # review: rings 1 and 2
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
     stack["server"].agents.max_working = count  # all of them at work at once, none waiting in line
     for number in range(count):
@@ -493,9 +487,12 @@ async def test_no_step_card_hides_the_name_of_a_desk_behind_it(stack, count, siz
     await asyncio.sleep(1.5)  # every desk in its place
     shown, covered = await js(NAMES_UNDER_CARDS)
     assert shown == count
-    # a full card (5 and 6 desks) hides no part of a nameplate behind it; a chip (12 and 20) at most half of one
+    # a full card (5 and 6 desks) hides no part of a nameplate behind it; a chip (12 to 20) at most half of one
     assert [one for one in covered if one[2] > most] == [], covered
     assert await js("document.querySelectorAll('.step[data-mode=\"chip\"]').length") == (count if count > 6 else 0)
+    desks = await js(ARTS)  # and the desks themselves: none over another, all in the window
+    assert overlapping(desks) == []
+    assert all(desk[0] >= 0 and desk[2] <= size[0] and desk[1] >= 0 and desk[3] <= size[1] for desk in desks), desks
 
 
 @CHROME

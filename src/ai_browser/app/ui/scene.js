@@ -22,6 +22,7 @@ const RING = 430; // the first ring's radius, in room pixels
 const RING_STEP = 330; // between two rings
 const WIDE = 1.25; // rings are ellipses, wider than deep: desks stand side by side on screen
 const ARC = 240; // degrees of each ring in front of the globe: no desk stands right behind it
+const PUSH = 100; // room pixels: in a ring after the first, every odd seat stands this much further out (see placeOf)
 // Ring 1's seats, in degrees (90 is the front): left, right, front-left, front-right, far left, far right. The far two
 // stand back and out (215°, -35°), so that a full step card (a desk with it is TALL) never hides the desk behind it.
 const FIRST_RING = [150, 30, 112, 68, 215, -35];
@@ -59,7 +60,8 @@ function place(node, point) {
 
 // The seat of the index-th of `count` desks. Ring 1's six seats come in a fixed order (three desks sit as in the
 // mockup); ring r ≥ 2 holds 6·r desks over the ARC in front of the globe, a ring that isn't full spreading its desks
-// over the whole arc.
+// over the whole arc. Along a full ring's two sides, neighbours stand in line one behind the other, and the card of the
+// nearer one would hide the name of the next: so the odd seats of a ring after the first stand PUSH further out.
 export function placeOf(index, count) {
   let ring = 1;
   let first = 0;
@@ -68,6 +70,7 @@ export function placeOf(index, count) {
     ring += 1;
   }
   let angle;
+  let radius = RING + RING_STEP * (ring - 1);
   if (ring === 1) {
     angle = FIRST_RING[index];
   } else {
@@ -75,8 +78,8 @@ export function placeOf(index, count) {
     const inRing = Math.min(seats, count - first);
     const seat = Math.round((index - first + 0.5) * (seats / inRing) - 0.5);
     angle = 90 + ARC / 2 - (seat + 0.5) * (ARC / seats);
+    if (seat % 2 === 1) radius += PUSH;
   }
-  const radius = RING + RING_STEP * (ring - 1);
   const radians = (angle * Math.PI) / 180;
   return { x: Math.round(CENTER.x + WIDE * radius * Math.cos(radians)),
            y: Math.round(CENTER.y + radius * Math.sin(radians)), ring };
