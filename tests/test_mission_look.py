@@ -134,6 +134,25 @@ async def test_an_agent_without_a_to_do_list_shows_its_actions(stack):
 
 
 @CHROME
+async def test_a_long_answer_never_pushes_the_actions_off_the_checklist(stack):  # the final review, F1
+    from test_bridge_powers import result
+
+    piece = {"type": "stream_event", "event": {"type": "content_block_delta",
+                                               "delta": {"type": "text_delta", "text": "word "}}}
+    stack["script"].write_text(json.dumps([INIT, use("u1", "Bash", {"command": "ls"}), result("u1"),
+                                           use("u2", "Bash", {"command": "npm test"}), result("u2"),
+                                           *[piece] * 250, {"sleep": 30}]), encoding="utf-8")
+    agents = stack["server"].agents
+    js = await open_mission(stack)  # open first: the pieces arrive one by one
+    await agents.create("look around")
+    await wait_for(lambda: sum(event["type"] == "delta" for event in agents.events_of("a1")) == 250)
+    want = json.dumps([["done", "Bash ls"], ["done", "Bash npm test"]], separators=(",", ":"))
+    assert await until(js, f"JSON.stringify({CHECKLIST}) === {json.dumps(want)}"), await js(CHECKLIST)
+    later = await open_mission(stack)  # opened after the answer: its whole conversation at once
+    assert await until(later, f"JSON.stringify({CHECKLIST}) === {json.dumps(want)}"), await later(CHECKLIST)
+
+
+@CHROME
 async def test_recent_activity_lists_starts_steps_and_ends(stack):
     first = {"todos": [{"content": "Read the code", "status": "in_progress", "activeForm": "Reading the code"}]}
     second = {"todos": [{"content": "Read the code", "status": "completed", "activeForm": "Reading the code"}]}

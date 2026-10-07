@@ -11,6 +11,8 @@ import { activityOf, ago, checklistOf, groupsOf, progressOf } from "./progress.j
 import { stateOf, stepOf, timerOf } from "./step.js";
 
 const MARKS = { done: "✓", current: "●", pending: "○" };
+const KEPT = 200; // the agent's latest actions and their results: never pushed out by its streamed words
+const isAction = (event) => (event?.type === "tool" || event?.type === "tool_result") && !event.sub;
 const RUNNING = { working: "Running…", waiting: "Waiting in line…", needs_you: "Waiting for you…", your_turn: "Done",
                   stopped: "Stopped", failed: "Failed" };
 
@@ -149,12 +151,12 @@ export function mountSide({ send, openDrawer, openHistory }) {
     },
     events(id, list) {
       if (agent?.id !== id) return;
-      events = Array.isArray(list) ? list.slice(-200) : [];
+      events = Array.isArray(list) ? list.filter(isAction).slice(-KEPT) : [];
       renderCurrent();
     },
     event(id, event) {
-      if (agent?.id !== id) return;
-      events = [...events, event].slice(-200);
+      if (agent?.id !== id || !isAction(event)) return;
+      events = [...events, event].slice(-KEPT);
       renderCurrent();
     },
     tick() { // once a second: the step's timer and "2m ago"
