@@ -648,3 +648,54 @@ async def test_a_long_run_time_stays_on_one_line_in_my_missions_and_history(stac
                            " return heights; })()")
         assert all(one == heights[0] for one in heights), (part, heights)  # one line, whatever the time
         assert await js(f"{nodes}.every(node => getComputedStyle(node).whiteSpace === 'nowrap')"), part
+
+
+# ---- Templates, Knowledge and Integrations (Task 15) -----------------------------------------------------------------
+
+@CHROME
+async def test_templates_and_integrations_are_ai_homes_own(stack):
+    stack["workflows"].save({"name": "Weekly report", "instructions": "Write the weekly report"})
+    js = await open_mission(stack)
+    await js(f"{page_link('templates')}.click(); true")
+    row = "document.querySelector('#page-templates .workflow[data-slug=\"weekly-report\"]')"
+    assert await until(js, f"{row} !== null")
+    assert await js("document.querySelector('#page-templates h3').textContent") == "New template"
+    await js(f"{row}.querySelector('.run').click(); true")
+    await wait_for(lambda: "a1" in stack["server"].agents.agents)
+    await js(f"{page_link('integrations')}.click(); true")
+    assert await until(js, "document.querySelector('#page-integrations .tool-servers') !== null")
+
+
+@CHROME
+async def test_knowledge_lists_skills_and_remove_hides_one_without_deleting_it(stack, tmp_path, monkeypatch):
+    from ai_browser.config import load_config
+
+    user = tmp_path / "skills-user"
+    skill = user / ".claude" / "skills" / "footer-fixer"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: footer-fixer\ndescription: Fixes footers the way I like\n---\nSteps.\n",
+                                    encoding="utf-8")
+    monkeypatch.setenv("HOME", str(user))  # the skills come from this throwaway folder, never the user's own
+    stack["server"]._catalog = None
+    js = await open_mission(stack)
+    await js(f"{page_link('knowledge')}.click(); true")
+    row = "document.querySelector('#page-knowledge .skill[data-ref=\"personal:footer-fixer\"]')"
+    assert await until(js, f"{row} !== null")
+    assert await js(f"{row}.querySelector('.desc').textContent") == "Fixes footers the way I like"
+    await js(f"{row}.querySelector('.remove').click(); true")
+    assert await until(js, f"{row} === null")
+    assert await until(js, "[...document.querySelectorAll('#page-knowledge .removed li .name')]"
+                           ".map(node => node.textContent).includes('personal:footer-fixer')")
+    assert load_config(stack["home"]).blocked_skills == ["personal:footer-fixer"]
+    assert (skill / "SKILL.md").is_file()  # its files stay
+    await js("document.querySelector('#page-knowledge .removed .bring-back').click(); true")
+    assert await until(js, f"{row} !== null")
+    assert load_config(stack["home"]).blocked_skills == []
+    assert await js("document.querySelector('#page-knowledge .train-body .job') !== null")  # Train is here too
+
+
+def test_skill_block_is_app_only():  # the spec's Safety: no new right
+    from ai_browser.app.server import MESSAGE_RULES, may_send
+
+    assert "skill_block" in MESSAGE_RULES and may_send("app", {"type": "skill_block"})
+    assert not may_send("none", {"type": "skill_block"})

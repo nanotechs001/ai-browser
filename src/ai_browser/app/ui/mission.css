@@ -248,6 +248,29 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
   .history-row :is(.chip, .took, .account, .files) { display: none; }
 }
 
+/* ---- Templates, Knowledge and Integrations: AI Home's own pieces, on navy ------------------------------------- */
+.page :is(.workflow, .tool-server, .skill-editor, .skill) { display: flex; flex-direction: column; gap: 6px;
+  font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.page :is(.list, .skills-list) { display: flex; flex-direction: column; gap: 8px; }
+.page .field { display: flex; flex-direction: column; gap: 2px; }
+.page :is(textarea, input:not([type="checkbox"]):not([type="radio"]), select) { border: 1px solid var(--line);
+  border-radius: 8px; padding: 5px 8px; background: var(--field); color: var(--text); }
+.page textarea { width: 100%; resize: vertical; }
+.page h3 { font-size: 15px; margin: 18px 0 8px; }
+.page .top-line { display: flex; gap: 8px; align-items: center; }
+.page .top-line .remove { margin-left: auto; font-size: 12px; }
+.page .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.page .check { display: flex; gap: 4px; align-items: center; }
+.page .tool-line, .page .always-tool { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.page .diff, .page .skill-text { font: 12px/1.45 var(--mono); }
+.page .diff { margin: 0; max-height: 260px; overflow: auto; background: var(--soft); border-radius: 8px; padding: 8px;
+              white-space: pre-wrap; }
+.removed { margin-top: 12px; }
+.removed summary { cursor: pointer; color: var(--text-2); }
+.removed-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.removed-list li { display: flex; gap: 8px; align-items: center; }
+.knowledge-note:empty { display: none; }
+
 /* ---- narrow windows, last so they win: the right column folds under the centre, then the menu shrinks to icons -- */
 @media (max-width: 1279px) {
   .mc { grid-template-columns: 248px minmax(0, 1fr); grid-template-areas: "menu centre" "menu side";

@@ -45,7 +45,7 @@ from ..brain.workflows import WorkflowRunner, WorkflowStore
 from ..checks import KINDS
 from ..chrome import own_browser_dir
 from ..claudecli import claude_argv
-from ..config import LIVE_PORTS, load_config, project_root
+from ..config import LIVE_PORTS, load_config, project_root, set_blocked
 from ..desktop import layout
 from ..desktop.notes import note_for
 from ..desktop.release import asset_for, setup_command
@@ -117,6 +117,7 @@ USED_CODE = "This start link was used already or has expired. Start AI Browser a
 SOURCES = {"personal": "personal", "anthropic-skills": "claude.ai", "ai-browser": "ai-browser"}  # else: plugins
 SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")  # a Claude Code session's id (cc-<task id>)
 AGENT_ID = re.compile(r"^a[0-9]{1,9}$")  # an agent's id (a<number>)
+SKILL_REF = re.compile(r"^[A-Za-z0-9_.-]{1,100}:[A-Za-z0-9_.-]{1,100}$")  # a skill's ref (namespace:name)
 SESSION_SWEEP = 30  # seconds between two looks at the sessions' processes
 ACCOUNT_MESSAGES = {"accounts", "account_add", "account_add_existing", "account_remove", "account_default",
                     "account_brain", "account_signin", "account_move"}  # AI accounts: AI Browser's own pages only
@@ -178,6 +179,8 @@ MESSAGE_RULES: dict[str, Rule] = {
     "workspaces": APP_ONLY, "workspace_save": APP_ONLY, "workspace_delete": APP_ONLY, "workspace_assign": APP_ONLY,
     # the new look's Attach: a page sends a file in pieces, for a task it starts. A file, never a right
     "attach_start": APP_ONLY, "attach_chunk": APP_ONLY, "attach_drop": APP_ONLY,
+    # the new look's Knowledge: Remove hides a skill from AI Browser's agents (config.json), Bring back shows it
+    "skill_block": APP_ONLY,
 }
 
 
@@ -1335,6 +1338,8 @@ class AppServer:
             await self._account_command(queue, kind, message)
         elif kind in POWERS_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._powers_command(queue, kind, message)
+        elif kind == "skill_block":  # AI Browser's own pages only (MESSAGE_RULES)
+            self._skill_block(queue, message)
         elif kind in ATTACH_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._attach_command(ws, queue, kind, message)
         elif kind in WORKSPACE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
@@ -1397,7 +1402,7 @@ class AppServer:
         elif kind == "events":
             queue.put_nowait({"type": "agent_events", "id": agent_id, "events": agents.events_of(agent_id)})
         elif kind == "skills":
-            queue.put_nowait({"type": "skills", "skills": self._skill_list()})
+            queue.put_nowait({"type": "skills", "skills": self._skill_list(), "blocked": self._blocked_skills()})
         elif kind == "thumbs":  # a page opened later: the latest picture of each agent's tab
             queue.put_nowait({"type": "thumbs", "thumbs": {
                 agent: state["jpeg"] for agent, state in self._thumbs.items()
@@ -1677,7 +1682,7 @@ class AppServer:
     def skills_changed(self, name: str = "") -> None:
         """A skill was saved: read the skills again and show them at once."""
         self._catalog = None
-        self._send_all({"type": "skills", "skills": self._skill_list()})
+        self._send_all({"type": "skills", "skills": self._skill_list(), "blocked": self._blocked_skills()})
 
     def workflows_changed(self) -> None:
         if self.workflows is not None:
@@ -1923,6 +1928,24 @@ class AppServer:
         return [{"ref": skill.ref, "name": skill.name, "namespace": skill.namespace,
                  "source": SOURCES.get(skill.namespace, "plugins"), "description": _first_line(skill.description)}
                 for skill in self._skills()]
+
+    def _blocked_skills(self) -> list[str]:
+        return sorted(load_config(self.home).blocked_skills)
+
+    def _skill_block(self, queue: asyncio.Queue, message: dict) -> None:
+        """Knowledge's Remove and Bring back: a skill hidden from AI Browser's agents, or shown again, in
+        <home>/config.json. Its files are the user's and stay where they are."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        ref = message.get("ref")
+        if not isinstance(ref, str) or not SKILL_REF.match(ref):
+            queue.put_nowait({"type": "error", "text": "That isn't a skill", "request": request})
+            return
+        try:
+            set_blocked(self.home, ref, message.get("blocked") is True)
+        except (ValueError, OSError) as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        self.skills_changed()
 
     # ---- thumbnails -------------------------------------------------------------------------------------------
 

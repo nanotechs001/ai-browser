@@ -8,6 +8,7 @@ import { mountComposer } from "./composer.js";
 import { mountDrawer } from "./drawer.js";
 import { icon } from "./icons.js";
 import { connect } from "./link.js";
+import { mountIntegrations, mountKnowledge, mountTemplates } from "./library.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
 import { mountHistory, mountList, mountMissions } from "./pages.js";
 import { createScene } from "./scene.js";
@@ -86,6 +87,10 @@ parts.push(composer);
 const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible: inWorkspace });
 const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
 parts.push(missions, history);
+const templates = mountTemplates($("page-templates"), link);
+parts.push(templates, mountKnowledge($("page-knowledge"), link, { tabs: () => tabs,
+                                                                   model: () => $("task-model").value }),
+           mountIntegrations($("page-integrations"), link));
 talk = mountTalk({
   panel: $("talk"),
   micButton: $("mic"),
