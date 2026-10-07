@@ -165,6 +165,8 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 
 /* Agent powers: each action's badge and time, a sub-agent's lines, and the task's folder on the row. */
 .action .badge { font-size: 11px; border-radius: 999px; padding: 0 6px; margin-right: 6px; background: var(--soft); }
+.action .auto { font-size: 11px; border-radius: 999px; padding: 0 6px; margin-right: 6px; color: var(--accent-2);
+                border: 1px solid var(--accent-2); }  /* Auto-approve in its folder ran it without a card */
 .action .at { color: var(--muted); margin-left: 6px; font-size: 12px; }
 .action.sub { margin-left: 14px; }
 .agent .chip.folder { background: transparent; border: 1px solid var(--line); max-width: 160px; overflow: hidden;

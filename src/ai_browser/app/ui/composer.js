@@ -1,12 +1,13 @@
 // Mission Control's composer (the new look, Decision 9): Ask AI (the Brain: it answers and proposes, and nothing runs
 // without the user's Start, Send or a plain yes), Build a Mission (start an agent) and Use a Template (run a workflow,
 // with the box as its extra words). Under the box: Attach (uploads.js), Web ▾, Model ▾, Account ▾, Folder ▾ (agent
-// powers' picker), Template ▾ and Workspace ▾, the mic, and the main button. Enter or Command-Enter (Ctrl+Enter) presses it;
-// Shift+Enter makes a new line. Narrow windows fold the pickers into ⋯ Options. Every word is set as text.
+// powers' picker), Auto-approve in its folder (a switch, off again for each new task), Template ▾ and Workspace ▾, the
+// mic, and the main button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter makes a new line. Narrow
+// windows fold the pickers into ⋯ Options. Every word is set as text.
 "use strict";
 
 import { fillPicker, pickDefault } from "./accountui.js";
-import { el } from "./chat.js";
+import { AUTO_TITLE, el } from "./chat.js";
 import { mountFolderPicker } from "./folderpick.js";
 import { mountUploads } from "./uploads.js";
 
@@ -48,7 +49,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     $("start-label").textContent = MODES[mode].label;
     $("task").placeholder = MODES[mode].placeholder;
     const build = mode === "build";
-    for (const id of ["task-web", "task-model", "task-folder", "attach"]) $(id).hidden = !build;
+    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "attach"]) $(id).hidden = !build;
     $("task-account").hidden = !build || rows.length < 2;
     $("task-template").hidden = mode !== "template";
     $("task-workspace").hidden = mode === "ask";
@@ -111,8 +112,9 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     const folder = folders.value();
     const files = uploads.ids();
     const account = $("task-account").hidden ? {} : { account: $("task-account").value };
+    const auto = $("task-auto").checked ? { auto: true } : {}; // the user's own tick, never a default
     begin({ type: "new_task", text, skills: [], model: $("task-model").value, web: $("task-web").value, ...account,
-            ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...workspace() });
+            ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...auto, ...workspace() });
   }
 
   function option(value, label) {
@@ -170,6 +172,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     workspacePicked = true;
   });
   $("start-key").textContent = MAC ? "⌘ ↵" : "Ctrl ↵";
+  $("task-auto-switch").title = AUTO_TITLE;
   setMode("build");
 
   return {
@@ -218,6 +221,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
             const took = taking;
             finish();
             $("task").value = "";
+            $("task-auto").checked = false; // each task is its own choice: the next one starts off
             uploads.taken(took); // the app moved those into the agent's folder: a template run took none
             setMode(mode); // the chips show in Build a Mission only
             pickDefault($("task-account"), rows);

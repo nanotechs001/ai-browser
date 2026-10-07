@@ -166,6 +166,10 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 #drawer-body .status { font: 12px var(--mono); }
 #drawer-body .buttons { margin-top: 0; }
 #drawer-body .moved { color: var(--ok); }
+#drawer-body .auto-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2);
+                            cursor: pointer; align-self: flex-start; }
+#drawer-body .auto-words { color: var(--accent-2); }
+#drawer-body .folder, #drawer-body .auto-words { overflow-wrap: anywhere; }  /* a long path wraps */
 .drawer-brain { display: flex; flex-direction: column; gap: 8px; }
 .permission-slot:empty, .ask-slot:empty { display: none; }
 .your-tabs { border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; }
@@ -195,6 +199,8 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .action .badge { font-size: 11px; border-radius: 999px; padding: 0 6px; margin-right: 6px; background: var(--soft); }
 .action .at { color: var(--muted); margin-left: 6px; font-size: 12px; }
 .action.sub { margin-left: 14px; }
+.action .auto { font-size: 11px; border-radius: 999px; padding: 0 6px; margin-right: 6px; color: var(--accent-2);
+                border: 1px solid var(--accent-2); }  /* Auto-approve in its folder ran it without a card */
 .composer-line { display: flex; gap: 8px; align-items: flex-end; }
 .composer-line textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px;
                           background: var(--bg); field-sizing: content; max-height: 140px; }

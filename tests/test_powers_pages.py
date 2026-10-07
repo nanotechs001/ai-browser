@@ -330,3 +330,87 @@ def test_the_readme_says_always_trusts_the_whole_program():  # fresh review: per
                    "Allow only programs you trust with any input", "`find -delete`", "`git reset --hard`",
                    "`git push --force`", "`git branch -D`"):
         assert phrase in readme, phrase
+
+
+# Auto-approve in its folder (the user's choice, 2026-10-07): a switch per task, the user's click only.
+AUTO_SWITCH = "document.getElementById('task-auto')"
+
+
+@CHROME
+async def test_build_a_missions_switch_starts_an_agent_that_auto_approves(stack):  # the user's choice
+    from test_mission import open_mission
+
+    mission = await open_mission(stack)
+    label = "document.getElementById('task-auto-switch')"
+    assert await mission(f"{AUTO_SWITCH}.checked") is False  # off by default
+    assert await mission(f"{label}.textContent.trim()") == "Auto-approve in its folder"
+    assert await mission(f"{label}.closest('.pickers') === document.getElementById('task-folder').closest('.pickers')"
+                         f" && {label}.hidden === false")  # beside Folder, in Build a Mission
+    for mode, hidden in (("ask", True), ("template", True), ("build", False)):
+        await mission(f"document.getElementById('mode-{mode}').click(); true")
+        assert await mission(f"{label}.hidden") is hidden, mode
+    await mission(f"{AUTO_SWITCH}.click(); document.getElementById('task').value = 'fix the footer';"
+                  "document.getElementById('start').click(); true")
+    agents = stack["server"].agents
+    assert await settled(lambda: "a1" in agents.agents)
+    assert agents.agents["a1"].auto is True and agents.agents["a1"].bridge.auto is True
+    assert await until(mission, f"{AUTO_SWITCH}.checked === false")  # each task is its own choice: off again
+    await mission("document.getElementById('task').value = 'look around';"
+                  "document.getElementById('start').click(); true")
+    assert await settled(lambda: "a2" in agents.agents)
+    assert agents.agents["a2"].auto is False
+
+
+@CHROME
+async def test_the_drawers_switch_turns_auto_approve_on_and_off_and_says_where(stack, user_home, tmp_path):
+    from test_mission import WORKING, open_drawer, open_mission, station
+
+    project = tmp_path / "project"
+    project.mkdir()
+    agents = stack["server"].agents
+    agents.rules.trust(project)
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    agent = await agents.create("keep working")
+    mission = await open_mission(stack)
+    assert await until(mission, f"{station('a1')} != null")
+    await mission(open_drawer("a1"))
+    toggle = "document.querySelector('#drawer-body .auto-toggle input')"
+    words = "document.querySelector('#drawer-body .auto-words')"
+    assert await until(mission, f"{toggle} != null")
+    assert await mission(f"{toggle}.checked") is False and await mission(f"{words}.hidden") is True
+    assert await mission("document.querySelector('#drawer-body .auto-toggle').textContent.trim()") == (
+        "Auto-approve in its folder")
+    await mission(f"{toggle}.click(); true")  # while it works
+    assert await settled(lambda: agent.auto and agent.bridge.auto)
+    assert await until(mission, f"{words}.hidden === false")
+    assert await mission(f"{words}.textContent") == "Auto-approving inside its own scratch folder"
+    await mission(f"{toggle}.click(); true")
+    assert await settled(lambda: not agent.auto and not agent.bridge.auto)
+    assert await until(mission, f"{words}.hidden === true && {toggle}.checked === false")
+    inside = await agents.create("fix it", folder=str(project), auto=True)
+    assert await until(mission, f"{station(inside.id)} != null")
+    await mission(open_drawer(inside.id))
+    assert await until(mission, f"document.getElementById('drawer-title').textContent.startsWith('2 ·')"
+                                f" && {toggle}?.checked === true")
+    assert await mission(f"{words}.textContent") == f"Auto-approving inside {os.path.realpath(project)}"
+
+
+@CHROME
+async def test_an_auto_approved_action_line_carries_its_mark(stack):  # the user's choice: what ran without a card
+    from test_bridge_powers import result
+    from test_mission import open_drawer, open_mission, station
+
+    stack["script"].write_text(json.dumps([INIT, use("u1", "Bash", {"command": "npm test"}),
+                                           ask("Bash", {"command": "npm test"}, tool_id="u1"),
+                                           result("u1", "3 passed"),
+                                           use("u2", "mcp__ai-browser__open", {"url": "https://shop.example/"}),
+                                           {"sleep": 30}]), encoding="utf-8")
+    agent = await stack["server"].agents.create("test it", auto=True)
+    assert await settled(lambda: {"type": "auto", "id": "u1"} in stack["server"].agents.events_of(agent.id))
+    mission = await open_mission(stack)
+    assert await until(mission, f"{station('a1')} != null")
+    await mission(open_drawer("a1"))
+    rows = "[...document.querySelectorAll('#drawer-body .messages .action')]"
+    assert await until(mission, f"{rows}.length === 2")
+    assert await mission(f"{rows}.map((row) => row.querySelector('.auto')?.textContent ?? null)") == ["auto", None]
+    assert await mission(f"{rows}[0].querySelector('.auto').title") == "Ran without a card: Auto-approve in its folder"
