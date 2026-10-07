@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
@@ -28,6 +29,10 @@ PRIVATE_V4 = [ipaddress.ip_network(net) for net in (
     "240.0.0.0/4")]
 PRIVATE_V6 = [ipaddress.ip_network(net) for net in ("::/128", "::1/128", "fc00::/7", "fe80::/10", "fec0::/10")]
 NAT64 = ipaddress.ip_network("64:ff9b::/96")
+# This computer's own addresses that are public (a page served over IPv6 sees the visitor's global address, and can
+# send the browser to it: services listening on :: answer there) are found by asking the system, not by a list.
+OWN_FOR = 60.0  # seconds this computer's own IPv6 network is remembered (temporary addresses change now and then)
+_own: tuple[float, ipaddress.IPv6Network | None] | None = None  # (remembered until, the network)
 LOOKUP_WAIT = 3.0  # seconds a name's lookup may take; past it, it is refused (a page can make lookups hang)
 # Lookups run on threads of their own, not the loop's shared pool: a page that opens many names whose DNS never answers
 # can only fill these four (then every lookup is refused, until they are free), and never stalls agentlink or the
@@ -63,7 +68,44 @@ def private_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> b
         inside = carried(address)
         if inside is not None:
             address = inside
-    return any(address in net for net in (PRIVATE_V4 if address.version == 4 else PRIVATE_V6))
+    if any(address in net for net in (PRIVATE_V4 if address.version == 4 else PRIVATE_V6)):
+        return True
+    if can_bind(address):  # this computer's own address, though a public one
+        return True
+    network = own_network() if address.version == 6 else None  # IPv4: the private ranges already cover the networks
+    return network is not None and address in network
+
+
+def can_bind(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Whether this computer has the address: a UDP socket binds only to an address of its own (nothing is sent)."""
+    try:
+        with socket.socket(socket.AF_INET6 if address.version == 6 else socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.bind((str(address), 0))
+        return True
+    except OSError:
+        return False
+
+
+def source_v6() -> ipaddress.IPv6Address | None:
+    """The IPv6 address this computer uses to reach the internet, or None without IPv6. A UDP connect only picks the
+    route and the address: nothing is sent."""
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as probe:
+            probe.connect(("2001:4860:4860::8888", 53))
+            return ipaddress.IPv6Address(probe.getsockname()[0].split("%", 1)[0])
+    except (OSError, ValueError):
+        return None
+
+
+def own_network() -> ipaddress.IPv6Network | None:
+    """The /64 of this computer's own global IPv6 address (its network), or None. Remembered for OWN_FOR seconds."""
+    global _own
+    if _own is None or _own[0] < time.monotonic():
+        source = source_v6()
+        if source is not None and any(source in net for net in PRIVATE_V6):
+            source = None  # a private source: its network is already refused
+        _own = (time.monotonic() + OWN_FOR, ipaddress.ip_network((source, 64), strict=False) if source else None)
+    return _own[1]
 
 
 def private_host(host: str) -> bool:

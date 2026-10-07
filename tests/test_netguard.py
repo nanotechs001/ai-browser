@@ -3,12 +3,26 @@ network's, as written or looked up. Docker's never could: its loopback was the c
 here is a fake: no test asks a real DNS server."""
 
 import asyncio
+import ipaddress
 import socket
 import threading
+import time
 
 import pytest
 
 from ai_browser import netguard
+
+REAL = (netguard.can_bind, netguard.source_v6)  # what the fixture below replaces
+
+
+@pytest.fixture(autouse=True)
+def not_this_computers_own_addresses(monkeypatch):
+    """Which public addresses are this computer's own depends on the machine running the tests: none, unless a test
+    says so."""
+    monkeypatch.setattr(netguard, "can_bind", lambda address: False)
+    monkeypatch.setattr(netguard, "source_v6", lambda: None)
+    monkeypatch.setattr(netguard, "_own", None)  # what it learned, and until when
+
 
 PRIVATE = ["http://localhost:8792/home", "http://LOCALHOST./", "http://app.localhost/", "http://printer.local/",
            "http://127.0.0.1/", "http://127.9.9.9:3000/", "http://0.0.0.0:8000/", "http://10.0.0.1/",
@@ -66,6 +80,52 @@ async def test_a_public_name_that_points_here_is_refused_once_looked_up(monkeypa
     assert await netguard.refused("http://nowhere.example/") is None  # not found: the browser can't open it either
     assert await netguard.refused("http://127.0.0.1:3000/") is not None  # as written: no lookup needed
     assert await netguard.refused("data:text/html,hi") is None and await netguard.refused("about:blank") is None
+
+
+def test_an_address_this_computer_can_bind_is_this_computers_own(monkeypatch):
+    own = {"2a00:1450:4001:81b::2", "203.0.113.9"}  # an IPv6 address a page was served to, and an IPv4 one
+    monkeypatch.setattr(netguard, "can_bind", lambda address: str(address) in own)
+    for url in ("http://[2a00:1450:4001:81b::2]:3000/", "http://[2A00:1450:4001:81B:0::2]/", "http://203.0.113.9/",
+                "http://[::ffff:203.0.113.9]/"):
+        assert netguard.private_url(url), url
+    for url in ("http://[2a00:1450:4001:81b::3]/", "http://203.0.113.10/"):
+        assert not netguard.private_url(url), url
+
+
+def test_the_network_of_this_computers_own_global_ipv6_address_is_its_network(monkeypatch):
+    asked = []
+
+    def source():
+        asked.append(1)
+        return ipaddress.IPv6Address("2a00:1450:4001:81b:aaaa:bbbb:cccc:dddd")  # a temporary address
+
+    monkeypatch.setattr(netguard, "source_v6", source)
+    assert netguard.private_url("http://[2a00:1450:4001:81b::1]/")  # the router, or a neighbour
+    assert netguard.private_url("http://[2a00:1450:4001:81b:ffff:ffff:ffff:ffff]:3000/")
+    assert not netguard.private_url("http://[2a00:1450:4001:81c::1]/")  # another /64
+    assert not netguard.private_url("http://93.184.216.34/")  # IPv4: the private ranges already cover the networks
+    assert len(asked) == 1 and 50 < netguard._own[0] - time.monotonic() <= 60  # remembered for about a minute
+    monkeypatch.setattr(netguard, "_own", (0.0, None))  # a minute later it asks again
+    assert not netguard.private_url("http://[2a00:1450:4001:81c::1]/") and len(asked) == 2
+
+
+def test_without_ipv6_there_is_no_network_to_add():
+    assert netguard.own_network() is None
+    assert not netguard.private_url("http://[2a00:1450:4001:81b::1]/")
+
+
+def test_asking_the_system_sends_nothing_and_needs_no_particular_address():
+    can_bind, source_v6 = REAL
+    assert can_bind(ipaddress.ip_address("127.0.0.1"))  # always its own
+    assert not can_bind(ipaddress.ip_address("192.0.2.1"))  # a documentation address: nobody's own
+    assert source_v6() is None or isinstance(source_v6(), ipaddress.IPv6Address)  # None: no IPv6 here
+
+
+async def test_a_name_that_points_at_this_computers_own_address_is_refused(monkeypatch):
+    fake_lookup(monkeypatch, {"me.example": ["2a00:1450:4001:81b::2"], "you.example": ["2a00:1450:4001:81b::3"]})
+    monkeypatch.setattr(netguard, "can_bind", lambda address: str(address) == "2a00:1450:4001:81b::2")
+    assert await netguard.refused("http://me.example/") is not None
+    assert await netguard.refused("http://you.example/") is None
 
 
 async def test_a_lookup_too_slow_to_say_is_refused(monkeypatch):
