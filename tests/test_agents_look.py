@@ -84,3 +84,50 @@ async def test_a_card_says_since_when_it_waits(fake_claude, tmp_path):
         assert agent.public()["finished"] is None  # it waits for the user: not finished
     finally:
         await agents.close_all()
+
+
+def said(text):
+    """Claude Code's answer streaming in: the words, one delta."""
+    return {"type": "stream_event", "event": {"type": "content_block_delta",
+                                              "delta": {"type": "text_delta", "text": text}}}
+
+
+WHOLE = {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}]}}  # a whole message: its end
+
+
+async def test_a_stopped_answer_leaves_nothing_in_the_next_turns_result(fake_claude, tmp_path):
+    agents, _ = manager(fake_claude, tmp_path, {
+        "default": [INIT, said("Half of the answer\nand more"), {"sleep": 30}],  # Stop comes before it is whole
+        "second": [INIT, said("Whole answer\nwith details"), WHOLE, RESULT]})
+    try:
+        agent = await agents.create("fix it")
+        await wait_for(lambda: agent.words.startswith("Half"))
+        await agents.stop(agent.id)
+        await wait_for(lambda: agent.state == "stopped")
+        assert agent.public()["result"] == "Half of the answer"  # the partial is the newest answer there is
+        await agents.send(agent.id, "second try")
+        await wait_for(lambda: agent.state == "your_turn")
+        assert agent.public()["result"] == "Whole answer"  # nothing of the first turn's words glued on
+    finally:
+        await agents.close_all()
+
+
+async def test_the_newest_partial_beats_an_older_whole_answer_and_a_quiet_turn_keeps_it(fake_claude, tmp_path):
+    agents, _ = manager(fake_claude, tmp_path, {
+        "default": [INIT, said("First answer\nin full"), WHOLE, RESULT],
+        "partial": [INIT, said("Newer partial\nonly"), {"sleep": 30}],
+        "quiet": [INIT, RESULT]})  # a turn that says nothing at all
+    try:
+        agent = await agents.create("fix it")
+        await wait_for(lambda: agent.state == "your_turn")
+        assert agent.public()["result"] == "First answer"
+        await agents.send(agent.id, "partial one")
+        await wait_for(lambda: agent.words.startswith("Newer"))
+        await agents.stop(agent.id)
+        await wait_for(lambda: agent.state == "stopped")
+        assert agent.public()["result"] == "Newer partial"  # not the older whole message
+        await agents.send(agent.id, "quiet one")
+        await wait_for(lambda: agent.state == "your_turn")
+        assert agent.public()["result"] == "First answer"  # said nothing: the last whole answer stays
+    finally:
+        await agents.close_all()

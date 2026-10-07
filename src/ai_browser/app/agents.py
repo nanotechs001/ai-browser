@@ -595,6 +595,7 @@ class AgentManager:
                 else:
                     self._record(agent, {"type": "user", "text": text})
                 resuming, started = agent.handover is not None, False  # the first turn after a move that copied
+                agent.words = ""  # a turn Stop, a limit or an error cut short left its words: they aren't this turn's
                 async for event in agent.bridge.send(text, tab.get("url", ""), tab.get("title", ""), skills,
                                                      tab.get("label", "panel")):
                     started = started or event.get("type") == "status"
@@ -663,7 +664,8 @@ class AgentManager:
             agent.seconds = round(agent.seconds + (event.get("seconds") or 0), 1)
             agent.cost = round(agent.cost + (event.get("cost") or 0), 4)
             agent.status = ""
-            agent.result = _first_line(agent.said or agent.words)
+            # the words of an answer cut short are the newest there is; a turn that said nothing keeps the last answer
+            agent.result = _first_line(agent.words if agent.words.strip() else agent.said)
             agent.state = "working" if agent.pending else "stopped" if event.get("stopped") else \
                 "needs_you" if agent.check is not None else "your_turn"
         elif kind == "error":
