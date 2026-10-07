@@ -59,6 +59,7 @@ from ..live import _bind, _QuietServer, _serve
 from ..settings import Settings
 from ..skills import Catalog
 from ..syncdir import write_atomic
+from . import attachments
 from . import pagematch
 from . import powers
 from .agents import Agent, AgentManager
@@ -121,6 +122,7 @@ ACCOUNT_MESSAGES = {"accounts", "account_add", "account_add_existing", "account_
                     "account_brain", "account_signin", "account_move"}  # AI accounts: AI Browser's own pages only
 POWERS_MESSAGES = {"folder_choose", "folder_trust", "permission_rules", "permission_rule_remove"}  # agent powers
 WORKSPACE_MESSAGES = {"workspaces", "workspace_save", "workspace_delete", "workspace_assign"}  # the new look
+ATTACH_MESSAGES = {"attach_start", "attach_chunk", "attach_drop"}  # the new look's Attach: a file in pieces
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
@@ -174,6 +176,8 @@ MESSAGE_RULES: dict[str, Rule] = {
     "permission_rule_remove": APP_ONLY,
     # the new look: Mission Control's workspaces, named groups of agents and templates. A filter: no new right
     "workspaces": APP_ONLY, "workspace_save": APP_ONLY, "workspace_delete": APP_ONLY, "workspace_assign": APP_ONLY,
+    # the new look's Attach: a page sends a file in pieces, for a task it starts. A file, never a right
+    "attach_start": APP_ONLY, "attach_chunk": APP_ONLY, "attach_drop": APP_ONLY,
 }
 
 
@@ -322,6 +326,7 @@ class AppServer:
         self.home = Path(home)
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
         self.workspaces = Workspaces(self.home)  # <home>/workspaces.json: the new look's groups
+        self.uploads = attachments.Uploads(self.home / "app" / "uploads")  # files on their way from a page
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
         self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
         self.desktop = None  # AI Browser's own app while it runs (run_app attaches it): the shortcut, notifications
@@ -686,6 +691,7 @@ class AppServer:
         return {"type": "tabs", "tabs": listing, **({"tab_scope": scope} if scope is not None else {})}
 
     async def start(self) -> str:
+        self.uploads.clear()  # a crash's leftovers: no page is there to send them any more
         app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open), Route(SHELL, self._page),
                                        Route("/home", self._page), Route("/mission", self._page),
                                        Route("/settings", self._page), Route("/chat", self._page),
@@ -1243,6 +1249,7 @@ class AppServer:
         self._sockets.pop(ws, None)
         self._roles.pop(ws, None)
         self._windows.discard(ws)
+        self.uploads.drop_all(ws)  # a closed page's files go with it
         if self.hearing is not None:
             self.hearing.drop(ws)  # a closed page's turn, and its audio, go with it
         writer = self._writers.pop(ws, None)
@@ -1328,6 +1335,8 @@ class AppServer:
             await self._account_command(queue, kind, message)
         elif kind in POWERS_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._powers_command(queue, kind, message)
+        elif kind in ATTACH_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            self._attach_command(ws, queue, kind, message)
         elif kind in WORKSPACE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._workspace_command(queue, kind, message)
         elif kind == "hello":
@@ -1359,12 +1368,17 @@ class AppServer:
             account = message.get("account") if isinstance(message.get("account"), str) else None
             folder = message.get("folder") if isinstance(message.get("folder"), str) and message.get("folder") \
                 else None  # agent powers: the task's folder; none is the agent's own scratch folder
+            listed = message.get("attachments") if isinstance(message.get("attachments"), list) else []
+            web = message.get("web") if message.get("web") in powers.WEB_CHOICES else "web"
             try:  # an account that isn't listed any more is said, never swapped for another
+                files = self.uploads.take(ws, listed)  # each attached file whole, or nothing starts
                 agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
-                                            folder=folder, workspace=self._workspace_of(message))
+                                            folder=folder, workspace=self._workspace_of(message), files=files,
+                                            web=web)
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
+            self.uploads.done(ws, listed)
             if handed is not None:
                 self._own(adopt, self._owner_of(agent.id, handed=True))
             queue.put_nowait({"type": "created", "id": agent.id, "request": request})
@@ -1674,6 +1688,35 @@ class AppServer:
                       "note": self.runner.notes.get(workflow.slug, "") if self.runner else ""}
                      for workflow in self.workflows.all()]
         return {"type": "workflows_snapshot", "workflows": workflows, "problems": self.workflows.problems()}
+
+    def _attach_command(self, ws: WebSocket, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        """The composer's Attach: a file comes in pieces, staged for this page until its task starts (or it is
+        dropped). Each answer names the page's own id for that file."""
+        upload = message.get("upload") if isinstance(message.get("upload"), str) else ""
+        if kind == "attach_drop":
+            self.uploads.drop(ws, upload)
+            return
+        if kind == "attach_start":
+            try:
+                name, problem = self.uploads.start(ws, upload, message.get("name"), message.get("size"))
+            except OSError as exc:
+                name, problem = "", f"Couldn't keep that file: {exc.strerror or exc}"
+            if problem:
+                queue.put_nowait({"type": "error", "text": problem, "request": upload})
+                return
+            queue.put_nowait({"type": "attach_ready", "upload": upload, "name": name})
+            if self.uploads.whole(ws, upload):  # an empty file is whole already
+                queue.put_nowait({"type": "attach_done", "upload": upload})
+            return
+        try:
+            whole, problem = self.uploads.add(ws, upload, message.get("seq"), message.get("data"))
+        except OSError as exc:
+            self.uploads.drop(ws, upload)
+            whole, problem = False, f"Couldn't keep that file: {exc.strerror or exc}"
+        if problem:
+            queue.put_nowait({"type": "error", "text": problem, "request": upload})
+        elif whole:
+            queue.put_nowait({"type": "attach_done", "upload": upload})
 
     def _workspaces_message(self) -> dict:
         return {"type": "workspaces", "workspaces": self.workspaces.list()}

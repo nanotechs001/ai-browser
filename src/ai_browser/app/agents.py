@@ -18,6 +18,7 @@ from typing import ClassVar
 
 from ..accounts import DEFAULT, DEFAULT_NAME, GONE, NOT_SIGNED_IN, clean_env, default_folder
 from ..checks import KINDS
+from . import attachments
 from . import move as moving
 from . import powers
 from .bridge import ClaudeBridge
@@ -155,12 +156,13 @@ class Agent:
     words: str = field(default="", repr=False)
     said: str = field(default="", repr=False)
     workspace: str | None = None  # the new look: its workspace, a filter only (in memory: ids start again each run)
+    web: str = "web"  # the new look's Web ▾: "web", "brave" or "none"
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
                                          "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
-                                         "result", "files", "workspace")
+                                         "result", "files", "workspace", "web")
 
     @property
     def number(self) -> int:
@@ -242,7 +244,8 @@ class AgentManager:
 
     async def create(self, text: str, skills=(), model: str = "sonnet", adopt: str | None = None,
                      tab: dict | None = None, servers: list[str] | None = None,
-                     account: str | None = None, folder: str | None = None, workspace: str | None = None) -> Agent:
+                     account: str | None = None, folder: str | None = None, workspace: str | None = None,
+                     files=(), web: str = "web") -> Agent:
         """A new agent for `text`; with `adopt`, it works in that tab of the user's (started from the panel). Its MCP
         servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list). It runs on
         `account`, else on the default account for new agents; ValueError for an account that isn't listed. With
@@ -250,27 +253,32 @@ class AgentManager:
         folder?" isn't answered yet, is a ValueError too. Without, it works in its own scratch folder."""
         chosen = self._account_row(account)  # first: a refused account leaves no agent and no number behind
         work, trusted = self._folder_for(folder)  # and so does a refused folder
+        web = web if web in powers.WEB_CHOICES else "web"
+        agent_id = f"a{self._seq + 1}"
+        try:  # the attached files, into its folder's attachments/ (the scratch folder is the bridge's own path)
+            saved = attachments.place(work or self.home / "app" / "agents" / agent_id / "work", list(files))
+        except OSError as exc:
+            raise ValueError(f"Couldn't save the attached files: {exc.strerror or exc}") from None
         self._seq += 1
-        agent_id = f"a{self._seq}"
         env = {**self.env, "AIB_APP_AGENT": agent_id, **({"AIB_APP_ADOPT": adopt} if adopt else {})}
         if self.mint_token is not None:  # its own token: the app knows who reports, asks for tabs and connects
             env["AIB_APP_AGENT_TOKEN"] = self.mint_token(agent_id)
         bridge = ClaudeBridge(self.home, model=model, claude=self.claude, env=env, agent_id=agent_id,
                               tools=self.tools_for(chosen["id"]), servers=servers,
                               on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request),
-                              environment=self._environment(chosen["id"]), work=work, rules=self.rules,
+                              environment=self._environment(chosen["id"]), work=work, rules=self.rules, web=web,
                               trusted=trusted)
         if self.accounts is not None:  # its account must be signed in before its Claude Code starts
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
         agent = Agent(agent_id, _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge, account=chosen,
-                      task=text, folder=work, trusted=trusted, workspace=workspace)
+                      task=text, folder=work, trusted=trusted, workspace=workspace, web=web)
         if work is not None:
             with contextlib.suppress(OSError):  # a read-only home: the folder isn't listed as recent, nothing more
                 self.rules.note_used(work)
         if adopt:  # the panel can show this agent for that tab before Claude's first step
             agent.adopted.append(adopt)
             agent.working_tab = adopt
-        agent.pending.append((text, tab or {}, list(skills)))
+        agent.pending.append((text + attachments.note(saved), tab or {}, list(skills)))
         self.agents[agent_id] = agent
         self._changed(agent)
         self._line.append(agent_id)

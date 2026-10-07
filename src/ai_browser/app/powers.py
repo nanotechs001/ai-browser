@@ -545,6 +545,21 @@ def badge(name) -> str:
     return "Tool"
 
 
+WEB_CHOICES = ("web", "brave", "none")  # the new look's Web ▾: Web + Brave (the default), Brave only, No web
+WEB_TOOLS = ("WebSearch", "WebFetch")
+BROWSER_TOOLS = ("open", "observe", "act", "screenshot", "tabs", "page_log", "extract", "js", "qa", "sandbox_start",
+                 "sandbox_stop", "sandbox_status")  # the browser's page tools; its skill tools stay
+
+
+def web_tools(choice) -> tuple[tuple[str, ...], list[str]]:
+    """(Claude Code's --tools, more --disallowedTools) for a task's Web ▾: "brave" drops WebSearch and WebFetch, "none"
+    also blocks the browser's page tools. Anything else is the default, "web"."""
+    choice = choice if choice in WEB_CHOICES else "web"
+    tools = TOOLS if choice == "web" else tuple(tool for tool in TOOLS if tool not in WEB_TOOLS)
+    blocked = [f"{OWN}{name}" for name in BROWSER_TOOLS] if choice == "none" else []
+    return tools, blocked
+
+
 def summary(tool: str, data) -> str:
     """One line for the action feed: the command, the path, the pattern, the address, the query or the sub-agent's
     task."""
