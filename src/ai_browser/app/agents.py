@@ -722,6 +722,7 @@ class AgentManager:
         elif kind == "limit":
             self._end_subagents(agent)
             self._limited(agent, event.get("resets_at"))
+            agent.result = _first_line(agent.words)  # a failed turn: its own words or none, never an older answer
         elif kind == "done":
             self._end_subagents(agent)
             agent.limit = None  # the turn ended well: a limit it heard of didn't stop it
@@ -736,6 +737,7 @@ class AgentManager:
             self._end_subagents(agent)
             if agent.limit is None:  # at a limit, its own line stays
                 agent.status = str(event.get("text", ""))
+            agent.result = _first_line(agent.words)  # a failed turn: its own words or none, never an older answer
             agent.state = "working" if agent.pending and agent.limit is None else "failed"
         else:
             return

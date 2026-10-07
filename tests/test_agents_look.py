@@ -131,3 +131,24 @@ async def test_the_newest_partial_beats_an_older_whole_answer_and_a_quiet_turn_k
         assert agent.public()["result"] == "First answer"  # said nothing: the last whole answer stays
     finally:
         await agents.close_all()
+
+
+async def test_a_failed_turn_never_shows_the_last_turns_answer(fake_claude, tmp_path):  # the final review, F6
+    resets = int(time.time()) + 3 * 3600
+    agents, _ = manager(fake_claude, tmp_path, {
+        "default": [INIT, said("First answer\nin full"), WHOLE, RESULT],
+        "broken": [INIT, said("Half way there\nand more"), {"exit": 1}],  # it fails with words said
+        "silent": [INIT, {"exit": 1}],  # it fails before a word
+        "limited": [INIT, {"usage_limit": f"Claude AI usage limit reached|{resets}"}]})  # the account's limit
+    try:
+        agent = await agents.create("fix it")
+        await wait_for(lambda: agent.state == "your_turn")
+        assert agent.public()["result"] == "First answer"
+        for text, words in (("broken one", "Half way there"), ("silent one", ""), ("limited one", "")):
+            before = len(agent.events)
+            await agents.send(agent.id, text)
+            await wait_for(lambda: agent.state == "failed"
+                           and any(event["type"] in ("error", "limit") for event in list(agent.events)[before:]))
+            assert agent.public()["result"] == words, text  # this turn's words, never the first turn's line
+    finally:
+        await agents.close_all()
