@@ -277,6 +277,33 @@ async def test_stop_chat_and_hand_over(stack):
 
 
 @CHROME
+async def test_watch_beside_hand_over_brings_the_agents_tab_to_the_front(stack):  # the user's look, 2026-10-07
+    from test_check_card import heard, recorded
+
+    seen = recorded(stack)  # what the app was asked to do, instead of doing it
+    agents = stack["server"].agents
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    await agents.create("keep working")
+    js = await open_mission(stack)
+    assert await until(js, "document.getElementById('current-step').textContent === '1 · keep working'")
+    watch = "document.getElementById('current-watch')"
+    assert await js(f"{watch}.previousElementSibling.id") == "current-hand"  # to the right of Hand over
+    assert await js(f"[{watch}.textContent, {watch}.title, {watch}.querySelectorAll('svg.icon').length]") == [
+        "Watch", "Bring this agent's tab to the front", 1]
+    assert await js(f"{watch}.disabled") is True  # no tab of its own yet
+    agents.tab_event("a1", "working_tab", "T1")
+    assert await until(js, f"!{watch}.disabled")
+    await js(f"{watch}.click(); true")
+    assert await heard(seen, ("watch", "T1"))  # the drawer's Watch: its tab to the front
+    assert await js("document.getElementById('drawer').hidden") is True  # without opening the drawer
+    agents.tab_event("a1", "tab_closed", "T1")
+    assert await until(js, f"{watch}.disabled")
+    await js(f"{watch}.click(); true")
+    await asyncio.sleep(0.5)
+    assert seen.count(("watch", "T1")) == 1  # nothing to bring forward: nothing sent
+
+
+@CHROME
 @pytest.mark.parametrize("size", [WIDE, (1280, 760), MIDDLE, NARROW])
 async def test_the_list_and_the_calendar_start_right_under_the_switch(stack, size):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
