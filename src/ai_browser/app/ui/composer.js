@@ -162,9 +162,9 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     run();
   });
   $("attach").addEventListener("click", () => $("attach-files").click());
-  takeFiles($("task"), (pasted, { text }) => { // a picture pasted or a file dropped: Build a Mission's, as Attach
+  takeFiles($("task"), (pasted) => { // a picture pasted or a file dropped: Build a Mission's, as Attach
     if (mode === "build") uploads.add(pasted);
-    else if (!text) note(PICTURES_NOTE); // Ask AI and Use a Template take none, and nothing switches by itself
+    else note(PICTURES_NOTE); // Ask AI and Use a Template take none, and nothing switches by itself
   }, { area: $("task").closest(".box") });
   $("attach-files").addEventListener("change", () => {
     uploads.add([...$("attach-files").files]);

@@ -212,9 +212,7 @@ folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
                             (message) => link.send(message)); // agent powers: the task's folder
 uploads = mountUploads({ list: $("attached"), send: (message) => link.send(message), note: flash });
 takeFiles($("task"), (files) => uploads.add(files), { area: $("new") }); // pasted or dropped: as Build a Mission
-takeFiles($("talk-text"), (files, { text }) => { // the Brain's box: text only, and nothing opens by itself
-  if (!text) flash(PICTURES_HERE);
-});
+takeFiles($("talk-text"), () => flash(PICTURES_HERE)); // the Brain's box: text only, and nothing opens by itself
 talk = mountTalk({ panel: $("talk"), micButton: $("mic"), link, voice: quiet, hintVoice: false,
                    model: () => $("task-model").value,
                    openAgent: (id) => link.send({ type: "show_app", agent: id }),

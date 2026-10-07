@@ -759,6 +759,23 @@ async def test_an_agents_chat_keeps_its_files_until_the_app_takes_them(stack):
 
 
 @CHROME
+async def test_spreadsheet_cells_paste_as_text_and_a_copied_file_still_attaches(stack):  # the review of look-3, F6
+    js = await drawer_of_a_finished_agent(stack)
+    await js("document.getElementById('mode-ask').click(); true")
+    assert await js(f"({PASTE})('#task', [['report.pdf', 10, 'application/pdf']], 'report.pdf')") is False
+    assert await until(js, f"{NOTE} === {json.dumps(PICTURES_GO)}")  # a file in Ask AI: where files go
+    await js("document.getElementById('mode-build').click(); true")
+    for box, chips in (("#task", CHIPS), (f"{LINE} textarea", DRAWER_CHIPS)):
+        # cells copied from a spreadsheet: their text, and a picture of them that the browser names image.png
+        assert await js(f"({PASTE})('{box}', {json.dumps(PICTURE)}, 'A1\\tB1')") is False
+        await asyncio.sleep(0.5)
+        assert await js(f"{chips}.length") == 0, box
+        # a file copied in the Finder (Explorer): the file, and its name as text
+        assert await js(f"({PASTE})('{box}', [['notes.txt', 10, 'text/plain']], 'notes.txt')") is False
+        assert await until(js, f"{chips}.length === 1", 15), box
+
+
+@CHROME
 async def test_build_a_mission_and_an_agents_chat_each_hold_their_own_ten_files(stack):  # the review of look-3, F4
     js = await drawer_of_a_finished_agent(stack)
     await js(f"({ATTACH})({json.dumps([[f'build{number}.txt', 10] for number in range(7)])})")
