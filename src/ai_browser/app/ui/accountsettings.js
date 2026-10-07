@@ -91,8 +91,9 @@ export function mountAccounts(parts, send) {
     select.value = chosen || "default";
   }
 
-  function draw() {
-    const signature = JSON.stringify([rows, [...open], [...waiting], [...notes]]);
+  function draw() { // usage readings (windows) come with every request an agent makes: this list doesn't show them
+    const shown = rows.map(({ windows, ...row }) => row);
+    const signature = JSON.stringify([shown, [...open], [...waiting], [...notes]]);
     if (signature === drawn) return;
     drawn = signature;
     list.textContent = "";
