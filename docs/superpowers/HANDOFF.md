@@ -68,18 +68,16 @@ capability for faster navigation and all feature of the claude app". Four projec
      reach for a site has its own card. Report: `docs/superpowers/reports/2026-10-05-agent-powers.md`.
    - **A Claude Code login is keyed to its folder's path as written:** `/tmp/x` and `/private/tmp/x` are two logins on a
      Mac. Never resolve an account folder's path before handing it to `CLAUDE_CONFIG_DIR`.
-2. **The new look: the plan is written, NOT built.** The user said: "when you finish the write the new look plan stop
-   for now on it".
-   - **The spec is approved:** `docs/superpowers/specs/2026-10-05-new-look-design.md`.
-   - **The plan, finished 2026-10-07:** `docs/superpowers/plans/2026-10-05-new-look.md`, 18 tasks (2b257f8).
-     - Every task was dry-run on a scratch copy, then the whole suite. Merged with bc12f23 there, it gave 2115 passed,
-       10 skipped and 0 failed.
-     - Its 32 plan decisions are listed in the plan.
-     - The earlier save point (6152d3e) held a draft of 15 tasks, never dry-run.
-   - **Next:**
-     1. the user reviews the plan;
-     2. build only when the user says so, choosing subagent-driven or native execution;
-     3. Task 1 (which usage fields Claude Code reports) is an optional hand probe with the user.
+2. **The new look: built and merged (2026-10-07).** Mission Control is the user's mockup, the "AI office", and every
+   page takes one navy and neon-blue theme.
+   - Spec `docs/superpowers/specs/2026-10-05-new-look-design.md`, plan `docs/superpowers/plans/2026-10-05-new-look.md`.
+   - Report, with every ruling and deferred minor: `docs/superpowers/reports/2026-10-05-new-look.md`.
+   - Built subagent-driven on branch `new-look`: 17 tasks, each reviewed; a final whole-branch review and one fix wave
+     (F1–F12). The whole suite: 2207 passed, 10 skipped.
+   - **Left for the user:** the hand check (the report lists it), and the optional usage probe (plan Task 1; until it
+     runs, `limits.USAGE_KEY` is None and the Usage card never shows a percentage).
+   - **The build's ledger** stays at `../Ai_Browser-wt/look/.superpowers/sdd/2026-10-05-new-look/progress.md` (git-ignored)
+     until the hand check, whose findings go there.
 3. **Projects, sessions and chat:** not designed yet. The user wants coding in project folders, sessions and history,
    and plain chat with Claude.
 4. **Claude artifacts:** not designed yet. Claude Code 2.1.263 carries claude.ai artifact tools (list and read with
