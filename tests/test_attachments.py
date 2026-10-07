@@ -176,15 +176,15 @@ def test_a_huge_out_of_order_or_damaged_file_is_dropped(tmp_path):  # Review Foc
     assert list((tmp_path / "uploads").glob("*.part")) == []
 
 
-def test_at_most_ten_files_per_page_and_a_closed_page_leaves_nothing(tmp_path):
+def test_at_most_ten_files_a_message_twenty_a_page_and_a_closed_page_leaves_nothing(tmp_path):
     from ai_browser.app.attachments import Uploads
 
     uploads = Uploads(tmp_path / "uploads")
-    for number in range(10):
+    for number in range(20):  # Mission Control has two boxes, ten files each: Build a Mission and an agent's chat
         assert uploads.start("page", f"u{number}", "f.txt", 1)[1] == ""
-    assert uploads.start("page", "u10", "f.txt", 1) == ("", "At most 10 files at once")
+    assert uploads.start("page", "u20", "f.txt", 1) == ("", "At most 10 files at once")
     assert uploads.start("other", "u0", "f.txt", 1)[1] == ""  # another page's own
-    with pytest.raises(ValueError, match="At most 10"):
+    with pytest.raises(ValueError, match="At most 10"):  # but one task, or one message, takes ten at most
         uploads.take("page", [f"u{number}" for number in range(11)])
     uploads.drop_all("page")
     assert len(list((tmp_path / "uploads").glob("*.part"))) == 1

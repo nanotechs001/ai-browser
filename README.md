@@ -275,15 +275,36 @@ Web Fetch, sub-agents, and a to-do list.
   - starting a sub-agent (its own actions still ask);
   - `ls`, `cat`, `pwd`, `git status`, `git diff` and `git log`.
 - **Asked every time, never "Always":**
-  - `sudo`, `rm`, `chmod`, `chown`, `dd` and `mkfs`;
+  - `sudo`, `rm`, `unlink`, `chmod`, `chown`, `dd` and `mkfs`;
+  - programs that run the command after them (`env`, `xargs`, `caffeinate`, `strace`, `flock`…), and code written on
+    the command line (`python -c`, `node -e`, `deno eval`, a `sed` script that runs a command or writes a file);
   - uses that delete files or throw work away: `find -delete` or `-exec`, `git clean`, `git reset --hard`,
-    `git checkout -- …`, `git restore`, `git push --force` and `git branch -D`;
+    `git checkout -- …`, `git restore`, `git push --force`, `git branch -D`, `git rm -f` or `-r`,
+    `git stash drop`, `git switch --discard-changes` and `rsync --delete`;
   - a download piped into a shell;
-  - anything that reads or writes outside the folder, including edits to its `.git` or `.claude` settings;
+  - anything that reads or writes outside the folder, including changes to its `.git`, `.claude`, `.husky`, `.vscode`
+    or `.idea` settings, its Git hooks folder, `.mcp.json`, and a `git config` value;
   - anything that is more than one plain command (`;`, `&&`, `|`, `$(…)`, a redirect).
 - **Always allow trusts the whole program:** once you always-allow a program (`curl`, `sed`, `tar`, `make`), later
   uses run without a card, and AI Browser can't see inside that program's own options: `curl -T` or `-d @file`,
   `sed 'w …'`, an archive's `../` entries. Allow only programs you trust with any input.
+- **Auto-approve in its folder:** a switch per task, off by default, beside **Folder** in Mission Control's **Build a
+  Mission**, and in the agent's drawer, where you can turn it on or off while it works (the drawer then says
+  "Auto-approving inside <folder>"). While it is on:
+  - edits and new files inside the task's folder run without a card, and each shows a small **auto** mark beside its
+    badge;
+  - on a Mac, where the sandbox holds commands in the folder, ordinary commands run without a card too: reading and
+    listing (`ls`, `cat`, `grep`, `find`…), making files (`mkdir`, `touch`, `cp`, `mv`), everyday Git (`status`,
+    `diff`, `add`, `commit`, a new branch), a package's own scripts (`npm test`, `npm run build`), and the project's
+    checks and builds (`make`, `pytest`, `cargo test`, `python script.py`…). Any other command asks;
+  - on Windows and Linux, commands still ask: only file edits run without a card. The switch and the drawer say so;
+  - still a card everywhere: everything asked every time (above), Web Search and Web Fetch, a command reaching a
+    site, your own tools, and a `cd` that isn't into a folder inside. Once the shell has left the folder, commands
+    ask again until the agent's Claude Code starts again;
+  - what still asks is judged from what a command names, not from what a script it runs does: `npm test` runs your
+    package's own script, whatever it does inside the folder. Turn it on only for folders and tasks you trust.
+
+  The Brain, templates and Claude Code sessions never turn it on, and after **Stop** nothing runs.
 - **Your answers are kept per folder** in `~/.ai-browser/permissions.json`. **Settings → Permissions** lists each
   folder with your trust answer and the rules you allowed always, each with **Remove**. A folder that was deleted,
   renamed or unplugged keeps its rules until you remove them.
@@ -295,8 +316,8 @@ Web Fetch, sub-agents, and a to-do list.
   - **Stop** stops its sub-agents too.
 - **Commands and the sandbox:** on a Mac, commands run in Claude Code's sandbox, so they can't write outside the
   task's folder. A command that needs more asks, every time, on a card of its own: reaching a site ("let a command
-  reach a site") or running outside the sandbox. You still answer each command's card. On Windows, commands don't run
-  in a sandbox; the cards are the guard.
+  reach a site") or running outside the sandbox. You still answer each command's card, unless **Auto-approve in its
+  folder** runs an ordinary one. On Windows, commands don't run in a sandbox; the cards are the guard.
 - **Workflows** still run in a scratch folder of their own.
 
 ### AI accounts (Settings → Accounts)
@@ -392,7 +413,9 @@ Press the shortcut again, Esc or ✕ to hide it. It needs AI Browser's own app (
 - **Talk to the Brain:** type, or hold the mic button. "Tell agent 2 to check the footer" makes a card: press **Send**
   or **Start**, or say yes. The open agents show by number; a click opens one in AI Home.
 - **New task** starts an agent with the model and the account you pick. It replaces typing `ai` in Brave's address
-  bar. **Start it in this page** hands this tab over to it as it starts.
+  bar. **Start it in this page** hands this tab over to it as it starts. A picture pasted into its box, or a file
+  dropped on it, goes with the task, as in Mission Control (at most 10 files, 20 MB each). The Brain's box takes text
+  only: a picture pasted there says "Pictures go with New task".
 - **Hand over…** gives this page to an open agent. Only your click hands a tab over, as in AI Home.
 - An agent that waits for you (a tool to allow, a bot check) shows its card in the chat too.
 - The old side panel is gone: the floating chat takes its place.
@@ -560,8 +583,9 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     picture of its tab.
   - Each desk's nameplate shows the agent's number and name ("1 · Fix the footer"). The number stays the same while
     the app runs, so "agent 2" always means the same agent; numbers start at 1 again when the app restarts.
-  - Dotted lines run from each desk to the globe. The globe is the Brain: it glows while the Brain works, turns amber
-    when something needs you, and opens the Brain's inbox when you click it.
+  - Dotted lines run from each desk to the globe's foot; nothing else stands under the globe. The globe is the Brain:
+    it glows while the Brain works, turns amber when something needs you, and opens the Brain's inbox when you click
+    it.
   - Many agents: past 12 desks, the oldest finished agents leave the room (they stay in My Missions and History), and
     with more than 6 desks the step cards fold to chips. At 20 or more desks the office gets small: read the names in
     **List**, or zoom in. An empty room says "Start a mission below".
@@ -574,17 +598,25 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
 - **The right column**, for the agent you click (or the one at work):
   - **Mission Progress:** "3 / 5 steps complete", the bar, and your agents as Completed, In Progress and Pending;
   - **Current Task:** its step and timer, its checklist (its to-do list, or its latest actions without one), and
-    **Stop**, **Chat** and **Hand over**. **Answer** shows when a card waits; clicking a desk that needs you opens its
-    card too;
+    **Stop**, **Chat**, **Hand over** and **Watch**. **Watch** brings its tab to the front without opening its drawer
+    (it is greyed out while the agent has no tab). **Answer** shows when a card waits; clicking a desk that needs you
+    opens its card too;
   - **Chat** opens the agent's drawer: its state, **Watch**, **Stop**, **Close**, its permission card (**Allow once**,
     **Always allow**, **Deny**), **Your tabs** and its chat. When agents work in your Brave, **Give to this agent**
-    under **Your tabs** hands it one of your own tabs, as AI Home's **Hand over** does;
+    under **Your tabs** hands it one of your own tabs, as AI Home's **Hand over** does. Its message box takes files as
+    **Build a Mission** does: paste a picture, drop a file on it, or click the clip. They go with your message into
+    the agent's folder under `attachments/`, and the message names them; their chips go only once the app has placed
+    them, so a refused message keeps your words and files for another try;
   - **Recent Activity:** started, a step done, needs you, finished. **See all** opens History.
 - **The composer:** **Ask AI** (the Brain answers and proposes; nothing runs until you press Start or Send, or say
   yes), **Build a Mission** (a new agent) and **Use a Template** (a workflow, with your words added). Under the box:
   - **Attach:** at most 10 files, 20 MB each. They are copied into the agent's folder under `attachments/`, never over
     a file that is there (a duplicate becomes "name (2).ext"), and the task names them. Pictures reach the agent through
-    Claude Code's own Read. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
+    Claude Code's own Read. Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it, and it is
+    attached the same way. Pasted text stays text. Cells copied from a spreadsheet paste as text, without the picture
+    of them that comes along. **Ask AI** and **Use a Template** take no files: a picture pasted there says "Pictures
+    go with Build a Mission or an agent's chat". AI Home's **New task** and an agent's chat there take pictures and
+    files the same way, and so does the floating chat's **New task**. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
     that folder has been replaced by a link, the task refuses to start and says which folder. After a reconnect, every
     attached file says "Not sent: attach it again", even one that showed ✓: the app forgets files when the connection
     drops.
@@ -593,8 +625,9 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     **No web**, your own tools (Integrations) still run, and a command can still reach a site. On a Mac it asks you
     first, with a card, every time; on Windows and Linux it asks with a card too, except a command you chose
     **Always allow** for.
-  - **Model**, **Account**, **Folder** and **Workspace**; the mic (in Ask AI it talks to the Brain; otherwise your words
-    fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
+  - **Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**; the mic (in Ask AI it talks
+    to the Brain; otherwise your words fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
+    **Auto-approve in its folder** (see Agent powers) is off again for each new task.
   - On a narrow window the pickers fold into **⋯ Options**, the right column moves under the office, and the menu
     shows icons only.
 - **Talking back:** the Brain's updates show in a speech bubble over the globe, one at a time: a new message that
@@ -817,7 +850,8 @@ uv run ai-browser build                      # rebuild the image
   (a Mac) or UI Automation (Windows): one fixed command, never built from a page's or your words. It reads a page's
   words only when you ask about that page, and an agent works in your tab only after your Hand over.
 - Agents' own commands, edits and reads ask first, on a card that shows exactly what will happen. Only clicks in AI
-  Browser's own pages answer: never the Brain, voice or a page. The app reads each command without running it. Only
+  Browser's own pages answer: never the Brain, voice or a page. **Auto-approve in its folder** answers for you inside
+  the task's folder, and only your click turns it on. The app reads each command without running it. Only
   one plain command whose paths are all inside the task's folder can be harmless or allowed always. Paths are
   compared after resolving symlinks and `..`.
 - ⚠ risky buttons are refused unless `confirmed=true`; Claude asks you first. Page dialogs are treated the same way:

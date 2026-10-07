@@ -62,7 +62,7 @@ from ..syncdir import write_atomic
 from . import attachments
 from . import pagematch
 from . import powers
-from .agents import Agent, AgentManager
+from .agents import CLOSED, Agent, AgentManager
 from .bravelink import NOT_CONNECTED, PlaceError
 from .inworld import WorldError
 from .workspaces import GONE as WORKSPACE_GONE
@@ -127,6 +127,7 @@ ATTACH_MESSAGES = {"attach_start", "attach_chunk", "attach_drop"}  # the new loo
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
+EMPTY_MESSAGE = "Write a message, or attach a file"
 YOU = {"kind": "you"}
 
 
@@ -161,6 +162,7 @@ MESSAGE_RULES: dict[str, Rule] = {
     "brave_connect": APP_ONLY, "hand_tab": APP_ONLY, "take_back": APP_ONLY,
     "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in AI Home's list of connected clients
     "new_task": APP_ONLY,  # with or without adopt
+    # send: the user's message to an agent, with the files a page staged (the drawer's chat): a file, never a right
     "send": APP_ONLY, "stop": APP_ONLY, "close": APP_ONLY, "model": APP_ONLY,
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
     "settings_set": APP_ONLY,  # the window's Settings, AI Home's and Mission Control's picks
@@ -181,6 +183,9 @@ MESSAGE_RULES: dict[str, Rule] = {
     "attach_start": APP_ONLY, "attach_chunk": APP_ONLY, "attach_drop": APP_ONLY,
     # the new look's Knowledge: Remove hides a skill from AI Browser's agents (config.json), Bring back shows it
     "skill_block": APP_ONLY,
+    # Auto-approve in its folder (the user's choice, 2026-10-07): the drawer's switch, on or off, the user's click on
+    # one of our pages. The Brain, templates and voice never turn it on (new_task's "auto" is the composer's switch)
+    "agent_auto": APP_ONLY,
 }
 
 
@@ -1379,7 +1384,7 @@ class AppServer:
                 files = self.uploads.take(ws, listed)  # each attached file whole, or nothing starts
                 agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
                                             folder=folder, workspace=self._workspace_of(message), files=files,
-                                            web=web)
+                                            web=web, auto=message.get("auto") is True)  # the composer's switch
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
@@ -1388,15 +1393,15 @@ class AppServer:
                 self._own(adopt, self._owner_of(agent.id, handed=True))
             queue.put_nowait({"type": "created", "id": agent.id, "request": request})
         elif kind == "send":
-            text = _text(message.get("text"))
-            if text:
-                await agents.send(agent_id, text, _tab(message.get("tab")))
+            await self._send(ws, queue, agent_id, message)
         elif kind == "stop":
             await agents.stop(agent_id)
         elif kind == "close":
             self._job(agents.close(agent_id))  # it may wait for the agent's turn to end
         elif kind == "model" and message.get("model") in MODELS:
             agents.set_model(agent_id, message["model"])
+        elif kind == "agent_auto" and isinstance(message.get("agent"), str) and isinstance(message.get("on"), bool):
+            agents.set_auto(message["agent"], message["on"])  # the drawer's switch: a yes or a no, nothing else
         elif kind == "watch" and self.tabs is not None and isinstance(message.get("target"), str):
             await self.tabs.watch(message["target"])
         elif kind == "events":
@@ -1407,6 +1412,32 @@ class AppServer:
             queue.put_nowait({"type": "thumbs", "thumbs": {
                 agent: state["jpeg"] for agent, state in self._thumbs.items()
                 if state.get("jpeg") and agent in self.agents.agents}})
+
+    async def _send(self, ws: WebSocket, queue: asyncio.Queue, agent_id: str, message: dict) -> None:
+        """The user's message to an agent, with the files this page staged for it (the drawer's chat: pasted,
+        dropped or attached), placed in the agent's folder under attachments/ and named in the message, all or none.
+        A page that gives a request id hears "sent", or an error with the reason; refused files stay staged."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+
+        def answer(reply: dict) -> None:
+            if request is not None:
+                queue.put_nowait({**reply, "request": request})
+
+        text = _text(message.get("text"))
+        listed = message.get("attachments") if isinstance(message.get("attachments"), list) else []
+        try:
+            files = self.uploads.take(ws, listed)  # each file whole, or nothing is sent
+            if not text and not files:  # ids that name no file are none
+                raise ValueError(EMPTY_MESSAGE)
+            sent = await self.agents.send(agent_id, text, _tab(message.get("tab")), files=files)
+        except ValueError as exc:
+            answer({"type": "error", "text": str(exc)})
+            return
+        if not sent:
+            answer({"type": "error", "text": CLOSED})
+            return
+        self.uploads.done(ws, listed)
+        answer({"type": "sent", "id": agent_id})
 
     async def _show_check(self, agent_id: str) -> None:
         """Show me (a bot check's card): bring forward the tab where this agent's bot check waits. The app holds
@@ -1782,7 +1813,8 @@ class AppServer:
                 "default_model": self.default_model, "browser": self._browser_info(),
                 "sessions": self._session_list(), "browser_clients": self._browser_clients(),
                 "settings": self._settings_payload(), "accounts": self._account_rows(),
-                "brain_limit": self.brain_limit, "workspaces": self.workspaces.list()}
+                "brain_limit": self.brain_limit, "workspaces": self.workspaces.list(),
+                "auto_commands": powers.auto_commands()}  # Auto-approve may run commands here (a Mac's sandbox)
 
     # ---- AI accounts: Settings → Accounts, the pickers and Continue on (AI Browser's own pages only) -------------
 

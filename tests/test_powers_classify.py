@@ -197,3 +197,164 @@ def test_the_safe_uses_of_find_and_git_still_offer_always(project):  # F2 keeps 
                               ("git checkout main", "Bash(git checkout:*)"), ("git branch topic", "Bash(git branch:*)"),
                               ("git reset src/app.py", "Bash(git reset:*)")):
         assert decide(command, project) == "ask" and rule(command) == expected, command
+
+
+# Auto-approve in its folder (the user's choice, 2026-10-07), and the security review's first round: auto runs only a
+# short table of ordinary uses (AUTO_BASH), and only where the sandbox holds commands; the deny-lists that leaked now
+# ask every time, auto or not.
+LEAKED = [  # C2: each one came back "ask", so auto would have run it
+    # launchers: they run another command
+    "caffeinate rm -r src", "arch -arm64 rm -r src", "busybox rm -r src", "busybox sh -c 'rm -r src'",
+    "stdbuf -o0 rm -r src", "setsid rm -r src", "strace -f rm -r src", "flock lockfile rm -r src",
+    "systemd-run rm -r src", "pkexec rm -r src", "run0 rm -r src", "gdb -batch -ex 'shell touch /tmp/p'",
+    "hyperfine 'rm -r src'", "unshare rm -r src", "nsenter -t 1 rm -r src", "chroot . rm -r src", "ltrace rm x",
+    "dtruss rm x", "lldb -o 'platform shell rm x'", "valgrind rm x", "at now", "batch", "unbuffer rm x", "entr rm x",
+    "watchexec rm x", "firejail rm x", "proxychains rm x", "torsocks rm x",
+    # code written on the command line
+    "python3.12 -c 'print(1)'", "python2 -c 'print(1)'", "pypy3 -c 'print(1)'", "py -c 'print(1)'",
+    "nodejs -e 'x'", "tsx -e 'x'", "ts-node -e 'x'", "irb -e 'x'", "julia -e 'x'", "R -e 'x'", "python.exe -c 'x'",
+    "deno eval 'Deno.removeSync(\"src\", {recursive: true})'", "sqlite3 x.db '.shell touch /tmp/p'",
+    "sqlite3 -cmd '.system rm x' x.db", "sed -n '1e touch /tmp/p' notes.md", "sed '1w /tmp/p' notes.md",
+    "sed -e 's/a/b/w out' notes.md", "sed 's/a/touch p/e' notes.md", "sed -f script.sed notes.md",
+    "npx -c 'rm -r src'",
+    # deleting
+    "unlink important.py", "srm important.py", "git rm -r .", "git rm -f src/app.py", "git rm --force src/app.py",
+    "rsync -a --delete empty/ src/", "rsync -a --remove-source-files src/ out/", "RM -r src", "rm.exe -r src",
+    # throwing Git's work away
+    "git switch --discard-changes main", "git switch -f main", "git switch --force main", "git stash drop",
+    "git stash clear", "git reflog expire --expire=now --all", "git gc --prune=now", "git update-ref -d refs/heads/main",
+    "git worktree remove --force wt"]
+GUARDED = [  # C1: a command that changes Git's, Claude Code's or an editor's own settings in the folder
+    "git config core.fsmonitor fsmon.sh", "git config core.hooksPath hooks", "git config alias.st status",
+    "git config --add core.pager less", "git config --unset core.editor", "cp payload .git/hooks/pre-commit",
+    "touch .git/hooks/post-checkout", "ln -sf payload .git/config", "mv payload.json .claude/settings.json",
+    "tee .claude/settings.local.json", "cp payload.json .mcp.json", "cp payload .husky/pre-commit",
+    "touch .vscode/tasks.json", "cp payload .idea/workspace.xml"]
+
+
+def auto(tool, data, folder, sandbox=True, moved=False):
+    from ai_browser.app.powers import auto_approves, classify
+
+    return auto_approves(tool, data, classify(tool, data, folder, moved=moved), sandbox=sandbox)
+
+
+@pytest.mark.parametrize("command", LEAKED)
+def test_what_leaked_past_the_deny_lists_asks_every_time(project, command):  # the security review, C2
+    assert decide(command, project) == "ask_always" and rule(command) is None
+    for sandbox in (True, False):
+        assert not auto("Bash", {"command": command}, project, sandbox=sandbox)
+
+
+@pytest.mark.parametrize("command", GUARDED)
+def test_a_command_that_changes_the_folders_own_settings_asks_every_time(project, command):  # C1
+    from ai_browser.app.powers import WHY_GUARDED, card
+
+    shown = card("Bash", {"command": command}, project)
+    assert shown["why"] == WHY_GUARDED and shown["always"] is False  # never Always
+    for sandbox in (True, False):
+        assert not auto("Bash", {"command": command}, project, sandbox=sandbox)
+
+
+def test_reading_gits_settings_still_offers_always(project):  # C1: only a write is guarded
+    for command in ("git config --get core.editor", "git config --list", "git config core.editor", "git config -l"):
+        assert decide(command, project) == "ask", command
+
+
+def test_editors_hooks_and_the_hooks_path_are_guarded_too(project):  # C1: what they run later
+    from ai_browser.app.powers import classify
+
+    (project / ".git" / "config").write_text("[core]\n\tbare = false\n\thooksPath = tools/hooks\n", encoding="utf-8")
+    for path in (".husky/pre-commit", ".vscode/tasks.json", ".idea/workspace.xml", ".pre-commit-config.yaml",
+                 "tools/hooks/pre-push", ".git/hooks/pre-commit"):
+        data = {"file_path": str(project / path), "content": "x"}
+        assert classify("Write", data, project) == "ask_always", path
+        assert not auto("Write", data, project) and not auto("Write", data, project, sandbox=False)
+        assert decide(f"touch {path}", project) == "ask_always", path
+    assert classify("Write", {"file_path": str(project / "tools" / "build.sh"), "content": "x"}, project) == "ask"
+
+
+def test_a_program_the_folder_holds_is_never_harmless(project):  # auto writes files: ./bin/ls could be anything
+    for command in ("./bin/ls", "bin/cat notes.md", "/bin/ls src", "./git status"):
+        assert decide(command, project) == "ask", command
+        assert not auto("Bash", {"command": command}, project)
+    assert decide("ls src", project) == "allow" and decide("LS src", project) == "allow"  # the same program
+
+
+ORDINARY = ["head -5 src/app.py", "grep -rn hi src", "rg hi src", "wc -l src/app.py", "sort src/app.py",
+            "jq . data.json", "find src -name app.py", "echo done", "mkdir build", "touch notes.md",
+            "cp src/app.py src/copy.py", "mv notes.md docs.md", "git add src/app.py", "git commit -m 'Fix the cd step'",
+            "git show HEAD", "git branch topic", "git checkout -b topic", "git switch -c topic main", "git stash",
+            "git stash push -m wip", "git stash list", "git tag v1", "git rev-parse HEAD", "git ls-files",
+            "npm test", "npm run build", "pnpm lint", "yarn build", "bun test", "make", "make test", "pytest -q",
+            "tsc --noEmit", "ruff check src", "cargo test", "go vet ./...", "dotnet build", "mvn test",
+            "uv run pytest", "uv run python src/app.py", "python src/app.py", "python3 src/app.py --fast",
+            "node src/app.js", "cd src"]
+NOT_ORDINARY = ["npm install", "npm exec vite", "npm publish", "git push", "git pull", "git fetch", "git merge main",
+                "git rebase main", "git reset src/app.py", "git checkout main", "git checkout src/app.py",
+                "git switch main", "git stash pop", "git branch -m old new", "git branch -C old new",
+                "git branch --edit-description", "git tag -a v1 -f", "git init --template=tpl",
+                "git log --output=log.txt", "git log --outp=log.txt", "git diff --ext-diff", "git grep -O hi",
+                "curl https://example.com", "python -m pytest", "python -u src/app.py", "node --inspect src/app.js",
+                "ln -s a b", "sed 's/a/b/' notes.md", "awk '{print}' notes.md", "tar -xf a.tar",
+                "uv run curl https://x.example", "uv run --with httpx pytest", "make --eval=all:", "make -kE all:",
+                "go test -exec ./x ./...", "go test --toolexec=./x ./...", "cargo test --config x",
+                "cargo build -Zunstable-options", "npm test --script-shell=./x", "pytest --basetemp=src",
+                "pytest --basete=src", "rg --pre=./x hi", "sort --compress-program=./x src/app.py",
+                "find src -fprint out", "find src -execdir ls", "cd", "cd -", "pushd src", "popd", "cd src extra",
+                "gradlew test", "sqlite3 x.db 'select 1'", "mvn install", "cargo install ripgrep",
+                "go get example.com/x", "unknown-tool src"]
+
+
+@pytest.mark.parametrize("command", ORDINARY)
+def test_auto_approve_runs_an_ordinary_use_where_the_sandbox_holds_it(project, command):  # C2's table, I3
+    assert decide(command, project) == "ask", command
+    assert auto("Bash", {"command": command}, project, sandbox=True)
+    assert not auto("Bash", {"command": command}, project, sandbox=False)  # I3: only file edits run there
+
+
+@pytest.mark.parametrize("command", NOT_ORDINARY)
+def test_auto_approve_keeps_the_card_for_every_other_use(project, command):  # C2: a gap costs a card
+    assert not auto("Bash", {"command": command}, project, sandbox=True)
+
+
+def test_auto_approve_takes_only_the_asks_of_edits_writes_and_ordinary_commands(project):  # the user's choice
+    from ai_browser.app.powers import AUTO_TOOLS, NETWORK, auto_approves
+
+    assert AUTO_TOOLS == {"Bash", "Edit", "Write"}
+    edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
+    write = {"file_path": str(project / "notes.md"), "content": "x"}
+    for sandbox in (True, False):
+        assert auto("Edit", edit, project, sandbox=sandbox) and auto("Write", write, project, sandbox=sandbox)
+    outside = str(project.parent / "outside" / "secret.txt")
+    for tool, data in (("Edit", {**edit, "file_path": str(project / ".git" / "config")}),
+                       ("Write", {"file_path": outside, "content": "x"}), ("Read", {"file_path": outside}),
+                       ("Grep", {"pattern": "x", "path": outside}),
+                       ("WebFetch", {"url": "https://example.com", "prompt": "x"}), ("WebSearch", {"query": "x"}),
+                       (NETWORK, {"host": "example.com"}), ("mcp__clickup__create_task", {"name": "x"}),
+                       ("Bash", {"command": "ls"}), ("Bash", {"command": "rm x"}),
+                       ("Bash", {"command": "cat ../outside/secret.txt"}),
+                       ("Bash", {"command": "ls", "dangerouslyDisableSandbox": True})):
+        for sandbox in (True, False):
+            assert not auto(tool, data, project, sandbox=sandbox), (tool, data, sandbox)
+    assert auto_approves("Bash", {"command": "npm test"}, "ask", sandbox=True)
+    assert not auto_approves("Bash", {"command": "npm test"}, "ask", sandbox=True, away=True)  # the shell moved
+
+
+def test_after_the_shell_moved_a_search_without_a_full_path_asks(project):  # the review's 8 (it was so before)
+    from ai_browser.app.powers import classify
+
+    for tool, data in (("Grep", {"pattern": "key"}), ("Glob", {"pattern": "*.pem"}),
+                       ("Grep", {"pattern": "key", "path": "."}), ("Read", {"file_path": ".ssh/id_rsa"})):
+        assert classify(tool, data, project) == "allow", (tool, data)  # before it moved: the folder
+        assert classify(tool, data, project, moved=True) == "ask_always", (tool, data)
+    assert classify("Grep", {"pattern": "key", "path": str(project / "src")}, project, moved=True) == "allow"
+
+
+def test_what_moves_the_shell_is_read_from_its_words(project):  # the review's 5: auto stops once the shell has moved
+    from ai_browser.app.powers import moves_shell
+
+    for command in ("cd src", "cd", "pushd src", "popd", "source env.sh", "eval cd /", "builtin cd /",
+                    "command cd /", "npm test && cd ..", "ls; . ./env.sh", "cd $HOME"):
+        assert moves_shell(command), command
+    for command in ("git commit -m 'fix the cd step'", "ls src", "echo source", "npm test", 7, None):
+        assert not moves_shell(command), command

@@ -135,9 +135,14 @@ export function askBox(agent, rows, send) {
 }
 
 // The Brain's card in AI Home (Decision 10): "The Brain hit its limit on Personal. Continue on Work?". The click sets
-// the Brain's account (account_brain), which Settings can change back; the card goes once the Brain is moved.
+// the Brain's account (account_brain), which Settings can change back; the card goes once the Brain is moved. It is
+// rebuilt only when what it shows changes, never for a usage reading, so a pick and a Continue that waits both stay.
 export function brainCard(node, limit, rows, send) {
   const brain = rows.find((row) => row.brain);
+  const key = JSON.stringify([limit || null, brain?.id || null,
+                              rows.map((row) => [row.id, row.name, row.signed_in, optionText(row)])]);
+  if (node.dataset.key === key) return;
+  node.dataset.key = key;
   node.textContent = "";
   node.hidden = !limit || !brain || brain.id !== limit.account;
   if (node.hidden) return;

@@ -1,7 +1,7 @@
 // Mission Control's right column (the new look, Decision 4): Mission Progress for the agent picked (or the one at
-// work), its Current Task with the Running… checklist and Stop, Chat and Hand over (Answer when a card waits), and
-// Recent Activity. Built from the app's agent rows and, for an agent without a to-do list, its actions. Every word is
-// set as text, with its whole as a tooltip where it may be clipped.
+// work), its Current Task with the Running… checklist and Stop, Chat, Hand over and Watch (Answer when a card
+// waits), and Recent Activity. Built from the app's agent rows and, for an agent without a to-do list, its actions.
+// Every word is set as text, with its whole as a tooltip where it may be clipped.
 "use strict";
 
 import { el } from "./chat.js";
@@ -88,6 +88,7 @@ export function mountSide({ send, openDrawer, openHistory }) {
     setText($("current-needs"), state === "needs_you" ? step.line : "");
     $("current-answer").hidden = state !== "needs_you";
     $("current-stop").hidden = !(agent.state === "working" || agent.state === "waiting" || agent.check);
+    $("current-watch").disabled = !agent.working_tab; // the drawer's Watch: only while it has a tab to bring forward
     setText($("running-label"), RUNNING[state] || "");
     bar($("running-bar"), progressOf(agent).percent);
     const items = checklistOf(agent, events);
@@ -137,6 +138,9 @@ export function mountSide({ send, openDrawer, openHistory }) {
   $("current-stop").addEventListener("click", () => agent && send({ type: "stop", id: agent.id }));
   $("current-chat").addEventListener("click", () => agent && openDrawer(agent.id));
   $("current-hand").addEventListener("click", () => agent && openDrawer(agent.id, { tabs: true }));
+  $("current-watch").addEventListener("click", () => { // its tab to the front, without opening the drawer
+    if (agent?.working_tab) send({ type: "watch", target: agent.working_tab });
+  });
   $("current-answer").addEventListener("click", () => agent && openDrawer(agent.id));
   $("see-all").addEventListener("click", openHistory);
 

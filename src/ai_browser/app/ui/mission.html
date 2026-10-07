@@ -103,6 +103,8 @@
               </select>
               <select id="task-account" aria-label="Account" hidden></select>
               <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
+              <label id="task-auto-switch" class="auto-switch"><input id="task-auto"
+                type="checkbox"> Auto-approve in its folder</label>
               <select id="task-template" aria-label="Template" hidden></select>
               <select id="task-workspace" aria-label="Workspace"></select>
             </div>
@@ -147,8 +149,10 @@
           <button id="current-answer" class="answer primary" type="button" hidden>Answer</button>
           <button id="current-stop" class="stop" type="button" data-icon="stop">Stop</button>
           <button id="current-chat" class="chat" type="button" data-icon="chat">Chat</button>
-          <button id="current-hand" class="hand" type="button" data-icon="hand"
+          <span class="pair"><button id="current-hand" class="hand" type="button" data-icon="hand"
                   title="Give it one of your tabs">Hand over</button>
+            <button id="current-watch" class="watch" type="button" data-icon="eye" disabled
+                    title="Bring this agent's tab to the front">Watch</button></span>
         </div>
       </div>
     </section>

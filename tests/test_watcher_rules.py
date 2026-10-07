@@ -22,7 +22,8 @@ SENDS = {
     "hearing", "hearing_download", "hearing_cancel", "listen_start", "listen_chunk", "listen_end", "listen_cancel",
     "brain_ask", "brain_confirm", "brain_dismiss", "tell_confirm", "tell_dismiss",
     "check_continue", "check_skip", "check_show", "brave_connect", "hand_tab", "take_back", "browser_disconnect",
-    "new_task", "send", "stop", "close", "model", "watch", "events", "thumbs", "settings_set", "open_url",
+    "new_task", "send", "stop", "close", "model", "watch", "events", "thumbs", "settings_set", "open_url",  # send: with
+    # the files a page staged (the drawer's chat, 2026-10-07): a file, never a right
     "accounts", "account_add", "account_add_existing", "account_remove", "account_default", "account_brain",
     "account_signin", "account_move",  # AI accounts
     "this_page", "show_app",  # the floating chat (native-app part c)
@@ -30,6 +31,7 @@ SENDS = {
     "workspaces", "workspace_save", "workspace_delete", "workspace_assign",  # the new look's workspaces
     "attach_start", "attach_chunk", "attach_drop",  # the new look's Attach
     "skill_block",  # the new look's Knowledge
+    "agent_auto",  # Auto-approve in its folder: the drawer's switch, the user's click only
 }
 RETIRED = {"items", "replied", "thread", "filled", "reader_status", "watcher_caps", "tab_grouped", "pause",
            "ai_keyword"}  # the watcher's own: gone with it

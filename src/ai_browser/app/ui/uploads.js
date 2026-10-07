@@ -1,16 +1,20 @@
-// The composer's Attach (the new look, Decision 9): at most 10 files, 20 MB each. Each file goes to the app in pieces
-// over the page's line (the pages' CSP allows no other way), shown as a chip with its name, its size and how far it
-// got, and × to drop it. The app stages them until the task starts; Start waits until each one is whole, and a task
-// takes only the ones it was sent with. A new connection loses them all (the app drops them): each chip says to attach
-// it again. The name shown is the app's cleaned one, set as text.
+// The composer's Attach (the new look, Decision 9), and since 2026-10-07 every box where the user writes to Claude
+// (Build a Mission, an agent's chat in the drawer, the floating chat's New task), for files attached, pasted or
+// dropped (paste.js): at most 10 files, 20 MB each. Each file goes to the app in pieces over the page's line (the
+// pages' CSP allows no other way), shown as a chip with its name, its size and how far it got, and × to drop it. The
+// app stages them until the task starts (or the message goes); Start (Send) waits until each one is whole, and takes
+// only the ones it was sent with. A new connection loses them all (the app drops them): each chip says to attach it
+// again. The name shown is the app's cleaned one, set as text.
 "use strict";
 
 import { el } from "./chat.js";
+import { takeFiles } from "./paste.js";
 import { bytes } from "./permission.js";
 
 export const MAX_FILES = 10;
 export const MAX_BYTES = 20_000_000; // 20 MB, as the app counts it
 const PIECE = 786_432; // bytes in one piece: 1,048,576 characters of base64, the app's limit
+const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
 let made = 0;
 
 function base64(view) {
@@ -112,6 +116,9 @@ export function mountUploads({ list, send, note }) {
       if (states.includes("failed")) return "Remove the files that didn't arrive (×), or attach them again";
       return "";
     },
+    clear() { // the box goes (the drawer closes, or shows another agent): the app drops what it staged for it
+      for (const id of [...files.keys()]) drop(id);
+    },
     taken(ids) { // a task took these: the app moved them into the agent's folder. Any other chip stays
       for (const id of ids) {
         const entry = files.get(id);
@@ -138,6 +145,77 @@ export function mountUploads({ list, send, note }) {
         render(entry);
       } else if (message.type === "error") {
         fail(id, String(message.text || "Not sent: attach it again"));
+      }
+    },
+  };
+}
+
+// A box for messages to an agent that takes files (the drawer's chat, AI Home's chat): pasted or dropped on `area`
+// (paste.js), or picked with `attach` (a button) and `picker` (its file input) where there are. Words alone go as
+// before, out of the box at once. Words with files go with a request id, and the box keeps both until the app answers:
+// "sent" (the app placed them) empties it, an error says why. No timer: the files may still be on their way, and a
+// new connection (a snapshot) is what lets Send work again.
+export function mountMessageBox({ link, agentId, input, sendButton, list, note, area = input, attach, picker }) {
+  const uploads = mountUploads({ list, send: (message) => link.send(message), note });
+  let pending = null; // {request, files} of the message waiting for its answer
+
+  function settle() {
+    pending = null;
+    sendButton.disabled = false;
+  }
+
+  function send() {
+    const id = agentId();
+    if (!id || pending) return;
+    const text = input.value.trim();
+    const why = uploads.why();
+    if (why) {
+      note(why);
+      return;
+    }
+    const files = uploads.ids();
+    if (!text && !files.length) return;
+    if (!files.length) { // words only
+      if (link.send({ type: "send", id, text })) input.value = "";
+      else note(NOT_CONNECTED);
+      return;
+    }
+    made += 1;
+    const request = `s${Date.now().toString(36)}-${made}`;
+    if (!link.send({ type: "send", id, text, attachments: files, request })) {
+      note(NOT_CONNECTED);
+      return;
+    }
+    pending = { request, files };
+    sendButton.disabled = true;
+  }
+
+  takeFiles(input, (files) => uploads.add(files), { area }); // pasted or dropped: as Attach
+  attach?.addEventListener("click", () => picker.click());
+  picker?.addEventListener("change", () => {
+    uploads.add([...picker.files]);
+    picker.value = ""; // the same file can be picked again
+  });
+  return {
+    send,
+    clear() { // the box shows another agent, or goes: the app drops what it staged for it
+      uploads.clear();
+      settle();
+    },
+    onMessage(message) {
+      uploads.onMessage(message);
+      if (message.type === "snapshot") { // a new connection: the app dropped every staged file
+        uploads.lost();
+        settle();
+      } else if (pending && message.request === pending.request) {
+        const { files } = pending;
+        settle();
+        if (message.type === "sent") { // only now do the chips and the words go
+          uploads.taken(files);
+          input.value = "";
+        } else if (message.type === "error") {
+          note(String(message.text || ""));
+        }
       }
     },
   };

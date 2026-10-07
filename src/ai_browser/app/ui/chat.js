@@ -2,6 +2,23 @@
 // as HTML; **bold** and `code` become elements built here.
 "use strict";
 
+// Auto-approve in its folder (the user's choice, 2026-10-07): the switch's words, and the mark of what ran without a
+// card. The composer's and the drawer's switch say the same. Commands run without a card only where Claude Code's
+// sandbox holds them (the app's `auto_commands`: a Mac); elsewhere only file edits do.
+export const AUTO_LABEL = "Auto-approve in its folder";
+export const AUTO_EDITS_ONLY = "On this computer, commands still ask: only file edits run without a card";
+const AUTO_JUDGED = "What still asks is judged from what a command names, not from what a script it runs does.";
+const AUTO_MARK = "Ran without a card: Auto-approve in its folder";
+
+export function autoTitle(commands) { // the switch's title, for this computer
+  return commands
+    ? "Edits, new files and ordinary commands (reading, building, testing, everyday Git) inside the task's folder run "
+      + "without a card. Deleting, sudo, anything outside the folder, force-push and reaching a site still ask. "
+      + AUTO_JUDGED
+    : `${AUTO_EDITS_ONLY}. Edits and new files inside the task's folder run without one; anything outside it, and `
+      + `Git's, Claude Code's or an editor's own settings, still ask. ${AUTO_JUDGED}`;
+}
+
 export function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -42,13 +59,22 @@ function clock(seconds) { // "14:05", this computer's time; "" without one
 }
 
 // One tool use: its badge (Bash, Edit, Web Fetch, Browser Agent, Sub-agent, Skill…), its name and summary, and its
-// time (agent powers, Decision 10). A sub-agent's own lines are marked "sub".
+// time (agent powers, Decision 10). A sub-agent's own lines are marked "sub"; what Auto-approve in its folder ran
+// without a card, "auto" beside its badge.
 function actionRow(event) {
   const row = el("div", `action pending${event.sub ? " sub" : ""}`);
   row.append(el("span", "icon", "•"), el("span", "badge", event.badge || "Tool"),
     el("span", "name", event.name || "action"), el("span", "summary", event.summary || ""), el("span", "ms", ""),
     el("span", "at", clock(event.at)));
+  if (event.auto === true) markAuto(row);
   return row;
+}
+
+function markAuto(row) {
+  if (row.querySelector(".auto")) return;
+  const mark = el("span", "auto", "auto");
+  mark.title = AUTO_MARK;
+  row.querySelector(".badge").after(mark);
 }
 
 export function createChat(container, { onPage = () => {} } = {}) {
@@ -86,6 +112,11 @@ export function createChat(container, { onPage = () => {} } = {}) {
       case "tool":
         rows.set(event.id || `row${rows.size}`, add(actionRow(event)));
         break;
+      case "auto": { // Auto-approve in its folder ran this line's action without a card
+        const row = rows.get(event.id);
+        if (row) markAuto(row);
+        break;
+      }
       case "tool_result": {
         const row = rows.get(event.id) || add(actionRow({ name: event.name, sub: event.sub }));
         row.classList.remove("pending");

@@ -86,7 +86,8 @@
 }
 
 /* ---- the room ------------------------------------------------------------------------------------------------- */
-/* the room is the page's plain navy (the user's hand check: no back wall, no grid): --bg, --bg-deep in its corners */
+/* the room is the page's plain navy (the user's hand check: no back wall, no grid): --bg, --bg-deep in its corners.
+   Nothing lies under the globe (the user's look, 2026-10-07): no rings, no light disc, no glow on the floor */
 .scene { position: relative; overflow: hidden; isolation: isolate;
          background: radial-gradient(ellipse at 50% 40%, var(--bg) 55%, var(--bg-deep)); }
 .viewport { position: absolute; inset: 0; perspective: 1800px; perspective-origin: 50% 20%; overflow: hidden;
@@ -94,13 +95,6 @@
 .viewport.dragging { cursor: grabbing; }
 .room { position: absolute; left: 50%; top: 58%; width: 2000px; height: 1400px; margin: -700px 0 0 -1000px;
         transform-style: preserve-3d; --tilt: 58deg; --spin: 0deg; }
-.floor { position: absolute; inset: -500px; pointer-events: none; /* only the soft blue glow under the globe */
-         background: radial-gradient(circle at 50% 44%, color-mix(in srgb, var(--glow) 50%, transparent),
-                                     transparent 22%); }
-.ring { position: absolute; border-radius: 50%; pointer-events: none; border: 2px solid rgba(90, 150, 255, 0.55);
-        box-shadow: 0 0 30px var(--glow), inset 0 0 30px rgba(60, 110, 255, 0.3); }
-.ring.inner { width: 340px; height: 340px; margin: -170px 0 0 -170px; }
-.ring.outer { width: 480px; height: 480px; margin: -240px 0 0 -240px; border-color: rgba(90, 150, 255, 0.25); }
 .billboard { position: absolute; transform-style: preserve-3d; transform-origin: 50% 100%;
              transform: translate(-50%, -100%) rotateZ(calc(-1 * var(--spin))) rotateX(calc(-1 * var(--tilt))); }
 .links { position: absolute; left: 0; top: 0; width: 2000px; height: 1400px; overflow: visible; pointer-events: none; }
@@ -132,9 +126,6 @@
 .globe .shine { position: absolute; inset: 0; border-radius: 50%;
                 background: radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.55), transparent 32%),
                             radial-gradient(circle, transparent 58%, rgba(4, 12, 40, 0.65) 100%); }
-.pedestal { width: 260px; height: 46px; margin-top: -14px; border-radius: 50%; pointer-events: none;
-            background: radial-gradient(ellipse at 50% 40%, rgba(120, 180, 255, 0.9) 0 18%, rgba(40, 90, 255, 0.5) 40%,
-                                        transparent 70%); }
 .stage[data-state="thinking"] .globe { --g: #5fd0ff; }
 .stage[data-state="alert"] .globe { --g: #ffb547; filter: drop-shadow(0 0 30px rgba(255, 181, 71, 0.6)); }
 .stage[data-state="alert"] .globe .sphere { animation: mc-beat 1.1s linear infinite; }

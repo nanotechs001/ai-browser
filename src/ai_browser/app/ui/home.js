@@ -1,5 +1,6 @@
-// AI Home: every agent and what it is doing, every tab, and all of Claude's skills. Everything from Claude, pages or
-// skills is set as text; thumbnails are JPEG data the app made from Chrome screenshots.
+// AI Home: every agent and what it is doing, every tab, and all of Claude's skills. New task and an agent's chat take
+// pictures pasted into them and files dropped on them, as Mission Control's boxes do (paste.js, uploads.js). Everything
+// from Claude, pages or skills is set as text; thumbnails are JPEG data the app made from Chrome screenshots.
 import { askBox, askError, askKey, brainCard, fillPicker, pickDefault } from "./accountui.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
@@ -13,6 +14,8 @@ import { mountTrain } from "./train.js";
 import { mountWorkflows } from "./workflows.js";
 import { mountFolderPicker } from "./folderpick.js";
 import { guardCloseKey, guardLinks, openLive, openTab } from "./nav.js";
+import { takeFiles } from "./paste.js";
+import { mountMessageBox, mountUploads } from "./uploads.js";
 
 const $ = (id) => document.getElementById(id);
 const COLORS = { grey: "#5f6368", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038",
@@ -27,6 +30,7 @@ let skills = [];
 let summary = null;
 let maxWorking = 3;
 let pending = null; // the new_task request waiting for its "created"
+let taking = []; // the files that went with it: only those chips go when it is created
 let pendingTimer = null;
 let chatAgent = null;
 let defaultModel = "sonnet"; // ai-browser app --model, until the user picks one (the app remembers the pick)
@@ -57,6 +61,10 @@ const workflows = mountWorkflows($("workflows"), link, { skills: () => skills, s
 const train = mountTrain($("train"), link, { tabs: () => tabs, model: () => $("task-model").value });
 const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
                                   (message) => link.send(message)); // agent powers: the task's folder
+const uploads = mountUploads({ list: $("attached"), send: (message) => link.send(message), note: flash });
+takeFiles($("task"), (files) => uploads.add(files), { area: $("task").closest(".new-task") });
+const chatBox = mountMessageBox({ link, agentId: () => chatAgent, input: $("chat-input"), sendButton: $("chat-send"),
+                                  list: $("chat-attached"), note: flash, area: $("chat") });
 
 function setStatus(state) {
   $("status").dataset.state = state;
@@ -475,12 +483,13 @@ function updatePicked() {
 
 function finishRequest() {
   pending = null;
+  taking = [];
   clearTimeout(pendingTimer);
   $("start").disabled = false;
 }
 
 function handle(message) {
-  for (const part of [brain, tools, workflows, train, folders]) part.onMessage(message);
+  for (const part of [brain, tools, workflows, train, folders, uploads, chatBox]) part.onMessage(message);
   if (message.type === "brain_snapshot" || message.type === "brain_state") {
     watchSites = message.watch_list || [];
     workflows.options();
@@ -506,6 +515,7 @@ function handle(message) {
       maxWorking = message.max_working || 3;
       defaultModel = message.default_model || defaultModel;
       applySettings(message.settings);
+      uploads.lost(); // a new connection: the app dropped the files staged for the old one
       if (pending) finishRequest(); // a new connection: an unanswered Start can be pressed again
       renderAgents();
       renderTabs();
@@ -585,7 +595,9 @@ function handle(message) {
       break;
     case "created":
       if (pending && message.request === pending) {
+        const took = taking;
         finishRequest();
+        uploads.taken(took); // the app moved those into the agent's folder
         $("task").value = "";
         for (const input of $("skills-pick").querySelectorAll("input:checked")) input.checked = false;
         updatePicked();
@@ -611,17 +623,20 @@ function start() {
     return;
   }
   if (pending) return; // one Start, one agent
-  const why = folders.ready(); // "Trust this folder?" is answered before the first task there
+  const why = folders.ready() || uploads.why(); // "Trust this folder?" first; every attached file whole
   if (why) {
     flash(why);
     return;
   }
   const folder = folders.value();
+  const files = uploads.ids();
   pending = `r${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  taking = files;
   $("start").disabled = true;
   const account = $("task-account").hidden ? {} : { account: $("task-account").value }; // the picked account
   const sent = link.send({ type: "new_task", text, skills: pickedSkills(), model: $("task-model").value,
-    request: pending, ...account, ...(folder ? { folder } : {}), ...(handing ? { adopt: handing.target } : {}) });
+    request: pending, ...account, ...(folder ? { folder } : {}), ...(handing ? { adopt: handing.target } : {}),
+    ...(files.length ? { attachments: files } : {}) });
   if (!sent) {
     finishRequest();
     flash("Not connected: is `ai-browser app` running?");
@@ -633,6 +648,7 @@ function start() {
 function openChat(id) {
   const agent = agents.get(id);
   if (!agent) return;
+  if (chatAgent !== id) chatBox.clear(); // another agent: the files staged for the last one go
   chatAgent = id;
   $("chat").hidden = false;
   $("chat-name").textContent = agentLabel(agent);
@@ -643,15 +659,9 @@ function openChat(id) {
 }
 
 function closeChat() {
+  chatBox.clear();
   chatAgent = null;
   $("chat").hidden = true;
-}
-
-function sendChat() {
-  const text = $("chat-input").value.trim();
-  if (!text || !chatAgent) return;
-  if (link.send({ type: "send", id: chatAgent, text })) $("chat-input").value = "";
-  else flash("Not connected: is `ai-browser app` running?");
 }
 
 function showLive(url, agent) { // a bot check in QA's sandbox: its live view, in the agent's own tab of the window
@@ -693,11 +703,11 @@ $("chat-skill").addEventListener("click", () => {
   train.fromAgent(chatAgent, agents.get(chatAgent)?.name);
 });
 $("tools-section").addEventListener("toggle", () => { if ($("tools-section").open) tools.refresh(); });
-$("chat-send").addEventListener("click", sendChat);
+$("chat-send").addEventListener("click", () => chatBox.send());
 $("chat-stop").addEventListener("click", () => chatAgent && link.send({ type: "stop", id: chatAgent }));
 $("chat-input").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
-    sendChat();
+    chatBox.send();
   }
 });
