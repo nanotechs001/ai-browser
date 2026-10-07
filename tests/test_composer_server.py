@@ -146,12 +146,12 @@ async def test_a_huge_or_extra_attachment_is_refused_and_a_closed_page_leaves_no
             await ws.send(json.dumps({"type": "attach_start", "upload": "u0", "name": "movie.mov",
                                       "size": 20_000_001}))
             assert (await until(ws, lambda m: m.get("request") == "u0"))[-1]["text"] == "movie.mov is over 20 MB"
-            for number in range(1, 11):
+            for number in range(1, 21):  # a page may stage 20: Build a Mission's 10 and an agent's chat's 10
                 await ws.send(json.dumps({"type": "attach_start", "upload": f"u{number}", "name": "a.txt",
                                           "size": 4}))
-            await ws.send(json.dumps({"type": "attach_start", "upload": "u11", "name": "a.txt", "size": 4}))
-            assert (await until(ws, lambda m: m.get("request") == "u11"))[-1]["text"] == "At most 10 files at once"
-            assert len(list(uploads.glob("*.part"))) == 10
+            await ws.send(json.dumps({"type": "attach_start", "upload": "u21", "name": "a.txt", "size": 4}))
+            assert (await until(ws, lambda m: m.get("request") == "u21"))[-1]["text"] == "At most 10 files at once"
+            assert len(list(uploads.glob("*.part"))) == 20
         await wait_for(lambda: not list(uploads.glob("*.part")))  # the page went: its files went with it
     finally:
         await server.stop()
@@ -385,6 +385,12 @@ async def test_a_message_with_files_is_refused_whole_and_keeps_them_for_the_next
             (project / "attachments").unlink()
             assert (await answer("s5", attachments=["u2", "u3"]))["type"] == "sent"  # the files were kept
             assert sorted(path.name for path in (project / "attachments").iterdir()) == ["a.png", "b.txt"]
+            await wait_for(lambda: len(told(log)) == 2 and agent.state == "your_turn")
+            await ws.send(json.dumps({"type": "send", "id": "a1", "text": "", "attachments": [1, None],
+                                      "request": "s8"}))  # ids that aren't a file's are no file: nothing to send
+            assert (await until(ws, lambda m: m.get("request") == "s8"))[-1] == {
+                "type": "error", "text": "Write a message, or attach a file", "request": "s8"}
+            assert agent.pending == [] and agent.state == "your_turn" and len(told(log)) == 2
             await server.agents.close("a1")
             assert (await send_file(ws, "u4", "c.png", b"data"))["type"] == "attach_done"
             assert (await answer("s6", attachments=["u4"]))["text"] == "That agent has closed"
@@ -422,5 +428,30 @@ async def test_a_message_with_files_never_goes_through_a_scratch_folder_that_bec
         assert str(refused.value) == LINKED.format(path=agent_folder / "work")
         assert list(outside.iterdir()) == [] and path.is_file()  # nothing placed there, the staged copy kept
         assert len(told(fake_claude[1])) == 1  # and nothing said
+    finally:
+        await agents.close_all()
+
+
+async def test_a_message_with_files_to_a_chosen_folder_that_is_gone_is_refused(fake_claude, tmp_path, user_home):
+    """The folder the user chose for the task went after the start: a message's files are refused with the same words
+    as a start's, and the folder is never made again by placing them."""
+    import shutil
+
+    from ai_browser.app.powers import GONE
+
+    agents = scratch_manager(fake_claude, tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    agents.rules.trust(project)
+    try:
+        agent = await agents.create("x", folder=str(project))
+        await wait_for(lambda: agent.state == "your_turn")
+        shutil.rmtree(project)
+        path = staged(tmp_path)
+        with pytest.raises(ValueError) as refused:
+            await agents.send(agent.id, "look", files=[(path, "new.txt")])
+        assert str(refused.value) == GONE
+        assert not project.exists() and path.is_file()  # not made again; the staged copy kept
+        assert len(told(fake_claude[1])) == 1
     finally:
         await agents.close_all()

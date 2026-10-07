@@ -1425,11 +1425,10 @@ class AppServer:
 
         text = _text(message.get("text"))
         listed = message.get("attachments") if isinstance(message.get("attachments"), list) else []
-        if not text and not listed:
-            answer({"type": "error", "text": EMPTY_MESSAGE})
-            return
         try:
             files = self.uploads.take(ws, listed)  # each file whole, or nothing is sent
+            if not text and not files:  # ids that name no file are none
+                raise ValueError(EMPTY_MESSAGE)
             sent = await self.agents.send(agent_id, text, _tab(message.get("tab")), files=files)
         except ValueError as exc:
             answer({"type": "error", "text": str(exc)})

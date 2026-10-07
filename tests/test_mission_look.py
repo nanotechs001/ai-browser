@@ -758,6 +758,17 @@ async def test_an_agents_chat_keeps_its_files_until_the_app_takes_them(stack):
     await wait_for(lambda: len(list((work / "attachments").iterdir())) == 10)
 
 
+@CHROME
+async def test_build_a_mission_and_an_agents_chat_each_hold_their_own_ten_files(stack):  # the review of look-3, F4
+    js = await drawer_of_a_finished_agent(stack)
+    await js(f"({ATTACH})({json.dumps([[f'build{number}.txt', 10] for number in range(7)])})")
+    assert await until(js, f"{CHIPS}.length === 7 && {CHIPS}.every(chip => chip.dataset.state === 'done')", 15)
+    four = [[f"chat{number}.png", 10, "image/png"] for number in range(4)]
+    await js(f"({PASTE})('{LINE} textarea', {json.dumps(four)})")
+    assert await until(js, f"{DRAWER_CHIPS}.length === 4 && {DRAWER_CHIPS}.every(chip =>"
+                           " chip.dataset.state === 'done')", 15)  # the page holds 11: none refused
+
+
 # ---- My Missions and History (Task 14) -------------------------------------------------------------------------------
 
 @CHROME
