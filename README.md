@@ -584,8 +584,9 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     drops.
   - **Web:** **Web + Brave** (the default), **Brave only** (no Web Search or Web Fetch), or **No web**: no Web Search,
     Web Fetch, browser tools or skills shell (a skill's instructions still load, but its scripts don't run). Under
-    **No web**, a command still asks you, with a card, before it reaches a site, and your own tools (Integrations)
-    still run;
+    **No web**, your own tools (Integrations) still run, and a command can still reach a site. On a Mac it asks you
+    first, with a card, every time; on Windows and Linux it asks with a card too, except a command you chose
+    **Always allow** for.
   - **Model**, **Account**, **Folder** and **Workspace**; the mic (in Ask AI it talks to the Brain; otherwise your words
     fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
   - On a narrow window the pickers fold into **⋯ Options**, the right column moves under the office, and the menu

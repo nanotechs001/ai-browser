@@ -1241,9 +1241,12 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
                    'After a reconnect, every attached file says "Not sent: attach it again", even one that showed ✓',
                    "the task refuses to start and says which folder",
                    "no Web Search, Web Fetch, browser tools or skills shell",
-                   "a command still asks you, with a card, before it reaches a site",
+                   "a command can still reach a site",
+                   "On a Mac it asks you first, with a card, every time",
+                   "except a command you chose **Always allow** for",
                    "your own tools (Integrations) still run",
                    "scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom"):
         assert phrase in readme, phrase
-    for gone in ("brain of glowing points", "WebGL", "no web tools at all", "a file that was not yet sent"):
+    for gone in ("brain of glowing points", "WebGL", "no web tools at all", "a file that was not yet sent",
+                 "a command still asks you, with a card, before it reaches a site"):
         assert gone not in readme, gone
