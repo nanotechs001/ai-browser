@@ -4,15 +4,17 @@ computer with a profile of its own, under a throwaway AI Browser home. Each test
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
 import time
 import urllib.request
+from pathlib import Path
 
 import pytest
 
-from ai_browser import localbox
+from ai_browser import localbox, platforms
 from ai_browser.chrome import ChromeError
 from conftest import file_mode, symlink_or_skip
 
@@ -80,6 +82,7 @@ def test_stop_ends_the_browser_and_keeps_its_profile(boxes):
 @BROWSER
 def test_its_downloads_never_land_in_the_users_downloads_folder(boxes):
     info = boxes.start("pytest")  # (checked by hand: a download after its session left lands in the pref's folder)
+    assert (boxes.home / "sandboxes" / "pytest" / "downloads").is_dir()  # there before the browser could write to it
     boxes.stop(info.name)  # the browser rewrites its preferences as it closes: the folder must survive that
     folder = boxes.home / "sandboxes" / "pytest"
     prefs = json.loads((folder / "profile" / "Default" / "Preferences").read_text(encoding="utf-8"))
@@ -154,8 +157,6 @@ def test_two_sessions_starting_a_profile_at_once_share_one_browser(boxes):  # Re
 
 
 def test_on_windows_a_pid_that_isnt_the_browser_is_never_ended(boxes, monkeypatch):  # Review Focus 5
-    from ai_browser import platforms
-
     folder = boxes.home / "sandboxes" / "pytest"
     (folder / "profile").mkdir(parents=True)
     stranger = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
@@ -163,6 +164,7 @@ def test_on_windows_a_pid_that_isnt_the_browser_is_never_ended(boxes, monkeypatc
         (folder / "browser.json").write_text(json.dumps({"pid": stranger.pid, "binary": "x", "fresh": False}),
                                              encoding="utf-8")
         monkeypatch.setattr(platforms, "WINDOWS", True)
+        monkeypatch.setattr(platforms, "lock_file", lambda path: open(path, "a+b"))  # (stop locks; no Win32 call here)
         monkeypatch.setattr(platforms, "pid_alive", lambda pid: pid == stranger.pid)  # no Win32 call is made here
         assert not boxes.is_running("aib-pytest") and boxes.running() == []  # its port doesn't answer: not ours
         boxes.stop("aib-pytest")
@@ -177,7 +179,8 @@ def test_names_are_checked_before_anything_starts(boxes, monkeypatch):
         raise AssertionError("a browser started")
 
     monkeypatch.setattr(localbox, "launch", never)
-    for name, words in (("chrome", "reserved"), ("app", "reserved"), ("Bad Name!", "lowercase letters")):
+    for name, words in (("chrome", "reserved"), ("app", "reserved"), ("fresh-work", "reserved"),
+                        ("Bad Name!", "lowercase letters")):
         with pytest.raises(ValueError, match=words):
             boxes.start(name)
 
@@ -194,3 +197,212 @@ def test_the_browser_is_chrome_else_brave(monkeypatch):
     assert localbox.sandbox_binary() == "/opt/brave.com/brave/brave"
     monkeypatch.setattr(localbox, "chrome_binary", lambda: "/usr/bin/google-chrome")
     assert localbox.sandbox_binary() == "/usr/bin/google-chrome"
+
+
+# ---- fix round 1 (the review's findings) ----
+
+
+def _tree(folder: Path) -> dict:
+    """Every entry under a folder with its bytes (or its link target) and mode: to see that nothing changed."""
+    seen = {}
+    for path in sorted(folder.rglob("*")):
+        if path.is_symlink():
+            seen[str(path)] = ("link", os.readlink(path))
+        elif path.is_file():
+            seen[str(path)] = (path.read_bytes(), path.stat().st_mode)
+        else:
+            seen[str(path)] = ("dir", path.stat().st_mode)
+    return seen
+
+
+def _holder(profile: Path) -> subprocess.Popen:
+    """A process whose command line names the profile, as a browser's does."""
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", f"--user-data-dir={profile}"])
+
+
+def test_a_profile_named_like_a_throwaway_is_refused_and_a_named_one_survives_stop(boxes):  # I1
+    folder = boxes.home / "sandboxes" / "fresh-work"  # one an earlier version could have made: a named profile
+    (folder / "profile").mkdir(parents=True)
+    (folder / "profile" / "logins").write_text("x", encoding="utf-8")
+    (folder / "browser.json").write_text(json.dumps({"pid": 0, "binary": "x", "fresh": False}), encoding="utf-8")
+    boxes.stop("aib-fresh-work")
+    assert (folder / "profile" / "logins").is_file() and not (folder / "browser.json").exists()
+
+
+@pytest.mark.posix_only
+def test_a_browser_started_for_one_profile_never_vouches_for_another(boxes, monkeypatch):  # I2
+    first = boxes.home / "sandboxes" / "pytest" / "profile"
+    first.mkdir(parents=True)
+    other = boxes.home / "sandboxes" / "other"
+    (other / "profile").mkdir(parents=True)
+    holder = _holder(first)
+    try:
+        monkeypatch.setitem(localbox._launched, holder.pid, holder)  # launched here, for "pytest"
+        (other / "browser.json").write_text(json.dumps({"pid": holder.pid, "binary": "x", "fresh": False}),
+                                            encoding="utf-8")  # a record of another profile that names its pid
+        assert localbox._runs_profile(holder.pid, first) and not localbox._runs_profile(holder.pid, other / "profile")
+        assert not boxes.is_running("aib-other") and boxes.running() == []
+        boxes.stop("aib-other")
+        assert holder.poll() is None and not (other / "browser.json").exists()  # untouched; the stale record went
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+@pytest.mark.posix_only
+def test_a_launched_process_that_ended_doesnt_hide_a_live_holder_of_its_pid(boxes, monkeypatch):  # I2
+    profile = boxes.home / "sandboxes" / "pytest" / "profile"
+    profile.mkdir(parents=True)
+
+    class Ended:
+        args: list = []
+
+        def poll(self):
+            return 0
+
+    holder = _holder(profile)
+    try:
+        monkeypatch.setitem(localbox._launched, holder.pid, Ended())  # the pid was a browser of ours that ended
+        assert localbox._runs_profile(holder.pid, profile) and holder.pid not in localbox._launched
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+@pytest.mark.parametrize("how", ["profile is a link", "folder is a link", "is a browser folder"])
+def test_a_link_or_the_users_browser_folder_is_refused_before_anything_changes(boxes, tmp_path, monkeypatch, how):  # I3
+    def never(*args, **kwargs):
+        raise AssertionError("a browser started")
+
+    monkeypatch.setattr(localbox, "launch", never)
+    monkeypatch.setattr(localbox, "own_browser_dirs", lambda: [])
+    stand_in = tmp_path / "UserBrowser"  # a stand-in for one of the user's own browser folders
+    (stand_in / "Default").mkdir(parents=True)
+    (stand_in / "Default" / "Preferences").write_text('{"download": {"default_directory": "/me/Downloads"}}',
+                                                      encoding="utf-8")
+    (stand_in / "DevToolsActivePort").write_text("9\n/devtools/browser/x\n", encoding="utf-8")
+    (stand_in / "lockfile").write_text("", encoding="utf-8")
+    symlink_or_skip("host-1", stand_in / "SingletonLock")
+    os.chmod(stand_in, 0o755)
+    folder = boxes.home / "sandboxes" / "pytest"
+    (boxes.home / "sandboxes").mkdir(parents=True)
+    if how == "profile is a link":
+        folder.mkdir()
+        symlink_or_skip(stand_in, folder / "profile")
+        watched = stand_in
+    elif how == "folder is a link":
+        (tmp_path / "elsewhere").mkdir()
+        shutil.copytree(stand_in, tmp_path / "elsewhere" / "profile", symlinks=True)
+        symlink_or_skip(tmp_path / "elsewhere", folder)
+        watched = tmp_path / "elsewhere"
+    else:
+        shutil.copytree(stand_in, folder / "profile", symlinks=True)
+        monkeypatch.setattr(localbox, "own_browser_dirs", lambda: [folder / "profile"])
+        watched = folder / "profile"
+    before = _tree(watched)
+    with pytest.raises(ChromeError, match="won't use"):
+        boxes.start("pytest")
+    with pytest.raises(ChromeError, match="won't use"):
+        boxes.stop("aib-pytest")
+    assert _tree(watched) == before and not (folder / "work").exists() and not (folder / "start.lock").exists()
+    assert boxes.running() == [] and not boxes.is_running("aib-pytest")
+
+
+@BROWSER
+@pytest.mark.posix_only
+def test_stopping_a_browser_from_another_process_is_quick_and_never_a_kill(boxes):  # I4
+    boxes.start("pytest")  # this process is its parent and doesn't reap it as it ends: a zombie to the other one
+    process = localbox._launched[record(boxes, "pytest")["pid"]]
+    script = """
+import json, os, sys, time
+from pathlib import Path
+from ai_browser import localbox
+calls = []
+real_kill = os.kill
+os.kill = lambda pid, sig: calls.append(["kill", sig]) if sig else real_kill(pid, sig)
+os.killpg = lambda pid, sig: calls.append(["killpg", sig])
+started = time.monotonic()
+localbox.LocalSandboxes(Path(sys.argv[1])).stop("aib-pytest")
+print(json.dumps({"seconds": time.monotonic() - started, "calls": calls}))
+"""
+    answer = subprocess.run([sys.executable, "-c", script, str(boxes.home)], capture_output=True, text=True,
+                            encoding="utf-8", timeout=60)
+    result = json.loads(answer.stdout)
+    assert result["calls"] == [] and result["seconds"] < localbox.STOP_WAIT / 2, (result, answer.stderr)
+    assert process.wait(5) is not None  # it did exit, by itself
+
+
+@pytest.mark.posix_only
+def test_a_browser_that_wont_close_is_ended_with_its_whole_group(boxes, tmp_path, monkeypatch):  # minor (b)
+    monkeypatch.setattr(localbox, "STOP_WAIT", 0.5)
+    folder = boxes.home / "sandboxes" / "pytest"
+    (folder / "profile").mkdir(parents=True)
+    pidfile = tmp_path / "helper.pid"
+    script = ("import subprocess, sys, time\n"
+              "helper = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+              "open(sys.argv[1], 'w').write(str(helper.pid))\ntime.sleep(60)")
+    leader = subprocess.Popen([sys.executable, "-c", script, str(pidfile), f"--user-data-dir={folder / 'profile'}"],
+                              start_new_session=True)
+    helper = 0
+    try:
+        monkeypatch.setitem(localbox._launched, leader.pid, leader)
+        (folder / "browser.json").write_text(json.dumps({"pid": leader.pid, "binary": "x", "fresh": False}),
+                                             encoding="utf-8")
+        for _ in range(100):
+            text = pidfile.read_text(encoding="utf-8") if pidfile.exists() else ""
+            if text.isdigit():
+                helper = int(text)
+                break
+            time.sleep(0.1)
+        assert helper
+        boxes.stop("aib-pytest")
+        assert leader.poll() is not None
+        for _ in range(50):
+            if not platforms.pid_alive(helper):
+                break
+            time.sleep(0.1)
+        assert not platforms.pid_alive(helper)  # its helper went with it
+    finally:
+        for pid in (helper, leader.pid):
+            if pid:
+                try:
+                    os.kill(pid, 9)
+                except OSError:
+                    pass
+        leader.wait()
+
+
+def test_a_start_or_stop_waits_for_the_start_lock_as_long_as_its_holder_may_need(boxes, monkeypatch):  # minor (e), (f)
+    for name in ("READY_TIMEOUT", "ANSWER_WAIT", "STOP_WAIT", "KILL_WAIT"):
+        monkeypatch.setattr(localbox, name, 0.2)
+    monkeypatch.setattr(localbox, "LOCK_MARGIN", 0.1)
+    folder = boxes.home / "sandboxes" / "pytest"
+    folder.mkdir(parents=True)
+    held = platforms.lock_file(folder / "start.lock")
+    try:
+        for call in (lambda: boxes.start("pytest"), lambda: boxes.stop("aib-pytest")):
+            started = time.monotonic()
+            with pytest.raises(ChromeError, match="didn't finish"):
+                call()
+            assert 0.85 <= time.monotonic() - started < 5  # 4 x 0.2 + 0.1: the holder's worst case, and a margin
+    finally:
+        held.close()
+
+
+def test_when_stop_cant_clear_a_held_profile_it_says_how_to_end_the_browser(boxes, monkeypatch):  # minor (d)
+    folder = boxes.home / "sandboxes" / "pytest"
+    (folder / "profile").mkdir(parents=True)
+
+    def held(path, missing_ok=False):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(platforms, "unlink", held)
+    with pytest.raises(ChromeError, match="Task Manager") as caught:
+        boxes.stop("aib-pytest")
+    assert platforms.command("stop pytest") not in str(caught.value)  # not "run ai-browser stop": just run
+
+
+def test_two_spellings_of_one_home_are_one_home(tmp_path):  # minor (a)
+    (tmp_path / "real").mkdir()
+    symlink_or_skip(tmp_path / "real", tmp_path / "link")
+    assert localbox.LocalSandboxes(tmp_path / "link").home == (tmp_path / "real").resolve()
