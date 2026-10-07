@@ -224,3 +224,19 @@ async def test_a_template_run_and_a_brain_started_task_never_auto_approve(fake_c
     finally:
         await server.agents.close_all()
         await server.stop()
+
+
+@pytest.mark.parametrize("sandbox", [True, False])
+async def test_the_pages_hear_whether_auto_approve_may_run_commands_here(  # the review's I3
+        fake_claude, tmp_path, monkeypatch, sandbox):
+    from ai_browser.app import powers
+
+    monkeypatch.setattr(powers, "sandbox_on", lambda: sandbox)
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+            snapshot = (await until(ws, lambda message: message["type"] == "snapshot"))[-1]
+            assert snapshot["auto_commands"] is sandbox
+    finally:
+        await server.stop()

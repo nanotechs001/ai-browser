@@ -432,12 +432,18 @@ async def test_after_stop_nothing_runs_not_even_a_harmless_or_ruled_command(  # 
     assert shown == [] and behaviors(log) == ["deny", "deny"]  # nothing runs after Stop, and no card shows
 
 
-# Auto-approve in its folder (the user's choice, 2026-10-07): a switch per task.
-async def test_auto_approve_runs_what_stays_in_the_folder_without_a_card_and_marks_it(  # the user's choice
-        fake_claude, tmp_path, project, monkeypatch):
+# Auto-approve in its folder (the user's choice, 2026-10-07): a switch per task. After the security review: commands
+# from AUTO_BASH only, and only where the sandbox holds them; edits and new files everywhere.
+@pytest.fixture
+def sandboxed(monkeypatch):
+    """A computer where Claude Code's sandbox holds commands (a Mac): auto-approve may run ordinary ones."""
     from ai_browser.app import powers
 
-    monkeypatch.setattr(powers, "sandbox_on", lambda: False)
+    monkeypatch.setattr(powers, "sandbox_on", lambda: True)
+
+
+async def test_auto_approve_runs_what_stays_in_the_folder_without_a_card_and_marks_it(  # the user's choice
+        fake_claude, tmp_path, project, sandboxed):
     runner, log, script = fake_claude
     edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
     script.write_text(json.dumps([INIT, use("u1", "Bash", {"command": "npm test"}),
@@ -457,7 +463,7 @@ async def test_auto_approve_runs_what_stays_in_the_folder_without_a_card_and_mar
 
 
 @pytest.mark.parametrize("sandbox", [False, True])
-async def test_under_auto_approve_what_is_risky_or_reaches_a_site_still_shows_a_card(  # the user's choice
+async def test_under_auto_approve_what_is_risky_or_reaches_a_site_still_shows_a_card(  # the user's choice, C1, C2
         fake_claude, tmp_path, project, monkeypatch, sandbox):
     from ai_browser.app import powers
 
@@ -467,36 +473,68 @@ async def test_under_auto_approve_what_is_risky_or_reaches_a_site_still_shows_a_
     asks = [ask("Bash", {"command": "rm x"}), ask("Bash", {"command": "cat ../outside/secret.txt"}),
             ask("Edit", {"file_path": str(project / ".git" / "config"), "old_string": "a", "new_string": "b"}),
             ask("WebFetch", {"url": "https://example.com/", "prompt": "x"}), ask("WebSearch", {"query": "x"}),
-            ask(powers.NETWORK, {"host": "example.com"}), ask("Bash", {"command": "cd"}),
-            ask("mcp__ai-browser__shell", {"command": "ls"})]
+            ask(powers.NETWORK, {"host": "example.com"}), ask("mcp__ai-browser__shell", {"command": "ls"}),
+            ask("Bash", {"command": "caffeinate rm -r src"}), ask("Bash", {"command": "python3.12 -c 'print(1)'"}),
+            ask("Bash", {"command": "git stash drop"}), ask("Bash", {"command": "cp payload .git/hooks/pre-commit"}),
+            ask("Bash", {"command": "git config core.fsmonitor fsmon.sh"}), ask("Bash", {"command": "npm install"}),
+            ask("Bash", {"command": "cd"})]
     script.write_text(json.dumps([INIT, *asks, RESULT]), encoding="utf-8")
     bridge, shown = bridge_for(tmp_path, runner, ["once"] * len(asks), work=project, auto=True)
     events = await run(bridge)
     assert [request["tool"] for request in shown] == [
-        "Bash", "Bash", "Edit", "WebFetch", "WebSearch", powers.NETWORK, "Bash", "mcp__ai-browser__shell"]
+        "Bash", "Bash", "Edit", "WebFetch", "WebSearch", powers.NETWORK, "mcp__ai-browser__shell", *["Bash"] * 7]
     assert not any(event["type"] == "auto" for event in events)
 
 
-async def test_without_the_sandbox_a_command_that_reaches_a_site_shows_a_card_under_auto(  # Windows, Linux
-        fake_claude, tmp_path, project, monkeypatch):
+async def test_without_the_sandbox_auto_approve_runs_edits_only(fake_claude, tmp_path, project, monkeypatch):  # I3
     from ai_browser.app import powers
 
+    monkeypatch.setattr(powers, "sandbox_on", lambda: False)  # Windows, Linux: nothing holds a command in
     runner, log, script = fake_claude
-    script.write_text(json.dumps([INIT, ask("Bash", {"command": "curl https://x.example"}),
-                                  ask("Bash", {"command": "git push"}), ask("Bash", {"command": "npm test"}),
+    edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "npm test"}), ask("Bash", {"command": "python x.py"}),
+                                  ask("Bash", {"command": "mkdir build"}), ask("Edit", edit, tool_id="u1"),
+                                  use("u2", "Bash", {"command": "ls"}), ask("Bash", {"command": "ls"}, tool_id="u2"),
                                   RESULT]), encoding="utf-8")
-    monkeypatch.setattr(powers, "sandbox_on", lambda: False)
-    bridge, shown = bridge_for(tmp_path, runner, ["once", "once"], work=project, auto=True)
+    bridge, shown = bridge_for(tmp_path, runner, ["once"] * 3, work=project, auto=True)
+    events = await run(bridge)
+    assert [request["card"]["text"] for request in shown] == ["npm test", "python x.py", "mkdir build"]
+    assert behaviors(log) == ["allow"] * 5  # the Edit ran without a card; ls is allowed as always (Decision 3)
+    assert [event["id"] for event in events if event["type"] == "auto"] == []  # u1's line never came; ls isn't auto
+    assert bridge._auto_ids == {"u1"}
+
+
+async def test_a_request_without_its_tool_use_never_runs_by_auto_approve(  # the review's 4: the mark fails closed
+        fake_claude, tmp_path, project, sandboxed):
+    runner, log, script = fake_claude
+    edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
+    script.write_text(json.dumps([INIT, {"ask_permission": {"tool_name": "Edit", "input": edit, "tool_use_id": ""}},
+                                  {"ask_permission": {"tool_name": "Bash", "input": {"command": "npm test"},
+                                                      "tool_use_id": None}}, RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once", "deny"], work=project, auto=True)
     await run(bridge)
-    assert [request["card"]["text"] for request in shown] == ["curl https://x.example", "git push"]
-    monkeypatch.setattr(powers, "sandbox_on", lambda: True)  # a Mac: the sandbox asks before either reaches a site
-    log.write_text("", encoding="utf-8")
-    mac, asked = bridge_for(tmp_path, runner, work=project, auto=True, agent_id="a2")
-    await run(mac)
-    assert asked == [] and behaviors(log) == ["allow"] * 3
+    assert [request["tool"] for request in shown] == ["Edit", "Bash"] and behaviors(log) == ["allow", "deny"]
 
 
-async def test_with_auto_approve_off_everything_asks_as_before(fake_claude, tmp_path, project):
+async def test_once_the_shell_has_left_the_folder_auto_approve_runs_no_command(  # the review's 5
+        fake_claude, tmp_path, project, sandboxed):
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "cd src"}, tool_id="u1"),
+                                  ask("Bash", {"command": "cat app.py"}, tool_id="u2"),
+                                  ask("Bash", {"command": "cd ~"}), ask("Bash", {"command": "cat .ssh/id_rsa"}),
+                                  ask("Edit", {"file_path": str(project / "src" / "app.py"), "old_string": "hi",
+                                               "new_string": "bye"}, tool_id="u3"), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once", "deny"], work=project, auto=True)
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == ["cd ~", "cat .ssh/id_rsa"]  # cd src ran: still inside
+    assert behaviors(log) == ["allow", "allow", "allow", "deny", "allow"]  # an edit by its full path still runs
+    again, asked = bridge_for(tmp_path, runner, ["once"], work=project, auto=True, agent_id="a2")
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": "cat .ssh/id_rsa"}), RESULT]), encoding="utf-8")
+    await run(again)
+    assert asked == []  # a new Claude Code process starts in the folder
+
+
+async def test_with_auto_approve_off_everything_asks_as_before(fake_claude, tmp_path, project, sandboxed):
     runner, log, script = fake_claude
     edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
     script.write_text(json.dumps([INIT, ask("Bash", {"command": "npm test"}), ask("Edit", edit), RESULT]),
@@ -508,7 +546,8 @@ async def test_with_auto_approve_off_everything_asks_as_before(fake_claude, tmp_
     assert not any(event["type"] == "auto" for event in events)
 
 
-async def test_after_stop_auto_approve_runs_nothing(fake_claude, tmp_path, monkeypatch, project):  # Review Focus 3
+async def test_after_stop_auto_approve_runs_nothing(  # Review Focus 3
+        fake_claude, tmp_path, monkeypatch, project, sandboxed):
     from ai_browser.app import bridge as bridge_module
     from ai_browser.app.powers import SUBAGENT_TOOL
 
@@ -525,7 +564,7 @@ async def test_after_stop_auto_approve_runs_nothing(fake_claude, tmp_path, monke
     assert shown == [] and behaviors(log) == ["deny"]
 
 
-async def test_auto_approve_follows_its_switch_while_the_agent_works(fake_claude, tmp_path, project):
+async def test_auto_approve_follows_its_switch_while_the_agent_works(fake_claude, tmp_path, project, sandboxed):
     runner, log, script = fake_claude
     script.write_text(json.dumps([INIT, ask("Bash", {"command": "npm test"}), RESULT]), encoding="utf-8")
     bridge, shown = bridge_for(tmp_path, runner, ["once"], work=project)

@@ -66,18 +66,25 @@ _GLOB = re.compile(r"[*?\[{]")
 LAUNCHERS = frozenset({  # they run another command, which no rule of theirs could cover
     "sudo", "su", "doas", "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "env", "xargs", "eval", "exec",
     "source", "nohup", "time", "nice", "timeout", "watch", "command", "builtin", "alias", "unalias", "function",
-    "trap", "osascript", "open", "ssh", "script", "expect", "parallel", "powershell", "pwsh", "cmd"})
+    "trap", "osascript", "open", "ssh", "script", "expect", "parallel", "powershell", "pwsh", "cmd",
+    # the security review of auto-approve (C2): more that run the command after them
+    "caffeinate", "arch", "busybox", "stdbuf", "setsid", "unshare", "nsenter", "chroot", "pkexec", "run0",
+    "systemd-run", "strace", "ltrace", "dtruss", "gdb", "lldb", "valgrind", "flock", "hyperfine", "at", "batch",
+    "unbuffer", "entr", "watchexec", "firejail", "proxychains", "proxychains4", "torsocks"})
 RISKY = frozenset({  # Decision 4's, and programs whose saved rule would cover their dangerous uses too
     "rm", "rmdir", "chmod", "chown", "chgrp", "dd", "shred", "truncate", "diskutil", "fdisk", "newfs", "launchctl",
-    "crontab", "defaults"})
+    "crontab", "defaults", "unlink", "srm"})
 # Everyday programs whose saved rule would also cover a use that deletes files or throws work away (fresh review F2):
 # those uses are asked every time, never Always (Decision 4), while the program's other uses still offer it.
 FIND_DELETES = frozenset({"-delete"})  # find removes what it finds
 FIND_RUNS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})  # find runs another program on what it finds
 GIT_DISCARDS = frozenset({"clean", "restore"})  # git deletes untracked files, or throws away uncommitted changes
 GIT_FORCE = ("--force", "--mirror", "--delete")  # git push options that overwrite or delete the remote's work
-INTERPRETERS = frozenset({"python", "python3", "node", "ruby", "perl", "php", "lua", "Rscript"})
+# Interpreters, however their version is spelled (python3.12, pypy3, py): code on the command line is never a rule's
+_INTERPRETER = re.compile(r"python\d*(?:\.\d+)*|pypy\d*(?:\.\d+)*|py|node|nodejs|tsx|ts-node|ruby|irb|perl|php|lua|"
+                          r"luajit|julia|r|rscript")
 INLINE = frozenset({"-c", "-e", "-p", "-r", "--eval", "--print", "--command"})  # code on the command line
+_SUFFIX = re.compile(r"\.(?:exe|cmd|bat|com)$", re.IGNORECASE)  # rm.exe is rm
 SUBCOMMANDS = frozenset({"git", "npm", "pnpm", "yarn", "bun", "uv", "pip", "pip3", "poetry", "cargo", "go", "docker",
                          "kubectl", "brew", "gh", "dotnet", "swift", "mvn", "gradle", "deno"})
 RUNNERS = frozenset({"run", "exec", "x", "dlx", "tool"})  # `npm run build`: the rule holds the third word too
@@ -100,8 +107,9 @@ WHY_RUNNER = "It runs whatever comes after it"
 WHY_SANDBOX = "It runs outside the sandbox"
 WHY_NETWORK = "A command in the sandbox reaches a site only when you say so, each time"
 WHY_READ = "It reads outside the task's folder"
+WHY_MOVED = "The shell has left the task's folder: a path that isn't a full one may name a file outside it"
 WHY_EDIT = "It changes a file outside the task's folder"
-WHY_GUARDED = "It changes Git's or Claude Code's own settings in this folder"
+WHY_GUARDED = "It changes Git's, Claude Code's or an editor's own settings or hooks in this folder"
 WHY_WEB = "That isn't a web address"
 
 
@@ -200,6 +208,17 @@ def _program(word: str) -> str:
     return word.rsplit("/", 1)[-1]
 
 
+def _name(word: str) -> str:
+    """A program as the deny-lists know it: its file name, lower-case, without .exe (RM and rm.exe are rm where the
+    disk ignores case, as macOS's and Windows' do)."""
+    return _SUFFIX.sub("", _program(word)).lower()
+
+
+def _bare(word: str) -> bool:
+    """A program found on the PATH, not one the folder holds (./bin/ls could be anything the agent wrote)."""
+    return "/" not in word and "\\" not in word
+
+
 def _git_runs_programs(folder) -> bool:
     """Whether Git could run a program of the folder's own on git status, diff or log: settings that name one
     (fsmonitor, a pager, a diff driver, an include, an alias), or a .git that isn't a plain folder of this folder's
@@ -216,7 +235,10 @@ def _git_runs_programs(folder) -> bool:
 
 def _harmless(program: str, words: list[str], folder) -> bool:
     """Decision 3's commands, whole: ls, cat and pwd, and git status, diff and log without the options that write a
-    file or run a program (their paths were checked already)."""
+    file or run a program (their paths were checked already). Only the programs on the PATH: never one the folder
+    holds."""
+    if not _bare(words[0]):
+        return False
     if program in HARMLESS:
         return True
     if program != "git" or len(words) < 2 or words[1] not in GIT_READS:
@@ -226,11 +248,127 @@ def _harmless(program: str, words: list[str], folder) -> bool:
     return not _git_runs_programs(folder)
 
 
+_SED_QUIET = set("=dDgGhHlnNpPqQxzF")  # sed's commands that only read, print or stop
+_SED_FLAGS = set("gpiImM0123456789")  # an s command's flags that neither run a command nor write a file
+
+
+def _sed_part(script: str, start: int, delimiter: str) -> int:
+    """Where the part of a sed command that starts at `start` ends (its delimiter), or -1."""
+    index = start
+    while index < len(script):
+        if script[index] == "\\":
+            index += 2
+            continue
+        if script[index] == delimiter or script[index] == "\n":
+            return index if script[index] == delimiter else -1
+        index += 1
+    return -1
+
+
+def _sed_runs(script: str) -> bool:
+    """Whether a sed script may run a command or touch a file it names: an e, w, W, r or R command, or an s command's e
+    or w flag (GNU sed). Anything it can't read is taken as one."""
+    index, size = 0, len(script)
+    while index < size:
+        char = script[index]
+        if char in " \t\n;{}!,~+$" or char.isdigit():  # separators, and an address's numbers and marks
+            index += 1
+        elif char == "#":  # a comment, to the end of its line
+            end = script.find("\n", index)
+            index = size if end < 0 else end + 1
+        elif char in "/\\":  # an address's regular expression: /re/ or \cREc, then I or M
+            delimiter, start = ("/", index + 1) if char == "/" else (script[index + 1:index + 2], index + 2)
+            end = _sed_part(script, start, delimiter) if delimiter else -1
+            if end < 0:
+                return True
+            index = end + 1
+            while index < size and script[index] in "IM":
+                index += 1
+        elif char in "sy":
+            delimiter = script[index + 1:index + 2]
+            if not delimiter or delimiter in "\n\\":
+                return True
+            middle = _sed_part(script, index + 2, delimiter)
+            end = _sed_part(script, middle + 1, delimiter) if middle >= 0 else -1
+            if end < 0:
+                return True
+            index = end + 1
+            while char == "s" and index < size and script[index] not in ";\n}":
+                if script[index] not in _SED_FLAGS and script[index] not in " \t":
+                    return True  # e or w (or anything else)
+                index += 1
+        elif char in "aic:btTv":  # text or a label, to the end of the line (a label: or to a ;)
+            stops = "\n" if char in "aic" else ";\n"
+            while index < size and script[index] not in stops:
+                index += 2 if script[index] == "\\" else 1
+        elif char in _SED_QUIET:
+            index += 1
+        else:
+            return True  # e, w, W, r, R, or a command this reading doesn't know
+    return False
+
+
+def _sed_scripts(args: list[str]) -> list[str] | None:
+    """The scripts of a sed command: each -e's, else its first word that isn't an option (and the second too after a
+    bare -i, which BSD sed takes as the backup's suffix). None for a script in a file (-f), which isn't read."""
+    scripts, plain, index, bare_i = [], [], 0, False
+    while index < len(args):
+        arg = args[index]
+        stem = arg[2:].split("=", 1)[0] if arg.startswith("--") else ""
+        if arg == "-e" or (stem and "expression".startswith(stem)):  # GNU takes --expr for --expression
+            if "=" in arg and stem:
+                scripts.append(arg.split("=", 1)[1])
+            elif index + 1 < len(args):
+                scripts.append(args[index + 1])
+                index += 1
+        elif arg == "-f" or (stem and "file".startswith(stem)):
+            return None
+        elif stem and "line-length".startswith(stem) and "=" not in arg:
+            index += 1  # its value
+        elif arg.startswith("-") and not arg.startswith("--") and len(arg) > 1:
+            letters = arg[1:]
+            for place, letter in enumerate(letters):
+                if letter == "f":
+                    return None
+                if letter in "el":  # its value: the rest of the word, or the next word
+                    value = letters[place + 1:]
+                    if not value and index + 1 < len(args):
+                        index += 1
+                        value = args[index]
+                    if letter == "e":
+                        scripts.append(value)
+                    break
+                if letter == "i":  # GNU: the rest is the backup's suffix; BSD: the next word is
+                    bare_i = place == len(letters) - 1
+                    break
+        elif not arg.startswith("-"):
+            plain.append(arg)
+        index += 1
+    return scripts or plain[:2 if bare_i else 1]
+
+
+def _inline(program: str, rest: list[str]) -> bool:
+    """Code written on the command line beyond an interpreter's -c: deno eval, sqlite3's dot-commands (.shell,
+    .system) and -cmd, a sed script that runs a command or writes a file, npx -c."""
+    if program == "deno":
+        return rest[:1] == ["eval"] or any(arg.startswith("--eval") for arg in rest)
+    if program == "sqlite3":
+        return any(re.match(r"\.[A-Za-z]", arg) or arg.lstrip("-") in ("cmd", "init") for arg in rest)
+    if program == "sed":
+        scripts = _sed_scripts(rest)
+        return scripts is None or any(_sed_runs(script) for script in scripts)
+    if program == "npx":
+        return any(arg in ("-c", "--call") or arg.startswith("--call=") for arg in rest)
+    return False
+
+
 def _prefix(words: list[str]) -> tuple[list[str] | None, str]:
     """The words a rule for this command holds (Decision 5: "the command's first words"), or None and why there is
     no rule: code on the command line, an option before the subcommand, a runner with nothing after it."""
-    program, rest = _program(words[0]), words[1:]
-    if program in INTERPRETERS and rest:
+    program, rest = _name(words[0]), words[1:]
+    if _inline(program, rest):
+        return None, WHY_INLINE
+    if _INTERPRETER.fullmatch(program) and rest:
         if rest[0] in INLINE or rest[0][:2] in ("-c", "-e"):
             return None, WHY_INLINE
         if rest[0] == "-m":
@@ -246,25 +384,62 @@ def _prefix(words: list[str]) -> tuple[list[str] | None, str]:
     return words[:2], ""
 
 
+def _long(args: list[str], *options: str) -> bool:
+    """Whether an argument is one of these long options, or a short form of one (git takes --forc for --force)."""
+    for arg in args:
+        name = arg.split("=", 1)[0]
+        if name.startswith("--") and len(name) > 2 and any(option.startswith(name) for option in options):
+            return True
+    return False
+
+
 def _destroys(program: str, words: list[str]) -> str:
     """Why this use of an everyday program deletes files or throws work away, or "": find -delete, -exec, -execdir,
-    -ok or -okdir; git clean, restore, reset --hard, checkout -- / . / --force, push --force (or +branch, --mirror,
-    --delete), branch -D (fresh review F2)."""
+    -ok or -okdir; rsync --delete or --remove-source-files; git clean, restore, reset --hard, checkout -- / . /
+    --force, push --force (or +branch, --mirror, --delete), branch -D, rm -f or -r, switch --force or
+    --discard-changes, stash drop or clear, reflog expire, gc --prune, update-ref -d, worktree remove (fresh review F2,
+    and the security review of auto-approve)."""
     rest = words[1:]
     if program == "find":
         return WHY_DISCARDS if FIND_DELETES & set(rest) else WHY_LAUNCHER if FIND_RUNS & set(rest) else ""
+    if program == "rsync":
+        return WHY_DISCARDS if any(arg.startswith(("--del", "--remove")) for arg in rest) else ""
     if program != "git" or not rest:
         return ""
     sub, args = rest[0], rest[1:]
     short = "".join(arg[1:] for arg in args if arg.startswith("-") and not arg.startswith("--"))  # -fd: f and d
-    force = "--force" in args or "f" in short
+    force = "--force" in args or "f" in short or _long(args, "--force")
     if sub in GIT_DISCARDS or (sub == "reset" and "--hard" in args) \
             or (sub == "checkout" and ("--" in args or "." in args or force)) \
             or (sub == "push" and (force or "d" in short or any(arg.startswith(GIT_FORCE) or arg.startswith("+")
                                                                 for arg in args))) \
-            or (sub == "branch" and ("D" in short or (force and ("--delete" in args or "d" in short)))):
+            or (sub == "branch" and ("D" in short or (force and ("--delete" in args or "d" in short)))) \
+            or (sub == "rm" and (force or "r" in short or _long(args, "--recursive"))) \
+            or (sub == "switch" and (force or _long(args, "--discard-changes"))) \
+            or (sub == "stash" and args[:1] in (["drop"], ["clear"])) \
+            or (sub == "reflog" and args[:1] in (["expire"], ["delete"])) \
+            or (sub == "gc" and _long(args, "--prune")) \
+            or (sub == "update-ref" and ("d" in short or _long(args, "--delete"))) \
+            or (sub == "worktree" and args[:1] == ["remove"]):
         return WHY_DISCARDS
     return ""
+
+
+_GIT_CONFIG_READS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
+                     "--list")
+_GIT_CONFIG_WRITES = ("--add", "--unset", "--unset-all", "--replace-all", "--rename-section", "--remove-section",
+                      "--edit")
+
+
+def _git_config_writes(args: list[str]) -> bool:
+    """Whether `git config …` may change a setting: a write option or subcommand (set, unset, edit…), or a name with a
+    value. Reading one (--get, --list, a name alone) doesn't."""
+    if _long(args, *_GIT_CONFIG_WRITES) or "-e" in args \
+            or args[:1] in (["set"], ["unset"], ["edit"], ["rename-section"], ["remove-section"]):
+        return True
+    if args[:1] in (["get"], ["list"]) or "-l" in args or _long(args, *_GIT_CONFIG_READS):
+        return False
+    return len([arg for arg in args if not arg.startswith("-")]) != 1
 
 
 def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
@@ -273,7 +448,7 @@ def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
     words = words_of(data.get("command"))
     if words is None:
         return "ask_always", WHY_NOT_PLAIN
-    program = _program(words[0])
+    program = _name(words[0])
     if program in LAUNCHERS:
         return "ask_always", WHY_LAUNCHER
     if program in RISKY or program.startswith("mkfs"):
@@ -283,6 +458,10 @@ def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
         return "ask_always", why
     if any(_outside(word, folder) for word in words[1:]):
         return "ask_always", WHY_OUTSIDE
+    guarded = _guard(folder)
+    if any(guarded(target) for word in words[1:] for target in _targets(word)) \
+            or (program == "git" and words[1:2] == ["config"] and _git_config_writes(words[2:])):
+        return "ask_always", WHY_GUARDED  # C1: what Git, Claude Code or an editor runs or loads later
     if not moved and _harmless(program, words, folder):
         return "allow", ""
     prefix, why = _prefix(words)
@@ -299,11 +478,21 @@ def _glob_root(pattern: str) -> str:
     return "/".join(kept) or "/"
 
 
-def _reads(tool: str, data: dict, folder) -> tuple[str, str]:
+def _full(path) -> bool:
+    return isinstance(path, str) and os.path.isabs(os.path.expanduser(path))
+
+
+def _reads(tool: str, data: dict, folder, moved: bool = False) -> tuple[str, str]:
+    """A read, a listing or a search inside the folder is allowed (Decision 3). Once the shell may have left the
+    folder (`moved`), a search without a full path, or a relative one, searches wherever the shell is now: it asks."""
     if tool == "Read":
         targets = [data.get("file_path")]
+        if moved and isinstance(targets[0], str) and not _full(targets[0]):
+            return "ask_always", WHY_MOVED
     else:
         where = data.get("path")
+        if moved and not _full(where):
+            return "ask_always", WHY_MOVED
         targets = [where if where is not None else str(folder)]
         pattern = data.get("pattern") if tool == "Glob" else data.get("glob")
         if isinstance(pattern, str) and pattern:
@@ -314,16 +503,56 @@ def _reads(tool: str, data: dict, folder) -> tuple[str, str]:
     return ("allow", "") if all(inside(target, folder) for target in targets) else ("ask_always", WHY_READ)
 
 
+GUARDED_FOLDERS = (".git", ".claude", ".husky", ".vscode", ".idea")  # and everything in them, anywhere in the folder
+GUARDED_FILES = (".mcp.json", ".pre-commit-config.yaml")  # at the folder's top
+_HOOKS_PATH = re.compile(r"^\s*hookspath\s*=\s*(.*?)\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def _hooks_folder(folder) -> str | None:
+    """The folder the repository's core.hooksPath names (its hooks run on commit, checkout…), read from .git/config
+    without running git, as a real path; None without one."""
+    git = Path(folder) / ".git"
+    if git.is_symlink() or not git.is_dir():
+        return None
+    try:
+        match = _HOOKS_PATH.search((git / "config").read_text(encoding="utf-8", errors="replace")[:200_000])
+    except OSError:
+        return None
+    value = match.group(1).strip().strip('"') if match else ""
+    if not value:
+        return None
+    path = Path(os.path.expanduser(value))
+    return _real(path if path.is_absolute() else Path(folder) / path)
+
+
+def _guard(folder):
+    """A test of whether a path is a file of Git's, Claude Code's or an editor's own in the folder (.git, .claude,
+    .husky, .vscode, .idea, .mcp.json, .pre-commit-config.yaml, the hooks folder): what they run or load later, so an
+    edit there could turn "edit files" into "run programs" (plan decision 7; the security review, C1)."""
+    root, hooks = _real(folder), _hooks_folder(folder)
+
+    def guarded(path) -> bool:
+        if not isinstance(path, str) or not path or "\x00" in path:
+            return False
+        target = Path(os.path.expanduser(path))
+        target = target if target.is_absolute() else Path(folder) / target
+        real = _real(target)
+        try:
+            relative = os.path.relpath(real, root)
+        except ValueError:  # another drive: outside, which is asked for already
+            return False
+        parts = [part.casefold() for part in Path(relative).parts]  # .GIT is .git where case is ignored
+        if any(part in GUARDED_FOLDERS for part in parts):
+            return True
+        if Path(real).name.casefold() in GUARDED_FILES and _same(str(Path(real).parent), root):
+            return True
+        return hooks is not None and (_same(real, hooks) or _under(real, hooks))
+
+    return guarded
+
+
 def _guarded(path: str, folder) -> bool:
-    """A file of Git's or Claude Code's own in the folder (.git, .claude, .mcp.json): what they run or load later, so
-    an edit there could turn "edit files" into "run programs" (plan decision 7)."""
-    target = Path(os.path.expanduser(path))
-    target = target if target.is_absolute() else Path(folder) / target
-    real, root = _real(target), _real(folder)
-    parts = [part.casefold() for part in Path(os.path.relpath(real, root)).parts]  # .GIT is .git where case is ignored
-    if any(part in (".git", ".claude") for part in parts):
-        return True
-    return Path(real).name.casefold() == ".mcp.json" and _same(str(Path(real).parent), root)
+    return _guard(folder)(path)
 
 
 def _host(url) -> str:
@@ -346,7 +575,7 @@ def _decide(tool: str, data, folder, moved: bool = False) -> tuple[str, str]:
     if tool == "Bash":
         return _bash(data, folder, moved)
     if tool in READS:
-        return _reads(tool, data, folder)
+        return _reads(tool, data, folder, moved)
     if tool in EDITS:
         path = data.get("file_path")
         if not inside(path, folder):
@@ -375,7 +604,7 @@ def rule_for(tool: str, data) -> str | None:
         words = words_of(data.get("command"))
         if words is None or data.get("dangerouslyDisableSandbox") is True:
             return None
-        program = _program(words[0])
+        program = _name(words[0])
         if program in LAUNCHERS or program in RISKY or program.startswith("mkfs") or _destroys(program, words):
             return None
         prefix, _ = _prefix(words)
@@ -398,62 +627,133 @@ def moves_folder(command) -> bool:
     return isinstance(command, str) and bool(_MOVES.search(command))
 
 
-# ---- Auto-approve in its folder (the user's choice, 2026-10-07): a switch per task ----------------------------------
-
-AUTO_TOOLS = frozenset({"Bash", "Edit", "Write", "Read", "Glob", "Grep"})  # what it may run without a card
-# Programs whose job is reaching a site, and the uses of others that do (they download, upload or sign in). Where no
-# sandbox holds them (Windows, Linux), these keep their card under auto-approve; on a Mac the sandbox's own card asks
-# before any command reaches a site. A short list of what such a command is for, never a promise about what a program
-# the agent runs may do.
-NETWORK_PROGRAMS = frozenset({"curl", "wget", "nc", "ncat", "netcat", "ftp", "sftp", "scp", "telnet", "http", "https",
-                              "gh", "brew", "npx", "pnpx", "bunx", "uvx", "pipx"})
-NETWORK_USES = frozenset({
-    ("git", "push"), ("git", "pull"), ("git", "fetch"), ("git", "clone"), ("git", "ls-remote"), ("git", "submodule"),
-    *(("npm", use) for use in ("install", "i", "add", "ci", "update", "publish", "exec", "x")),
-    *(("pnpm", use) for use in ("install", "i", "add", "update", "publish", "dlx")),
-    *(("yarn", use) for use in ("install", "add", "upgrade", "publish", "dlx")),
-    *(("bun", use) for use in ("install", "i", "add", "update", "publish", "x")),
-    ("pip", "install"), ("pip", "download"), ("pip3", "install"), ("pip3", "download"),
-    ("uv", "pip", "install"), ("uv", "pip", "sync"), ("uv", "add"), ("uv", "sync"), ("uv", "tool", "install"),
-    ("poetry", "add"), ("poetry", "install"), ("poetry", "update"),
-    ("cargo", "install"), ("cargo", "add"), ("cargo", "publish"), ("go", "get"), ("go", "install"),
-    ("docker", "pull"), ("docker", "push"), ("docker", "login")})
-NETWORK_ALONE = frozenset({"yarn"})  # programs that install when nothing follows them
-_SUFFIX = re.compile(r"\.(?:exe|cmd|bat)$", re.IGNORECASE)  # curl.exe is curl
+SHELL_MOVERS = frozenset({"cd", "pushd", "popd", "source", "eval", "exec", "builtin", "command"})
+_MOVES_ANY = re.compile(r"(?:^|[\s;&|(`])(?:cd|pushd|popd|source|eval|exec|builtin|command)(?=$|[\s;&|)])"
+                        r"|(?:^|[;&|(`])\s*\.\s")
 
 
-def reaches_network(command) -> bool:
-    """Whether a command's job is reaching a site: a program in NETWORK_PROGRAMS (or NETWORK_ALONE, alone), a use in
-    NETWORK_USES (its first words), or `python -m pip install` (any Python). A command that isn't one plain command may too: True."""
+def moves_shell(command) -> bool:
+    """Whether a command may leave the shell in another folder: one plain command whose program is cd, pushd or popd,
+    or runs words in this shell (source, eval, exec, builtin, command); any other command that names one of them, or
+    sources a file (. file). Read from the words: "cd" in a commit message moves nothing."""
     words = words_of(command)
-    if words is None:
-        return True
-    program = _SUFFIX.sub("", _program(words[0])).lower()
-    if program in NETWORK_PROGRAMS or (len(words) == 1 and program in NETWORK_ALONE):
-        return True
-    if any((program, *words[1:len(use)]) == use for use in NETWORK_USES):
-        return True
-    return words[1:3] in (["-m", "pip"], ["-m", "pip3"]) and len(words) > 3 and words[3] in ("install", "download")
+    if words is not None:
+        return _name(words[0]) in SHELL_MOVERS
+    return isinstance(command, str) and bool(_MOVES_ANY.search(command))
 
 
-def auto_approves(tool: str, data, decision: str, sandbox: bool = False) -> bool:
-    """Whether Auto-approve in its folder runs this request without a card: an "ask" (never "ask_always") of Bash, Edit,
-    Write, Read, Glob or Grep, so a command, an edit or a new file inside the task's folder. Still a card: everything
-    asked every time (deleting, sudo, outside the folder, Git's and Claude Code's own files…), Web Search and Web Fetch,
-    a sandboxed command's reach for a site, the user's own tools; a cd that isn't into a folder inside (cd alone goes
-    home); and with no sandbox to stop it (`sandbox` False), a command whose job is reaching a site."""
+# ---- Auto-approve in its folder (the user's choice, 2026-10-07): a switch per task ----------------------------------
+# After the security review: it runs only what classify asks about (one plain command, inside the folder, nothing
+# asked every time) AND what AUTO_BASH lists; a gap costs a card, never a silent run. Commands run without a card only
+# where Claude Code's sandbox holds them (a Mac): elsewhere only edits and new files do.
+
+AUTO_TOOLS = frozenset({"Bash", "Edit", "Write"})  # what it may run without a card
+_ANY = object()  # any use classify lets through (its paths are inside the folder already)
+_SCRIPT = object()  # a script file in the folder, first, with no option before it: python x.py, node x.js
+_PLACE = object()  # one folder in the folder: cd src
+_RUN = frozenset({"run", "test", "build", "lint"})  # a package's own scripts, never install, exec, dlx or publish
+
+# The one table of ordinary uses (C2): a program as the agent typed it (a bare name on the PATH, never ./bin/ls), and
+# what of it may run: any use, a script, a folder, or only these first words.
+AUTO_BASH: dict[str, object] = {
+    # reading and listing
+    **dict.fromkeys(("ls", "cat", "head", "tail", "wc", "grep", "rg", "tree", "file", "stat", "du", "which", "echo",
+                     "printf", "pwd", "date", "diff", "cmp", "sort", "uniq", "cut", "tr", "jq", "find"), _ANY),
+    # making files and folders (Edit and Write's own reach: inside, never Git's or Claude Code's files)
+    **dict.fromkeys(("mkdir", "touch", "cp", "mv"), _ANY),
+    # the project's own checks and builds
+    **dict.fromkeys(("make", "pytest", "tsc", "eslint", "prettier", "ruff", "black", "mypy", "jest", "vitest"), _ANY),
+    "git": frozenset({"status", "diff", "log", "show", "add", "commit", "branch", "checkout", "switch", "stash", "tag",
+                      "init", "rev-parse", "blame", "grep", "ls-files"}),  # each with AUTO_GIT's limits
+    **dict.fromkeys(("npm", "pnpm", "yarn", "bun"), _RUN),
+    "cargo": frozenset({"build", "test", "check", "fmt", "clippy", "run"}),
+    "go": frozenset({"build", "test", "vet", "fmt", "run"}),
+    "swift": frozenset({"build", "test"}), "dotnet": frozenset({"build", "test"}),
+    "mvn": frozenset({"test", "build"}), "gradle": frozenset({"test", "build"}),
+    "uv": frozenset({"run"}),  # and what it runs is in this table too
+    **dict.fromkeys(("python", "python3", "node"), _SCRIPT),
+    "cd": _PLACE,  # only into a folder inside: cd alone goes home, cd - goes back
+}
+# Options that make an ordinary use something else: it deletes, runs a program it names, or writes where it shouldn't.
+# A long option is refused abbreviated too (git takes --outp for --output); a one-letter one anywhere in a cluster.
+AUTO_REFUSED: dict[str, tuple[str, ...]] = {
+    "find": ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls"),
+    "rg": ("--pre",), "sort": ("--compress-program",), "pytest": ("--basetemp",), "make": ("--eval", "-E"),
+    "go": ("-exec", "-toolexec", "-vettool"), "cargo": ("--config", "-Z"),
+    **dict.fromkeys(("npm", "pnpm", "yarn", "bun"), ("--script-shell", "--shell", "-c", "--call")),
+    "git": (*sorted(GIT_UNSAFE), "-O"),
+}
+AUTO_GIT: dict[str, tuple[str, ...]] = {  # git's everyday uses, and what turns each into something else
+    "branch": ("-d", "-D", "-f", "-m", "-M", "-C", "--delete", "--force", "--move", "--edit-description"),
+    "tag": ("-d", "-f", "--delete", "--force"),
+    "init": ("--template", "--separate-git-dir"),  # a template folder fills .git/hooks
+}
+GIT_STASH = (None, "push", "list", "show")  # git stash alone pushes
+
+
+def _refused(word: str, options: tuple[str, ...]) -> bool:
+    """Whether one argument is one of these options: a long one (with a value, abbreviated, or with one dash or two),
+    or a one-letter one anywhere in a cluster (-kE)."""
+    if not word.startswith("-") or word in ("-", "--"):
+        return False
+    stem = word.split("=", 1)[0].lstrip("-")
+    for option in options:
+        name = option.lstrip("-")
+        if len(name) == 1:
+            if not word.startswith("--") and name in word[1:]:
+                return True
+        elif stem.startswith(name) or (len(stem) > 1 and name.startswith(stem)):
+            return True
+    return False
+
+
+def ordinary(words: list[str]) -> bool:
+    """Whether one plain command is an ordinary use in AUTO_BASH (C2)."""
+    program, rest = words[0], words[1:]
+    use = AUTO_BASH.get(program)
+    if use is None or any(_refused(arg, AUTO_REFUSED.get(program, ())) for arg in rest):
+        return False
+    if use is _ANY:
+        return True
+    if use is _SCRIPT:
+        return bool(rest) and not rest[0].startswith("-")
+    if use is _PLACE:
+        return len(rest) == 1 and not rest[0].startswith("-")
+    if not rest or rest[0] not in use:
+        return False
+    if program == "uv":
+        return len(rest) > 1 and rest[1] != "uv" and ordinary(rest[1:])
+    if program != "git":
+        return True
+    sub, args = rest[0], rest[1:]
+    if sub in ("checkout", "switch"):  # only a new branch: checkout -b name [start], switch -c name [start]
+        return args[:1] == ["-b" if sub == "checkout" else "-c"] and len(args) in (2, 3) \
+            and not any(arg.startswith("-") for arg in args[1:])
+    if sub == "stash":
+        return (args[0] if args else None) in GIT_STASH
+    return not any(_refused(arg, AUTO_GIT.get(sub, ())) for arg in args)
+
+
+def auto_commands() -> bool:
+    """Whether Auto-approve in its folder may run commands on this computer: only where Claude Code's sandbox holds
+    them in the folder and away from sites (R1: a Mac). Elsewhere it runs edits and new files only (the review, I3)."""
+    return sandbox_on() and SANDBOX_NETWORK
+
+
+def auto_approves(tool: str, data, decision: str, sandbox: bool = False, away: bool = False) -> bool:
+    """Whether Auto-approve in its folder runs this request without a card: an "ask" (never "ask_always") of Edit or
+    Write, so an edit or a new file inside the task's folder; and where the sandbox holds commands (`sandbox`), an "ask"
+    of Bash that AUTO_BASH lists, unless the shell has left the folder since Claude Code started (`away`). Everything
+    else keeps its card: what is asked every time, Web Search and Web Fetch, a sandboxed command's reach for a site,
+    the user's own tools, and every command AUTO_BASH doesn't list."""
     if decision != "ask" or tool not in AUTO_TOOLS:
         return False
     if tool != "Bash":
         return True
-    command = data.get("command") if isinstance(data, dict) else None
-    words = words_of(command)  # an "ask" is one plain command: its first word is its program
-    if words is None:
+    if not (sandbox and SANDBOX_NETWORK) or away:
         return False
-    if _program(words[0]) in ("cd", "pushd", "popd") \
-            and (words[0] != "cd" or len(words) != 2 or words[1].startswith("-")):
-        return False  # only cd into a folder inside: cd alone goes home, cd - and popd go back to where it was
-    return (sandbox and SANDBOX_NETWORK) or not reaches_network(command)
+    words = words_of(data.get("command") if isinstance(data, dict) else None)
+    return words is not None and ordinary(words)
 
 
 # ---- the card: what a request will do, as plain text (Decision 2), and each action's badge (Decision 10) -------------

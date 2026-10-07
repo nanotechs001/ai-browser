@@ -166,7 +166,11 @@ async def test_a_huge_edit_never_rides_in_the_agents_row(fake_claude, tmp_path, 
         await agents.close_all()
 
 
-async def test_auto_approve_is_each_agents_own_switch(fake_claude, tmp_path, project):  # the user's choice, 2026-10-07
+async def test_auto_approve_is_each_agents_own_switch(  # the user's choice, 2026-10-07
+        fake_claude, tmp_path, project, monkeypatch):
+    from ai_browser.app import powers
+
+    monkeypatch.setattr(powers, "sandbox_on", lambda: True)  # where the sandbox holds commands
     agents, log = manager(fake_claude, tmp_path, [INIT, use("u1", "Bash", {"command": "npm test"}),
                                                   ask("Bash", {"command": "npm test"}, tool_id="u1"), RESULT])
     agents.rules.trust(project)

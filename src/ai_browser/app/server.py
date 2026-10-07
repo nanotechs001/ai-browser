@@ -1787,7 +1787,8 @@ class AppServer:
                 "default_model": self.default_model, "browser": self._browser_info(),
                 "sessions": self._session_list(), "browser_clients": self._browser_clients(),
                 "settings": self._settings_payload(), "accounts": self._account_rows(),
-                "brain_limit": self.brain_limit, "workspaces": self.workspaces.list()}
+                "brain_limit": self.brain_limit, "workspaces": self.workspaces.list(),
+                "auto_commands": powers.auto_commands()}  # Auto-approve may run commands here (a Mac's sandbox)
 
     # ---- AI accounts: Settings → Accounts, the pickers and Continue on (AI Browser's own pages only) -------------
 

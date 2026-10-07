@@ -144,6 +144,7 @@ class ClaudeBridge:
         self._quiet: set[str] = set()  # TodoWrite's tool use ids: the list is their view, never an action line
         self._session_rules: set[str] = set()  # Always allow in the scratch folder: this agent's only (plan dec. 10)
         self._moved = False  # an allowed command may have moved the shell: nothing is harmless (plan decision 8)
+        self._away = False  # a move auto-approve didn't make (only its cd into the folder is): it runs no command
         self.loaded_skills: set[str] = set()  # skills Claude loaded in this conversation
         self.model = model  # a change applies from the next message, in the same process (set_model)
         self.claude = claude  # resolved when a process starts (claude_argv): a list too, such as the tests' fake
@@ -344,7 +345,8 @@ class ClaudeBridge:
         auto = False
         if decision == "allow" or (rule is not None and rule in self._rules()):
             answer, note = "once", ""
-        elif self.auto and powers.auto_approves(tool, data, decision, sandbox=powers.sandbox_on()):
+        elif self.auto and request.get("tool_use_id") and powers.auto_approves(  # no id, no mark: a card
+                tool, data, decision, sandbox=powers.sandbox_on(), away=self._away):
             answer, note, auto = "once", "", True
         else:
             shown = {**powers.card(tool, data, self.work, moved=self._moved, sandbox=powers.sandbox_on()),
@@ -355,8 +357,9 @@ class ClaudeBridge:
                                                  "card": shown, "sub": sub})
             if answer == "always" and shown["always"] and rule is not None:
                 self._remember(rule)
-        if answer != "deny" and tool == "Bash" and powers.moves_folder(data.get("command")):
+        if answer != "deny" and tool == "Bash" and powers.moves_shell(data.get("command")):
             self._moved = True  # the shell may be elsewhere now: nothing is harmless until Claude Code starts again
+            self._away = self._away or not auto  # and auto-approve runs no command (its own cd stays inside)
         return answer, note, auto
 
     def _rules(self) -> set[str]:
@@ -552,7 +555,7 @@ class ClaudeBridge:
         if not self.chosen:
             self.work.mkdir(parents=True, exist_ok=True)  # the agent's own scratch folder (Decision 6)
         env = clean_env(self.environment)  # the agent's account (AI accounts); never API credentials
-        self._stderr, self._moved = [], False  # a new process starts in the task's folder
+        self._stderr, self._moved, self._away = [], False, False  # a new process starts in the task's folder
         self._process = await asyncio.create_subprocess_exec(
             *self._command(), cwd=self.work, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=STDOUT_LIMIT, **spawn_options())
