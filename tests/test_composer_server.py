@@ -41,6 +41,29 @@ async def test_web_picks_the_agents_web_tools(fake_claude, tmp_path, web, web_to
     assert "mcp__ai-browser__load_skill" not in blocked and "mcp__ai-browser__sandbox_start" in blocked
 
 
+@pytest.mark.parametrize("web", ["web", "brave", "none"])
+async def test_brave_only_and_no_web_block_the_web_tools_even_with_a_saved_site_rule(  # the final review, F5
+        fake_claude, tmp_path, user_home, web):
+    from ai_browser.app.powers import Rules
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    project = tmp_path / "project"
+    project.mkdir()
+    rules = Rules(tmp_path / "home")
+    rules.add(project, "WebFetch(domain:docs.python.org)")  # a site the user once allowed for this folder
+    bridge, _ = bridge_for(tmp_path, runner, work=project, rules=rules, trusted=True, web=web)
+    [event async for event in bridge.send("hi")]
+    await bridge.close()
+    argv = commands(log)[0]
+    allowed, blocked = flag(argv, "--allowedTools").split(","), flag(argv, "--disallowedTools").split(",")
+    if web == "web":
+        assert "WebFetch(domain:docs.python.org)" in allowed and not {"WebSearch", "WebFetch"} & set(blocked)
+    else:  # a backstop besides --tools: Claude Code refuses them, and no site's rule is handed over
+        assert {"WebSearch", "WebFetch"} <= set(blocked)
+        assert not [rule for rule in allowed if rule.startswith(("WebFetch", "WebSearch"))]
+
+
 async def hello(ws):
     await ws.send(json.dumps({"type": "hello", "view": "mission"}))
     await until(ws, lambda message: message["type"] == "snapshot")

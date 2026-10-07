@@ -487,8 +487,9 @@ class ClaudeBridge:
         sub-agent tool (Decision 3) and the folder's site rules (plan decision 1). The folder's own settings load
         only when the user trusts it (Decision 7)."""
         argv = claude_argv(self.claude)  # ClaudeNotUsable for an npm claude.cmd
-        allowed = ["mcp__ai-browser__*", *powers.FREE, *self._handed_rules()]
         tools, web_blocked = powers.web_tools(self.web)
+        sites = self._handed_rules() if "WebFetch" in tools else []  # Brave only, No web: no site's rule handed over
+        allowed = ["mcp__ai-browser__*", *powers.FREE, *sites]
         blocked = list(dict.fromkeys(["mcp__ai-browser__sandbox_start", *web_blocked]))
         strict = ["--strict-mcp-config"]
         if self.tools is not None:  # the user's tools: allowed ones pass, the rest are asked for

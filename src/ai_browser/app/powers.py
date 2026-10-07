@@ -554,13 +554,15 @@ BROWSER_TOOLS = ("open", "observe", "act", "screenshot", "tabs", "page_log", "ex
 
 
 def web_tools(choice) -> tuple[tuple[str, ...], list[str]]:
-    """(Claude Code's --tools, more --disallowedTools) for a task's Web ▾: "brave" drops WebSearch and WebFetch, "none"
-    also blocks the browser's page tools and its shell (a Docker shell with the internet: curl would be a way to the
-    web). Its skill tools, read_file and write_file stay. Anything else is the default, "web"."""
+    """(Claude Code's --tools, more --disallowedTools) for a task's Web ▾: "brave" drops WebSearch and WebFetch (and
+    blocks them too, a backstop: the bridge then hands over no site's rule), "none" also blocks the browser's page tools
+    and its shell (a Docker shell with the internet: curl would be a way to the web). Its skill tools, read_file and
+    write_file stay. Anything else is the default, "web"."""
     choice = choice if choice in WEB_CHOICES else "web"
-    tools = TOOLS if choice == "web" else tuple(tool for tool in TOOLS if tool not in WEB_TOOLS)
-    blocked = [f"{OWN}{name}" for name in BROWSER_TOOLS] if choice == "none" else []
-    return tools, blocked
+    if choice == "web":
+        return TOOLS, []
+    tools = tuple(tool for tool in TOOLS if tool not in WEB_TOOLS)
+    return tools, [*WEB_TOOLS, *([f"{OWN}{name}" for name in BROWSER_TOOLS] if choice == "none" else [])]
 
 
 def summary(tool: str, data) -> str:
