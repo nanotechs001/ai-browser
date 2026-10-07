@@ -68,17 +68,18 @@ capability for faster navigation and all feature of the claude app". Four projec
      reach for a site has its own card. Report: `docs/superpowers/reports/2026-10-05-agent-powers.md`.
    - **A Claude Code login is keyed to its folder's path as written:** `/tmp/x` and `/private/tmp/x` are two logins on a
      Mac. Never resolve an account folder's path before handing it to `CLAUDE_CONFIG_DIR`.
-2. **The new look: PAUSED by the user** ("stop the new look plan for now, create a save point to continue it later").
+2. **The new look: the plan is written, NOT built.** The user said: "when you finish the write the new look plan stop
+   for now on it".
    - **The spec is approved:** `docs/superpowers/specs/2026-10-05-new-look-design.md`.
-   - **The save point:** branch `plan-look` (pushed), commit 6152d3e, holding a 16-task draft of
-     `docs/superpowers/plans/2026-10-05-new-look.md`, written on 852cd30.
-   - **The draft's state:** Tasks 1–12 were dry-run against the code; Tasks 13–16 are drafted but not dry-run, and
-     the plan's self-review isn't done.
-   - **To continue:**
-     1. check out `plan-look` and merge `main` into it;
-     2. dry-run Tasks 13–16 and do the self-review;
-     3. show the user the plan;
-     4. build only after the user says so.
+   - **The plan, finished 2026-10-07:** `docs/superpowers/plans/2026-10-05-new-look.md`, 18 tasks (2b257f8).
+     - Every task was dry-run on a scratch copy, then the whole suite. Merged with bc12f23 there, it gave 2115 passed,
+       10 skipped and 0 failed.
+     - Its 32 plan decisions are listed in the plan.
+     - The earlier save point (6152d3e) held a draft of 15 tasks, never dry-run.
+   - **Next:**
+     1. the user reviews the plan;
+     2. build only when the user says so, choosing subagent-driven or native execution;
+     3. Task 1 (which usage fields Claude Code reports) is an optional hand probe with the user.
 3. **Projects, sessions and chat:** not designed yet. The user wants coding in project folders, sessions and history,
    and plain chat with Claude.
 4. **Claude artifacts:** not designed yet. Claude Code 2.1.263 carries claude.ai artifact tools (list and read with
