@@ -284,6 +284,18 @@ Web Fetch, sub-agents, and a to-do list.
 - **Always allow trusts the whole program:** once you always-allow a program (`curl`, `sed`, `tar`, `make`), later
   uses run without a card, and AI Browser can't see inside that program's own options: `curl -T` or `-d @file`,
   `sed 'w …'`, an archive's `../` entries. Allow only programs you trust with any input.
+- **Auto-approve in its folder:** a switch per task, off by default, beside **Folder** in Mission Control's **Build a
+  Mission**, and in the agent's drawer, where you can turn it on or off while it works (the drawer then says
+  "Auto-approving inside <folder>"). While it is on:
+  - edits, new files and ordinary commands inside the task's folder run without a card, and each shows a small
+    **auto** mark beside its badge;
+  - still a card: everything asked every time (deleting, `sudo`, anything outside the folder, `git push --force`),
+    Web Search and Web Fetch, a command reaching a site, your own tools, and a `cd` that isn't into a folder inside;
+  - a command reaching a site: on a Mac, the sandbox's card asks first. On Windows and Linux, a command whose job is
+    reaching a site asks (`curl`, `wget`, `gh`, `git push`, `git pull`, `npm install`, `pip install` and the like),
+    but nothing there holds a program in once it runs: turn it on only for folders and tasks you trust.
+
+  The Brain, templates and Claude Code sessions never turn it on, and after **Stop** nothing runs.
 - **Your answers are kept per folder** in `~/.ai-browser/permissions.json`. **Settings → Permissions** lists each
   folder with your trust answer and the rules you allowed always, each with **Remove**. A folder that was deleted,
   renamed or unplugged keeps its rules until you remove them.
@@ -295,8 +307,8 @@ Web Fetch, sub-agents, and a to-do list.
   - **Stop** stops its sub-agents too.
 - **Commands and the sandbox:** on a Mac, commands run in Claude Code's sandbox, so they can't write outside the
   task's folder. A command that needs more asks, every time, on a card of its own: reaching a site ("let a command
-  reach a site") or running outside the sandbox. You still answer each command's card. On Windows, commands don't run
-  in a sandbox; the cards are the guard.
+  reach a site") or running outside the sandbox. You still answer each command's card, unless **Auto-approve in its
+  folder** is on. On Windows, commands don't run in a sandbox; the cards are the guard.
 - **Workflows** still run in a scratch folder of their own.
 
 ### AI accounts (Settings → Accounts)
@@ -592,9 +604,10 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     Web Fetch, browser tools or skills shell (a skill's instructions still load, but its scripts don't run). Under
     **No web**, your own tools (Integrations) still run, and a command can still reach a site. On a Mac it asks you
     first, with a card, every time; on Windows and Linux it asks with a card too, except a command you chose
-    **Always allow** for.
-  - **Model**, **Account**, **Folder** and **Workspace**; the mic (in Ask AI it talks to the Brain; otherwise your words
-    fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
+    **Always allow** for, or one **Auto-approve in its folder** runs.
+  - **Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**; the mic (in Ask AI it talks
+    to the Brain; otherwise your words fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
+    **Auto-approve in its folder** (see Agent powers) is off again for each new task.
   - On a narrow window the pickers fold into **⋯ Options**, the right column moves under the office, and the menu
     shows icons only.
 - **Talking back:** the Brain's updates show in a speech bubble over the globe, one at a time: a new message that
@@ -817,7 +830,8 @@ uv run ai-browser build                      # rebuild the image
   (a Mac) or UI Automation (Windows): one fixed command, never built from a page's or your words. It reads a page's
   words only when you ask about that page, and an agent works in your tab only after your Hand over.
 - Agents' own commands, edits and reads ask first, on a card that shows exactly what will happen. Only clicks in AI
-  Browser's own pages answer: never the Brain, voice or a page. The app reads each command without running it. Only
+  Browser's own pages answer: never the Brain, voice or a page. **Auto-approve in its folder** answers for you inside
+  the task's folder, and only your click turns it on. The app reads each command without running it. Only
   one plain command whose paths are all inside the task's folder can be harmless or allowed always. Paths are
   compared after resolving symlinks and `..`.
 - ⚠ risky buttons are refused unless `confirmed=true`; Claude asks you first. Page dialogs are treated the same way:

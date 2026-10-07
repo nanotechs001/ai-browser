@@ -414,3 +414,21 @@ async def test_an_auto_approved_action_line_carries_its_mark(stack):  # the user
     assert await until(mission, f"{rows}.length === 2")
     assert await mission(f"{rows}.map((row) => row.querySelector('.auto')?.textContent ?? null)") == ["auto", None]
     assert await mission(f"{rows}[0].querySelector('.auto').title") == "Ran without a card: Auto-approve in its folder"
+
+
+def test_the_readme_explains_auto_approve():  # the user's choice, 2026-10-07: what it covers and what still asks
+    from pathlib import Path
+
+    readme = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for phrase in ("- **Auto-approve in its folder:** a switch per task, off by default",
+                   "edits, new files and ordinary commands inside the task's folder run without a card",
+                   "a small **auto** mark beside its badge", '"Auto-approving inside <folder>"',
+                   "Web Search and Web Fetch, a command reaching a site, your own tools",
+                   "a `cd` that isn't into a folder inside",
+                   "On Windows and Linux, a command whose job is reaching a site asks",
+                   "turn it on only for folders and tasks you trust",
+                   "The Brain, templates and Claude Code sessions never turn it on",
+                   "**Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**",
+                   "You still answer each command's card, unless **Auto-approve in its folder** is on",
+                   "only your click turns it on"):
+        assert phrase in readme, phrase
