@@ -25,6 +25,7 @@
 .attached-file[data-state="failed"] .progress { color: var(--fail); max-width: 160px; overflow: hidden;
                                                 text-overflow: ellipsis; white-space: nowrap; }
 .attached-file .drop { padding: 0 6px; border: 0; background: transparent; }
+.dropping { outline: 2px dashed var(--accent-2); outline-offset: 2px; } /* files dragged over a box (paste.js) */
 .controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .pickers { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
 .pickers select { max-width: 190px; }

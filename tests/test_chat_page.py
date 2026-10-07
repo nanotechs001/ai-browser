@@ -335,7 +335,9 @@ def test_the_readme_explains_the_floating_chat():
                    "Privacy & Security → Automation → AI Browser → turn on Brave Browser", "**Ask about it:**",
                    "It replaces typing `ai` in Brave's address bar", "**Hand over…**",
                    "the chat never connects by itself", "the Brain only answers, and proposes nothing",
-                   "and for Brave, once more", "The old side panel is gone"):
+                   "and for Brave, once more", "The old side panel is gone",
+                   "A picture pasted into its box, or a file dropped on it, goes with the task",
+                   "The Brain's box takes text only"):
         assert needed in text, needed
     assert "(the floating chat, coming next)" not in text
 
@@ -408,3 +410,43 @@ async def test_a_window_without_an_address_bar_offers_your_tabs(stack):  # fix p
     unknown = "AI Browser can't see this window's address: pick the tab you mean."
     assert await until(js, f"{bar('says')}.textContent === {json.dumps(unknown)}")
     assert await js(f"{bar('picker')}.hidden") is False
+
+
+@CHROME
+async def test_new_task_takes_a_pasted_picture_and_the_brains_box_says_where_pictures_go(stack):  # 2026-10-07
+    from test_app_server import told
+    from test_mission_look import DROP, PASTE, PICTURE
+
+    js, _ = await open_chat(stack)
+    hint = "document.getElementById('hint').textContent"
+    assert await js(f"({PASTE})('#talk-text', {json.dumps(PICTURE)})") is True  # the Brain's box: text only
+    assert await until(js, f"{hint} === 'Pictures go with New task'")
+    assert await js("document.getElementById('new').hidden") is True  # nothing opened by itself
+    await js("document.getElementById('new-open').click(); true")
+    chips = "[...document.querySelectorAll('#attached .attached-file')]"
+    assert await js(f"({PASTE})('#task', {json.dumps(PICTURE)})") is True
+    assert await js(f"({PASTE})('#task', [], 'more words')") is False  # pasted text stays text
+    assert await js(f"({DROP})('#new', [['notes.txt', 50, 'text/plain']])") == [True, True]
+    assert await until(js, f"{chips}.length === 2 && {chips}.every(chip => chip.dataset.state === 'done')", 15)
+    await js(f"({PASTE})('#task', [['big.png', 21000000, 'image/png']])")
+    assert await until(js, f"{hint} === 'big.png is over 20 MB'")
+    await js("document.getElementById('task').value = 'what is this';"
+             " document.getElementById('task-start').click(); true")
+    folder = stack["home"] / "app" / "agents" / "a1" / "work" / "attachments"
+    assert await eventually(lambda: folder.is_dir() and sorted(path.name for path in folder.iterdir()) == [
+        "image.png", "notes.txt"])
+    assert await eventually(lambda: bool(told(stack["log"])))
+    assert "- attachments/image.png (a picture: look at it with Read)" in told(stack["log"])[0]
+    assert await until(js, f"{chips}.length === 0")
+
+
+@CHROME
+async def test_new_task_refuses_an_eleventh_file(stack):  # the review of look-3, F7
+    from test_mission_look import ELEVEN, PASTE
+
+    js, _ = await open_chat(stack)
+    await js("document.getElementById('new-open').click(); true")
+    await js(f"({PASTE})('#task', {json.dumps(ELEVEN)})")
+    assert await until(js, "document.getElementById('hint').textContent === 'At most 10 files at once'")
+    chips = "[...document.querySelectorAll('#attached .attached-file')]"
+    assert await until(js, f"{chips}.length === 10 && {chips}.every(chip => chip.dataset.state === 'done')", 15)

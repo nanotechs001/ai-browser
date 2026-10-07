@@ -277,6 +277,50 @@ async def test_stop_chat_and_hand_over(stack):
 
 
 @CHROME
+async def test_watch_beside_hand_over_brings_the_agents_tab_to_the_front(stack):  # the user's look, 2026-10-07
+    from test_check_card import heard, recorded
+
+    seen = recorded(stack)  # what the app was asked to do, instead of doing it
+    agents = stack["server"].agents
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    await agents.create("keep working")
+    js = await open_mission(stack)
+    assert await until(js, "document.getElementById('current-step').textContent === '1 · keep working'")
+    watch = "document.getElementById('current-watch')"
+    assert await js(f"{watch}.previousElementSibling.id") == "current-hand"  # to the right of Hand over
+    assert await js(f"[{watch}.textContent, {watch}.title, {watch}.querySelectorAll('svg.icon').length]") == [
+        "Watch", "Bring this agent's tab to the front", 1]
+    assert await js(f"{watch}.disabled") is True  # no tab of its own yet
+    agents.tab_event("a1", "working_tab", "T1")
+    assert await until(js, f"!{watch}.disabled")
+    await js(f"{watch}.click(); true")
+    assert await heard(seen, ("watch", "T1"))  # the drawer's Watch: its tab to the front
+    assert await js("document.getElementById('drawer').hidden") is True  # without opening the drawer
+    agents.tab_event("a1", "tab_closed", "T1")
+    assert await until(js, f"{watch}.disabled")
+    await js(f"{watch}.click(); true")
+    await asyncio.sleep(0.5)
+    assert seen.count(("watch", "T1")) == 1  # nothing to bring forward: nothing sent
+
+
+@CHROME
+@pytest.mark.parametrize("size", [WIDE, (1280, 760)])
+async def test_watch_stays_right_of_hand_over_with_stop_shown_or_hidden(stack, size):  # the review of look-3, F2
+    agents = stack["server"].agents
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    await agents.create("keep working")
+    agents.tab_event("a1", "working_tab", "T1")
+    js = await open_with(stack, size=size)
+    assert await until(js, "!document.getElementById('current-watch').disabled")
+    pair = f"[{BOX}(document.getElementById('current-hand')), {BOX}(document.getElementById('current-watch'))]"
+    for stop_shown in (True, False):
+        assert await until(js, f"document.getElementById('current-stop').hidden === {str(not stop_shown).lower()}")
+        hand, watch = await js(pair)
+        assert watch[0] >= hand[2] and abs(watch[1] - hand[1]) < 2, (size, stop_shown, hand, watch)  # one row
+        await agents.stop("a1")  # a finished agent that still has its tab: Stop goes, Watch stays
+
+
+@CHROME
 @pytest.mark.parametrize("size", [WIDE, (1280, 760), MIDDLE, NARROW])
 async def test_the_list_and_the_calendar_start_right_under_the_switch(stack, size):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
@@ -579,6 +623,219 @@ async def test_after_a_reconnect_the_attached_files_must_be_attached_again(stack
     assert await until(js, "document.getElementById('task-note').textContent.startsWith('Remove the files that didn')")
     await asyncio.sleep(0.5)
     assert server.agents.agents == {}  # nothing was sent: Start waited for the user to attach them again
+
+
+# ---- pictures pasted into any chat (the user's look, 2026-10-07) -----------------------------------------------------
+
+# ⌘V (Ctrl+V) in a box, as the browser sends it: a paste event whose clipboard holds `files` ([name, size, type]) and,
+# if given, `text`. True when the page kept the browser from pasting (only files: nothing to paste as text).
+PASTE = ("(selector, files, text) => { const transfer = new DataTransfer();"
+         " for (const [name, size, type] of files) transfer.items.add(new File([new Uint8Array(size).fill(137)],"
+         " name, {type}));"
+         " if (text) transfer.setData('text/plain', text);"
+         " const box = document.querySelector(selector); box.focus();"
+         " const event = new ClipboardEvent('paste', {clipboardData: transfer, bubbles: true, cancelable: true});"
+         " box.dispatchEvent(event); return event.defaultPrevented; }")
+# files dragged from the Finder (Explorer) and dropped on a box: [whether dragover and drop were taken by the page]
+DROP = ("(selector, files) => { const transfer = new DataTransfer();"
+        " for (const [name, size, type] of files) transfer.items.add(new File([new Uint8Array(size).fill(65)],"
+        " name, {type}));"
+        " const box = document.querySelector(selector);"
+        " return ['dragover', 'drop'].map(kind => { const event = new DragEvent(kind, {dataTransfer: transfer,"
+        " bubbles: true, cancelable: true}); box.dispatchEvent(event); return event.defaultPrevented; }); }")
+PICTURE = [["image.png", 3000, "image/png"]]  # a copied screenshot: Chrome names it image.png
+NOTE = "document.getElementById('task-note').textContent"
+PICTURES_GO = "Pictures go with Build a Mission or an agent's chat"
+ELEVEN = [[f"shot{number}.png", 10, "image/png"] for number in range(11)]
+
+
+@CHROME
+async def test_a_pasted_picture_is_attached_as_attach_does_and_goes_with_the_mission(stack):
+    from test_app_server import told
+
+    js = await open_mission(stack)
+    assert await js(f"({PASTE})('#task', {json.dumps(PICTURE)})") is True
+    assert await until(js, f"{CHIPS}.length === 1 && {CHIPS}[0].dataset.state === 'done'", 15)  # staged, like Attach
+    assert await js(f"{CHIPS}[0].querySelector('.name').textContent") == "image.png"
+    assert await js(f"({PASTE})('#task', [], 'look at this')") is False  # pasted text: the browser pastes it
+    assert await js(f"{CHIPS}.length") == 1 and await js(NOTE) == ""
+    assert await js(f"({DROP})('#composer .box', [['notes.txt', 500, 'text/plain']])") == [True, True]
+    assert await until(js, f"{CHIPS}.length === 2 && {CHIPS}.every(chip => chip.dataset.state === 'done')", 15)
+    await js("document.getElementById('task').value = 'what is wrong here';"
+             " document.getElementById('start').click(); true")
+    folder = stack["home"] / "app" / "agents" / "a1" / "work" / "attachments"
+    await wait_for(lambda: folder.is_dir() and sorted(path.name for path in folder.iterdir()) == [
+        "image.png", "notes.txt"])
+    await wait_for(lambda: bool(told(stack["log"])))
+    assert "- attachments/image.png (a picture: look at it with Read)" in told(stack["log"])[0]
+    assert await until(js, f"{CHIPS}.length === 0")
+
+
+@CHROME
+async def test_ask_ai_and_use_a_template_take_no_picture_and_say_where_pictures_go(stack):
+    js = await open_mission(stack)
+    for mode in ("ask", "template"):
+        await js(f"document.getElementById('mode-{mode}').click(); true")
+        await js(f"({PASTE})('#task', {json.dumps(PICTURE)})")
+        assert await until(js, f"{NOTE} === {json.dumps(PICTURES_GO)}"), mode
+        assert await js("document.getElementById('composer').dataset.mode") == mode  # nothing switched by itself
+        assert await js(f"{CHIPS}.length") == 0
+        await js("document.getElementById('task-note').textContent = ''; true")
+    assert await js(f"({PASTE})('#task', {json.dumps(PICTURE)}, 'A1 B1')") is False  # cells from a spreadsheet come
+    await asyncio.sleep(0.5)                                                           # with a picture: they're text
+    assert await js(NOTE) == ""
+    assert list((stack["home"] / "app" / "uploads").glob("*.part")) == []  # nothing was sent to the app
+
+
+@CHROME
+async def test_a_pasted_picture_over_20_mb_or_an_eleventh_file_is_refused(stack):
+    js = await open_mission(stack)
+    await js(f"({PASTE})('#task', [['image.png', 21000000, 'image/png']])")
+    assert await until(js, f"{NOTE} === 'image.png is over 20 MB'")
+    assert await js(f"{CHIPS}.length") == 0
+    await js(f"({PASTE})('#task', {json.dumps(ELEVEN)})")
+    assert await until(js, f"{NOTE} === 'At most 10 files at once'")
+    assert await js(f"{CHIPS}.length") == 10
+
+
+LINE = "#drawer .chat-box"
+DRAWER_CHIPS = f"[...document.querySelectorAll('{LINE} .attached-file')]"
+DRAWER_NOTE = f"document.querySelector('{LINE} .note').textContent"
+PICK_FILE = ("(files) => { const transfer = new DataTransfer();"
+             " for (const [name, size] of files) transfer.items.add(new File([new Uint8Array(size).fill(66)], name));"
+             f" const input = document.querySelector('{LINE} input[type=file]'); input.files = transfer.files;"
+             " input.dispatchEvent(new Event('change')); return true; }")
+
+
+async def drawer_of_a_finished_agent(stack):
+    """Mission Control with a1 done (it answered once) and its drawer open: its chat is where the user writes."""
+    from test_mission import open_drawer
+
+    await stack["server"].agents.create("check the page")  # EVENTS: one answer, then its turn ends
+    js = await open_mission(stack)
+    assert await until(js, f"{station('a1')}?.dataset.state === 'your_turn'")
+    await js(open_drawer("a1"))
+    assert await until(js, f"document.querySelector('{LINE} textarea') !== null")
+    return js
+
+
+@CHROME
+async def test_an_agents_chat_takes_pasted_dropped_and_attached_files(stack):
+    from test_app_server import told
+
+    js = await drawer_of_a_finished_agent(stack)
+    attach = f"document.querySelector('{LINE} .attach')"
+    assert await js(f"[{attach}.getAttribute('aria-label'), {attach}.title]") == [
+        "Attach files", "Attach files: at most 10, 20 MB each"]
+    assert await js(f"({PASTE})('{LINE} textarea', {json.dumps(PICTURE)})") is True
+    assert await js(f"({PASTE})('{LINE} textarea', [], 'words')") is False  # text stays text
+    assert await js(f"({DROP})('{LINE}', [['log.txt', 100, 'text/plain']])") == [True, True]
+    await js(f"({PICK_FILE})([['report.pdf', 900000]])")  # Attach: two pieces
+    assert await until(js, f"{DRAWER_CHIPS}.length === 3 && {DRAWER_CHIPS}.every(chip =>"
+                           " chip.dataset.state === 'done')", 15)
+    assert await js(f"{CHIPS}.length") == 0  # the composer's chips are its own
+    await js(f"document.querySelector('{LINE} textarea').value = 'why does it fail here?';"
+             f" document.querySelector('{LINE} .send').click(); true")
+    folder = stack["home"] / "app" / "agents" / "a1" / "work" / "attachments"
+    await wait_for(lambda: folder.is_dir() and sorted(path.name for path in folder.iterdir()) == [
+        "image.png", "log.txt", "report.pdf"])
+    await wait_for(lambda: len(told(stack["log"])) == 2)
+    message = told(stack["log"])[1]
+    assert message.startswith("why does it fail here?\n\nThe user attached these files.")
+    assert "- attachments/image.png (a picture: look at it with Read)" in message and "- attachments/log.txt" in message
+    assert await until(js, f"{DRAWER_CHIPS}.length === 0 && document.querySelector('{LINE} textarea').value === ''")
+    assert await until(js, "document.querySelector('#drawer .messages').textContent.includes('why does it fail')")
+
+
+@CHROME
+async def test_an_agents_chat_keeps_its_files_until_the_app_takes_them(stack):
+    from conftest import symlink_or_skip
+    from test_app_server import told
+
+    js = await drawer_of_a_finished_agent(stack)
+    box = f"document.querySelector('{LINE} textarea')"
+    await js(f"({PASTE})('{LINE} textarea', [['image.png', 21000000, 'image/png']])")
+    assert await until(js, f"{DRAWER_NOTE} === 'image.png is over 20 MB'")
+    await js(f"({PASTE})('{LINE} textarea', {json.dumps(ELEVEN)})")
+    assert await until(js, f"{DRAWER_NOTE} === 'At most 10 files at once'")
+    assert await until(js, f"{DRAWER_CHIPS}.length === 10 && {DRAWER_CHIPS}.every(chip =>"
+                           " chip.dataset.state === 'done')", 15)
+    work = stack["home"] / "app" / "agents" / "a1" / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    outside = stack["home"].parent / "outside"
+    outside.mkdir()
+    symlink_or_skip(outside, work / "attachments")  # the app refuses to place them: the page keeps them
+    await js(f"{box}.value = 'see these'; document.querySelector('{LINE} .send').click(); true")
+    assert await until(js, f"{DRAWER_NOTE}.startsWith('The attachments folder in that folder leads somewhere else')")
+    assert await js(f"[{DRAWER_CHIPS}.length, {box}.value]") == [10, "see these"]  # nothing lost
+    assert list(outside.iterdir()) == [] and len(told(stack["log"])) == 1
+    (work / "attachments").unlink()
+    await js(f"document.querySelector('{LINE} .send').click(); true")
+    assert await until(js, f"{DRAWER_CHIPS}.length === 0 && {box}.value === ''")
+    await wait_for(lambda: len(list((work / "attachments").iterdir())) == 10)
+
+
+# A page whose long timers (10 s and more) run at once, and whose messages to an agent with files wait for
+# window.release(): the app's answer comes later than any timer the page sets.
+LATE = ("(() => { const later = window.setTimeout;"
+        " window.setTimeout = (run, ms, ...rest) => later(run, ms >= 10000 ? 50 : ms, ...rest);"
+        " const send = WebSocket.prototype.send; const held = [];"
+        " WebSocket.prototype.send = function (data) {"
+        "   if (!window.released && typeof data === 'string' && data.startsWith('{\"type\":\"send\"')"
+        "       && data.includes('\"attachments\"')) { held.push([this, data]); return; }"
+        "   return send.call(this, data); };"
+        " window.release = () => { window.released = true; for (const [socket, data] of held.splice(0))"
+        " send.call(socket, data); }; })();")
+
+
+@CHROME
+async def test_an_agents_chat_waits_for_the_apps_answer_however_late_it_comes(stack):  # the review of look-3, F5
+    from test_mission import open_drawer
+
+    await stack["server"].agents.create("check the page")
+    js = await open_with(stack, LATE)
+    assert await until(js, f"{station('a1')}?.dataset.state === 'your_turn'")
+    await js(open_drawer("a1"))
+    assert await until(js, f"document.querySelector('{LINE} textarea') !== null")
+    await js(f"({PASTE})('{LINE} textarea', {json.dumps(PICTURE)})")
+    assert await until(js, f"{DRAWER_CHIPS}.length === 1 && {DRAWER_CHIPS}[0].dataset.state === 'done'", 15)
+    await js(f"document.querySelector('{LINE} textarea').value = 'see this';"
+             f" document.querySelector('{LINE} .send').click(); true")
+    await asyncio.sleep(1)  # well past every timer the page set
+    assert await js(f"document.querySelector('{LINE} .send').disabled") is True  # still waiting for the answer
+    await js("window.release(); true")
+    assert await until(js, f"{DRAWER_CHIPS}.length === 0 && document.querySelector('{LINE} textarea').value === ''")
+    assert await js(f"document.querySelector('{LINE} .send').disabled") is False
+    folder = stack["home"] / "app" / "agents" / "a1" / "work" / "attachments"
+    await wait_for(lambda: (folder / "image.png").is_file())
+
+
+@CHROME
+async def test_spreadsheet_cells_paste_as_text_and_a_copied_file_still_attaches(stack):  # the review of look-3, F6
+    js = await drawer_of_a_finished_agent(stack)
+    await js("document.getElementById('mode-ask').click(); true")
+    assert await js(f"({PASTE})('#task', [['report.pdf', 10, 'application/pdf']], 'report.pdf')") is False
+    assert await until(js, f"{NOTE} === {json.dumps(PICTURES_GO)}")  # a file in Ask AI: where files go
+    await js("document.getElementById('mode-build').click(); true")
+    for box, chips in (("#task", CHIPS), (f"{LINE} textarea", DRAWER_CHIPS)):
+        # cells copied from a spreadsheet: their text, and a picture of them that the browser names image.png
+        assert await js(f"({PASTE})('{box}', {json.dumps(PICTURE)}, 'A1\\tB1')") is False
+        await asyncio.sleep(0.5)
+        assert await js(f"{chips}.length") == 0, box
+        # a file copied in the Finder (Explorer): the file, and its name as text
+        assert await js(f"({PASTE})('{box}', [['notes.txt', 10, 'text/plain']], 'notes.txt')") is False
+        assert await until(js, f"{chips}.length === 1", 15), box
+
+
+@CHROME
+async def test_build_a_mission_and_an_agents_chat_each_hold_their_own_ten_files(stack):  # the review of look-3, F4
+    js = await drawer_of_a_finished_agent(stack)
+    await js(f"({ATTACH})({json.dumps([[f'build{number}.txt', 10] for number in range(7)])})")
+    assert await until(js, f"{CHIPS}.length === 7 && {CHIPS}.every(chip => chip.dataset.state === 'done')", 15)
+    four = [[f"chat{number}.png", 10, "image/png"] for number in range(4)]
+    await js(f"({PASTE})('{LINE} textarea', {json.dumps(four)})")
+    assert await until(js, f"{DRAWER_CHIPS}.length === 4 && {DRAWER_CHIPS}.every(chip =>"
+                           " chip.dataset.state === 'done')", 15)  # the page holds 11: none refused
 
 
 # ---- My Missions and History (Task 14) -------------------------------------------------------------------------------
@@ -1388,7 +1645,17 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
                    "On a Mac it asks you first, with a card, every time",
                    "except a command you chose **Always allow** for",
                    "your own tools (Integrations) still run",
-                   "scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom"):
+                   "scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom",
+                   # the user's look, 2026-10-07: nothing under the globe, Watch beside Hand over, pictures in any chat
+                   "Dotted lines run from each desk to the globe's foot",
+                   "**Stop**, **Chat**, **Hand over** and **Watch**",
+                   "**Watch** brings its tab to the front without opening its drawer",
+                   "Its message box takes files as **Build a Mission** does",
+                   "their chips go only once the app has placed them",
+                   "Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it",
+                   '"Pictures go with Build a Mission or an agent\'s chat"', "Pasted text stays text",
+                   "AI Home's **New task** and an agent's chat there take pictures and files the same way",
+                   "Cells copied from a spreadsheet paste as text"):
         assert phrase in readme, phrase
     for gone in ("brain of glowing points", "WebGL", "no web tools at all", "a file that was not yet sent",
                  "a command still asks you, with a card, before it reaches a site",

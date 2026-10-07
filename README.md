@@ -413,7 +413,9 @@ Press the shortcut again, Esc or ✕ to hide it. It needs AI Browser's own app (
 - **Talk to the Brain:** type, or hold the mic button. "Tell agent 2 to check the footer" makes a card: press **Send**
   or **Start**, or say yes. The open agents show by number; a click opens one in AI Home.
 - **New task** starts an agent with the model and the account you pick. It replaces typing `ai` in Brave's address
-  bar. **Start it in this page** hands this tab over to it as it starts.
+  bar. **Start it in this page** hands this tab over to it as it starts. A picture pasted into its box, or a file
+  dropped on it, goes with the task, as in Mission Control (at most 10 files, 20 MB each). The Brain's box takes text
+  only: a picture pasted there says "Pictures go with New task".
 - **Hand over…** gives this page to an open agent. Only your click hands a tab over, as in AI Home.
 - An agent that waits for you (a tool to allow, a bot check) shows its card in the chat too.
 - The old side panel is gone: the floating chat takes its place.
@@ -581,8 +583,9 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     picture of its tab.
   - Each desk's nameplate shows the agent's number and name ("1 · Fix the footer"). The number stays the same while
     the app runs, so "agent 2" always means the same agent; numbers start at 1 again when the app restarts.
-  - Dotted lines run from each desk to the globe. The globe is the Brain: it glows while the Brain works, turns amber
-    when something needs you, and opens the Brain's inbox when you click it.
+  - Dotted lines run from each desk to the globe's foot; nothing else stands under the globe. The globe is the Brain:
+    it glows while the Brain works, turns amber when something needs you, and opens the Brain's inbox when you click
+    it.
   - Many agents: past 12 desks, the oldest finished agents leave the room (they stay in My Missions and History), and
     with more than 6 desks the step cards fold to chips. At 20 or more desks the office gets small: read the names in
     **List**, or zoom in. An empty room says "Start a mission below".
@@ -595,17 +598,25 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
 - **The right column**, for the agent you click (or the one at work):
   - **Mission Progress:** "3 / 5 steps complete", the bar, and your agents as Completed, In Progress and Pending;
   - **Current Task:** its step and timer, its checklist (its to-do list, or its latest actions without one), and
-    **Stop**, **Chat** and **Hand over**. **Answer** shows when a card waits; clicking a desk that needs you opens its
-    card too;
+    **Stop**, **Chat**, **Hand over** and **Watch**. **Watch** brings its tab to the front without opening its drawer
+    (it is greyed out while the agent has no tab). **Answer** shows when a card waits; clicking a desk that needs you
+    opens its card too;
   - **Chat** opens the agent's drawer: its state, **Watch**, **Stop**, **Close**, its permission card (**Allow once**,
     **Always allow**, **Deny**), **Your tabs** and its chat. When agents work in your Brave, **Give to this agent**
-    under **Your tabs** hands it one of your own tabs, as AI Home's **Hand over** does;
+    under **Your tabs** hands it one of your own tabs, as AI Home's **Hand over** does. Its message box takes files as
+    **Build a Mission** does: paste a picture, drop a file on it, or click the clip. They go with your message into
+    the agent's folder under `attachments/`, and the message names them; their chips go only once the app has placed
+    them, so a refused message keeps your words and files for another try;
   - **Recent Activity:** started, a step done, needs you, finished. **See all** opens History.
 - **The composer:** **Ask AI** (the Brain answers and proposes; nothing runs until you press Start or Send, or say
   yes), **Build a Mission** (a new agent) and **Use a Template** (a workflow, with your words added). Under the box:
   - **Attach:** at most 10 files, 20 MB each. They are copied into the agent's folder under `attachments/`, never over
     a file that is there (a duplicate becomes "name (2).ext"), and the task names them. Pictures reach the agent through
-    Claude Code's own Read. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
+    Claude Code's own Read. Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it, and it is
+    attached the same way. Pasted text stays text. Cells copied from a spreadsheet paste as text, without the picture
+    of them that comes along. **Ask AI** and **Use a Template** take no files: a picture pasted there says "Pictures
+    go with Build a Mission or an agent's chat". AI Home's **New task** and an agent's chat there take pictures and
+    files the same way, and so does the floating chat's **New task**. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
     that folder has been replaced by a link, the task refuses to start and says which folder. After a reconnect, every
     attached file says "Not sent: attach it again", even one that showed ✓: the app forgets files when the connection
     drops.

@@ -82,6 +82,18 @@ details summary { cursor: pointer; border: 1px solid var(--line); border-radius:
 .action .ms { color: var(--muted); margin-left: 6px; font-size: 12px; }
 .action pre { margin: 4px 0 0; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap; color: var(--muted); }
 .composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+/* the files attached to New task or a message (uploads.js): pasted or dropped, a chip each, and × */
+.attached { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-attached { margin: 0; padding: 0 14px 10px; }
+.attached-file { display: inline-flex; align-items: center; gap: 6px; max-width: 280px; padding: 2px 4px 2px 10px;
+                 border-radius: 999px; background: var(--soft); border: 1px solid var(--line); font-size: 12px; }
+.attached-file .name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attached-file[data-state="done"] .progress { color: var(--ok); }
+.attached-file[data-state="failed"] { border-color: var(--fail); }
+.attached-file[data-state="failed"] .progress { color: var(--fail); max-width: 160px; overflow: hidden;
+                                                text-overflow: ellipsis; white-space: nowrap; }
+.attached-file .drop { padding: 0 6px; border: 0; background: transparent; }
+.dropping { outline: 2px dashed var(--accent-2); outline-offset: 2px; } /* files dragged over a box (paste.js) */
 .composer textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px;
                      background: var(--bg); field-sizing: content; max-height: 140px; }
 .chip.needs_you { background: color-mix(in srgb, var(--needs) 22%, transparent); color: var(--needs); }

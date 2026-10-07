@@ -1,10 +1,11 @@
 // Mission Control's office (the new look, Decision 3), drawn with CSS 3D: a floor in the page's plain navy, tilted
 // away from the user, the glowing globe in the middle (the Brain's seat: #brain), and one desk per agent in rings
 // around it (desk.js). Desks and the globe are billboards: they stand upright and face the user (their own turn undoes
-// the room's). Dotted lines on the floor join each desk to the globe's base. There is no other decor (the user's hand
-// check: no wall, no grid, no lamp, no sign, no big plants). Past 12 desks the oldest finished agents leave the room
-// (step.js roomAgents); with more than 6 desks the step cards fold to chips. Everything is built once and updated in
-// place; the timers tick together once a second, and stop while the room is paused. Text is set with textContent.
+// the room's). Dotted lines on the floor join each desk to the globe's foot. There is no other decor (the user's hand
+// checks: no wall, no grid, no lamp, no sign, no big plants, and nothing under the globe: no rings, no light disc).
+// Past 12 desks the oldest finished agents leave the room (step.js roomAgents); with more than 6 desks the step cards
+// fold to chips. Everything is built once and updated in place; the timers tick together once a second, and stop while
+// the room is paused. Text is set with textContent.
 "use strict";
 
 import { ensureDefs } from "./chibi.js";
@@ -23,6 +24,7 @@ const RING_STEP = 330; // between two rings
 const WIDE = 1.25; // rings are ellipses, wider than deep: desks stand side by side on screen
 const ARC = 240; // degrees of each ring in front of the globe: no desk stands right behind it
 const PUSH = 100; // room pixels: in a ring after the first, every odd seat stands this much further out (see placeOf)
+const FOOT = 48; // room pixels: a dotted line stops this far in front of the globe's foot (WIDE times that sideways)
 // Ring 1's seats, in degrees (90 is the front): left, right, front-left, front-right, far left, far right. The far two
 // stand back and out (215°, -35°), so that a full step card (a desk with it is TALL) never hides the desk behind it.
 const FIRST_RING = [150, 30, 112, 68, 215, -35];
@@ -122,15 +124,13 @@ export function createScene(root, { onSelect = () => {} } = {}) {
   const links = svg("svg", { class: "links", "aria-hidden": "true" });
   const stage = el("div", "stage billboard");
   const globe = createGlobe();
-  stage.append(globe, el("div", "pedestal"));
+  stage.append(globe);
   const empty = el("div", "empty-note billboard", "Start a mission below");
-  const outer = el("div", "ring outer");
-  const inner = el("div", "ring inner");
-  room.append(el("div", "floor"), links, outer, inner, stage, empty);
+  room.append(links, stage, empty);
   viewport.append(room);
   root.replaceChildren(viewport);
   ensureDefs(document);
-  for (const node of [outer, inner, stage]) place(node, CENTER);
+  place(stage, CENTER);
   place(empty, { x: CENTER.x, y: CENTER.y + 250 });
   const desks = new Map(); // agent id -> {desk, shadow, link}
   const rows = new Map(); // agent id -> its latest row
@@ -200,10 +200,10 @@ export function createScene(root, { onSelect = () => {} } = {}) {
     return count > CHIPS_PAST && agent.id !== selected && stateOf(agent) !== "needs_you" ? "chip" : "full";
   }
 
-  function linkPath(point) { // from under the desk to the globe's base, on the floor
+  function linkPath(point) { // from under the desk to the globe's foot, on the floor
     const angle = Math.atan2(point.y - CENTER.y, point.x - CENTER.x);
-    return `M ${point.x} ${point.y} L ${Math.round(CENTER.x + 175 * Math.cos(angle))} `
-      + `${Math.round(CENTER.y + 140 * Math.sin(angle))}`;
+    return `M ${point.x} ${point.y} L ${Math.round(CENTER.x + WIDE * FOOT * Math.cos(angle))} `
+      + `${Math.round(CENTER.y + FOOT * Math.sin(angle))}`;
   }
 
   function fillOne(id, count) {

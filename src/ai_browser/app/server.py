@@ -62,7 +62,7 @@ from ..syncdir import write_atomic
 from . import attachments
 from . import pagematch
 from . import powers
-from .agents import Agent, AgentManager
+from .agents import CLOSED, Agent, AgentManager
 from .bravelink import NOT_CONNECTED, PlaceError
 from .inworld import WorldError
 from .workspaces import GONE as WORKSPACE_GONE
@@ -127,6 +127,7 @@ ATTACH_MESSAGES = {"attach_start", "attach_chunk", "attach_drop"}  # the new loo
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
+EMPTY_MESSAGE = "Write a message, or attach a file"
 YOU = {"kind": "you"}
 
 
@@ -161,6 +162,7 @@ MESSAGE_RULES: dict[str, Rule] = {
     "brave_connect": APP_ONLY, "hand_tab": APP_ONLY, "take_back": APP_ONLY,
     "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in AI Home's list of connected clients
     "new_task": APP_ONLY,  # with or without adopt
+    # send: the user's message to an agent, with the files a page staged (the drawer's chat): a file, never a right
     "send": APP_ONLY, "stop": APP_ONLY, "close": APP_ONLY, "model": APP_ONLY,
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
     "settings_set": APP_ONLY,  # the window's Settings, AI Home's and Mission Control's picks
@@ -1391,9 +1393,7 @@ class AppServer:
                 self._own(adopt, self._owner_of(agent.id, handed=True))
             queue.put_nowait({"type": "created", "id": agent.id, "request": request})
         elif kind == "send":
-            text = _text(message.get("text"))
-            if text:
-                await agents.send(agent_id, text, _tab(message.get("tab")))
+            await self._send(ws, queue, agent_id, message)
         elif kind == "stop":
             await agents.stop(agent_id)
         elif kind == "close":
@@ -1412,6 +1412,32 @@ class AppServer:
             queue.put_nowait({"type": "thumbs", "thumbs": {
                 agent: state["jpeg"] for agent, state in self._thumbs.items()
                 if state.get("jpeg") and agent in self.agents.agents}})
+
+    async def _send(self, ws: WebSocket, queue: asyncio.Queue, agent_id: str, message: dict) -> None:
+        """The user's message to an agent, with the files this page staged for it (the drawer's chat: pasted,
+        dropped or attached), placed in the agent's folder under attachments/ and named in the message, all or none.
+        A page that gives a request id hears "sent", or an error with the reason; refused files stay staged."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+
+        def answer(reply: dict) -> None:
+            if request is not None:
+                queue.put_nowait({**reply, "request": request})
+
+        text = _text(message.get("text"))
+        listed = message.get("attachments") if isinstance(message.get("attachments"), list) else []
+        try:
+            files = self.uploads.take(ws, listed)  # each file whole, or nothing is sent
+            if not text and not files:  # ids that name no file are none
+                raise ValueError(EMPTY_MESSAGE)
+            sent = await self.agents.send(agent_id, text, _tab(message.get("tab")), files=files)
+        except ValueError as exc:
+            answer({"type": "error", "text": str(exc)})
+            return
+        if not sent:
+            answer({"type": "error", "text": CLOSED})
+            return
+        self.uploads.done(ws, listed)
+        answer({"type": "sent", "id": agent_id})
 
     async def _show_check(self, agent_id: str) -> None:
         """Show me (a bot check's card): bring forward the tab where this agent's bot check waits. The app holds

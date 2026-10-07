@@ -2,31 +2,38 @@
 // Brave. The shortcut picked in Settings, or the menu-bar icon's Show chat, shows and hides it; Esc and ✕ hide it.
 // It holds "This page" (the Brave tab you're on: pagebar.js), the Brain's talk, typed or push-to-talk (talk.js), New
 // task, the open agents by number, and the card of the newest agent that waits for you. The Brain only proposes; a
-// question reads the page only while "Ask about it" is on; only a click hands a tab over. Every word from Claude,
-// pages and agents is set as text.
+// question reads the page only while "Ask about it" is on; only a click hands a tab over. New task takes pictures
+// pasted into its box, and files dropped on it, as Mission Control's Build a Mission does (paste.js, uploads.js: staged
+// over this page's own line); the Brain's box takes text only, and says so. Every word from Claude, pages and agents
+// is set as text.
 import { fillPicker, pickDefault } from "./accountui.js";
 import { checkCard } from "./check.js";
 import { agentLabel, el } from "./chat.js";
 import { connect } from "./link.js";
 import { guardLinks } from "./nav.js";
 import { host, mountPageBar, pickable } from "./pagebar.js";
+import { takeFiles } from "./paste.js";
 import { permissionCard } from "./permission.js";
 import { mountTalk } from "./talk.js";
 import { mountFolderPicker } from "./folderpick.js";
+import { mountUploads } from "./uploads.js";
 
 const $ = (id) => document.getElementById(id);
 const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
+const PICTURES_HERE = "Pictures go with New task"; // the Brain's box takes text only
 const STATES = { working: "working", waiting: "waiting in line", your_turn: "your turn", stopped: "stopped",
                  failed: "failed" };
 const quiet = { enabled: false, say() {}, pause() {}, resume() {} }; // the chat answers in text: nothing speaks here
 const agents = new Map(); // the open agents, by id
 let accounts = []; // Settings → Accounts as the app lists them: names and "signed in", never an email
 let pending = null; // the new_task request waiting for its "created"
+let taking = []; // the files that went with it: only those chips go when it is created
 let pendingTimer = null;
 let hereTab = null; // the tab This page showed when "Start it in this page" was last looked at
 let talk = null;
 let bar = null;
 let folders = null; // the Folder picker (agent powers)
+let uploads = null; // New task's attached files: pasted or dropped
 
 function setStatus(state) {
   talk?.connection(state); // a lost line ends a turn, or a question, at once
@@ -103,6 +110,7 @@ function hereChanged(tab) {
 function finish() { // the Start's answer came, or never will: Start can be pressed again
   clearTimeout(pendingTimer);
   pending = null;
+  taking = [];
   $("task-start").disabled = false;
 }
 
@@ -114,18 +122,21 @@ function start() {
     return;
   }
   if (pending) return; // one Start, one agent
-  const why = folders.ready();
+  const why = folders.ready() || uploads.why();
   if (why) {
     flash(why);
     return;
   }
   const folder = folders.value();
+  const files = uploads.ids();
   const here = $("task-here").checked ? bar.current() : null;
   pending = `c${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  taking = files;
   $("task-start").disabled = true;
   const account = $("task-account").hidden ? {} : { account: $("task-account").value };
   const sent = link.send({ type: "new_task", text, skills: [], model: $("task-model").value, request: pending,
-                           ...account, ...(folder ? { folder } : {}), ...(here ? { adopt: here.target } : {}) });
+                           ...account, ...(folder ? { folder } : {}), ...(here ? { adopt: here.target } : {}),
+                           ...(files.length ? { attachments: files } : {}) });
   if (!sent) {
     finish();
     flash(NOT_CONNECTED);
@@ -140,8 +151,10 @@ function useModel(value) { // the model picked last, in AI Home or Mission Contr
 
 function handle(message) {
   folders?.onMessage(message);
+  uploads?.onMessage(message);
   switch (message.type) {
     case "snapshot":
+      uploads?.lost(); // a new connection: the app dropped the files staged for the old one
       agents.clear();
       for (const agent of message.agents || []) agents.set(agent.id, agent);
       accounts = message.accounts || [];
@@ -166,7 +179,9 @@ function handle(message) {
       break;
     case "created":
       if (pending && message.request === pending) {
+        const took = taking;
         finish();
+        uploads.taken(took); // the app moved those into the agent's folder
         $("task").value = "";
         $("task-here").checked = false;
         pickDefault($("task-account"), accounts);
@@ -195,6 +210,9 @@ bar = mountPageBar($("page"), { link, aib: window.aib, agents: ordered, input: $
                                 onChange: hereChanged });
 folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
                             (message) => link.send(message)); // agent powers: the task's folder
+uploads = mountUploads({ list: $("attached"), send: (message) => link.send(message), note: flash });
+takeFiles($("task"), (files) => uploads.add(files), { area: $("new") }); // pasted or dropped: as Build a Mission
+takeFiles($("talk-text"), () => flash(PICTURES_HERE)); // the Brain's box: text only, and nothing opens by itself
 talk = mountTalk({ panel: $("talk"), micButton: $("mic"), link, voice: quiet, hintVoice: false,
                    model: () => $("task-model").value,
                    openAgent: (id) => link.send({ type: "show_app", agent: id }),

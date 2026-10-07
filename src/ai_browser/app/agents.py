@@ -46,6 +46,7 @@ BUSY_MOVE = "{label} is still working: stop it, or wait for its turn to end, the
 NO_CONVERSATION = "no conversation found"
 TRUST_FIRST = "Answer “Trust this folder?” for that folder first"  # agent powers, Decision 7
 LINKED = "This agent's own folder is a link to somewhere else: {path}. Remove the link and try again."
+CLOSED = "That agent has closed"
 NOTE_LIMIT = 300  # characters of Deny's note to the agent
 SUBAGENTS_KEPT = 20  # sub-agents an agent's drawer lists, the newest
 FINISHED = ("your_turn", "stopped", "failed")  # a turn that ended: the room's finished agents (the new look)
@@ -288,7 +289,7 @@ class AgentManager:
         web = web if web in powers.WEB_CHOICES else "web"
         auto = auto is True
         agent_id = f"a{self._seq + 1}"
-        scratch = self.home / "app" / "agents" / agent_id / "work"  # the bridge's own path when no folder is chosen
+        scratch = self._scratch(agent_id)
         try:  # the attached files, into its folder's attachments/
             if work is None:
                 _own_scratch(scratch)  # a link as a<N> or work: refused, with nothing touched
@@ -321,6 +322,28 @@ class AgentManager:
         self._line.append(agent_id)
         self._pump()
         return agent
+
+    def _scratch(self, agent_id: str) -> Path:
+        """An agent's own scratch folder: the bridge's own path when no folder is chosen."""
+        return self.home / "app" / "agents" / agent_id / "work"
+
+    def _attach(self, agent: Agent, files) -> list[str]:
+        """A message's files (the drawer's chat), into its folder's attachments/, as a new task's go: the folder the
+        user chose (still one a task may use), or its own scratch folder (refused if a<N> or work became a link).
+        Nothing is cleared here: the start cleared what an earlier run left, and this run's files stay. All or none
+        (ValueError); returns the names used."""
+        work = agent.folder
+        try:
+            if work is None:
+                work = self._scratch(agent.id)
+                _own_scratch(work)  # a link as a<N> or work: refused, with nothing touched
+            else:
+                why = self.folder_problem(work)
+                if why:
+                    raise ValueError(why)
+            return attachments.place(work, list(files))
+        except OSError as exc:
+            raise ValueError(f"Couldn't save the attached files: {exc.strerror or exc}") from None
 
     def _account_row(self, account_id: str | None) -> dict:
         """{"id", "name"} of the account a new agent runs on: the one asked for, else the default for new agents."""
@@ -379,11 +402,16 @@ class AgentManager:
         status = await self.accounts.status(agent.account["id"])
         return NOT_SIGNED_IN.format(name=agent.account["name"]) if status["signed_in"] is False else ""
 
-    async def send(self, agent_id: str, text: str, tab: dict | None = None) -> bool:
-        """The user's message: now, or after the agent's current answer. False when the agent has closed."""
+    async def send(self, agent_id: str, text: str, tab: dict | None = None, files=()) -> bool:
+        """The user's message: now, or after the agent's current answer. False when the agent has closed. Its `files`
+        ((staged path, name), from the page that staged them) go into the agent's folder first and the message names
+        them; a ValueError when they can't, and then nothing is sent."""
         agent = self.agents.get(agent_id)
         if agent is None:
             return False
+        if files:
+            note = attachments.note(self._attach(agent, files))
+            text = f"{text}{note}" if text else note.lstrip()
         agent.limit = None  # the user's own message: it tries again, on the same account
         agent.pending.append((text, tab or {}, []))
         if agent_id in self._turns or agent_id in self._line or agent.moving:  # after the current turn, or the move
@@ -833,7 +861,7 @@ class AgentManager:
         Its tabs stay its own: the browser connection doesn't change. "" once the move is under way, else why not."""
         agent = self.agents.get(agent_id)
         if agent is None or self.accounts is None:
-            return "That agent has closed"
+            return CLOSED
         if agent.moving:
             return ""  # a second move while one runs does nothing
         label = f"{agent.number} · {agent.name}"

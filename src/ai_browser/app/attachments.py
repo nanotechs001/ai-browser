@@ -20,7 +20,8 @@ from pathlib import Path
 
 from .. import platforms
 
-MAX_FILES = 10
+MAX_FILES = 10  # a task's, or a message's
+STAGED = 2 * MAX_FILES  # a page's at once: Mission Control has two boxes (Build a Mission, an agent's chat)
 MAX_BYTES = 20_000_000  # 20 MB, as the pages count megabytes (1 MB is 1,000,000 bytes)
 CHUNK_CHARS = 1_048_576  # base64 characters in one piece: 768 KiB of the file
 FOLDER = "attachments"
@@ -165,7 +166,7 @@ class Uploads:
             return "", TOO_BIG.format(name=clean)
         mine = self._open.setdefault(key, {})
         self.drop(key, upload)  # the same id again: the page starts that file over
-        if len(mine) >= MAX_FILES:
+        if len(mine) >= STAGED:  # each box keeps its own ten (uploads.js); take() holds a task to ten
             return "", TOO_MANY
         self.folder.mkdir(parents=True, exist_ok=True)
         with contextlib.suppress(OSError):

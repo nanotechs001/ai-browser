@@ -144,6 +144,7 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .checklist .current { color: var(--accent-2); font-weight: 600; }
 .checklist .current .mark { border-color: var(--accent-2); box-shadow: 0 0 8px var(--glow); }
 .current-buttons { margin-top: 12px; }
+.current-buttons .pair { display: inline-flex; gap: 8px; } /* Watch never wraps away from Hand over */
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; }
 .activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .activity-row { width: 100%; display: grid; grid-template-columns: 40px 10px minmax(0, 1fr) auto; gap: 10px;
@@ -202,9 +203,13 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .action.sub { margin-left: 14px; }
 .action .auto { font-size: 11px; border-radius: 999px; padding: 0 6px; margin-right: 6px; color: var(--accent-2);
                 border: 1px solid var(--accent-2); }  /* Auto-approve in its folder ran it without a card */
+.chat-box { display: flex; flex-direction: column; gap: 6px; border-radius: 12px; } /* the chat's box, its chips */
+.chat-box .attached { margin: 0; }
+.chat-box .note:empty { display: none; }
 .composer-line { display: flex; gap: 8px; align-items: flex-end; }
 .composer-line textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px;
                           background: var(--bg); field-sizing: content; max-height: 140px; }
+.composer-line .icon-button { width: 34px; height: 34px; }
 .chip.account { background: transparent; border: 1px solid var(--line); }
 .account-ask { border-color: var(--needs); display: flex; flex-direction: column; gap: 6px; }
 .account-ask p { margin: 0; }
