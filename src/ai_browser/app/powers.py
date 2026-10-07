@@ -33,17 +33,23 @@ from ..syncdir import write_atomic
 # (nothing of the folder's own loads), R3 ASK_ALL = True (every use goes to the app's own check), R4 SUBAGENT_TOOL
 # accepts both "Agent" and "Task" (the name is read from the init event's tools when present) — cost if wrong: a
 # follow-up fix after the probe; never a looser default.
+# The probe ran on 2026-10-07 (Claude Code 2.1.263, macOS): a sandboxed `touch` inside the folder worked, one outside
+# it got "Operation not permitted", and the curl got no network (its reach came as a SandboxNetworkAccess request);
+# `--setting-sources ""` ran no hook and loaded no CLAUDE.md; without the ask rule, in-folder reads, `ls` and `echo one
+# && echo two` were never asked; `--tools Agent` listed nothing and `--tools Task` listed Task, whose uses stream as
+# "Agent".
 # Change one only with the probe's answer (tests/probe_powers.py).
-SANDBOX = False  # R1: Claude Code's Bash sandbox holds in -p mode: writes stay in the folder (macOS only)
-SANDBOX_NETWORK = False  # R1: and a command in it can't reach the network
+SANDBOX = True  # R1: Claude Code's Bash sandbox holds in -p mode: writes stay in the folder (macOS only)
+SANDBOX_NETWORK = True  # R1: and a command in it can't reach the network
 UNTRUSTED_SOURCES = ""  # R2: --setting-sources for a folder that isn't trusted: none of the folder's own settings
 ASK_ALL = True  # R3: a permissions.ask rule brings every command, read and edit to the app
-SUBAGENT_TOOL = "Agent"  # R4: the name handed to Claude Code; both names in SUBAGENTS are read as the sub-agent tool
+SUBAGENT_TOOL = "Task"  # R4: the name handed to Claude Code; both names in SUBAGENTS are read as the sub-agent tool
 
 TOOLS = ("Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch", SUBAGENT_TOOL, "TodoWrite")
 FREE = ("TodoWrite", SUBAGENT_TOOL)  # never asked (Decision 3): also handed to Claude Code as --allowedTools
 ASKED = ("Bash", "Read", "Glob", "Grep", "Edit", "Write")  # R3: Claude Code asks the app for each of their uses
 SUBAGENTS = frozenset({"Agent", "Task"})  # the sub-agent tool, by either name Claude Code has given it
+NETWORK = "SandboxNetworkAccess"  # R1: a sandboxed command asking to reach a site (its input: {"host": ...})
 READS = frozenset({"Read", "Glob", "Grep"})
 EDITS = frozenset({"Edit", "Write"})
 
@@ -92,6 +98,7 @@ WHY_INLINE = "It runs code written on the command line"
 WHY_OPTION = "An option comes before the command's own name"
 WHY_RUNNER = "It runs whatever comes after it"
 WHY_SANDBOX = "It runs outside the sandbox"
+WHY_NETWORK = "A command in the sandbox reaches a site only when you say so, each time"
 WHY_READ = "It reads outside the task's folder"
 WHY_EDIT = "It changes a file outside the task's folder"
 WHY_GUARDED = "It changes Git's or Claude Code's own settings in this folder"
@@ -345,6 +352,8 @@ def _decide(tool: str, data, folder, moved: bool = False) -> tuple[str, str]:
         if not inside(path, folder):
             return "ask_always", WHY_EDIT
         return ("ask_always", WHY_GUARDED) if _guarded(path, folder) else ("ask", "")
+    if tool == NETWORK:
+        return "ask_always", WHY_NETWORK
     if tool == "WebFetch":
         return ("ask", "") if _host(data.get("url")) else ("ask_always", WHY_WEB)
     if tool == "WebSearch" and isinstance(data.get("query"), str) and data["query"].strip():
@@ -400,12 +409,14 @@ BINARY_PROBE = 8192  # characters looked at for a NUL: a binary file shows its s
 _CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f؜​-‏‪-‮⁦-⁩﻿]")
 TITLES = {"Bash": "run a command", "Edit": "edit a file", "Write": "write a file",
           "Read": "read a file outside its folder", "Glob": "list files outside its folder",
-          "Grep": "search files outside its folder", "WebFetch": "fetch a page", "WebSearch": "search the web"}
+          "Grep": "search files outside its folder", "WebFetch": "fetch a page", "WebSearch": "search the web",
+          NETWORK: "let a command reach a site"}
 SANDBOXED = "Runs in Claude Code's sandbox: it can't write outside this folder."
-SANDBOXED_OFFLINE = "Runs in Claude Code's sandbox: it can't write outside this folder or reach the network."
+SANDBOXED_OFFLINE = ("Runs in Claude Code's sandbox: it can't write outside this folder, or reach a site unless you "
+                     "allow it.")
 BADGES = {"Bash": "Bash", "Edit": "Edit", "Write": "Write", "Read": "Read", "Glob": "Read", "Grep": "Read",
           "WebSearch": "Web Search", "WebFetch": "Web Fetch", "Agent": "Sub-agent", "Task": "Sub-agent",
-          "TodoWrite": "To-do list"}
+          "TodoWrite": "To-do list", NETWORK: "Bash"}
 OWN = "mcp__ai-browser__"  # the browser's tools
 SKILL_TOOLS = frozenset({"load_skill", "find_skills", "read_skill_file", "shell"})  # skills, in the sealed Docker box
 SUMMARIZED = frozenset({"Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"}) | SUBAGENTS
@@ -514,6 +525,10 @@ def card(tool: str, data, folder, moved: bool = False, sandbox: bool = False) ->
         shown["text"], shown["site"] = _said(data.get("url")), _host(data.get("url"))
     elif tool == "WebSearch":
         shown["text"] = _said(data.get("query"))
+    elif tool == NETWORK:
+        host = data.get("host")
+        shown["text"] = _said(host)
+        shown["site"] = host.lower() if isinstance(host, str) and re.fullmatch(r"[A-Za-z0-9.-]{1,253}", host) else ""
     else:
         shown["text"] = _said(json.dumps(data, ensure_ascii=False))
     return shown

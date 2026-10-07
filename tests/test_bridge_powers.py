@@ -290,6 +290,20 @@ async def test_a_command_shows_a_card_and_always_saves_a_rule_for_the_folder(  #
     assert behaviors(log) == ["allow", "allow", "deny"]
 
 
+async def test_a_sandboxed_commands_reach_for_a_site_shows_a_card_never_refused_unasked(  # R1, probe 2026-10-07
+        fake_claude, tmp_path, project):
+    from ai_browser.app import powers
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask(powers.NETWORK, {"host": "registry.npmjs.org"}),
+                                  ask(powers.NETWORK, {"host": "example.com"}), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once", ("deny", "not that one")], work=project)
+    await run(bridge, "install it")
+    assert [(request["tool"], request["card"]["text"]) for request in shown] == [
+        (powers.NETWORK, "registry.npmjs.org"), (powers.NETWORK, "example.com")]
+    assert behaviors(log) == ["allow", "deny"]
+
+
 async def test_always_in_the_scratch_folder_lasts_for_this_agent_only(fake_claude, tmp_path):  # plan decision 10
     from ai_browser.app.powers import Rules
 
