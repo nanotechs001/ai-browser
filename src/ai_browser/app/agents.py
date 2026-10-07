@@ -44,6 +44,11 @@ NO_CONVERSATION = "no conversation found"
 TRUST_FIRST = "Answer “Trust this folder?” for that folder first"  # agent powers, Decision 7
 NOTE_LIMIT = 300  # characters of Deny's note to the agent
 SUBAGENTS_KEPT = 20  # sub-agents an agent's drawer lists, the newest
+FINISHED = ("your_turn", "stopped", "failed")  # a turn that ended: the room's finished agents (the new look)
+FILES_KEPT = 50  # files an agent changed, the newest, for History
+RESULT_LIMIT = 200  # characters of its last answer's first line, for History
+WORDS_LIMIT = 20_000  # characters of an answer kept while it streams in
+EDITS = ("Edit", "Write")  # the tools whose path is a file the agent changed
 _SCHEME = re.compile(r"\bhttps?://(?:www\.)?", re.IGNORECASE)
 _FILLER = {"and", "or", "then", "to", "the", "a", "an", "of", "in", "on", "with", "for", "from"}
 _AGENT_ID = re.compile(r"a([0-9]{1,9})")  # the ids the server and the relay accept: ^a[0-9]{1,9}$
@@ -77,6 +82,30 @@ def _not_resumed(event: dict, started: bool) -> bool:
     sign-in check that stopped it isn't one: the next message tries the resume again.)"""
     return event.get("type") == "error" and ((bool(event.get("ended")) and not started)
                                              or NO_CONVERSATION in str(event.get("text", "")).lower())
+
+
+def _first_line(text) -> str:
+    """An answer's first line that has words, at most RESULT_LIMIT characters."""
+    line = next((one.strip() for one in str(text or "").splitlines() if one.strip()), "")
+    return line if len(line) <= RESULT_LIMIT else line[:RESULT_LIMIT - 1].rstrip() + "…"
+
+
+def _timed(old: list, new: list, now: float) -> list:
+    """A to-do list as Claude Code sent it, with each item's times: when it started (first seen in progress) and how
+    long it took (first seen completed). Items are matched by their words, in order; a time once known stays."""
+    left = [dict(item) for item in old]
+    out = []
+    for item in new:
+        before = next((one for one in left if one.get("content") == item.get("content")), None)
+        if before is not None:
+            left.remove(before)
+        status = item.get("status")
+        started = before.get("started") if before is not None and before.get("started") is not None else (
+            now if status == "in_progress" else None)
+        took = before.get("took") if before is not None and before.get("took") is not None else (
+            round(now - started, 1) if status == "completed" and started is not None else None)
+        out.append({**item, "started": started, "took": took})
+    return out
 
 
 @dataclass
@@ -116,11 +145,21 @@ class Agent:
     trusted: bool = False
     todos: list = field(default_factory=list)
     subagents: list = field(default_factory=list)
+    # the new look: its latest action's badge, when its current step started, when it finished, the first line of its
+    # last answer, the files it changed; and the answer streaming in now, and the last whole one
+    badge: str = ""
+    step_since: float | None = None
+    finished: float | None = None
+    result: str = ""
+    files: list = field(default_factory=list)
+    words: str = field(default="", repr=False)
+    said: str = field(default="", repr=False)
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
-                                         "folder", "trusted", "todos", "subagents")
+                                         "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
+                                         "result", "files")
 
     @property
     def number(self) -> int:
@@ -186,6 +225,11 @@ class AgentManager:
             queue.put_nowait(message)
 
     def _changed(self, agent: Agent) -> None:
+        if agent.state in FINISHED and agent.permission is None and agent.check is None:
+            if agent.finished is None:
+                agent.finished = round(time.time(), 1)  # when it ended up done, stopped or failed
+        else:
+            agent.finished = None
         self._broadcast({"type": "agent", "agent": agent.public()})
 
     def _record(self, agent: Agent, event: dict) -> None:
@@ -368,7 +412,8 @@ class AgentManager:
         self._asks[agent_id] = future
         agent.permission = {"request": request["request"], "server": request.get("server", ""),
                             "tool": request["tool"], "input": {} if request.get("card") else request.get("input", {}),
-                            "card": request.get("card"), "sub": str(request.get("sub") or "")}
+                            "card": request.get("card"), "sub": str(request.get("sub") or ""),
+                            "since": round(time.time(), 1)}
         agent.state = "needs_you"
         self._changed(agent)
         self._broadcast({"type": "permission_request", "agent": agent_id, **agent.permission})
@@ -579,19 +624,36 @@ class AgentManager:
                 self._sub_action(agent, str(event["sub"]), line)
             else:
                 agent.status = line
+                agent.badge = str(event.get("badge") or "")
+                at = event.get("at")
+                self._step(agent, float(at) if isinstance(at, (int, float)) and not isinstance(at, bool)
+                           else round(time.time(), 1))
             if event.get("name") == "load_skill":
                 agent.loaded_skills = sorted(agent.bridge.loaded_skills)
         elif kind == "subagent":
             self._subagent(agent, event)
-        elif kind == "todos":  # Claude Code's to-do list (Decision 9), for the drawer and a page opened later
-            agent.todos = [dict(item) for item in event.get("todos") or [] if isinstance(item, dict)]
+        elif kind == "todos":  # Claude Code's to-do list (Decision 9), each item with its times (the new look)
+            agent.todos = _timed(agent.todos, [dict(item) for item in event.get("todos") or []
+                                               if isinstance(item, dict)], round(time.time(), 1))
+            self._step(agent)
         elif kind == "tool_result":
             name, summary = agent.tools.get(event.get("id", ""), (event.get("name", ""), ""))
             ms = event.get("ms")
             agent.last_action = f"{name} {summary}".strip() + (f" · {ms} ms" if ms is not None else "")
+            if name in EDITS and summary and not event.get("is_error"):
+                self._changed_file(agent, summary)
             if self.on_action is not None:
                 with contextlib.suppress(Exception):
                     self.on_action(agent)
+        elif kind == "delta":  # the answer as it streams in: History's result is its first line
+            if len(agent.words) < WORDS_LIMIT:
+                agent.words += str(event.get("text", ""))
+            return
+        elif kind == "message_end":
+            if agent.words.strip():
+                agent.said = agent.words
+            agent.words = ""
+            return
         elif kind == "limit":
             self._end_subagents(agent)
             self._limited(agent, event.get("resets_at"))
@@ -601,6 +663,7 @@ class AgentManager:
             agent.seconds = round(agent.seconds + (event.get("seconds") or 0), 1)
             agent.cost = round(agent.cost + (event.get("cost") or 0), 4)
             agent.status = ""
+            agent.result = _first_line(agent.said or agent.words)
             agent.state = "working" if agent.pending else "stopped" if event.get("stopped") else \
                 "needs_you" if agent.check is not None else "your_turn"
         elif kind == "error":
@@ -637,6 +700,22 @@ class AgentManager:
         for row in agent.subagents:
             if row["state"] == "working":
                 row["state"] = "stopped"
+
+    @staticmethod
+    def _step(agent: Agent, at: float | None = None) -> None:
+        """When the agent's current step started: the to-do in progress, else its latest action (`at`)."""
+        current = next((item for item in agent.todos if item.get("status") == "in_progress"), None)
+        if current is not None and current.get("started") is not None:
+            agent.step_since = current["started"]
+        elif at is not None:
+            agent.step_since = at
+
+    @staticmethod
+    def _changed_file(agent: Agent, path: str) -> None:
+        if path in agent.files:
+            agent.files.remove(path)
+        agent.files.append(path)
+        del agent.files[:-FILES_KEPT]
 
     def _limited(self, agent: Agent, resets_at) -> None:
         """Its account hit its usage limit (the bridge tells it once per turn): the agent pauses, its partial answer
