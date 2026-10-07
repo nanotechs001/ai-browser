@@ -101,13 +101,13 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 /* ---- an agent as a row: the List view, My Missions ---------------------------------------------------------------- */
 .missions-list { display: flex; flex-direction: column; gap: 8px; }
 .mission { display: flex; align-items: center; gap: 8px; }
-.mission .open { flex: 1; min-width: 0; display: grid; grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1fr) 112px 56px;
+.mission .open { flex: 1; min-width: 0; display: grid; grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1fr) 112px 64px;
                  gap: 12px; align-items: center; padding: 10px 14px; text-align: left; border-radius: 12px;
                  background: var(--card); border: 1px solid var(--line); }
 .mission .words, .mission .meta { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .mission .step-words { color: var(--text-2); font-size: 13px; }
 .mission .chip { justify-self: end; }
-.mission .time { font-variant-numeric: tabular-nums; }
+.mission .time { font-variant-numeric: tabular-nums; white-space: nowrap; }
 @media (max-width: 899px) {
   .mission .open { grid-template-columns: 44px minmax(0, 1fr) auto; }
   .mission :is(.meta, .time) { display: none; }
@@ -235,13 +235,13 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
                                 color: var(--text); }
 .page .search { width: min(340px, 100%); }
 .history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.history-row { display: grid; grid-template-columns: 44px minmax(0, 2fr) 72px 52px minmax(0, 0.8fr) 120px auto;
+.history-row { display: grid; grid-template-columns: 44px minmax(0, 2fr) 72px 64px minmax(0, 0.8fr) 120px auto;
                gap: 12px; align-items: center; padding: 10px 14px; border-radius: 12px; background: var(--card);
                border: 1px solid var(--line); }
 .history-row .words { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .history-row .result { color: var(--text-2); font-size: 13px; }
 .history-row .chip { justify-self: start; }
-.history-row .took { font-variant-numeric: tabular-nums; }
+.history-row .took { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .history-row .files { white-space: nowrap; }
 @media (max-width: 899px) {
   .history-row { grid-template-columns: 44px minmax(0, 1fr) auto; }

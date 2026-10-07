@@ -628,3 +628,23 @@ async def test_the_columns_line_up_row_by_row_in_my_missions_and_history(stack):
     for part in ("chip", "took", "account", "files", "open"):
         found = await js(edges("history", ".history-row", f".{part}", "left"))
         assert len(set(found)) == 1, (part, found)
+
+
+@CHROME
+async def test_a_long_run_time_stays_on_one_line_in_my_missions_and_history(stack):  # review of Task 14
+    agents = stack["server"].agents
+    for words in ("one", "two"):
+        await agents.create(words)  # the stack's script: done at once
+    await wait_for(lambda: agents.agents["a1"].state == agents.agents["a2"].state == "your_turn")
+    js = await open_mission(stack)
+    for page, row, part in (("missions", ".mission", ".time"), ("history", ".history-row", ".took")):
+        await js(f"{page_link(page)}.click(); true")
+        nodes = f"[...document.querySelectorAll('#page-{page} {row} {part}')]"
+        assert await until(js, f"{nodes}.length === 2")
+        heights = await js(f"(() => {{ const nodes = {nodes}; const heights = [];"  # each time the page may say, all rows
+                           " for (const text of ['2s', '12m 05s', '59m 59s', '23h 59m']) {"  # set at once, so no update
+                           "   for (const node of nodes) node.textContent = text;"            # comes between
+                           "   heights.push(nodes.map(node => Math.round(node.getBoundingClientRect().height))); }"
+                           " return heights; })()")
+        assert all(one == heights[0] for one in heights), (part, heights)  # one line, whatever the time
+        assert await js(f"{nodes}.every(node => getComputedStyle(node).whiteSpace === 'nowrap')"), part
