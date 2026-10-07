@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import math
 import os
 import re
 import secrets
@@ -354,17 +353,20 @@ class Accounts:
         anything else."""
         if not isinstance(value, dict):
             return None
-        used = value.get("used")
-        if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used) \
-                or not 0 <= used <= 100 or seconds(at) is None:
+        used = value.get("used")  # compared, never converted first: NaN, infinity and huge integers fail
+        if isinstance(used, bool) or not isinstance(used, (int, float)) or not 0 <= used <= 100 or seconds(at) is None:
             return None
         return {"used": float(used), "resets_at": seconds(value.get("resets_at")), "at": seconds(at)}
 
     def _read_usage(self) -> dict[str, dict]:
+        """usage.json's sane readings of the listed accounts; {} for a file that can't be read, however odd (too deep
+        for the parser, a number too big for a float): the app always starts."""
         try:
-            data = json.loads(self.usage_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            return self._usage_from(json.loads(self.usage_path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError, OverflowError, RecursionError):
             return {}
+
+    def _usage_from(self, data) -> dict[str, dict]:
         found, listed = {}, {account.id for account in self.list()}
         accounts = data.get("accounts") if isinstance(data, dict) else None
         for account_id, windows in accounts.items() if isinstance(accounts, dict) else ():

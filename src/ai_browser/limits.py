@@ -15,7 +15,6 @@ five_hour is the current session's limit, seven_day the week's. Only a known win
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 
@@ -32,10 +31,12 @@ class Limit:
 
 
 def seconds(value) -> float | None:
-    """A time in seconds since 1970, as a float, if it is a sane one (EARLIEST to LATEST); else None."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    """A time in seconds since 1970, as a float, if it is a sane one (EARLIEST to LATEST); else None. The range is
+    compared before anything is made a float: NaN and infinity fail it, and an integer too big for a float never
+    raises."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not EARLIEST <= value <= LATEST:
         return None
-    return float(value) if EARLIEST <= value <= LATEST else None
+    return float(value)
 
 
 def from_text(text) -> Limit | None:
@@ -68,9 +69,8 @@ SHOWN_WINDOWS = ("five_hour", "seven_day")  # the Usage card's: the current sess
 def percent(fraction) -> float | None:
     """A utilization (a fraction from 0 to 1) as a percentage, to a tenth; None for anything else (a bool, a string,
     NaN, infinity, below 0 or above 1)."""
-    if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not math.isfinite(fraction) \
-            or not 0 <= fraction <= 1:
-        return None
+    if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not 0 <= fraction <= 1:
+        return None  # compared, never converted first: NaN, infinity and huge integers all fail it
     return round(fraction * 100, 1)
 
 

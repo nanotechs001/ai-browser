@@ -65,6 +65,11 @@ def test_only_a_fraction_from_0_to_1_makes_a_percentage():
     for bad_time in (True, "soon", float("nan"), float("inf"), 5, 10**13, None):  # no sane time: none at all
         assert limits.windows_from_event(windows(seven_day={"utilization": 0.2, "resetsAt": bad_time})) == {
             "seven_day": {"used": 20.0, "resets_at": None}}, bad_time
+    huge = 10**400  # a number too big for a float: dropped, never an OverflowError that ends the agent's turn
+    assert limits.windows_from_event(windows(five_hour={"utilization": huge}, seven_day={"utilization": 0.2,
+                                                                                         "resetsAt": huge})) == {
+        "seven_day": {"used": 20.0, "resets_at": None}}
+    assert limits.from_event(event({"status": "rejected", "resetsAt": huge})) == limits.Limit()
     known = windows(seven_day_opus={"utilization": 0.3}, seven_day_sonnet={"utilization": 0.4},
                     ten_minute={"utilization": 0.5}, five_hour="half", seven_day=None)
     assert limits.windows_from_event(known) == {"seven_day_opus": {"used": 30.0, "resets_at": None},
@@ -99,6 +104,7 @@ def test_anything_but_a_reading_is_never_kept(tmp_path):
 
     accounts = Accounts(tmp_path)
     for nothing in (None, "64%", [READ], {"five_hour": {"used": True}}, {"five_hour": {"used": 101.0}},
+                    {"five_hour": {"used": 10**400}}, {"five_hour": {"used": float("inf")}},
                     {"five_hour": {"used": -1}}, {"five_hour": {"used": float("nan")}}, {"five_hour": "64"},
                     {"ten_minute": {"used": 5.0, "resets_at": None}}):
         accounts.set_windows("default", nothing)
@@ -108,9 +114,19 @@ def test_anything_but_a_reading_is_never_kept(tmp_path):
     assert not (tmp_path / "usage.json").exists()
 
 
+HUGE = "1" + "0" * 400  # a 400-digit integer: too big for a float
+NESTED = '{"accounts": ' + "[" * 100_000 + "]" * 100_000 + "}"  # deeper than Python's recursion limit
+
+
 @pytest.mark.parametrize("text", ["", "not json", "[1, 2]", '{"accounts": "default"}', '{"accounts": [1]}',
-                                  '{"accounts": {"default": "64%"}}', '{"accounts": {"default": {"five_hour": 64}}}'])
-def test_an_unreadable_usage_file_reads_as_empty(tmp_path, text):
+                                  '{"accounts": {"default": "64%"}}', '{"accounts": {"default": {"five_hour": 64}}}',
+                                  f'{{"accounts": {{"default": {{"five_hour": {{"used": {HUGE}, "resets_at": null,'
+                                  f' "at": 1800000000}}}}}}}}',
+                                  f'{{"accounts": {{"default": {{"five_hour": {{"used": 5, "resets_at": {HUGE},'
+                                  f' "at": {HUGE}}}}}}}}}', NESTED],
+                         ids=["empty", "not-json", "a-list", "accounts-a-string", "accounts-a-list", "a-string",
+                              "a-number", "huge-used", "huge-times", "nested"])
+def test_an_unreadable_usage_file_reads_as_empty(tmp_path, text):  # never a crash: the app always starts
     from ai_browser.accounts import Accounts
 
     (tmp_path / "usage.json").write_text(text, encoding="utf-8")
