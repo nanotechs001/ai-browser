@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import re
+import shutil
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
@@ -76,6 +78,22 @@ def _name(text: str) -> str:
     while len(parts) > 1 and parts[-1].lower().strip(",.;:") in _FILLER:
         parts.pop()
     return " ".join(parts).rstrip(",.;:") or "task"
+
+
+def _clear_attachments(scratch: Path) -> None:
+    """Whatever an earlier run left as `attachments` in an agent's own scratch folder (ids restart at a1 every run, the
+    folder stays): a link is unlinked, never followed (what it leads to is not ours); a folder is removed (rmtree
+    doesn't follow links inside it either); a plain file is removed. Never used for a folder the user chose."""
+    stale = scratch / attachments.FOLDER
+    if stale.is_symlink() or os.path.isjunction(stale):
+        try:
+            os.unlink(stale)
+        except OSError:
+            os.rmdir(stale)  # a Windows junction: removed as a folder, its contents untouched
+    elif stale.is_dir():
+        shutil.rmtree(stale)
+    elif stale.exists():
+        stale.unlink()
 
 
 def _not_resumed(event: dict, started: bool) -> bool:
@@ -255,8 +273,11 @@ class AgentManager:
         work, trusted = self._folder_for(folder)  # and so does a refused folder
         web = web if web in powers.WEB_CHOICES else "web"
         agent_id = f"a{self._seq + 1}"
-        try:  # the attached files, into its folder's attachments/ (the scratch folder is the bridge's own path)
-            saved = attachments.place(work or self.home / "app" / "agents" / agent_id / "work", list(files))
+        scratch = self.home / "app" / "agents" / agent_id / "work"  # the bridge's own path when no folder is chosen
+        try:  # the attached files, into its folder's attachments/
+            if work is None:
+                _clear_attachments(scratch)  # ids restart each run: the last run's a<N> left its files here
+            saved = attachments.place(work or scratch, list(files))
         except OSError as exc:
             raise ValueError(f"Couldn't save the attached files: {exc.strerror or exc}") from None
         self._seq += 1

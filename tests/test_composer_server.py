@@ -37,6 +37,7 @@ async def test_web_picks_the_agents_web_tools(fake_claude, tmp_path, web, web_to
     assert "Bash" in tools and "Read" in tools  # its own tools stay
     blocked = flag(argv, "--disallowedTools").split(",")
     assert ("mcp__ai-browser__open" in blocked and "mcp__ai-browser__act" in blocked) is page_tools_blocked
+    assert ("mcp__ai-browser__shell" in blocked) is page_tools_blocked  # its Docker shell has the internet: "none"
     assert "mcp__ai-browser__load_skill" not in blocked and "mcp__ai-browser__sandbox_start" in blocked
 
 
@@ -79,6 +80,8 @@ async def test_attached_files_land_in_the_agents_folder_and_are_named_in_the_tas
             assert first.startswith("look at these\n\nThe user attached these files.")
             assert "- attachments/shot.png (a picture: look at it with Read)" in first
             assert agent.web == "brave" and agent.name == "look at these"
+            tools = flag(commands(log)[0], "--tools").split(",")
+            assert "WebSearch" not in tools and "WebFetch" not in tools and "Bash" in tools  # web= reached the bridge
             assert list((tmp_path / "home" / "app" / "uploads").glob("*.part")) == []
     finally:
         await server.agents.close_all()
@@ -140,3 +143,94 @@ async def test_files_left_by_a_crash_are_cleared_at_start(fake_claude, tmp_path)
         assert not (left / "old.part").exists()
     finally:
         await server.stop()
+
+
+def scratch_manager(fake_claude, tmp_path):
+    from ai_browser.app.agents import AgentManager
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    return AgentManager(tmp_path / "home", claude=runner)
+
+
+def staged(tmp_path, data=b"new"):
+    path = tmp_path / "staged.part"
+    path.write_bytes(data)
+    return path
+
+
+async def test_an_agents_scratch_folder_is_never_reused_with_a_past_runs_attachments(  # Review I2
+        fake_claude, tmp_path):
+    """Agent ids restart at a1 every run, and a1's scratch folder is still there: a new a1 starts without the old
+    attachments (a folder or a link), whatever it attaches itself, and a link's target is never touched."""
+    agents = scratch_manager(fake_claude, tmp_path)
+    work = tmp_path / "home" / "app" / "agents" / "a1" / "work"
+    (work / "attachments").mkdir(parents=True)
+    (work / "attachments" / "old.txt").write_text("last run's", encoding="utf-8")
+    (work / "attachments" / "inner").mkdir()
+    try:
+        agent = await agents.create("x", files=[(staged(tmp_path), "new.txt")])
+        assert agent.id == "a1"
+        await wait_for(lambda: agent.state == "your_turn")
+        assert [path.name for path in (work / "attachments").iterdir()] == ["new.txt"]
+        assert (work / "attachments" / "new.txt").read_bytes() == b"new"
+        assert "old.txt" not in told(fake_claude[1])[0]
+        second = await agents.create("y")  # no files at all: a2's folder was never used, nothing to clear
+        assert second.id == "a2" and not (work.parent.parent / "a2" / "work" / "attachments").exists()
+    finally:
+        await agents.close_all()
+
+
+async def test_a_stale_attachments_link_in_the_scratch_folder_is_unlinked_not_followed(
+        fake_claude, tmp_path):  # Review I2
+    from conftest import symlink_or_skip
+
+    agents = scratch_manager(fake_claude, tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("not the agent's", encoding="utf-8")
+    work = tmp_path / "home" / "app" / "agents" / "a1" / "work"
+    work.mkdir(parents=True)
+    symlink_or_skip(outside, work / "attachments")
+    try:
+        agent = await agents.create("x", files=[(staged(tmp_path), "new.txt")])
+        await wait_for(lambda: agent.state == "your_turn")
+        assert not (work / "attachments").is_symlink()
+        assert [path.name for path in (work / "attachments").iterdir()] == ["new.txt"]
+        assert [path.name for path in outside.iterdir()] == ["keep.txt"]  # untouched: no file in, none out
+        assert (outside / "keep.txt").read_text(encoding="utf-8") == "not the agent's"
+    finally:
+        await agents.close_all()
+
+
+async def test_a_stale_attachments_link_goes_even_when_nothing_is_attached(fake_claude, tmp_path):  # Review I2
+    from conftest import symlink_or_skip
+
+    agents = scratch_manager(fake_claude, tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("x", encoding="utf-8")
+    work = tmp_path / "home" / "app" / "agents" / "a1" / "work"
+    work.mkdir(parents=True)
+    symlink_or_skip(outside, work / "attachments")
+    try:
+        agent = await agents.create("x")
+        await wait_for(lambda: agent.state == "your_turn")
+        assert not (work / "attachments").exists() and not (work / "attachments").is_symlink()
+        assert (outside / "keep.txt").exists()
+    finally:
+        await agents.close_all()
+
+
+async def test_a_chosen_folders_own_attachments_are_never_cleared(fake_claude, tmp_path, user_home):  # Review I2
+    agents = scratch_manager(fake_claude, tmp_path)
+    project = tmp_path / "project"
+    (project / "attachments").mkdir(parents=True)
+    (project / "attachments" / "mine.txt").write_text("the user's own", encoding="utf-8")
+    agents.rules.trust(project)
+    try:
+        agent = await agents.create("x", folder=str(project))
+        await wait_for(lambda: agent.state == "your_turn")
+        assert (project / "attachments" / "mine.txt").read_text(encoding="utf-8") == "the user's own"
+    finally:
+        await agents.close_all()

@@ -548,12 +548,15 @@ def badge(name) -> str:
 WEB_CHOICES = ("web", "brave", "none")  # the new look's Web ▾: Web + Brave (the default), Brave only, No web
 WEB_TOOLS = ("WebSearch", "WebFetch")
 BROWSER_TOOLS = ("open", "observe", "act", "screenshot", "tabs", "page_log", "extract", "js", "qa", "sandbox_start",
-                 "sandbox_stop", "sandbox_status")  # the browser's page tools; its skill tools stay
+                 "sandbox_stop", "sandbox_status",
+                 "shell")  # what "No web" blocks: the page tools, and the shell (it runs in Docker, with the internet)
+# Not blocked by it: the skill tools (load_skill, find_skills, read_skill_file) and read_file and write_file.
 
 
 def web_tools(choice) -> tuple[tuple[str, ...], list[str]]:
     """(Claude Code's --tools, more --disallowedTools) for a task's Web ▾: "brave" drops WebSearch and WebFetch, "none"
-    also blocks the browser's page tools. Anything else is the default, "web"."""
+    also blocks the browser's page tools and its shell (a Docker shell with the internet: curl would be a way to the
+    web). Its skill tools, read_file and write_file stay. Anything else is the default, "web"."""
     choice = choice if choice in WEB_CHOICES else "web"
     tools = TOOLS if choice == "web" else tuple(tool for tool in TOOLS if tool not in WEB_TOOLS)
     blocked = [f"{OWN}{name}" for name in BROWSER_TOOLS] if choice == "none" else []
