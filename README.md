@@ -521,48 +521,84 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
 - **Assign it:** pick it in a workflow's skills (or for one task in AI Home's Skills menu), and that workflow's agent
   loads it first.
 
-## Mission Control (your agents at work, in 3D)
+## Mission Control (your AI office)
 
-**Mission Control**, a tab of AI Browser's window (or its button in AI Home's header), is a dark control room:
-- **Stations:** every agent works at its own little desk, where a chibi office worker in a tie of the agent's colour
-  sits beside the monitor. The art is drawn in code on this computer: nothing is downloaded.
-  - Its monitor shows the tab it works in (the same pictures as AI Home), and the ticker its last action
-    ("click e14 · 38 ms").
-  - The light shows its state: green working, amber waiting in line, ✓ done, red failed. The worker shows it too: he
-    types while the agent works, checks his watch while it waits, gives a thumbs up when it is done, slumps on the
-    desk when it failed, and dozes when it was stopped.
-  - A station that **needs you** (a tool waiting for your permission) glows, and its worker turns to you and waves.
-  - A new agent arrives with a short scene: the Brain flares, a spark flies to its desk, the monitor switches on, and
-    the worker pops up and waves.
-  - Each nameplate shows the agent's number and name ("1 · Fix the footer"). The number stays the same while the app
-    runs, so "agent 2" always means the same agent; numbers start at 1 again when the app restarts.
-  - Click a station, or pick it from **List**: the drawer shows its state, **Watch**, **Stop**, **Close**, its
-    permission card (**Allow once**, **Always allow**, **Deny**), **Your tabs** and its chat. When agents work in
-    your Brave, **Give to this agent** under **Your tabs** hands it one of your own tabs, as AI Home's **Hand over**
-    does.
-- **The Brain** floats in the middle as a brain of glowing points, turning slowly:
-  - it drifts while idle, sends a wave of light across itself while it sorts messages or writes a draft, and beats
-    like a heart, in amber, while something needs you, its signals gathering on the side of the agent that waits (the
-    count shows under it); each word it speaks sends a ring of light across it;
-  - without WebGL it is a dotted brain in the same colours, and on a slower computer it draws fewer points;
-  - click it for its inbox (Draft reply, Use draft, Hand to agent…).
-- **Talking back:** the Brain's updates show in a speech bubble, one at a time: a new message that needs your reply, a
-  draft that is ready, an agent that is done, failed, or waits for a permission. More than three at once become one
-  summary. Only names and the Brain's one-line summaries are used, never a message's text.
-- **Voice** (top bar): the updates are also spoken, only with a voice that runs on this Mac, so nothing is sent
-  anywhere. It is off by default, and AI
-  Browser remembers it. Without such a voice, it says so and stays off.
-- **The task bar** at the bottom starts an agent, like AI Home's box. The mic button beside **Start** talks to the
-  Brain (see "Talking to the Brain", below).
-- **Moving around:** drag to turn the room, scroll to zoom, double-click to reset. Keys: ← → turn, ↑ ↓ tilt, + − zoom,
-  0 resets. With Reduce Motion on (System Settings → Accessibility → Display), the room, the workers and the Brain
-  stand still: a change is a short colour fade, and a new agent's desk simply appears.
+**Mission Control**, a tab of AI Browser's window (or its button in AI Home's header), is your agents' office, in the
+same dark navy and neon blue as the rest of AI Browser. It is drawn in code on this computer: nothing is downloaded.
+
+- **The left menu:** the counts ("1 active task · 3 completed"), **New Mission** (⌘K; Ctrl+K on Windows), and the
+  pages:
+  - **Dashboard:** the office, with **Flow · List · Calendar**;
+  - **My Missions:** every agent as a row, filtered by All · Working · Needs you · Done;
+  - **Templates:** your workflows (Run, Edit, New template);
+  - **Knowledge:** your skills and what each one teaches, and Train. **Remove** hides a skill from AI Browser's agents
+    and never deletes its files (it is listed under `blocked_skills` in `~/.ai-browser/config.json`); **Bring back**
+    undoes it. **Remove** applies to the agents you start next: agents that are running keep the skills they started
+    with;
+  - **Integrations:** your tools, switched on or off per account;
+  - **History:** this run's finished agents, with the result, the time, the account and the files changed, and a
+    search. **Open** shows the whole chat.
+- **Workspaces:** named groups of agents and templates, kept in `~/.ai-browser/workspaces.json`. Click one to see only
+  its agents and templates (click again for all); **⋯** renames or deletes it. Deleting removes the grouping only: its
+  agents keep running. An agent stays in its workspace for this run (agent numbers start again after a restart). With a
+  workspace picked and none of its missions in the room, the office says "No missions in this workspace". The Calendar
+  follows the picked workspace too.
+- **The Usage card:** each account's usage. It shows a percentage only when Claude Code reports one; otherwise it says
+  "Within limits", or "At its limit until 9:00 pm". Click it for Settings → Accounts.
+- **The office (Flow):** one round desk per agent, in rings around a glowing globe.
+  - Each agent is a chibi in a hoodie and headphones at a laptop. It types while it works, waits in line, waves when it
+    needs you, gives a thumbs up when it is done, and slumps when it failed. Its sub-agents are smaller chibis at its
+    desk.
+  - Above the desk, its step card: the current step from its to-do list ("2. Analyze"), the timer, the badge of its
+    latest action (Bash, Edit, Web Search, Browser Agent…), ✓ and the time it took once it is done, and the latest
+    picture of its tab.
+  - Each desk's nameplate shows the agent's number and name ("1 · Fix the footer"). The number stays the same while
+    the app runs, so "agent 2" always means the same agent; numbers start at 1 again when the app restarts.
+  - Dotted lines run from each desk to the globe. The globe is the Brain: it glows while the Brain works, turns amber
+    when something needs you, and opens the Brain's inbox when you click it.
+  - Many agents: past 12 desks, the oldest finished agents leave the room (they stay in My Missions and History), and
+    with more than 6 desks the step cards fold to chips. At 20 or more desks the office gets small: read the names in
+    **List**, or zoom in. An empty room says "Start a mission below".
+  - The room stands still while its tab or the window is hidden, and with Reduce Motion on (System Settings →
+    Accessibility → Display).
+  - Drag to turn, scroll to zoom, double-click to reset. Keys: ← → turn, ↑ ↓ tilt, + − zoom, 0 resets.
+- **List** shows the room's agents as rows. **Calendar** shows a month, or a week, with your scheduled templates' next
+  runs and this run's finished agents. A scheduled run that has passed isn't shown.
+- **The right column**, for the agent you click (or the one at work):
+  - **Mission Progress:** "3 / 5 steps complete", the bar, and your agents as Completed, In Progress and Pending;
+  - **Current Task:** its step and timer, its checklist (its to-do list, or its latest actions without one), and
+    **Stop**, **Chat** and **Hand over**. **Answer** shows when a card waits; clicking a desk that needs you opens its
+    card too;
+  - **Chat** opens the agent's drawer: its state, **Watch**, **Stop**, **Close**, its permission card (**Allow once**,
+    **Always allow**, **Deny**), **Your tabs** and its chat. When agents work in your Brave, **Give to this agent**
+    under **Your tabs** hands it one of your own tabs, as AI Home's **Hand over** does;
+  - **Recent Activity:** started, a step done, needs you, finished. **See all** opens History.
+- **The composer:** **Ask AI** (the Brain answers and proposes; nothing runs until you press Start or Send, or say
+  yes), **Build a Mission** (a new agent) and **Use a Template** (a workflow, with your words added). Under the box:
+  - **Attach:** at most 10 files, 20 MB each. They are copied into the agent's folder under `attachments/`, never over
+    a file that is there (a duplicate becomes "name (2).ext"), and the task names them. Pictures reach the agent through
+    Claude Code's own Read. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
+    that folder has been replaced by a link, the task refuses to start and names it. After a reconnect, a file that was
+    not yet sent says "Not sent: attach it again".
+  - **Web:** **Web + Brave** (the default), **Brave only** (no WebSearch or WebFetch), or **No web** (no web tools at
+    all). **No web** also stops the skills' Docker shell: skills' instructions still load, but their scripts don't run
+    in a "No web" task;
+  - **Model**, **Account**, **Folder** and **Workspace**; the mic (in Ask AI it talks to the Brain; otherwise your words
+    fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
+  - On a narrow window the pickers fold into **⋯ Options**, the right column moves under the office, and the menu
+    shows icons only.
+- **Talking back:** the Brain's updates show in a speech bubble over the globe, one at a time: a new message that
+  needs your reply, a draft that is ready, an agent that is done, failed, or waits for a permission. More than three
+  at once become one summary. Only names and the Brain's one-line summaries are used, never a message's text.
+- **Voice** (beside the composer's modes): the updates are also spoken, only with a voice that runs on this Mac, so
+  nothing is sent anywhere. It is off by default, and AI Browser remembers it. Without such a voice, it says so and
+  stays off.
 
 ## Talking to the Brain (push-to-talk, speech to text on this computer)
 
 In Mission Control, hold **Space** (while no text box or button has focus) and talk to the Brain, then let go. Or
 hold the **mic button** beside Start, or click it once to start and again to stop. **Esc** throws the turn away, and a
-turn stops by itself at 30 seconds. The **Ask the Brain** box does the same, typed.
+turn stops by itself at 30 seconds. **Ask AI**, in the composer, does the same, typed.
 - **Your voice stays on this computer.** The microphone is open only while you talk: no wake word, nothing in the
   background. The sound goes to `ai-browser app` over 127.0.0.1, and Whisper (faster-whisper, `base.en`, on the CPU)
   turns it into text there. The sound is kept in memory for that turn only, never saved or logged, and no cloud speech
@@ -592,7 +628,7 @@ turn stops by itself at 30 seconds. The **Ask the Brain** box does the same, typ
   measured here). The first turn after the app starts takes a few seconds longer while the model loads.
 - **Windows:** the same on 64-bit Windows. On Windows on Arm the extra can't install (CTranslate2 has no wheel there),
   so Mission Control stays at its setup card; use Voice Access instead, as that card suggests.
-- **No setup at all:** macOS Dictation types into any text box in AI Browser (the task bar, an agent's message box,
+- **No setup at all:** macOS Dictation types into any text box in AI Browser (the composer, an agent's message box,
   Tell the Brain): press the Microphone key, use Edit → Start Dictation, or the shortcut in System Settings → Keyboard
   → Dictation. On Apple silicon it runs on the Mac for supported languages, and that settings page shows whether it
   does. On Windows, Voice Access (Windows 11) runs on the PC, while Win+H voice typing sends audio to Microsoft.

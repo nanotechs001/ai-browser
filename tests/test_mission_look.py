@@ -1123,3 +1123,15 @@ async def test_the_calendar_follows_the_menus_workspace_for_templates_as_for_age
     assert await until(js, f"JSON.stringify({slugs}) === '[\"check-often\"]'")
     await js(f"{pick('Docs')}.click(); true")  # picked again: every template
     assert await until(js, f"JSON.stringify({slugs}) === '[\"check-often\",\"morning-report\",\"weekly-plan\"]'")
+
+
+def test_the_readme_describes_the_new_look():  # what the user reads first
+    from pathlib import Path
+
+    readme = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for phrase in ("## Mission Control (your AI office)", "`~/.ai-browser/workspaces.json`", "never deletes its files",
+                   "a percentage only when Claude Code reports one", '"Within limits"', "under `attachments/`",
+                   '"name (2).ext"', "**Brave only**", "**⋯ Options**",
+                   "past 12 desks, the oldest finished agents leave the room", "**Ask AI**, in the composer"):
+        assert phrase in readme, phrase
+    assert "brain of glowing points" not in readme and "WebGL" not in readme
