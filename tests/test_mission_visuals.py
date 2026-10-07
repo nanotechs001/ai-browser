@@ -391,134 +391,6 @@ async def test_without_webgl_the_orb_is_a_dotted_brain(stack):
     assert await js(f"{stage}.dataset.points") is None
 
 
-# ---- the workers, in a pose harness: one worker per state in a test container ----------------------------------------
-
-POSE_STATES = ["working", "waiting", "needs_you", "your_turn", "failed", "stopped"]
-PARTS = ["body", "head", "face", "blink", "sweat", "arm-l", "arm-r", "arm-up", "arm-thumb", "sparkle"]
-POSES = """(async () => {
-  const chibi = await import('/chibi.js');
-  chibi.ensureDefs(document);
-  const box = document.createElement('div');
-  box.id = 'poses';
-  box.style.cssText = 'position: fixed; left: 0; top: 60px; display: flex; gap: 8px; z-index: 5';
-  for (const state of ['working', 'waiting', 'needs_you', 'your_turn', 'failed', 'stopped']) {
-    const station = document.createElement('div');
-    station.className = 'station';
-    station.dataset.state = state;
-    station.style.setProperty('--c', '#4c8df6');
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.append(chibi.createWorker('pose-' + state));
-    station.append(card);
-    box.append(station);
-  }
-  document.body.append(box);
-  window.chibi = chibi;
-  return true;
-})()"""
-
-
-def worker(state, part=""):
-    return f"document.querySelector('#poses .station[data-state=\"{state}\"] .worker {part}'.trim())"
-
-
-def opacity(state, part):
-    return f"getComputedStyle({worker(state, part)}).opacity"
-
-
-async def poses(stack):
-    """Mission Control, in front, with the pose harness (`window.chibi` is the module)."""
-    js = await open_with(stack)
-    await front(stack, js)
-    assert await js(POSES)
-    return js
-
-
-@CHROME
-async def test_a_worker_is_made_of_parts_with_no_text_or_pictures(stack):
-    js = await poses(stack)
-    assert await js("window.chibi.PARTS") == PARTS
-    for state in POSE_STATES:
-        found = await js(f"[...{worker(state)}.children].map(part => [part.className,"
-                         " part.querySelectorAll(':scope > svg').length, part.children.length])")
-        assert found == [[f"part {name}", 1, 1] for name in PARTS], state
-        assert await js(f"{worker(state)}.textContent") == ""
-        assert await js(f"{worker(state)}.querySelectorAll('image, foreignObject, text, use').length") == 0
-        assert await js(f"{worker(state)}.getAttribute('aria-hidden')") == "true"
-
-
-@CHROME
-async def test_the_id_picks_the_hair_and_the_skin(stack):
-    js = await poses(stack)
-    assert await js("window.chibi.variantOf('a1')") == {"hair": 1, "skin": 1}
-    assert await js("window.chibi.variantOf('a1')") == {"hair": 1, "skin": 1}  # every time
-    assert await js("new Set(Array.from({length: 20}, (_, index) => {"
-                    " const variant = window.chibi.variantOf('a' + (index + 1));"
-                    " return variant.hair + '-' + variant.skin; })).size") == 9
-    made, wanted = await js("(() => { const made = window.chibi.createWorker('a7');"
-                            " const variant = window.chibi.variantOf('a7');"
-                            " return [[made.dataset.hair, made.dataset.skin], [String(variant.hair),"
-                            " String(variant.skin)]]; })()")
-    assert made == wanted
-
-
-@CHROME
-async def test_a_workers_pose_shows_the_agents_state(stack):
-    js = await poses(stack)
-    shown = {
-        "working": {".arm-l": "1", ".arm-r": "1", ".arm-up": "0", ".arm-thumb": "0", ".eyes-open": "1"},
-        "needs_you": {".arm-up": "1", ".arm-r": "0", ".mouth-o": "1"},
-        "your_turn": {".arm-thumb": "1", ".arm-r": "0", ".eyes-happy": "1"},
-        "failed": {".eyes-shut": "1", ".mouth-sad": "1", ".sweat": "1"},
-        "stopped": {".eyes-shut": "1"},
-    }
-    for state, parts in shown.items():
-        for part, value in parts.items():
-            assert await js(opacity(state, part)) == value, (state, part)
-    assert await js(f"getComputedStyle({worker('failed', '.head')}).transform") != "none"
-    filters = await js(f"[...{worker('stopped')}.querySelectorAll('.part')].map(part => getComputedStyle(part).filter)")
-    assert len(filters) == len(PARTS) and "none" not in filters
-    delays = await js(f"getComputedStyle({worker('working', '.blink')}).animationDelay.split(',').map(parseFloat)")
-    assert [round(delay, 3) for delay in delays] == [0, -0.2]  # the nod, then the blink: pose-working is hair 0, skin 1
-
-
-@CHROME
-async def test_the_worker_itself_never_makes_a_stacking_context(stack):
-    js = await poses(stack)
-    for state in POSE_STATES:
-        style = await js(f"(() => {{ const style = getComputedStyle({worker(state)}); return [style.transform,"
-                         " style.filter, style.opacity, style.willChange, style.zIndex, style.isolation]; })()")
-        assert style == ["none", "none", "1", "auto", "auto", "auto"], state
-        layers = await js(f"[...{worker(state)}.children].map(part => getComputedStyle(part).zIndex)")
-        assert layers == ["1"] * 5 + ["3"] * 5, state  # behind the desk (layer 2), or in front of it
-
-
-@CHROME
-async def test_only_html_layers_are_animated(stack):
-    js = await poses(stack)
-    assert await js("document.getAnimations().filter(animation => animation.effect"
-                    " && animation.effect.target instanceof SVGElement).length") == 0
-    assert await js("document.getAnimations().some(animation => animation.effect"
-                    " && animation.effect.target.matches('#poses .worker .part'))")
-
-
-@CHROME
-async def test_with_reduced_motion_nothing_moves(stack):
-    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
-    for name in ("one", "two", "three"):
-        await stack["server"].agents.create(name)
-    js = await open_with(stack)
-    await front(stack, js)
-    assert await until(js, "document.querySelectorAll('.station[data-state=\"working\"]').length === 3")
-    assert await js(POSES)
-    moving = ("document.getAnimations().filter(animation => animation.playState === 'running'"
-              " && animation.effect?.target?.closest?.('.worker')).length")
-    assert await until(js, f"{moving} > 0")  # the workers move, until the user turns Reduce Motion on
-    await reduce_motion(stack, js)
-    await asyncio.sleep(1)
-    assert await js("document.getAnimations().filter(animation => animation.playState === 'running').length") == 0
-
-
 # ---- the workers, in the room ----------------------------------------------------------------------------------------
 
 async def wait_for_permissions(agents, ids):
@@ -539,13 +411,13 @@ async def test_every_station_has_a_worker_with_the_agents_tie(stack):
     assert await until(js, "document.querySelectorAll('.station').length === 3")
     assert await js("[...document.querySelectorAll('.station')].every(node => node.querySelectorAll('.worker').length"
                     " === 1)")
-    assert await js(f"getComputedStyle({station('a1', '.worker .tie')}).fill") == "rgb(76, 141, 246)"  # blue
-    assert await js(f"getComputedStyle({station('a2', '.worker .tie')}).fill") == "rgb(63, 178, 107)"  # green
+    assert await js(f"getComputedStyle({station('a1', '.worker .shirt')}).fill") == "rgb(76, 141, 246)"  # blue
+    assert await js(f"getComputedStyle({station('a2', '.worker .shirt')}).fill") == "rgb(63, 178, 107)"  # green
     assert await js(f"[{station('a1', '.worker')}.dataset.hair, {station('a1', '.worker')}.dataset.skin]") == ["1", "1"]
     assert "mc-skin-1" in await js(f"getComputedStyle({station('a1', '.worker .head .skin')}).fill")  # from data-skin
     assert await js("(() => { const defs = document.getElementById('mc-defs'); return [defs.querySelectorAll("
                     "'radialGradient, linearGradient').length, getComputedStyle(defs).display !== 'none',"
-                    " defs.getAttribute('aria-hidden')]; })()") == [7, True, "true"]  # once, and never undisplayed
+                    " defs.getAttribute('aria-hidden')]; })()") == [8, True, "true"]  # once, and never undisplayed
     assert "<img" in await js(f"{station('a2', '.nameplate')}.textContent")
     assert await js("[...document.images].filter(img => !img.closest('.monitor')).length") == 0
     assert await js("document.title") != "pwned"
@@ -874,6 +746,7 @@ async def test_screenshots_for_the_eye(stack):
     await agents.create("One more task")
     await asyncio.sleep(0.4)
     await shoot(stack, js, "arrival")
+    from test_office import poses
     poses_page = await poses(stack)
     await asyncio.sleep(0.5)
     await shoot(stack, poses_page, "poses")

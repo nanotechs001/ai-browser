@@ -136,65 +136,6 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 .station[data-state="needs_you"] .card { border-color: var(--needs);
   box-shadow: 0 0 0 2px rgba(255, 181, 71, 0.4), 0 0 30px rgba(255, 181, 71, 0.4), 0 18px 40px rgba(0, 0, 0, 0.45); }
 
-/* ---- the worker (chibi.js): one HTML layer per part, each holding a small SVG. Only the layers move (transform,
-   translate and opacity), never an SVG element, and nothing on .worker itself may make a stacking context (no
-   transform, filter, opacity, will-change, z-index or isolation), so its parts stack with the desk: the body behind
-   it (layer 1), the hands in front (layer 3). Poses follow the station's data-state; neighbours blink out of step. */
-.worker { position: absolute; right: 4px; bottom: 45px; width: 70px; height: 77px; pointer-events: none;
-          --hair: 0; --skin: 0; --lag: calc(-0.6s * var(--hair) - 0.2s * var(--skin)); }
-.worker[data-hair="1"] { --hair: 1; }
-.worker[data-hair="2"] { --hair: 2; }
-.worker[data-skin="1"] { --skin: 1; }
-.worker[data-skin="2"] { --skin: 2; }
-.worker .part { position: absolute; inset: 0; z-index: 1; transform-origin: 50% 62%; }
-.worker .part svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.worker :is(.arm-l, .arm-r, .arm-up, .arm-thumb, .sparkle) { z-index: 3; }
-.worker .arm-l { transform-origin: 22% 74%; }
-.worker .arm-up { transform-origin: 78% 74%; }
-.worker .sparkle { transform-origin: 86% 52%; }
-.worker .skin { fill: url(#mc-skin-0); }
-.worker[data-skin="1"] .skin { fill: url(#mc-skin-1); }
-.worker[data-skin="2"] .skin { fill: url(#mc-skin-2); }
-.worker .tie { fill: var(--c, #8a8f98); }
-.worker :is(.blink, .sweat, .arm-up, .arm-thumb, .sparkle) { opacity: 0; }
-.worker :is(.eyes-happy, .eyes-shut, .mouth-o, .mouth-sad) { opacity: 0; }
-/* working: types (the hands tap in turn), nods, looks at the screen, blinks now and then */
-.station[data-state="working"] .worker .arm-l { animation: mc-tap 0.32s ease-in-out infinite alternate; }
-.station[data-state="working"] .worker .arm-r { animation: mc-tap 0.32s ease-in-out infinite alternate-reverse; }
-.station[data-state="working"] .worker :is(.head, .face) { animation: mc-nod 1.6s ease-in-out infinite; }
-.station[data-state="working"] .worker .blink { animation: mc-nod 1.6s ease-in-out infinite,
-                                                           mc-blink 5s linear var(--lag) infinite; }
-.station[data-state="working"] .worker :is(.face, .blink) { translate: -3.5px 0; }
-/* waiting in line: sits back, glances around, checks his watch now and then */
-.station[data-state="waiting"] .worker :is(.body, .head, .face, .blink) { transform: translateY(2px); }
-.station[data-state="waiting"] .worker :is(.face, .blink) { animation: mc-glance 5s ease-in-out var(--lag) infinite; }
-.station[data-state="waiting"] .worker .arm-l { animation: mc-watch 8s ease-in-out var(--lag) infinite; }
-/* needs you: turns to the user, raises a hand and waves, mouth open */
-.station[data-state="needs_you"] .worker .arm-r { opacity: 0; }
-.station[data-state="needs_you"] .worker .arm-up { opacity: 1; animation: mc-wave 1s ease-in-out infinite; }
-.station[data-state="needs_you"] .worker .mouth-smile { opacity: 0; }
-.station[data-state="needs_you"] .worker .mouth-o { opacity: 1; }
-/* done: a thumbs up, happy eyes, a little hop, and a sparkle as it starts */
-.station[data-state="your_turn"] .worker .arm-r { opacity: 0; }
-.station[data-state="your_turn"] .worker .arm-thumb { opacity: 1; }
-.station[data-state="your_turn"] .worker .eyes-open { opacity: 0; }
-.station[data-state="your_turn"] .worker .eyes-happy { opacity: 1; }
-.station[data-state="your_turn"] .worker :is(.body, .head, .face, .arm-l, .arm-thumb) {
-  animation: mc-hop 2.4s ease-in-out infinite; }
-.station[data-state="your_turn"] .worker .sparkle { animation: mc-sparkle 0.8s ease-out 1; }
-/* failed: slumps onto the desk, eyes shut, a sad mouth and a drop of sweat */
-.station[data-state="failed"] .worker :is(.body, .head, .face, .blink, .sweat) {
-  transform: translateY(9px) rotate(-12deg); transform-origin: 50% 90%; }
-.station[data-state="failed"] .worker :is(.eyes-open, .mouth-smile) { opacity: 0; }
-.station[data-state="failed"] .worker :is(.eyes-shut, .mouth-sad) { opacity: 1; }
-.station[data-state="failed"] .worker .sweat { opacity: 1; animation: mc-sweat 3s ease-in infinite; }
-/* stopped: dozes, eyes shut, his colours greyed (on each part: never on .worker) */
-.station[data-state="stopped"] .worker .eyes-open { opacity: 0; }
-.station[data-state="stopped"] .worker .eyes-shut { opacity: 1; }
-.station[data-state="stopped"] .worker :is(.head, .face, .blink) { translate: 0 2px; }
-.station[data-state="stopped"] .worker :is(.body, .head, .face, .blink) { animation: mc-doze 4s ease-in-out infinite; }
-.station[data-state="stopped"] .worker .part { filter: saturate(0.4) brightness(0.8); }
-
 /* ---- a new agent's arrival: scene.js adds .spawning for 2 s (never with Reduce Motion on) and flies a .spark ----- */
 .monitor .boot { position: absolute; inset: 0; opacity: 0; pointer-events: none; transform: scale(0, 0.03);
                  background: linear-gradient(180deg, transparent, rgba(200, 225, 255, 0.95) 50%, transparent); }
@@ -281,17 +222,6 @@ kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
 @keyframes beat { 0%, 14%, 20%, 34%, 100% { transform: scale(1); } 6% { transform: scale(1.06); }
                   26% { transform: scale(1.03); } }
 @keyframes talk { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
-@keyframes mc-tap { from { transform: translateY(0); } to { transform: translateY(-2px); } }
-@keyframes mc-nod { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-2deg) translateY(0.6px); } }
-@keyframes mc-blink { 0%, 96.99% { opacity: 0; } 97%, 100% { opacity: 1; } }
-@keyframes mc-glance { 0%, 100% { translate: -3px 0; } 50% { translate: 3px 0; } }
-@keyframes mc-watch { 0%, 84%, 100% { transform: none; } 87%, 97% { transform: translate(5px, -9px) rotate(-28deg); } }
-@keyframes mc-wave { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(14deg); } }
-@keyframes mc-hop { 0%, 80%, 100% { transform: translateY(0); } 88% { transform: translateY(-3px); } }
-@keyframes mc-sparkle { 0% { opacity: 0; transform: scale(0.4) rotate(0deg); } 30% { opacity: 1; }
-                        100% { opacity: 0; transform: scale(1.3) rotate(90deg); } }
-@keyframes mc-sweat { from { translate: 0 0; } to { translate: 0 4px; } }
-@keyframes mc-doze { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(0.8px) scale(1.01); } }
 @keyframes mc-boot { 0% { opacity: 1; transform: scale(0, 0.03); } 45% { opacity: 1; transform: scale(1, 0.03); }
                      80% { opacity: 0.8; transform: scale(1, 1); } 100% { opacity: 0; transform: scale(1, 1); } }
 @keyframes mc-pop { 0% { transform: translateY(80px); } 70% { transform: translateY(-4px); } 100% { transform: none; } }

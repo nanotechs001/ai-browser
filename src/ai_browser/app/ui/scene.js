@@ -164,7 +164,8 @@ export function createScene(root, { onSelect = () => {}, onCamera = () => {} } =
     node.dataset.id = id;
     const parts = { card: el("div", "card"), monitor: el("div", "monitor"), shot: el("img", "shot"),
                     scan: el("div", "scan"), boot: el("div", "boot"), stand: el("div", "stand"),
-                    worker: createWorker(id), desk: el("div", "desk"), plate: el("div", "plate"),
+                    worker: createWorker(id), pose: el("div", "pose main"), desk: el("div", "desk"),
+                    plate: el("div", "plate"),
                     nameplate: el("span", "nameplate"), light: el("span", "light"), ticker: el("div", "ticker"),
                     badge: el("span", "badge", "needs you") };
     parts.shot.alt = "";
@@ -172,7 +173,8 @@ export function createScene(root, { onSelect = () => {}, onCamera = () => {} } =
     parts.monitor.append(parts.shot, parts.scan, parts.boot);
     parts.plate.append(parts.nameplate, parts.light);
     parts.desk.append(parts.plate, parts.ticker);
-    parts.card.append(parts.monitor, parts.stand, parts.worker, parts.desk);
+    parts.pose.append(parts.worker); // the worker's pose follows the pose's data-state (office.css)
+    parts.card.append(parts.monitor, parts.stand, parts.pose, parts.desk);
     node.append(parts.card, parts.badge);
     node.addEventListener("click", () => onSelect(id));
     const shadow = el("div", "shadow placing");
@@ -188,6 +190,7 @@ export function createScene(root, { onSelect = () => {}, onCamera = () => {} } =
     const { node, parts } = station;
     const state = agent.permission || agent.check ? "needs_you" : String(agent.state || "waiting");
     if (node.dataset.state !== state) node.dataset.state = state;
+    if (parts.pose.dataset.state !== state) parts.pose.dataset.state = state;
     const color = COLORS[agent.color] || COLORS.grey;
     if (node.style.getPropertyValue("--c") !== color) node.style.setProperty("--c", color);
     const name = agentLabel(agent);
