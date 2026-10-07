@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from ai_browser import localbox, platforms
+from ai_browser import chrome
 from ai_browser.chrome import ChromeError
 from conftest import file_mode, symlink_or_skip
 
@@ -528,3 +529,198 @@ def test_two_spellings_of_one_home_are_one_home(tmp_path):  # minor (a)
     (tmp_path / "real").mkdir()
     symlink_or_skip(tmp_path / "real", tmp_path / "link")
     assert localbox.LocalSandboxes(tmp_path / "link").home == (tmp_path / "real").resolve()
+
+
+# ---- fix round 3: AI Browser's own deletes, and its read of the browser's port, after a wait ----
+
+
+@pytest.fixture
+def outside(tmp_path, stand_in):
+    """A folder outside the home that holds a profile and a record, as a linked sandbox folder would point to."""
+    folder = tmp_path / "elsewhere"
+    shutil.copytree(stand_in, folder / "profile", symlinks=True)
+    (folder / "browser.json").write_text(json.dumps({"pid": 0, "binary": "x", "fresh": True}), encoding="utf-8")
+    return folder
+
+
+def _swap_in_a_link(how: str, folder: Path, stand_in: Path, outside: Path) -> None:
+    """Put a link where the profile (or the whole sandbox folder) was: to a user's folder, or one outside the home."""
+    if how == "profile":
+        shutil.rmtree(folder / "profile")
+        symlink_or_skip(stand_in, folder / "profile")
+    else:
+        shutil.rmtree(folder)
+        symlink_or_skip(outside, folder)
+
+
+@pytest.mark.posix_only
+@pytest.mark.parametrize("how", ["profile", "folder"])
+def test_a_link_swapped_in_during_a_stops_wait_is_never_cleared_or_removed_through(boxes, stand_in, outside, how,
+                                                                                    monkeypatch):  # fix round 3
+    folder = boxes.home / "sandboxes" / "fresh-abcdef"  # a throwaway: stop removes its profile
+    (folder / "profile").mkdir(parents=True)
+    holder = _holder(folder / "profile")  # a browser (by its command line) that closes while stop waits
+    (folder / "browser.json").write_text(json.dumps({"pid": holder.pid, "binary": "x", "fresh": True}),
+                                         encoding="utf-8")
+    real, waits = localbox._holds, []
+
+    def holds(pid, profile):
+        if not waits:  # the browser has closed; and in that moment a link takes the profile's place
+            waits.append(pid)
+            holder.kill()
+            holder.wait()
+            _swap_in_a_link(how, folder, stand_in, outside)
+        return real(pid, profile)
+
+    monkeypatch.setattr(localbox, "_holds", holds)
+    watched = [stand_in] if how == "profile" else [outside]
+    before = [_tree(path) for path in watched]
+    try:
+        with pytest.raises(ChromeError, match="won't use"):
+            boxes.stop("aib-fresh-abcdef")
+    finally:
+        holder.kill()
+        holder.wait()
+    assert waits and [_tree(path) for path in watched] == before
+
+
+@pytest.mark.posix_only
+@pytest.mark.parametrize("how", ["profile", "folder"])
+def test_a_link_swapped_in_while_a_start_waits_for_an_answer_is_never_cleared_through(boxes, stand_in, outside, how,
+                                                                                       monkeypatch):  # fix round 3
+    monkeypatch.setattr(localbox, "ANSWER_WAIT", 5.0)
+    folder = boxes.home / "sandboxes" / "fresh-abcdef"
+    (folder / "profile").mkdir(parents=True)
+    holder = _holder(folder / "profile")  # a browser that runs, and doesn't answer, then ends
+    (folder / "browser.json").write_text(json.dumps({"pid": holder.pid, "binary": "x", "fresh": False}),
+                                         encoding="utf-8")
+    real, waits = localbox._holds, []
+
+    def holds(pid, profile):
+        if not waits:
+            waits.append(pid)
+            holder.kill()
+            holder.wait()
+            _swap_in_a_link(how, folder, stand_in, outside)
+        return real(pid, profile)
+
+    monkeypatch.setattr(localbox, "_holds", holds)
+    # (a name the public start refuses: this reaches the wait the way a named profile does)
+    watched = [stand_in] if how == "profile" else [outside]
+    before = [_tree(path) for path in watched]
+    try:
+        with pytest.raises(ChromeError, match="won't use"):
+            with boxes._one_start(folder):
+                boxes._running_port(folder)
+    finally:
+        holder.kill()
+        holder.wait()
+    assert waits and [_tree(path) for path in watched] == before
+
+
+@pytest.mark.parametrize("how", ["profile", "folder"])
+def test_a_link_swapped_in_while_a_browser_exits_as_it_starts_is_never_cleared_through(boxes, stand_in, outside, how,
+                                                                                        monkeypatch):  # fix round 3
+    monkeypatch.setattr(localbox, "launch", chrome.launch)  # a real launch of a program that isn't a browser
+    monkeypatch.setattr(localbox, "sandbox_binary", lambda: sys.executable)  # python refuses --user-data-dir, exits
+    folder = boxes.home / "sandboxes" / "pytest"
+    folder.mkdir(parents=True)
+    real, reads = localbox._port_of, []
+
+    def port_of(profile):
+        if not reads:  # the first look for the port: the link takes its place
+            reads.append(profile)
+            _swap_in_a_link(how, folder, stand_in, outside)
+        return real(profile)
+
+    monkeypatch.setattr(localbox, "_port_of", port_of)
+    watched = [stand_in] if how == "profile" else [outside]
+    before = [_tree(path) for path in watched]
+    with pytest.raises(ChromeError, match="won't use"):
+        boxes.start("pytest")
+    assert reads and [_tree(path) for path in watched] == before
+
+
+@pytest.mark.posix_only
+def test_the_browsers_port_is_never_read_through_a_link(boxes, stand_in, monkeypatch):  # fix round 3
+    folder = boxes.home / "sandboxes" / "pytest"
+    (folder / "profile").mkdir(parents=True)
+    holder = _holder(folder / "profile")
+    (folder / "browser.json").write_text(json.dumps({"pid": holder.pid, "binary": "x", "fresh": False}),
+                                         encoding="utf-8")
+    other = socket.socket()  # somebody else's browser, named by the stand-in's port file
+    other.bind(("127.0.0.1", 0))
+    other.listen()
+    other.settimeout(1)
+    (stand_in / "DevToolsActivePort").write_text(f"{other.getsockname()[1]}\n/devtools/browser/x\n",
+                                                 encoding="utf-8")
+    real_owner, found = localbox.LocalSandboxes._owner, []
+
+    def owner(self, folder):
+        pid = real_owner(self, folder)
+        if not found:  # the browser is found; then a link takes the profile's place
+            found.append(pid)
+            shutil.rmtree(folder / "profile")
+            symlink_or_skip(stand_in, folder / "profile")
+        return pid
+
+    monkeypatch.setattr(localbox.LocalSandboxes, "_owner", owner)
+    before = _tree(stand_in)
+    try:
+        with pytest.raises(ChromeError, match="won't use"):
+            boxes.stop("aib-pytest")
+        with pytest.raises(socket.timeout):
+            other.accept()  # nobody connected to it: not to look, not to ask it to close
+        assert holder.poll() is None and _tree(stand_in) == before
+    finally:
+        other.close()
+        holder.kill()
+        holder.wait()
+
+
+@pytest.mark.parametrize("call", ["start", "stop"])
+def test_a_link_that_appears_as_the_lock_is_taken_is_refused_with_the_lock_held(boxes, stand_in, call):  # fix round 3
+    folder = boxes.home / "sandboxes" / "pytest"
+    (folder / "profile").mkdir(parents=True)
+    (folder / "browser.json").write_text(json.dumps({"pid": 0, "binary": "x", "fresh": False}), encoding="utf-8")
+    real, taken = platforms.lock_file, []
+
+    def lock_file(path):
+        lock = real(path)
+        if not taken:  # the link comes between the check before the try and the lock: only the check after catches it
+            taken.append(path)
+            shutil.rmtree(folder / "profile")
+            symlink_or_skip(stand_in, folder / "profile")
+        return lock
+
+    before = _tree(stand_in)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(platforms, "lock_file", lock_file)
+        patch.setattr(localbox.LocalSandboxes, "_end", lambda self, folder: pytest.fail("stop's work ran"))
+        patch.setattr(localbox.LocalSandboxes, "_running_port", lambda self, folder: pytest.fail("start's work ran"))
+        with pytest.raises(ChromeError, match="won't use"):
+            getattr(boxes, call)("pytest" if call == "start" else "aib-pytest")
+    assert taken and _tree(stand_in) == before and not (folder / "work").exists()
+
+
+@pytest.mark.parametrize("how", ["profile", "folder"])
+def test_a_throwaways_profile_is_not_removed_through_a_link_that_came_after_the_clearing(boxes, stand_in, outside,
+                                                                                         how):  # fix round 3
+    folder = boxes.home / "sandboxes" / "fresh-abcdef"
+    (folder / "profile").mkdir(parents=True)
+    (folder / "browser.json").write_text(json.dumps({"pid": 0, "binary": "x", "fresh": True}), encoding="utf-8")
+    real_clear, cleared = localbox.LocalSandboxes._clear, []
+
+    def clear(self, folder, stopping=False):
+        real_clear(self, folder, stopping)
+        if not cleared:  # between the clearing and the removal
+            cleared.append(folder)
+            _swap_in_a_link(how, folder, stand_in, outside)
+
+    watched = [stand_in] if how == "profile" else [outside]
+    before = [_tree(path) for path in watched]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(localbox.LocalSandboxes, "_clear", clear)
+        with pytest.raises(ChromeError, match="won't use"):
+            boxes.stop("aib-fresh-abcdef")
+    assert cleared and [_tree(path) for path in watched] == before

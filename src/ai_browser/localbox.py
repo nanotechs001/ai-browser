@@ -281,7 +281,9 @@ class LocalSandboxes:
         return locked if locked is not None and _runs_profile(locked, profile) else None
 
     def _clear(self, folder: Path, stopping: bool = False) -> None:
-        """No browser holds the profile: the lock files, the port file and the record it left are stale."""
+        """No browser holds the profile: the lock files, the port file and the record it left are stale. Whatever
+        was waited for before, a link may have taken the profile's place since: checked right before it deletes."""
+        self._refuse_unsafe(folder)
         profile = folder / "profile"
         try:
             for name in LOCKS:
@@ -348,7 +350,8 @@ class LocalSandboxes:
             time.sleep(0.1)
 
     def _discard(self, folder: Path, fresh: bool) -> None:
-        """A throwaway whose browser never ran leaves no profile behind: its record, which would tell stop, is gone."""
+        """Remove a throwaway's profile (a named one stays), after a last check that it is the sandbox's own folder.
+        Also for a throwaway whose browser never ran: its record, which would tell stop, is gone."""
         self._refuse_unsafe(folder)
         if fresh and (folder / "profile").exists():
             platforms.rmtree(folder / "profile")
@@ -359,10 +362,11 @@ class LocalSandboxes:
             raise ChromeError(f"the sandbox browser for profile {info.profile} isn't running any more: try again")
         return f"ws://127.0.0.1:{found[0]}{found[1]}"
 
-    @staticmethod
-    def _close(profile: Path) -> None:
-        """Ask the browser to close (CDP Browser.close): it saves its profile and ends its own helper processes."""
-        found = _port_of(profile)
+    def _close(self, folder: Path) -> None:
+        """Ask the browser to close (CDP Browser.close): it saves its profile and ends its own helper processes. The
+        port is read from the profile's own folder: never through a link (it could name some other browser)."""
+        self._refuse_unsafe(folder)
+        found = _port_of(folder / "profile")
         if found is None or not _listening(found[0]):
             return
         from websockets.sync.client import connect
@@ -395,7 +399,7 @@ class LocalSandboxes:
         throwaway = self._record(folder).get("fresh") is True  # never from the name: a named profile keeps its logins
         pid = self._owner(folder)
         if pid is not None:
-            self._close(profile)
+            self._close(folder)
             self._wait_gone(pid, profile, STOP_WAIT)
             # still the profile's own browser, checked again right before (a pid can be given to another process)
             if _holds(pid, profile) and (pid in _launched or not platforms.WINDOWS):
@@ -403,8 +407,7 @@ class LocalSandboxes:
                 self._wait_gone(pid, profile, KILL_WAIT)
             _launched.pop(pid, None)
         self._clear(folder, stopping=True)
-        if throwaway and (folder / "profile").exists():
-            platforms.rmtree(folder / "profile")
+        self._discard(folder, throwaway)
 
     def is_running(self, name: str) -> bool:
         profile = name.removeprefix("aib-")
