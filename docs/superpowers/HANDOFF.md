@@ -88,11 +88,40 @@ capability for faster navigation and all feature of the claude app". Four projec
      sandbox browser is dropped; branch `no-docker` (3f8aa7c) stays unmerged as the record.
    - **The user's goal now:** every agent works in their own Brave and runs scripts/commands on its own; any browser
      testing uses their actual browser.
-2c. **Next to build: saved agents and Mission Control without AI Home.** Spec
-   `docs/superpowers/specs/2026-10-08-saved-agents-design.md`, plan `docs/superpowers/plans/2026-10-08-saved-agents.md`
-   (21 tasks, two lanes, three merge points; base 8d5fb44; 583 quotes checked). The user chose: per-agent Brave profiles
-   with the wait (agents in different profiles take turns opening tabs), saved agents may keep Auto-approve, and the
-   build starts right after the Windows test fixes (branch `win-fixes`, running), followed by a fresh Windows .exe.
+2c. **SAVE POINT (2026-10-08, stopped by the user: "let's stop that for now … let's just build the windows after we
+   finish all updates").** Nothing is running. Resume in this order:
+   1. **Finish the Windows fixes (branch `win-fixes`, pushed, f33498e, 16 commits on main a601e35's parent 8d5fb44).**
+      - Done: Windows-portable tests (paths, home folder, files in use, slower timings), the tests workflow's
+        `pytest_args` input, and six product fixes: a loading bot-check box's frame matched by its src; bash runs a
+        script by name only when no PATH folder holds that name; the app ends at once when its window closes on
+        Windows; the composer's pickers keep their height with any system font; a drive path (C:/…) is never a rule's
+        word; the fake claude's log takes whole lines on Windows.
+      - Results: local whole suite 2697 passed, 10 skipped; full Windows run 37772042776: 2687 passed, 1 failed
+        (`tests/test_office.py::test_the_room_pauses_while_its_tab_is_hidden`), 52m49s — close to the job's 75-minute
+        limit (raise `timeout-minutes` to 120 in tests.yml and tests/test_portable.py's pin when touching it).
+      - Left: that one test on the Windows runner (a runner limit or a real pause bug — read its traceback in the run's
+        log first), a quick review of the six product fixes (`git log main..win-fixes`), merge `main` into it, then
+        merge to `main` and push. Do this BEFORE the saved-agents build: it touches test files that build also edits.
+   2. **Build saved agents and Mission Control without AI Home** (the user approved: "Right after the Windows fixes").
+      Spec `docs/superpowers/specs/2026-10-08-saved-agents-design.md`, plan `docs/superpowers/plans/2026-10-08-saved-agents.md`
+      (21 tasks, two lanes, merge points M1–M3 in its "Lanes and order"; base 8d5fb44; 583 quotes checked — the
+      builders find each place by its quoted text, so drift from later main commits is handled the same way).
+      - The user's choices inside it: per-agent Brave profiles with the wait (agents in different profiles take turns
+        opening tabs; nothing opens in the wrong profile); a saved agent may keep Auto-approve as its setting.
+      - How: subagent-driven, as the brain-delegation batch was (worktrees `../Ai_Browser-wt/agents-a` and `agents-b`
+        from main; `sdd-workspace`; copy and adjust implementer/reviewer/re-reviewer rules from
+        `../Ai_Browser-wt/brain-b/.superpowers/sdd/2026-10-08-brain-delegation/`; a ledger per lane; opus reviewers for
+        the tasks the plan marks security-sensitive; a final whole-branch review, one fix wave, the whole suite).
+      - Never set HOME for a test run (a throwaway Chrome then asks macOS for a keychain: the user got many dialogs).
+   3. **Only after all updates: the Windows build.** Run the "tests" workflow on `windows` (with the 120-minute
+      limit) and the "Build Windows app" workflow (`windows-app.yml`), and give the user the AI-Browser-windows.zip.
+      The user's previous exe is from dc6e82b (2026-10-07).
+   - **Hand checks waiting for the user:** the brain-delegation batch's (named missions, a countdown hand-off and
+     Cancel/"no", another question pausing it, Settings → Brain's boxes and switch); Windows Auto-approve running
+     commands and a skill's scripts on the laptop.
+   - **Loose ends (not urgent):** unmerged record branches `no-docker` (3f8aa7c) and remote `win-baseline` (a1376b7,
+     can be deleted); many finished worktrees under `../Ai_Browser-wt/` can be cleaned up; the app's live-view
+     receivers have no sender since QA's removal; deferred minors are in each batch's ledger.
 3. **Projects, sessions and chat:** not designed yet. The user wants coding in project folders, sessions and history,
    and plain chat with Claude.
 4. **Claude artifacts:** not designed yet. Claude Code 2.1.263 carries claude.ai artifact tools (list and read with
