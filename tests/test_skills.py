@@ -164,43 +164,6 @@ def test_missing_sources_give_an_empty_catalog(tmp_path):
     assert cat.mounts() == []
 
 
-def test_the_website_qa_skill_ships_with_the_project():
-    from ai_browser.config import project_root
-
-    catalog = Catalog.discover(project_root() / "no-claude-home", project_root() / "no-app-support",
-                               project_root() / "skills", set())
-    loaded = catalog.load("ai-browser:website-qa")
-    assert "qa(" in loaded and "verify" in loaded.lower()
-
-
-def test_the_website_qa_skill_hands_bot_checks_over_and_stays_polite():
-    from ai_browser.config import project_root
-
-    text = (project_root() / "skills" / "website-qa" / "SKILL.md").read_text(encoding="utf-8")
-    flat = " ".join(text.split())
-    assert ("**Bot checks:** if qa or open stops at a bot check, stop and tell the user. Never switch browsers, "
-            "profiles or tools to get past it: the user solves it, or skips the site.") in flat
-    assert "Sites that block the sandbox" not in text
-    own = flat.split("- **The user's own browser:**", 1)[1].split("- **", 1)[0]  # chrome=true only when asked for
-    assert flat.count("chrome=true") == 1 and "chrome=true" in own and "bot check" not in own
-    assert "## Be polite" in text and "no `xargs -P`" in flat and "ignore_robots=true" in flat
-    assert ("30 pages take about three minutes, because qa is polite (below). A run stops visiting pages after five "
-            "minutes and says so") in flat
-    assert ("A site with many links takes longer while the links qa didn't visit are checked, about six minutes at "
-            "most.") in flat
-
-
-def test_the_website_qa_skill_says_where_qa_crawls():
-    from ai_browser.config import project_root
-
-    text = " ".join((project_root() / "skills" / "website-qa" / "SKILL.md").read_text(encoding="utf-8").split())
-    section = text.split("## 1. Pick the browser", 1)[1].split("## 2.", 1)[0]
-    assert "qa crawls in the Docker sandbox by default, even when the session browses in the user's Brave" in section
-    assert "only when the user asks for their own browser" in section and "sandbox_start(chrome=true)" in section
-    assert ("**Bot checks:** if qa or open stops at a bot check, stop and tell the user. Never switch browsers, "
-            "profiles or tools to get past it: the user solves it, or skips the site.") in section  # wave 1's line
-
-
 async def test_no_tests_skill_catalog_reads_the_users_own_folders(tmp_path, tmp_path_factory, monkeypatch):
     """The final review, F12: tests never touch ~/.claude, and Mission Control's pages ask for the skills on every
     snapshot. The app's catalog and an engine's own (where no catalog is handed in) read throwaway folders."""

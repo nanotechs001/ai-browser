@@ -159,7 +159,7 @@ def url_problem(url: str, mode: str, app_origin: str = "") -> str | None:
 
 class Browser:
     def __init__(self, cdp: CDP, work: WorkDir, cfg: Config, mode: str = "sandbox", placer=None,
-                 keep_tabs: bool = False, handed=None, key_prefix: str = "t", app_origin: str = ""):
+                 keep_tabs: bool = False, handed=None, app_origin: str = ""):
         self.cdp = cdp
         self.work = work
         self.cfg = cfg
@@ -169,7 +169,6 @@ class Browser:
         self.placer = placer  # grouping.Placer in the user's own browser: it opens each new tab of ours
         self.keep_tabs = keep_tabs  # an agent of ai-browser app: its tabs outlive this process (the app closes them)
         self.handed = handed  # async () -> the tabs the user handed this agent ([{"target", "title", "url"}])
-        self.key_prefix = key_prefix  # "q" for QA's own sandbox browser: its tabs never collide with the session's
         self._handed_keys: dict[str, str] = {}  # listing key (h1...) -> target id, until taken on
         self._tab_events: list[Callable[[str, Tab], None]] = []  # ("opened" | "closed", tab)
         self.owned: dict[str, Tab] = {}
@@ -360,7 +359,7 @@ class Browser:
     def _on_download(self, params: dict, session: str | None) -> None:
         """A download started in one of our tabs. Outside a step the user confirmed it is cancelled at once: in the
         user's own browser it would land in their Downloads folder (Decision 15). The agent hears of it when it was
-        its working tab (or a tab its step just opened); a page Website QA visits notes its own downloads."""
+        its working tab (or a tab its step just opened)."""
         tab = self._tab_for(session)
         if tab is None or self._allow_dialogs or not params.get("guid"):
             return
@@ -380,12 +379,12 @@ class Browser:
         self._stopped.clear()
         return notes
 
-    async def start(self, first_tab: bool = True) -> None:
+    async def start(self) -> None:
         if self.mode == "sandbox":  # the user's own browser keeps the user's Downloads folder
             await self.cdp.send("Browser.setDownloadBehavior", {
                 "behavior": "allow", "downloadPath": f"{self.work.sandbox_task}/downloads", "eventsEnabled": True})
         await self.cdp.send("Target.setDiscoverTargets", {"discover": True})
-        if self.mode == "sandbox" and first_tab:  # in the user's browser a blank tab would pop up
+        if self.mode == "sandbox":  # in the user's browser a blank tab would pop up
             await self._new_tab()
 
     def owned_targets(self) -> list[str]:
@@ -456,8 +455,8 @@ class Browser:
             self.current, self._lost = None, previous.key if previous is not None else None
 
     async def open_worker(self, background: bool | None = None) -> Tab:
-        """A new tab of ours (closed with the session) that does not become the working tab: Website QA uses these.
-        In the user's own browser the placer opens it (through the app, in a window of the AI's own)."""
+        """A new tab of ours (closed with the session) that does not become the working tab. In the user's own
+        browser the placer opens it (through the app, in a window of the AI's own)."""
         if self.placer is not None:
             target = await self.placer.open_tab(self.cdp)
         else:
@@ -520,8 +519,8 @@ class Browser:
         return f"(tab {lost} was closed by the page or the user, so a new tab {self.current.key} was opened)\n"
 
     def _on_target_created(self, params: dict, session: str | None) -> None:
-        """Adopt tabs and popups that one of our tabs opened (target=_blank, window.open) while our own steps (or a
-        QA run) were running. Any other new tab is the user's, even when it was opened from one of our tabs. In AI
+        """Adopt tabs and popups that one of our tabs opened (target=_blank, window.open) while our own steps were
+        running. Any other new tab is the user's, even when it was opened from one of our tabs. In AI
         Browser one opened from the user's (adopted) tab stays theirs too: followed, never closed. In the user's own
         browser one our steps opened from a handed tab is ours (Decision 4: popups its own steps opened), and
         closed with us: Take back gives back the handed tab, and no tab of the user's is kept beyond it."""
@@ -560,7 +559,7 @@ class Browser:
     async def _setup_tab(self, target: str, adopted: bool = False) -> Tab:
         session = (await self.cdp.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
         self._seq += 1
-        tab = Tab(f"{self.key_prefix}{self._seq}", target, session)
+        tab = Tab(f"t{self._seq}", target, session)
         width, height, _ = SIZES["desktop"]
 
         def send(method: str, params: dict | None = None):
@@ -1115,7 +1114,7 @@ class Browser:
 
     @contextlib.contextmanager
     def acting(self):
-        """While our own steps (or a QA run) work: tabs the pages open now are ours to follow and close."""
+        """While our own steps work: tabs the pages open now are ours to follow and close."""
         self._stepping += 1
         try:
             yield

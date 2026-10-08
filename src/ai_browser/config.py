@@ -40,8 +40,8 @@ def home() -> Path:
 
 
 def project_root() -> Path:
-    """The repository root (holds docker/ and skills/). In the packaged AI Browser.exe (packaging/): its bundle's
-    folder, where the build put both."""
+    """The repository root (holds docker/). In the packaged AI Browser.exe (packaging/): its bundle's folder, where
+    the build put it."""
     if platforms.frozen():
         return Path(sys._MEIPASS)
     return Path(__file__).resolve().parents[2]

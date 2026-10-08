@@ -42,13 +42,14 @@ def test_the_browser_level_list_is_short():
 
 
 def test_the_session_level_list_keeps_to_the_page():
-    for method in ("Runtime.evaluate", "DOM.setFileInputFiles", "Input.dispatchMouseEvent", "IO.read", "Log.enable",
+    for method in ("Runtime.evaluate", "DOM.setFileInputFiles", "Input.dispatchMouseEvent", "Log.enable",
                    "Page.navigate", "Page.captureScreenshot", "Page.screencastFrameAck", "Network.enable",
-                   "Network.loadNetworkResource", "Emulation.setFocusEmulationEnabled",
-                   "Emulation.setDeviceMetricsOverride", "Emulation.clearDeviceMetricsOverride"):
+                   "Emulation.setFocusEmulationEnabled", "Emulation.setDeviceMetricsOverride",
+                   "Emulation.clearDeviceMetricsOverride"):
         assert allowed(method, "session"), method
-    for method in ("Network.getAllCookies", "Network.getCookies", "Network.setCookie", "Network.setCookies",
-                   "Network.deleteCookies", "Network.clearBrowserCookies", "Network.clearBrowserCache",
+    for method in ("Network.loadNetworkResource", "IO.read", "IO.close", "Network.getAllCookies",
+                   "Network.getCookies", "Network.setCookie", "Network.setCookies", "Network.deleteCookies",
+                   "Network.clearBrowserCookies", "Network.clearBrowserCache",
                    "Network.setExtraHTTPHeaders", "Network.setUserAgentOverride", "Emulation.setUserAgentOverride",
                    "Emulation.setAutomationOverride", "Emulation.setLocaleOverride", "Emulation.setTimezoneOverride",
                    "Page.setDownloadBehavior", "Fetch.enable", "Autofill.trigger", "WebAuthn.enable",
@@ -117,7 +118,6 @@ def _level(method: str) -> str:
 def test_every_method_the_engine_sends_passes_the_policy():
     """The drift guard (spec test 18): a new CDP call in the engine fails here until the relay's lists allow it."""
     files = [SRC / name for name in ("browser.py", "live.py", "engine.py", "checks.py", "grouping.py")]
-    files += sorted((SRC / "qa").glob("*.py"))
     sandbox_only = {"Browser.setDownloadBehavior"}  # browser.py sends it in the Docker sandbox only, never here
     seen = set()
     for path in files:
@@ -127,8 +127,8 @@ def test_every_method_the_engine_sends_passes_the_policy():
                 assert allowed(method, _level(method)), f"{path.name} sends {method}, which the relay refuses"
     for method in _sent_methods(SRC / "app" / "tabs.py"):
         assert allowed(method, _level(method), app=True), f"tabs.py sends {method}, which the relay refuses"
-    assert {"Target.createTarget", "Page.navigate", "Network.loadNetworkResource", "Input.dispatchMouseEvent",
-            "Page.screencastFrameAck", "IO.read", "Browser.cancelDownload"} <= seen  # the scan found the engine
+    assert {"Target.createTarget", "Page.navigate", "Input.dispatchMouseEvent", "Page.screencastFrameAck",
+            "Browser.cancelDownload"} <= seen  # the scan found the engine
 
 
 async def test_cdp_connect_sends_the_header_and_no_origin_and_uses_no_proxy(monkeypatch):
@@ -343,7 +343,7 @@ BROWSER_REFUSED = ["Browser.close", "Browser.crash", "Browser.setDownloadBehavio
                    "SystemInfo.getInfo"]
 SESSION_REFUSED = ["Network.getAllCookies", "Network.getCookies", "Network.setUserAgentOverride",
                    "Emulation.setUserAgentOverride", "Emulation.setAutomationOverride", "Page.setDownloadBehavior",
-                   "Fetch.enable", "Autofill.trigger"]
+                   "Fetch.enable", "Autofill.trigger", "Network.loadNetworkResource", "IO.read", "IO.close"]
 
 
 @pytest.mark.parametrize("method", BROWSER_REFUSED + SESSION_REFUSED)
@@ -378,11 +378,9 @@ async def test_create_target_forces_background_and_checks_the_address(rig):
     assert [params["url"] for params in sent] == allowed_urls and all(params["background"] is True for params in sent)
     await a1.send("Target.createTarget", {"url": "about:blank", "browserContextId": "C1"})  # its own tabs' context
     _, session = await own_tab(a1)
-    for method, url in (("Page.navigate", "file:///etc/passwd"),
-                        ("Network.loadNetworkResource", f"http://127.0.0.1:{app_port}/setup")):
-        with pytest.raises(CDPError):
-            await a1.send(method, {"url": url, "frameId": "F", "options": {}}, session_id=session)
-        assert method not in rig.port.methods
+    with pytest.raises(CDPError):
+        await a1.send("Page.navigate", {"url": "file:///etc/passwd", "frameId": "F"}, session_id=session)
+    assert "Page.navigate" not in rig.port.methods
 
 
 async def test_close_target_only_own(rig):

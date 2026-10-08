@@ -905,7 +905,7 @@ def badge(name) -> str:
 
 WEB_CHOICES = ("web", "brave", "none")  # the new look's Web ▾: Web + Brave (the default), Brave only, No web
 WEB_TOOLS = ("WebSearch", "WebFetch")
-BROWSER_TOOLS = ("open", "observe", "act", "screenshot", "tabs", "page_log", "extract", "js", "qa", "sandbox_start",
+BROWSER_TOOLS = ("open", "observe", "act", "screenshot", "tabs", "page_log", "extract", "js", "sandbox_start",
                  "sandbox_stop", "sandbox_status",
                  "shell")  # what "No web" blocks: the page tools, and the shell (it runs in Docker, with the internet)
 # Not blocked by it: the skill tools (load_skill, find_skills, read_skill_file) and read_file and write_file.

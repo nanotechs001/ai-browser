@@ -120,7 +120,7 @@ def test_while_held_only_reading_and_the_held_tab_go_through():
     gate = CheckGate()
     assert gate.refusal("open", url="https://example.com") is None
     gate.hold("t2", "TARGET", GOOGLE, adopted=False)
-    for tool in ("open", "act", "screenshot", "extract", "js", "qa", "shell", "sandbox_start", "sandbox_stop"):
+    for tool in ("open", "act", "screenshot", "extract", "js", "shell", "sandbox_start", "sandbox_stop"):
         assert gate.refusal(tool).startswith(WAITING), tool
     for action, tab in (("new", None), ("switch", "t1"), ("close", "t1")):
         assert gate.refusal("tabs", action=action, tab=tab).startswith(WAITING), action
@@ -140,29 +140,8 @@ def test_a_closed_check_tab_skips_its_site_everywhere():
     assert gate.closed() == "google.com" and gate.held is None and gate.skipped == {"google.com"}
     refused = ("⛔ google.com is off-limits in this task: the user skipped it after a bot check. Ask the user if you "
                "need it.")
-    for tool, action in (("open", None), ("act", None), ("qa", None), ("tabs", "new")):
+    for tool, action in (("open", None), ("act", None), ("tabs", "new")):
         assert gate.refusal(tool, action=action, url="https://maps.google.com/x") == refused, tool
     assert gate.skipped_for("https://www.google.com/") == refused
     assert gate.refusal("open", url="https://notgoogle.com/") is None
     assert gate.refusal("open", url="https://www.bing.com/") is None
-
-
-def test_qa_cools_down_on_a_host_it_stopped_on():
-    now = [1_800_000_000.0]
-    gate = CheckGate(clock=lambda: now[0])
-    gate.qa_stop("shop.example.com", now[0] + 120, "429, it asked for 2 minutes")
-    at = time.strftime("%H:%M", time.localtime(now[0]))
-    again = time.strftime("%H:%M", time.localtime(now[0] + 120))
-    assert gate.refusal("qa", url="https://shop.example.com/pricing") == (
-        f"QA stopped on shop.example.com at {at} (429, it asked for 2 minutes): qa can run there again from {again}.")
-    assert gate.refusal("open", url="https://shop.example.com/pricing") is None  # single pages stay allowed
-    now[0] += 121
-    assert gate.refusal("qa", url="https://shop.example.com/") is None and gate.qa_stopped == {}
-
-
-def test_qa_never_starts_on_a_big_site():
-    gate = CheckGate()
-    refused = gate.refusal("qa", url="https://www.youtube.com/@someone")
-    assert refused.startswith("⛔ www.youtube.com is a big site, and qa never crawls one")
-    assert gate.refusal("open", url="https://www.youtube.com/@someone") is None  # single pages stay allowed
-    assert gate.refusal("qa", url="https://shop.example.com/") is None
