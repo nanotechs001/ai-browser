@@ -575,3 +575,56 @@ def test_open_terminal_starts_the_command_and_never_waits(monkeypatch):
     monkeypatch.setattr(platforms.subprocess, "Popen", cannot)
     assert platforms.open_terminal(["/opt/claude"], "/x/acct-1a2b3c", env={}, system="darwin") is False
     assert platforms.open_terminal(["/opt/claude"], "/x/acct-1a2b3c", env={}, system="linux") is False
+
+
+def test_a_connection_the_peer_reset_still_leaves_its_server_on_windows(monkeypatch):
+    """Windows' event loop (proactor) ends a connection with shutdown() then close(): when the peer has reset it
+    (WinError 10054, as Chrome may on closing a tab), shutdown() raises and the socket is never closed nor its server
+    told, so the server's wait_closed(), which uvicorn awaits as it stops, never returns (Windows run 37742705513: the
+    app took 5 s more to end). Pure Python, so it runs here on a stand-in socket and server."""
+    from asyncio import proactor_events
+
+    transport_class = proactor_events._ProactorBasePipeTransport
+    monkeypatch.setattr(transport_class, "_call_connection_lost", transport_class._call_connection_lost)  # restored
+
+    class Reset:
+        closed = False
+
+        def fileno(self):
+            return 3
+
+        def shutdown(self, how):
+            raise ConnectionResetError(10054, "An existing connection was forcibly closed by the remote host")
+
+        def close(self):
+            self.closed = True
+
+    class Stand(transport_class):  # its own fields only: no event loop, and nothing to say when it goes
+        def __del__(self):
+            pass
+
+    def transport(lost=lambda exc: None):
+        made = object.__new__(Stand)
+        made._protocol = type("Protocol", (), {"connection_lost": staticmethod(lost)})()
+        made._sock, made._server, made._called_connection_lost = Reset(), detached, False
+        return made
+
+    detached = type("Server", (), {"gone": [], "_detach": lambda self, *one: self.gone.append(True)})()
+    before = transport()
+    with pytest.raises(ConnectionResetError):  # Python's own: the socket stays open and the server waits on
+        before._call_connection_lost(None)
+    assert detached.gone == [] and before._sock.closed is False
+    platforms.finish_reset_closes()
+    platforms.finish_reset_closes()  # once is enough: never wrapped twice
+    after = transport()
+    sock = after._sock
+    after._call_connection_lost(None)
+    assert sock.closed and detached.gone == [True] and after._sock is None and after._called_connection_lost
+
+    def failing(exc):
+        raise OSError("the protocol's own error")
+
+    own = transport(lost=failing)
+    own._sock = type("Fine", (Reset,), {"shutdown": lambda self, how: None})()
+    with pytest.raises(OSError, match="protocol's own"):  # still raised: the close itself finished
+        own._call_connection_lost(None)

@@ -643,3 +643,33 @@ class KillOnCloseJob:
         if self._handle:
             _kernel32().CloseHandle(self._handle)
             self._handle = None
+
+
+def finish_reset_closes() -> None:
+    """Windows' event loop (asyncio's proactor) ends a connection with shutdown() then close(). When the peer has
+    already reset it (WinError 10054, as Chrome may when a tab closes), shutdown() raises first: the socket is never
+    closed nor its server told, so the server's wait_closed(), which uvicorn awaits as it stops, never returns and the
+    app took 5 s more to end (CPython 3.12 to 3.14). This finishes that close. Pure Python: patched once, anywhere."""
+    from asyncio import proactor_events
+
+    transport = proactor_events._ProactorBasePipeTransport
+    original = transport._call_connection_lost
+    if getattr(original, "finishes_reset_closes", False):
+        return
+
+    def call_connection_lost(self, exc):
+        try:
+            original(self, exc)
+        except OSError:
+            if self._called_connection_lost:  # the protocol's own error: the close itself finished
+                raise
+            if self._sock is not None:
+                self._sock.close()
+                self._sock = None
+            server, self._server = self._server, None
+            if server is not None:
+                server._detach(*(self,) if sys.version_info >= (3, 13) else ())  # 3.13 tells it which one
+            self._called_connection_lost = True
+
+    call_connection_lost.finishes_reset_closes = True
+    transport._call_connection_lost = call_connection_lost

@@ -55,6 +55,8 @@ def _bind(host: str, port: int) -> socket.socket | None:
 
 
 async def _serve(server: uvicorn.Server, sock: socket.socket) -> None:
+    if platforms.WINDOWS:
+        platforms.finish_reset_closes()  # else a connection the browser reset keeps it from stopping for 5 s
     try:
         await server.serve(sockets=[sock])
     except (SystemExit, Exception):  # uvicorn exits on fatal startup errors; never let that end the MCP server
