@@ -15,8 +15,8 @@ import time
 from collections.abc import Callable, Sequence
 
 from ..settings import SOURCES
-from .handoffs import (CANCELLED, COUNTDOWN, FROM_BRAIN, HELD, INSTRUCTION_LIMIT, KEPT, NOT_WORKING, OPEN, SENT_TO,
-                       STOPPED, WORKING, Handoff, counts_down, row_state)
+from .handoffs import (CANCELLED, COUNTDOWN, FROM_BRAIN, HELD, INSTRUCTION_LIMIT, KEPT, NOT_SENT, NOT_STARTED,
+                       NOT_WORKING, OPEN, SENT_TO, STOPPED, WORKING, Handoff, clean, counts_down, row_state)
 from .handoffs import SOURCES as HANDOFF_SOURCES
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
@@ -1005,7 +1005,7 @@ class BrainService:
         """A hand-off of `instruction` to the agent of `row`, from `source` (the caller says which: never Claude, a
         message or a page). It counts down only as counts_down allows; anything else waits for Send. None for an agent
         that isn't working, an empty instruction or an unknown source."""
-        instruction = _clip(instruction, INSTRUCTION_LIMIT)
+        instruction = _clip(clean(instruction), INSTRUCTION_LIMIT)
         state = row_state(row) if isinstance(row, dict) else ""
         if source not in HANDOFF_SOURCES or not instruction or state not in WORKING:
             return None
@@ -1020,7 +1020,7 @@ class BrainService:
 
     def suggest(self, instruction: str, source: str, item: str = "") -> Handoff | None:
         """A NEW agent the Brain suggests, with the exact task it would get: it starts only on the user's Start."""
-        instruction = _clip(instruction, INSTRUCTION_LIMIT)
+        instruction = _clip(clean(instruction), INSTRUCTION_LIMIT)
         if source not in HANDOFF_SOURCES or not instruction:
             return None
         handoff = self._new_handoff("start", source, instruction, item)
@@ -1062,21 +1062,27 @@ class BrainService:
         if countdown is not None and countdown is not asyncio.current_task():
             countdown.cancel()
         handoff.state = "sending"  # closed first: a click and the countdown's end can't both send
-        if handoff.kind == "start":
-            agent = await self.agents.create(handoff.instruction, model=self.agent_model)
-            handoff.agent, handoff.number, handoff.name = agent.id, number_of({"id": agent.id}), \
-                _clip(getattr(agent, "name", ""), 160)
-            handoff.state, handoff.note = "started", STARTED_SAY.format(label=label(
-                {"id": agent.id, "name": handoff.name}))
-        else:
-            row = next((row for row in self._rows() if row["id"] == handoff.agent), None)
-            if row is not None and row_state(row) not in WORKING:
-                handoff.state, handoff.note = "not_sent", NOT_WORKING.format(label=label(row))
-            else:  # the same send as a card's: a closed agent or a bot check sends nothing, and says why
-                answer = await self._send(handoff, f"{FROM_BRAIN} {handoff.instruction}")
-                sent = bool(answer.get("sent"))
-                handoff.state = "sent" if sent else "not_sent"
-                handoff.note = SENT_TO.format(number=handoff.number) if sent else answer["say"]
+        failed = NOT_STARTED if handoff.kind == "start" else NOT_SENT
+        try:
+            if handoff.kind == "start":
+                agent = await self.agents.create(handoff.instruction, model=self.agent_model)
+                handoff.agent, handoff.number, handoff.name = agent.id, number_of({"id": agent.id}), \
+                    _clip(getattr(agent, "name", ""), 160)
+                handoff.state, handoff.note = "started", STARTED_SAY.format(label=label(
+                    {"id": agent.id, "name": handoff.name}))
+            else:
+                row = next((row for row in self._rows() if row["id"] == handoff.agent), None)
+                if row is not None and row_state(row) not in WORKING:
+                    handoff.state, handoff.note = "not_sent", NOT_WORKING.format(label=label(row))
+                else:  # the same send as a card's: a closed agent or a bot check sends nothing, and says why
+                    answer = await self._send(handoff, f"{FROM_BRAIN} {handoff.instruction}")
+                    sent = bool(answer.get("sent"))
+                    handoff.state = "sent" if sent else "not_sent"
+                    handoff.note = SENT_TO.format(number=handoff.number) if sent else answer["say"]
+        except ValueError as exc:  # the agent manager's own words (an account gone, a limit): nothing went
+            handoff.state, handoff.note = "not_sent", _clip(str(exc), 200) or failed
+        except Exception:  # anything else: the card ends, in fixed words, never an error's text
+            handoff.state, handoff.note = "not_sent", failed
         self._show_handoff(handoff)
 
     def cancel_handoff(self, handoff_id: str, note: str = CANCELLED) -> None:

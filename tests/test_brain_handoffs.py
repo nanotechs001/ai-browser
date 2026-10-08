@@ -13,7 +13,10 @@ from test_app_server import until as told_until
 from test_brain_sources import Ask
 from test_brain_talk import Recorder
 from test_bridge import EVENTS
+from test_home import CHROME, home, stack  # noqa: F401  (fixtures)
 from ui_socket import ui_socket
+
+GONE = "That account isn't in Settings → Accounts any more"  # the agent manager's own words (accounts.GONE)
 
 
 def row(agent_id="a2", name="Research competitors", state="working", **extra):
@@ -218,7 +221,7 @@ async def test_the_pages_send_and_cancel_and_stop_cancels(fake_claude, tmp_path)
     try:
         assert brain.visible() is False  # no page open: a hand-off would wait
         async with ui_socket(server, url) as ws:
-            await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+            await ws.send(json.dumps({"type": "hello", "view": "mission", "visible": True}))
             await told_until(ws, lambda m: m["type"] == "snapshot")
             assert brain.visible() is True and brain.auto_hand() is True  # Settings → Brain's switch: on by default
             one = brain.give(row(), "Check the prices", "you")
@@ -240,3 +243,163 @@ async def test_the_pages_send_and_cancel_and_stop_cancels(fake_claude, tmp_path)
             assert brain.give(row(), "Check the fonts", "you").state == "waiting"  # off: every hand-off waits
     finally:
         await server.stop()
+
+
+class Failing(Recorder):
+    """An AgentManager whose create and send fail: with its own words (ValueError), or anything else."""
+
+    def __init__(self, rows=(), error=ValueError(GONE)):
+        super().__init__(rows)
+        self.error, self.tries = error, 0
+
+    async def create(self, text, skills=(), model="sonnet", adopt=None, tab=None, **options):
+        self.tries += 1
+        raise self.error
+
+    async def send(self, agent_id, text, tab=None):
+        self.tries += 1
+        raise self.error
+
+
+async def test_a_send_or_start_that_fails_says_why_and_ends_the_card(tmp_path):
+    from ai_browser.brain.handoffs import NOT_SENT, NOT_STARTED
+
+    brain, *_ = brain_with(tmp_path, [row()])
+    brain.agents = Failing([row()])
+    suggestion = brain.suggest("Write the launch post", "agent")
+    await brain.send_handoff(suggestion.id)  # Start
+    assert (suggestion.state, suggestion.note) == ("not_sent", GONE)  # the agent manager's own words
+    await brain.send_handoff(suggestion.id)  # a second Start does nothing: the card is done
+    assert brain.agents.tries == 1
+    brain.agents = Failing([row()], error=RuntimeError("a page's words, never shown"))
+    handoff = brain.give(row(), "Check the prices", "agent")
+    await brain.send_handoff(handoff.id)  # Send
+    assert (handoff.state, handoff.note) == ("not_sent", NOT_SENT)  # fixed words
+    started = brain.suggest("Write the post", "agent")
+    await brain.send_handoff(started.id)
+    assert (started.state, started.note) == ("not_sent", NOT_STARTED)
+
+
+async def test_send_now_while_the_countdowns_own_send_runs_sends_once(tmp_path):
+    class Slow(Recorder):
+        def __init__(self, rows=()):
+            super().__init__(rows)
+            self.go = asyncio.Event()
+
+        async def send(self, agent_id, text, tab=None):
+            await self.go.wait()
+            return await super().send(agent_id, text, tab)
+
+    brain, *_ = brain_with(tmp_path, [row()])
+    brain.agents = agents = Slow([row()])
+    handoff = brain.give(row(), "Check the prices", "you")
+    await brain.countdown.tick()  # the countdown ended: its send waits on the agent
+    assert handoff.state == "sending"
+    await brain.send_handoff(handoff.id)  # Send now meanwhile
+    agents.go.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert agents.sent == [("a2", "From the Brain: Check the prices")] and handoff.state == "sent"
+
+
+async def test_the_card_shows_what_is_sent_without_hidden_marks(tmp_path):
+    brain, agents, shown, _ = brain_with(tmp_path, [row()], switch=False)
+    marks = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200b\u200c\u200d\u200e\u200f\u061c" \
+            "\u2060\u2061\u2062\u2063\u2064\ufeff"
+    handoff = brain.give(row(), f"Check{marks} the\nprices\u202e", "you")
+    assert handoff.instruction == cards(shown)[-1]["instruction"] == "Check the\nprices"  # line breaks stay
+    await brain.send_handoff(handoff.id)
+    assert agents.sent == [("a2", "From the Brain: Check the\nprices")]
+    assert brain.suggest(f"Write it{marks}", "agent").instruction == "Write it"
+    assert brain.give(row(), marks, "you") is None and brain.suggest(marks, "agent") is None  # nothing left
+
+
+async def visible_page(fake_claude, tmp_path):
+    """An app server whose Brain counts down on the test's clock; the Brain's agents are a Recorder."""
+    from ai_browser.brain.service import BrainService
+    from ai_browser.brain.store import BrainStore
+
+    agents = Recorder([row()])
+    brain = BrainService(BrainStore(tmp_path / "home"), agents, ask=Ask())
+    brain.countdown = Clock()
+    server, url = await started(fake_claude, tmp_path, EVENTS, brain=brain)
+    return brain, agents, server, url
+
+
+async def hello(ws, view, visible):
+    """The page's hello (link.js: whether it can be seen), then a brain snapshot: the server has read the hello."""
+    await ws.send(json.dumps({"type": "hello", "view": view, **({} if visible is None else {"visible": visible})}))
+    await ws.send(json.dumps({"type": "brain"}))
+    await told_until(ws, lambda m: m["type"] == "brain_snapshot")
+
+
+async def eventually(check, seconds=5) -> bool:
+    for _ in range(int(seconds * 20)):
+        if check():
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+async def test_only_a_page_that_can_be_seen_lets_a_handoff_count_down(fake_claude, tmp_path):
+    from ai_browser.app.server import MESSAGE_RULES, may_send
+    from ai_browser.brain.handoffs import HELD
+
+    assert "visibility" in MESSAGE_RULES and may_send("app", {"type": "visibility"}) \
+        and not may_send("none", {"type": "visibility"})
+    brain, agents, server, url = await visible_page(fake_claude, tmp_path)
+    try:
+        async with ui_socket(server, url) as ws:
+            await hello(ws, "mission", False)  # a hidden window (the desktop app hides it on close)
+            assert brain.visible() is False and brain.give(row(), "Check the prices", "you").state == "waiting"
+            await hello(ws, "mission", None)  # a page that doesn't say: not seen
+            assert brain.visible() is False
+            await hello(ws, "settings", True)  # Settings shows no hand-off card
+            assert brain.visible() is False and brain.give(row(), "Check the prices", "you").state == "waiting"
+            await hello(ws, "mission", True)
+            counting = brain.give(row(), "Check the plans", "you")
+            assert brain.visible() is True and counting.state == "counting"
+            await ws.send(json.dumps({"type": "visibility", "visible": False}))  # hidden while it counts
+            await told_until(ws, lambda m: m["type"] == "brain_handoff" and m["handoff"]["id"] == counting.id)
+            assert (counting.state, counting.note) == ("waiting", HELD) and brain.visible() is False
+            await ws.send(json.dumps({"type": "visibility", "visible": True}))  # shown again: a new one counts
+            await ws.send(json.dumps({"type": "brain"}))
+            await told_until(ws, lambda m: m["type"] == "brain_snapshot")
+            again = brain.give(row(), "Check the logos", "you")
+            assert again.state == "counting"
+        assert await eventually(lambda: again.state != "counting")  # the page closed: it can't be seen any more
+        assert brain.visible() is False and (again.state, again.note) == ("waiting", HELD)
+        await brain.countdown.tick()
+        assert agents.sent == []
+    finally:
+        await server.stop()
+
+
+async def test_the_switch_off_holds_a_counting_handoff_at_once(fake_claude, tmp_path):
+    from ai_browser.brain.handoffs import HELD
+
+    brain, agents, server, url = await visible_page(fake_claude, tmp_path)
+    try:
+        async with ui_socket(server, url) as ws:
+            await hello(ws, "home", True)
+            handoff = brain.give(row(), "Check the prices", "you")
+            assert handoff.state == "counting"
+            await ws.send(json.dumps({"type": "settings_set", "key": "auto_hand", "value": False, "request": "s"}))
+            seen = await told_until(ws, lambda m: m["type"] == "settings")
+            card = [m["handoff"] for m in seen if m["type"] == "brain_handoff" and m["handoff"]["id"] == handoff.id][-1]
+            assert (card["state"], card["note"]) == ("waiting", HELD)  # at once: before any tick
+    finally:
+        await server.stop()
+
+
+@CHROME
+async def test_a_page_says_when_it_is_hidden_and_shown(home):
+    js, stack = home
+    brain = stack["brain"]
+    assert await eventually(brain.visible)  # AI Home, seen: its hello says so
+    hide = ("Object.defineProperty(document, 'hidden', { value: %s, configurable: true });"
+            "document.dispatchEvent(new Event('visibilitychange')); true")
+    await js(hide % "true")  # the window hidden (the desktop app hides it on close)
+    assert await eventually(lambda: not brain.visible())
+    await js(hide % "false")
+    assert await eventually(brain.visible)

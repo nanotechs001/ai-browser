@@ -32,7 +32,7 @@ export function connect({ view, onMessage = () => {}, onState = () => {} }) {
     ws.onopen = () => {
       retries = 0;
       socket = ws;
-      ws.send(JSON.stringify({ type: "hello", view }));
+      ws.send(JSON.stringify({ type: "hello", view, visible: !document.hidden }));
       onState("connected");
       for (const resolve of waiters.splice(0)) resolve();
     };
@@ -58,6 +58,12 @@ export function connect({ view, onMessage = () => {}, onState = () => {} }) {
   }
 
   open();
+  // Whether this page can be seen: the Brain's hand-off counts down only while a page can show its card
+  document.addEventListener("visibilitychange", () => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "visibility", visible: !document.hidden }));
+    }
+  });
   return {
     send(message) {
       if (!socket || socket.readyState !== WebSocket.OPEN) return false;

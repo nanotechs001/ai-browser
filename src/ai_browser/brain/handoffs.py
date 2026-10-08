@@ -9,11 +9,13 @@ which the code that makes it sets, never Claude's answer, a message or a page.
   the agent is still working;
 - "agent" (an agent's own result), "gmail", "slack", "asana" and "pages" (a watched part) always wait for Send:
   the instruction may carry someone else's words (agents read web pages).
-This run's hand-offs are kept in memory (the newest KEPT that are done, and every open one), never saved: agents are
-numbered from 1 again after a restart."""
+This run's hand-offs are kept in memory, never saved (agents are numbered from 1 again after a restart): at most KEPT
+in all, the oldest that is done going first. An open one is never dropped, so more stay while more than KEPT are
+open."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 COUNTDOWN = 15  # seconds a hand-off from the user's own words waits for Cancel
@@ -31,6 +33,16 @@ CANCELLED = "Cancelled: nothing was sent"
 STOPPED = "Cancelled: you stopped agent {number}"
 NOT_WORKING = "Not sent: {label} isn't working any more"
 HELD = "Waiting for your Send"
+NOT_SENT = "Couldn't send it: try again from the agent's chat"  # a send failed: never the error's own text
+NOT_STARTED = "Couldn't start it: try again from Build a Mission"
+# Direction and zero-width marks: they could make the card read otherwise than what is sent
+MARKS = re.compile("[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+
+
+def clean(instruction) -> str:
+    """An instruction as its card shows it and its agent gets it: without direction or zero-width marks. Line breaks
+    stay."""
+    return MARKS.sub("", instruction) if isinstance(instruction, str) else ""
 
 
 def row_state(row: dict) -> str:

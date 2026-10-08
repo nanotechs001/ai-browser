@@ -149,6 +149,7 @@ APP_ONLY = Rule()
 # copy says the same.
 MESSAGE_RULES: dict[str, Rule] = {
     "hello": APP_ONLY,
+    "visibility": APP_ONLY,  # the Brain's hand-offs (2026-10-08): a page shown or hidden (link.js)
     # the Brain's inbox, in AI Home, Mission Control and Settings
     "brain": APP_ONLY, "draft": APP_ONLY, "approve": APP_ONLY, "hand": APP_ONLY, "done": APP_ONLY,
     "tell": APP_ONLY, "watch_set": APP_ONLY, "watch_remove": APP_ONLY, "style": APP_ONLY,
@@ -376,6 +377,7 @@ class AppServer:
             brain.workflows, brain.runner = workflows, runner
         self._roles: dict[WebSocket, str] = {}  # "app", stored when a socket is accepted
         self._views: dict[WebSocket, str] = {}  # which page said hello on a socket: "home", "mission", "chat"…
+        self._shown: set[WebSocket] = set()  # the sockets whose page says it can be seen (link.js: hello, visibility)
         self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (AI Home…)
         self.window_seen = False  # the window's first socket has come in
         if brain is not None:
@@ -1274,6 +1276,7 @@ class AppServer:
         self._sockets.pop(ws, None)
         self._roles.pop(ws, None)
         self._views.pop(ws, None)
+        self._seen(ws, False)  # a closed page can't show a hand-off's card
         self._windows.discard(ws)
         self.uploads.drop_all(ws)  # a closed page's files go with it
         if self.hearing is not None:
@@ -1297,9 +1300,19 @@ class AppServer:
         return False
 
     def _shows_handoffs(self) -> bool:
-        """Whether a page that shows the Brain's hand-off cards is open (AI Home, Mission Control, the floating chat):
-        only then may a hand-off count down. Nothing is sent while nobody can see it."""
-        return any(view in HANDOFF_VIEWS for view in self._views.values())
+        """Whether a page that shows the Brain's hand-off cards (AI Home, Mission Control, the floating chat) can be
+        seen: it is open and says it isn't hidden (the desktop app only hides its window on close). Only then may a
+        hand-off count down. Nothing is sent while nobody can see it."""
+        return any(self._views.get(ws) in HANDOFF_VIEWS for ws in self._shown)
+
+    def _seen(self, ws: WebSocket, shown: bool) -> None:
+        """A page says whether it can be seen. When none that shows hand-off cards can, every countdown holds."""
+        if shown:
+            self._shown.add(ws)
+        else:
+            self._shown.discard(ws)
+        if self.brain is not None and not self._shows_handoffs():
+            self.brain.hold_countdowns()
 
     def _brain_closed(self) -> str:
         """Why the Brain's outbox took a thread or a reply box nowhere, for the item's note."""
@@ -1374,9 +1387,12 @@ class AppServer:
             self._workspace_command(queue, kind, message)
         elif kind == "hello":
             self._views[ws] = message.get("view") if isinstance(message.get("view"), str) else ""
+            self._seen(ws, message.get("visible") is True)
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
                 self._sockets[ws] = queue
+        elif kind == "visibility":  # the page was shown or hidden (link.js)
+            self._seen(ws, message.get("visible") is True)
         elif kind == "settings_set":
             self._settings_set(queue, message)
         elif kind == "open_url":
