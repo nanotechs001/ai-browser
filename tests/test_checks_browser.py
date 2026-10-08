@@ -86,6 +86,14 @@ async def test_pages_that_mention_checks_or_carry_a_box_read_normally(chrome_bro
 
 
 @CHROME
+async def test_a_box_still_loading_is_already_the_users(chrome_browser):  # Windows run 37737082260 read it too soon
+    browser, base, _ = chrome_browser
+    form = await browser.open(base + "checks/form-box.html?slow")  # its frame answers after 2 s: not there yet
+    assert "frames: [bot check box: the user ticks it]" in form and "⛔" not in form
+    assert len((await browser.state())["boxes"]) == 1
+
+
+@CHROME
 async def test_cloudflares_own_check_gets_a_few_seconds(chrome_browser):
     from ai_browser.browser import CF_WAIT
 

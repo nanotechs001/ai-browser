@@ -10,9 +10,10 @@
 </form>
 <script>
   // A checkbox frame from the other test origin, the size of a real "I'm not a robot" box: a form field the user
-  // ticks, never a reason to stop.
+  // ticks, never a reason to stop. With ?slow its frame answers after a while, as a real box from afar may.
   const box = document.createElement("iframe");
-  box.src = `http://127.0.0.1:${location.port}/checks/recaptcha/api2/anchor?k=test&size=normal`;
+  const slow = location.search === "?slow" ? "&slow=1" : "";
+  box.src = `http://127.0.0.1:${location.port}/checks/recaptcha/api2/anchor?k=test&size=normal${slow}`;
   box.title = "robot box";
   box.style.cssText = "width:304px;height:78px;border:0";
   document.getElementById("box").append(box);

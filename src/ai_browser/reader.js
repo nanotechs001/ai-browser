@@ -269,7 +269,7 @@
         return;
       }
       label = label || "frame" + (frames.length + 1);
-      frames.push({ label, url: doc.location.href, cross: false });
+      frames.push({ label, url: doc.location.href, src: iframe.src, cross: false }); // src: a box still loading
       const cs = styleOf(iframe);
       walk(doc, {
         x: ctx.x + r.left + iframe.clientLeft + parseFloat(cs.paddingLeft),

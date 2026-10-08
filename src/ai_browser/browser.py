@@ -757,7 +757,7 @@ class Browser:
         state["boxes"] = box_frames(signals)
         boxed = {box.get("src") for box in state["boxes"]}
         for frame in state.get("frames") or []:
-            if frame.get("url") in boxed:
+            if frame.get("url") in boxed or frame.get("src") in boxed:  # src: still on its first blank page, loading
                 frame["box"] = True
         if find is None and self.current:
             self.current.last = state

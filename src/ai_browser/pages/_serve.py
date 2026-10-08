@@ -65,6 +65,8 @@ class NoStore(http.server.SimpleHTTPRequestHandler):
             self._send(403, JUST_A_MOMENT.format(script=script).encode())
             return True
         if path in CHECK_FRAMES:  # the inside of a check frame: the reader never looks in here
+            if "slow=1" in self.path:  # a box from afar, still loading while the page is read
+                time.sleep(2)
             self._send(200, b"<!doctype html><title>Check frame</title><p>A test frame.</p>")
             return True
         if path == "/checks/go":  # a redirect to another of the test pages (never anywhere else)
