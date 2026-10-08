@@ -69,10 +69,11 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 
 /* ---- the centre: the switch, the views and the menu's pages ---------------------------------------------------- */
 .centre { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
-/* The Brain's hand-offs (brainui.js), under the view switch, over whatever the centre shows and the drawer, never over
-   the composer: --composer is its height (mission.js) */
-.handoff-slot { position: absolute; top: 72px; left: 50%; transform: translateX(-50%); z-index: 11;
-                width: min(440px, calc(100% - 32px)); max-height: calc(100% - 80px - var(--composer, 0px));
+/* The Brain's hand-offs (brainui.js), under the view switch in the middle of the centre (16 px in from the menu and
+   the right column), over whatever it shows and the drawer, never over the composer or Ask AI's history: --composer is
+   their height (mission.js). Fixed to the window: a narrow page scrolls, and a countdown stays in reach */
+.handoff-slot { position: fixed; top: 72px; left: 264px; right: 346px; margin-inline: auto; z-index: 11;
+                max-width: 440px; max-height: calc(100vh - 80px - var(--composer, 0px));
                 box-shadow: var(--shadow); border-radius: 10px; }
 .page { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px; }
 .page.dashboard { position: relative; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
@@ -345,9 +346,11 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
         grid-template-rows: max(640px, 100vh) auto; overflow-x: hidden; overflow-y: auto; }
   .side { height: auto; overflow: visible; border-left: 0; border-top: 1px solid var(--line); display: grid;
           grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; }
+  .handoff-slot { right: 16px; }
 }
 @media (max-width: 899px) {
   .mc { grid-template-columns: 64px minmax(0, 1fr); }
+  .handoff-slot { left: 80px; }
   .menu { padding: 14px 8px; align-items: center; }
   .menu :is(.label, kbd, .counts), .workspaces :is(.count, .head, .name), .usage .usage-words { display: none; }
   .new-mission, .page-link { justify-content: center; padding: 10px; }

@@ -122,8 +122,11 @@ parts.push(spaces, {
   },
 });
 parts.push(mountHandoffSlot($("handoff"), send)); // the Brain's hand-offs, by the globe (its inbox lists them all)
-new ResizeObserver(() => $("centre").style.setProperty("--composer", `${$("composer").offsetHeight}px`))
-  .observe($("composer")); // the hand-offs never cover the composer
+// the hand-offs never cover the composer, nor Ask AI's history above it
+const reserved = new ResizeObserver(() => $("centre").style.setProperty("--composer",
+  `${$("composer").offsetHeight + $("talk").offsetHeight}px`));
+reserved.observe($("composer"));
+reserved.observe($("talk"));
 parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
                                                 visibleTemplate: templateInWorkspace }));
 

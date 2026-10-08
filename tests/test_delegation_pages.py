@@ -311,6 +311,60 @@ async def test_long_words_and_several_countdowns_keep_cancel_and_the_composer_in
 
 
 @CHROME
+async def test_your_held_words_stay_in_the_slot_beside_a_countdown(stack):
+    row = await working_agent(stack)
+    js = await open_mission(stack)
+    first = stack["brain"].give(row, "Compare the annual plans", "you")
+    stack["brain"].hold_handoff(first.id)  # the talk's next words held it: it waits for Send
+    second = stack["brain"].give(row, "Use a shorter title", "you")
+    assert await until(js, f"{in_slot(handoff_id=second.id)}?.dataset.state === 'counting'")
+    held = in_slot(handoff_id=first.id)
+    assert await until(js, f"{held}?.dataset.state === 'waiting'")  # never hidden by the other countdown
+    assert await js(f"{held}.querySelector('.handoff-line').textContent") == "Waiting for your Send"
+    assert await js(f"{IN_SLOT}.length") == 2
+
+
+@CHROME
+async def test_below_1280_px_a_countdown_stays_in_reach_however_far_mission_control_scrolls(stack):
+    row = await working_agent(stack)
+    js = await open_with(stack, size=(1100, 800))
+    handoff = stack["brain"].give(row, "Compare the annual plans", "you")
+    cancel = f"{in_slot(handoff_id=handoff.id)}?.querySelector('.handoff-cancel')"
+    assert await until(js, hits(cancel))
+    mc = "document.querySelector('.mc')"
+    await js(f"{mc}.scrollTop = {mc}.scrollHeight; true")  # down to Current Task, under the office
+    assert await until(js, f"{mc}.scrollTop > 0"
+                           " && document.getElementById('current-title').getBoundingClientRect().bottom < innerHeight")
+    assert await js(hits(cancel))  # the page still counts as seen: so is the countdown's Cancel
+    js.cdp = stack["cdp"]
+    await size(js, 1440, 800)
+    await js(f"{mc}.scrollTop = 0; true")
+    assert await until(js, hits(cancel))  # wide again: under the view switch, in the middle of the centre, as before
+    box = "document.getElementById('handoff').getBoundingClientRect()"
+    assert await js(f"[{box}.top, {box}.left + {box}.width / 2, {box}.width]") == [72, (248 + 1440 - 330) / 2, 440]
+
+
+@CHROME
+async def test_several_long_countdowns_never_cover_ask_ais_history(stack):
+    from test_talk import talk_script
+
+    row = await working_agent(stack)
+    talk_script(stack, {"say": "Noted", "action": "none"})
+    js = await open_with(stack, size=(1100, 800))
+    await js("document.getElementById('mode-ask').click(); document.getElementById('task').value = 'hello';"
+             " document.getElementById('start').click(); true")
+    assert await until(js, f"{LOG}.querySelectorAll('li.brain').length === 1", 15)
+    words = "Compare every plan. " * 100
+    for number in range(3):
+        stack["brain"].give(row, f"{number} {words}", "you")
+    assert await until(js, f"{IN_SLOT}.length === 3")
+    slot = "document.getElementById('handoff')"
+    assert await until(js, f"{slot}.getBoundingClientRect().bottom <= {PANEL}.getBoundingClientRect().top")
+    assert await js(f"{slot}.scrollHeight > {slot}.clientHeight")  # the rest scrolls, in the slot
+    assert await js(hits("document.getElementById('task')"))
+
+
+@CHROME
 async def test_send_now_sends_the_words_shown_and_the_chat_says_from_the_brain(stack):
     row = await working_agent(stack)
     js = await open_mission(stack)
