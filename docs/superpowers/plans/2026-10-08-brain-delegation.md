@@ -182,7 +182,7 @@ Copied from the spec. Every task's requirements include these.
   agent: a new agent is a **suggestion** card with the exact instruction and **Start**, as today."
 - "**Untrusted sources always wait:** when what led to the hand-off came from an email, Slack or Asana message, or a
   watched page part, the card has no countdown: it waits for **Send**. … Only the user's own words (Ask AI, the
-  floating chat) and agents' own results may start a countdown."
+  floating chat) may start a countdown; an agent's result waits for **Send** too."
 - "Settings → Brain → **"Hand tasks to working agents by itself (15 s to cancel)"**, on by default; off means every
   hand-off waits for Send. Stop on an agent cancels any countdown for it. Closing the app cancels all countdowns
   (nothing is sent while nobody can see it)."
