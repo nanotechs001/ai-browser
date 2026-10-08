@@ -333,13 +333,14 @@ def test_the_ci_workflow_runs_only_by_hand():
     inputs = triggers["workflow_dispatch"]["inputs"]
     assert inputs["os"]["options"] == ["windows", "macos", "both"] and inputs["os"]["default"] == "windows"
     assert inputs["voice"]["type"] == "boolean" and inputs["voice"]["default"] is False
+    assert inputs["pytest_args"]["type"] == "string" and inputs["pytest_args"]["default"] == ""  # empty: every test
     assert workflow["permissions"] == {"contents": "read"}
     assert "windows-latest" in text and "macos-latest" in text
     job = workflow["jobs"]["test"]
     assert job["strategy"]["fail-fast"] is False and job["timeout-minutes"] == 75
     runs = [step.get("run", "") for step in job["steps"]]
     assert any(run.startswith("uv sync --locked") for run in runs)
-    assert any(run.startswith("uv run --no-sync pytest") for run in runs)
+    assert any(run.startswith("uv run --no-sync pytest") and run.endswith(" ${{ inputs.pytest_args }}") for run in runs)
     assert "secrets." not in text and "PYTHONUTF8" not in text  # no secrets; Windows' own encoding is what's tested
     uses = [step["uses"] for step in job["steps"] if "uses" in step]
     assert [use.split("@")[0] for use in uses] == ["actions/checkout", "astral-sh/setup-uv", "actions/upload-artifact"]

@@ -11,6 +11,10 @@ on:
         description: Also install the voice extra (no model download)
         type: boolean
         default: false
+      pytest_args:
+        description: Extra pytest arguments, e.g. a few test files (empty runs them all)
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -29,7 +33,7 @@ jobs:
       - run: uv sync --locked ${{ inputs.voice && '--extra voice' || '' }}
       - if: inputs.voice
         run: uv run --no-sync python -c "import faster_whisper"
-      - run: uv run --no-sync pytest -q --junitxml=pytest.xml
+      - run: uv run --no-sync pytest -q --junitxml=pytest.xml ${{ inputs.pytest_args }}
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
