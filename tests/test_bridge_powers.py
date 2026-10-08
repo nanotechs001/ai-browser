@@ -533,14 +533,7 @@ async def test_on_windows_auto_approve_runs_ordinary_commands_but_not_what_reach
 
 async def test_auto_approve_runs_an_installed_skills_script_but_never_writes_into_it(  # Part 2 of the review of
         fake_claude, tmp_path, project, monkeypatch, sandboxed):  # 2026-10-08: their skills' scripts too
-    from ai_browser import skills
-
-    claude = tmp_path / "users" / ".claude"  # the agent's skills, as the catalog finds them: never the user's own
-    scripts = claude / "skills" / "tidy" / "scripts"
-    scripts.mkdir(parents=True)
-    (claude / "skills" / "tidy" / "SKILL.md").write_text("---\nname: tidy\n---\n", encoding="utf-8")
-    (scripts / "x.py").write_text("print(1)\n", encoding="utf-8")
-    monkeypatch.setattr(skills, "user_folders", lambda: (claude, tmp_path / "users" / "Claude"))
+    scripts = a_skill(tmp_path, monkeypatch)  # the agent's skills, as the catalog finds them: never the user's own
     runner, log, script = fake_claude
     script.write_text(json.dumps([INIT, ask("Bash", {"command": f"python3 {scripts}/x.py src/app.py"}, tool_id="u1"),
                                   ask("Bash", {"command": f"cp src/app.py {scripts}/x.py"}, tool_id="u2"),
@@ -552,6 +545,59 @@ async def test_auto_approve_runs_an_installed_skills_script_but_never_writes_int
                                                               f"python3 {scripts}/x.py ../outside"]
     assert all(request["card"]["why"] for request in shown)  # each asked every time
     assert bridge._auto_ids == {"u1"}
+
+
+
+def a_skill(tmp_path, monkeypatch):
+    """A personal skill with a script, where the catalog finds the agent's skills (never the user's own)."""
+    from ai_browser import skills
+
+    claude = tmp_path / "users" / ".claude"
+    scripts = claude / "skills" / "tidy" / "scripts"
+    scripts.mkdir(parents=True)
+    (claude / "skills" / "tidy" / "SKILL.md").write_text("---\nname: tidy\n---\n", encoding="utf-8")
+    (scripts / "x.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(skills, "user_folders", lambda: (claude, tmp_path / "users" / "Claude"))
+    return scripts
+
+
+def test_the_skills_folders_are_read_again_so_a_blocked_skill_asks_without_a_restart(  # the re-review's N2
+        tmp_path, project, monkeypatch, sandboxed):
+    from ai_browser import config
+    from ai_browser.app import bridge as bridge_module
+    from ai_browser.app import powers
+
+    scripts = a_skill(tmp_path, monkeypatch)
+    bridge, _ = bridge_for(tmp_path, ["unused"], work=project, auto=True)
+    command = {"command": f"python3 {scripts}/x.py"}
+
+    def runs():
+        folders = bridge.skill_folders()
+        return powers.auto_approves("Bash", command, powers.classify("Bash", command, project, skills=folders),
+                                    sandbox=True, skills=folders)
+
+    assert runs()
+    config.set_blocked(tmp_path / "home", "personal:tidy", True)  # Knowledge's Remove, while the agent works
+    assert runs()  # read a moment ago: kept for SKILLS_TTL seconds
+    monkeypatch.setattr(bridge_module, "SKILLS_TTL", 0)
+    assert not runs()
+
+
+async def test_a_saved_rule_for_the_interpreter_never_runs_a_skills_script(  # the re-review's N4
+        fake_claude, tmp_path, project, monkeypatch):
+    from ai_browser.app import powers
+
+    scripts = a_skill(tmp_path, monkeypatch)
+    rules = powers.Rules(tmp_path / "rules")
+    rules.add(project, "Bash(python:*)")  # Always allow, saved for another python command
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": f"python {scripts}/x.py"}, tool_id="u1"),
+                                  ask("Bash", {"command": f"python {project}/src/app.py"}, tool_id="u2"), RESULT]),
+                      encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"], work=project, rules=rules)  # Auto-approve off
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == [f"python {scripts}/x.py"]  # the rule ran the other
+    assert behaviors(log) == ["allow", "allow"]
 
 
 async def test_a_request_without_its_tool_use_never_runs_by_auto_approve(  # the review's 4: the mark fails closed

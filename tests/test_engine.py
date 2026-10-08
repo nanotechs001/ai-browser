@@ -63,8 +63,9 @@ async def test_when_docker_isnt_running_skills_scripts_run_with_the_agents_own_b
     assert f"{root}/skills/hello" in loaded.text.splitlines()[0]
     assert "Run its scripts with your own commands (Bash), from your task's folder." in loaded.text
     told = await engine.shell("python3 hi.py --fast")
-    assert told.text.startswith("Docker isn't running, so there's no shell here: run it with your own Bash: "
-                                "python3 hi.py --fast\n")
+    assert told.text.startswith("There's no shell without Docker. Use your own Bash; AI Browser asks the user as "
+                                "usual.\n")
+    assert "hi.py" not in told.text  # never the command back, as an instruction (the re-review's N5)
     refused = await engine.shell("curl -A 'Mozilla/5.0' https://example.com")
     assert refused.text.startswith("⛔")  # a command the shell refuses is never handed to Bash instead
     assert len(asked) == 1 and engine.sandboxes is None and engine.browser is None  # asked once; nothing started

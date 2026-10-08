@@ -21,7 +21,8 @@ from ..accounts import clean_env
 from ..brain.tools import ToolsConfig, server_of
 from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
 from ..limits import from_event, from_text, windows_from_event
-from ..skills import skill_roots
+from ..config import load_config
+from ..skills import SkillFolders, skill_folders
 from ..syncdir import write_atomic
 from . import powers
 
@@ -54,6 +55,7 @@ LABELS = {"panel": "Tab beside the panel", "handed": "Tab the user handed you",
 TITLE_LIMIT, URL_LIMIT = 150, 300
 _UNSAFE = re.compile(r"[\x00-\x1f\x7f\[\]]")  # control characters and brackets: page text can't end the line early
 LINES = 12  # result lines shown under an action
+SKILLS_TTL = 10  # seconds the installed skills' folders are kept before they're read again (the re-review's N2)
 PAGE_LIMIT = 6000  # characters of a page read kept for the panel's Page view
 PAGE_TOOLS = {"open", "observe", "act", "tabs"}
 STDOUT_LIMIT = 32 * 1024 * 1024  # one stream-json line can carry a whole page read
@@ -147,9 +149,9 @@ class ClaudeBridge:
         self._moved = False  # an allowed command may have moved the shell: nothing is harmless (plan decision 8)
         self._away = False  # a move auto-approve didn't make (only its cd into the folder is): it runs no command
         self.loaded_skills: set[str] = set()  # skills Claude loaded in this conversation
-        # The installed skills' folders, once per agent: their scripts run like the task folder's own (Part 2 of the
-        # review of 2026-10-08), while their arguments stay the folder's
-        self.skills = tuple(str(root) for root in skill_roots())
+        # The installed skills' folders (skill_folders): their scripts run like the task folder's own (Part 2 of the
+        # review of 2026-10-08), while their arguments stay the folder's. (when read, what was read)
+        self._skills_read: tuple[float, SkillFolders] | None = None
         self.model = model  # a change applies from the next message, in the same process (set_model)
         self.claude = claude  # resolved when a process starts (claude_argv): a list too, such as the tests' fake
         self.env = dict(env or {})  # extra settings for the ai-browser MCP server
@@ -344,17 +346,18 @@ class ClaudeBridge:
         (Review Focus 3). (answer, note, whether auto-approve answered)."""
         if self._stopping:
             return "deny", "", False
-        decision = powers.classify(tool, data, self.work, moved=self._moved, skills=self.skills)
-        rule = powers.rule_for(tool, data) if decision == "ask" else None
+        skills = self.skill_folders()
+        decision, why = powers.decide(tool, data, self.work, moved=self._moved, skills=skills)
+        rule = powers.rule_for(tool, data) if decision == "ask" and not why else None  # where a card offers Always (N4)
         auto = False
         if decision == "allow" or (rule is not None and rule in self._rules()):
             answer, note = "once", ""
         elif self.auto and request.get("tool_use_id") and powers.auto_approves(  # no id, no mark: a card
-                tool, data, decision, sandbox=powers.sandbox_on(), away=self._away, skills=self.skills):
+                tool, data, decision, sandbox=powers.sandbox_on(), away=self._away, skills=skills):
             answer, note, auto = "once", "", True
         else:
             shown = {**powers.card(tool, data, self.work, moved=self._moved, sandbox=powers.sandbox_on(),
-                                   skills=self.skills),
+                                   skills=skills),
                      "scratch": not self.chosen}
             parent = self._parents.get(str(request.get("tool_use_id", "")))
             sub = self._subagents.get(parent, "") if parent else ""
@@ -366,6 +369,14 @@ class ClaudeBridge:
             self._moved = True  # the shell may be elsewhere now: nothing is harmless until Claude Code starts again
             self._away = self._away or not auto  # and auto-approve runs no command (its own cd stays inside)
         return answer, note, auto
+
+    def skill_folders(self) -> SkillFolders:
+        """The installed skills' folders, read again at most every SKILLS_TTL seconds: a plugin turned off or a skill
+        blocked (Knowledge's Remove) takes effect without restarting the agent (the re-review's N2)."""
+        now = time.monotonic()
+        if self._skills_read is None or now - self._skills_read[0] >= SKILLS_TTL:
+            self._skills_read = (now, skill_folders(set(load_config(self.home).blocked_skills)))
+        return self._skills_read[1]
 
     def _rules(self) -> set[str]:
         """The rules that answer for the user here: the folder's saved ones, and this agent's own."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -35,6 +36,14 @@ class SkillSource:
     host_root: Path
     mount: str
     pattern: str  # "*/SKILL.md" or "skills/*/SKILL.md"
+
+
+@dataclass(frozen=True)
+class SkillFolders:
+    """Where an agent may run installed skills' scripts from (Part 2 of the review of 2026-10-08): the catalog's roots,
+    less the blocked skills' folders (Knowledge's Remove)."""
+    roots: tuple[str, ...] = ()
+    blocked: tuple[str, ...] = ()
 
 
 class SkillNotFound(KeyError):
@@ -199,10 +208,26 @@ def _sources(claude_home: Path, app_support: Path) -> list[SkillSource]:
     return sources
 
 
-def skill_roots() -> list[Path]:
-    """The folders the catalog reads the user's own skills from, those that are there (what the Docker sandbox
-    mounts): an agent may run their scripts like its own folder's (Part 2 of the review of 2026-10-08)."""
-    return [source.host_root for source in _sources(*user_folders()) if source.host_root.is_dir()]
+def _too_wide(root: Path, claude_home: Path) -> bool:
+    """Whether a root is a whole disk, the home folder, or holds it or Claude Code's folder (a plugin's installPath of
+    "/" would make every program a skill's file: the re-review's N3)."""
+    real = Path(os.path.realpath(root))
+    held = [Path(os.path.realpath(folder)) for folder in (Path.home(), Path.home() / ".claude", claude_home)]
+    return real == Path(real.anchor) or any(real == folder or real in folder.parents for folder in held)
+
+
+def skill_folders(blocked: set[str] = frozenset()) -> SkillFolders:
+    """The folders the catalog reads the user's own skills from, those that are there and not too wide (what the
+    Docker sandbox mounts), and the folders of the skills in `blocked` (config's blocked_skills): an agent may run the
+    scripts of the others like its own folder's (Part 2 of the review of 2026-10-08)."""
+    claude_home, app_support = user_folders()
+    sources = [source for source in _sources(claude_home, app_support)
+               if source.host_root.is_dir() and not _too_wide(source.host_root, claude_home)]
+    hidden = ()
+    if blocked:  # only then the skills are read: blocked ones by their names
+        catalog = Catalog(sources, set(blocked))
+        hidden = tuple(str(skill.host_dir) for ref, skill in catalog._skills.items() if ref in catalog.blocked)
+    return SkillFolders(tuple(str(source.host_root) for source in sources), hidden)
 
 
 def _plugin_sources(claude_home: Path) -> list[SkillSource]:

@@ -1,6 +1,7 @@
 """Agent powers (app/powers.py): what Claude Code's own tools may do without the user. Read from the request's input,
 never run. Every folder is a throwaway one, and so is ~ (HOME), so no test names the user's own folders."""
 
+import os
 import shlex
 
 import pytest
@@ -622,6 +623,87 @@ def test_a_skills_script_with_an_outside_argument_or_a_write_into_a_skill_asks_e
     for tool, data in (("Write", {"file_path": str(scripts / "x.py"), "content": "x"}),
                        ("Edit", {"file_path": str(scripts / "x.py"), "old_string": "x", "new_string": "y"})):
         assert classify(tool, data, project, skills=[root]) == "ask_always"  # a skill's files are outside
+
+
+
+# The re-review of 2026-10-08, N1: a plugin's whole install folder is a root, so a file under .git, node_modules, a
+# virtualenv, site-packages or another dot-folder in it is no skill's script: asked every time, never auto-approved.
+@pytest.fixture
+def plugin(tmp_path, project):
+    root = tmp_path / "plugin"
+    files = ["skills/x/scripts/a.py", "scripts/tool.py", "node_modules/.bin/yarnpkg", "node_modules/npm/bin/npm-cli.js",
+             ".venv/lib/python3.12/site-packages/pip/__main__.py", ".git/hooks/post-checkout", "lib/site-packages/x.py",
+             "lib/dist-packages/x.py", "__pycache__/x.py", ".hidden/x.sh", "venv/bin/x.py", "skills/x/scripts/.x.sh",
+             "skills/y/scripts/b.py"]
+    for name in files:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("x\n", encoding="utf-8")
+    return root
+
+
+NOT_A_SKILLS_SCRIPT = [
+    "python {P}/.venv/lib/python3.12/site-packages/pip/__main__.py install evil-pkg",
+    "node {P}/node_modules/npm/bin/npm-cli.js install x", "{P}/node_modules/.bin/yarnpkg add x",
+    "{P}/.git/hooks/post-checkout", "python {P}/.git/hooks/post-checkout", "python {P}/lib/site-packages/x.py",
+    "python3 {P}/lib/dist-packages/x.py", "python {P}/__pycache__/x.py", "bash {P}/.hidden/x.sh",
+    "{P}/venv/bin/x.py", "sh {P}/skills/x/scripts/.x.sh",
+    "python {P}/skills/x/scripts/../../../node_modules/npm/bin/npm-cli.js"]
+
+
+@pytest.mark.parametrize("command", NOT_A_SKILLS_SCRIPT)
+def test_a_plugins_packages_hooks_and_hidden_files_are_no_skills_script(project, plugin, monkeypatch, command):  # N1
+    from ai_browser.app.powers import classify
+
+    command = command.format(P=plugin)
+    for platform, sandbox in (("darwin", True), ("win32", False)):
+        as_platform(monkeypatch, platform)
+        assert classify("Bash", {"command": command}, project, skills=[str(plugin)]) == "ask_always", command
+        assert not skill_auto(command, project, [str(plugin)], sandbox), (platform, command)
+
+
+def test_a_plugins_own_scripts_still_run(project, plugin, monkeypatch):  # N1: its skills' and its own scripts folder
+    for command in (f"python {plugin}/skills/x/scripts/a.py", f"python3 {plugin}/scripts/tool.py src/app.py"):
+        assert skill_auto(command, project, [str(plugin)], True), command
+
+
+def test_a_blocked_skills_scripts_ask_every_time(project, plugin, monkeypatch):  # N2: Knowledge's Remove
+    from ai_browser.app.powers import classify
+    from ai_browser.skills import SkillFolders
+
+    folders = SkillFolders(roots=(str(plugin),), blocked=(str(plugin / "skills" / "x"),))
+    for command in (f"python {plugin}/skills/x/scripts/a.py", f"{plugin}/skills/x/scripts/a.py"):
+        assert classify("Bash", {"command": command}, project, skills=folders) == "ask_always", command
+        assert not skill_auto(command, project, folders, True), command
+    assert skill_auto(f"python {plugin}/skills/y/scripts/b.py", project, folders, True)  # the others still run
+
+
+def test_bash_runs_a_script_by_its_name_only_when_the_path_holds_none_of_that_name(scripts, monkeypatch, tmp_path):
+    bin_folder = tmp_path / "bin"  # C1, hardened: a run.sh on the PATH too, which bash could take instead
+    bin_folder.mkdir()
+    (bin_folder / "run.sh").write_text("echo other\n", encoding="utf-8")
+    (bin_folder / "run.sh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_folder}{os.pathsep}{os.environ.get('PATH', '')}")
+    assert decide("bash run.sh", scripts) == "ask_always"
+    assert not auto("Bash", {"command": "bash run.sh"}, scripts)
+    assert auto("Bash", {"command": "bash ./run.sh"}, scripts)  # a path: no search
+
+
+def test_a_trailing_dot_or_space_names_the_same_hooks_folder(project):  # M1, the hooks folder too
+    from ai_browser.app.powers import WHY_GUARDED, card, classify
+
+    (project / ".git" / "config").write_text("[core]\n\thooksPath = tools/hooks\n", encoding="utf-8")
+    for command in ("touch tools/hooks./pre-push", "cp payload 'tools/hooks /pre-push'", "touch tools./hooks/x"):
+        assert card("Bash", {"command": command}, project)["why"] == WHY_GUARDED, command
+    assert classify("Write", {"file_path": str(project / "tools" / "hooks." / "x"), "content": "x"},
+                    project) == "ask_always"
+    assert classify("Write", {"file_path": str(project / "tools" / "build.sh"), "content": "x"}, project) == "ask"
+
+
+@pytest.mark.parametrize("command", ["uv run bash -c x", "uv run bash run.sh", "npm exec bash x.sh", "npx bash x.sh",
+                                     "pnpm dlx bash x.sh", "uv run rm x", "uv run sudo ls", "bunx sh x.sh",
+                                     "uv run env x", "npm exec sh -- -c x"])
+def test_a_runner_of_a_launcher_or_a_risky_program_has_no_rule(project, command):  # no saved rule covers bash -c
+    assert rule(command) is None and decide(command, project) == "ask_always", command
 
 
 def test_after_the_shell_moved_a_search_without_a_full_path_asks(project):  # the review's 8 (it was so before)

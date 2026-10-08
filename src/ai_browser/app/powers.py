@@ -19,12 +19,14 @@ import json
 import os
 import re
 import shlex
+import shutil
 import sys
 import time
 from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from ..skills import _SKIP_DIRS
 from ..syncdir import write_atomic
 
 # Task 1's probe sets these (the plan's rulings R1 to R4): facts about Claude Code 2.1.263 on macOS, not choices.
@@ -95,6 +97,7 @@ _SUFFIX = re.compile(r"\.(?:exe|cmd|bat|com)$", re.IGNORECASE)  # rm.exe is rm
 SUBCOMMANDS = frozenset({"git", "npm", "pnpm", "yarn", "bun", "uv", "pip", "pip3", "poetry", "cargo", "go", "docker",
                          "kubectl", "brew", "gh", "dotnet", "swift", "mvn", "gradle", "deno"})
 RUNNERS = frozenset({"run", "exec", "x", "dlx", "tool"})  # `npm run build`: the rule holds the third word too
+PACKAGE_RUNNERS = frozenset({"npx", "pnpx", "bunx", "uvx", "pipx"})  # they run the program named first
 HARMLESS = frozenset({"ls", "cat", "pwd"})  # Decision 3, with git's three below
 GIT_READS = frozenset({"status", "diff", "log"})
 GIT_UNSAFE = frozenset({"--output", "--ext-diff", "--textconv", "--open-files-in-pager", "--exec-path"})
@@ -119,6 +122,8 @@ WHY_EDIT = "It changes a file outside the task's folder"
 WHY_GUARDED = "It changes Git's, Claude Code's or an editor's own settings or hooks in this folder"
 WHY_WEB = "That isn't a web address"
 WHY_SKILL = "It runs a script of an installed skill, outside the task's folder"
+WHY_SKILL_FILE = ("It runs a file in a skill's folder that isn't one of its scripts: a package, a hook, a hidden or "
+                  "linked file, or a skill you removed")
 
 
 def user_home() -> Path:
@@ -246,21 +251,33 @@ def _shell_script(words: list[str]) -> bool:
     return words[0] in SHELLS and len(words) > 1 and not words[1].startswith(("-", "+"))
 
 
-def _skill_file(word: str, folder, skills) -> bool:
-    """Whether a word names a file in an installed skill's folder (`skills`: the catalog's roots), once symlinks and
-    .. are resolved; a relative one is read from the task's folder (Part 2 of the review of 2026-10-08)."""
-    if not skills or not isinstance(word, str) or not word or word.startswith(("-", "+")):
+SKILL_SKIPS = frozenset({*_SKIP_DIRS, "site-packages", "dist-packages"})  # a skill's packages and Git's, not its own
+
+
+def _skill_file(word: str, folder, skills) -> bool | None:
+    """Whether a word names one of an installed skill's own scripts, once symlinks and .. are resolved (Part 2 of the
+    review of 2026-10-08): True; None when it is in a skill's folder, as written or resolved, yet isn't one: under
+    .git, node_modules, a virtualenv, site-packages or any dot-folder, in a blocked skill, or linked from one to
+    elsewhere (the re-review's N1, N2); else False. `skills`: the catalog's roots, or a SkillFolders that also names
+    the blocked skills' folders. A relative word is read from the task's folder."""
+    roots, blocked = getattr(skills, "roots", skills), getattr(skills, "blocked", ())
+    if not roots or not isinstance(word, str) or not word or "\x00" in word or word.startswith(("-", "+")) \
+            or (os.name != "nt" and _DRIVE.match(word)):
         return False
     path = Path(os.path.expanduser(word))
     path = path if path.is_absolute() else Path(folder) / path
-    return any(inside(str(path), root) for root in skills)
-
-
-def _skill_link(word: str, skills) -> bool:
-    """Whether a full path names a file in an installed skill's folder as written, though its links lead elsewhere."""
-    seen = os.path.normcase(os.path.abspath(word))
-    return any(seen.startswith(top.rstrip(os.sep) + os.sep)
-               for root in skills for top in (os.path.normcase(os.path.abspath(root)), _real(root)))
+    real, seen = _real(path), os.path.normcase(os.path.abspath(path))
+    if any(_same(real, _real(hidden)) or _under(real, _real(hidden)) for hidden in blocked):
+        return None
+    written = False
+    for root in roots:
+        top = _real(root)
+        if _same(real, top) or _under(real, top):
+            parts = Path(os.path.relpath(real, top)).parts
+            return None if any(part.startswith(".") or part.casefold() in SKILL_SKIPS for part in parts) else True
+        written = written or any(seen.startswith(above.rstrip(os.sep) + os.sep)
+                                 for above in (os.path.normcase(os.path.abspath(root)), top))
+    return None if written else False
 
 
 def _git_runs_programs(folder) -> bool:
@@ -412,6 +429,10 @@ def _prefix(words: list[str]) -> tuple[list[str] | None, str]:
     program, rest = _name(words[0]), words[1:]
     if _inline(program, rest):
         return None, WHY_INLINE
+    runs = rest[1:2] if rest[:1] and rest[0] in RUNNERS and program in SUBCOMMANDS else \
+        rest[:1] if program in PACKAGE_RUNNERS else []
+    if any(_name(word) in LAUNCHERS or _name(word) in RISKY or _name(word).startswith("mkfs") for word in runs):
+        return None, WHY_LAUNCHER  # uv run bash, npm exec sh, npx bash: no rule may cover bash -c later
     if _INTERPRETER.fullmatch(program) and rest:
         if rest[0] in INLINE or rest[0][:2] in ("-c", "-e"):
             return None, WHY_INLINE
@@ -495,7 +516,8 @@ def _bash(data: dict, folder, moved: bool, skills=()) -> tuple[str, str]:
     program = _name(words[0])
     # A file's name without a slash: bash runs the folder's file, else the first one on the PATH (the review's C1):
     # only one that is there, while the shell is still in the folder
-    script = _shell_script(words) and ("/" in words[1] or (not moved and os.path.isfile(Path(folder) / words[1])))
+    script = _shell_script(words) and ("/" in words[1] or (not moved and os.path.isfile(Path(folder) / words[1])
+                                                          and shutil.which(words[1]) is None))
     if program in LAUNCHERS and not script:
         return "ask_always", WHY_LAUNCHER
     if program in RISKY or program.startswith("mkfs"):
@@ -506,11 +528,12 @@ def _bash(data: dict, folder, moved: bool, skills=()) -> tuple[str, str]:
     # An installed skill's script, run as the program or by bash, sh, python, python3 or node with it first: its path
     # isn't the folder's, but its arguments still are (Part 2 of the review of 2026-10-08)
     runner = words[0] in SHELLS or AUTO_BASH.get(words[0]) is _SCRIPT
-    skill = 0 if "/" in words[0] and _skill_file(words[0], folder, skills) else \
-        1 if runner and len(words) > 1 and _skill_file(words[1], folder, skills) else None
+    first = _skill_file(words[0], folder, skills) if "/" in words[0] else False
+    second = _skill_file(words[1], folder, skills) if runner and len(words) > 1 else False
+    if first is None or second is None:
+        return "ask_always", WHY_SKILL_FILE
+    skill = 0 if first else 1 if second else None
     named = words[skill + 1:] if skill is not None else words if _own_program(words[0]) else words[1:]
-    if skill is None and words[0].startswith("/") and _skill_link(words[0], skills):
-        return "ask_always", WHY_OUTSIDE  # a skill's file linked to one outside it
     if any(_outside(word, folder) for word in named):
         return "ask_always", WHY_OUTSIDE
     guarded = _guard(folder)
@@ -584,6 +607,11 @@ def _hooks_folder(folder) -> str | None:
     return _real(path if path.is_absolute() else Path(folder) / path)
 
 
+def _bare_parts(path) -> list[str]:
+    """A path's parts as Windows reads them: without trailing dots and spaces, in any case."""
+    return [part.rstrip(". ").casefold() for part in Path(path).parts]
+
+
 def _guard(folder):
     """A test of whether a path is a file of Git's, Claude Code's or an editor's own in the folder (.git, .claude,
     .husky, .vscode, .idea, .mcp.json, .pre-commit-config.yaml, the hooks folder): what they run or load later, so an
@@ -606,7 +634,10 @@ def _guard(folder):
             return True
         if Path(real).name.rstrip(". ").casefold() in GUARDED_FILES and _same(str(Path(real).parent), root):
             return True
-        return hooks is not None and (_same(real, hooks) or _under(real, hooks))
+        if hooks is None:
+            return False
+        mine, theirs = _bare_parts(real), _bare_parts(hooks)  # tools/hooks./x is in tools/hooks (M1)
+        return mine[:len(theirs)] == theirs or _same(real, hooks) or _under(real, hooks)
 
     return guarded
 
@@ -627,8 +658,8 @@ def _host(url) -> str:
     return host if parts.scheme in ("http", "https") and re.fullmatch(r"[a-z0-9.-]{1,253}", host) else ""
 
 
-def _decide(tool: str, data, folder, moved: bool = False, skills=()) -> tuple[str, str]:
-    """classify's answer, and why a card that asks every time does."""
+def decide(tool: str, data, folder, moved: bool = False, skills=()) -> tuple[str, str]:
+    """classify's answer, and why: a card that asks every time, or one that offers no Always."""
     data = data if isinstance(data, dict) else {}
     if tool in FREE or tool in SUBAGENTS:
         return "allow", ""
@@ -654,7 +685,7 @@ def classify(tool: str, data, folder, moved: bool = False, skills=()) -> str:
     """"allow", "ask" or "ask_always" for one request (Decisions 3 and 4). `moved`: an allowed command may have taken
     the shell out of the folder, so no command is harmless for the rest of that Claude Code process (plan decision
     8)."""
-    return _decide(tool, data, folder, moved, skills)[0]
+    return decide(tool, data, folder, moved, skills)[0]
 
 
 def rule_for(tool: str, data) -> str | None:
@@ -782,7 +813,7 @@ def ordinary(words: list[str], skills=()) -> bool:
     program, rest = words[0], words[1:]
     if program in SHELLS:
         return _shell_script(words)
-    if _own_program(program) or (program.startswith("/") and any(inside(program, root) for root in skills)):
+    if _own_program(program) or (program.startswith("/") and _skill_file(program, "/", skills) is True):
         name = _name(program)  # the folder's own program, or an installed skill's (`skills`: their roots)
         known = name in AUTO_BASH or name in SUBCOMMANDS or name in AUTO_FETCHES or _INTERPRETER.fullmatch(name)
         return ordinary([name, *rest]) if known else True
@@ -939,7 +970,7 @@ def card(tool: str, data, folder, moved: bool = False, sandbox: bool = False, sk
     the new file, the path, the site or the query; whether Always allow is offered, and if not, why. `sandbox`: the
     command will run in Claude Code's sandbox (R1)."""
     data = data if isinstance(data, dict) else {}
-    decision, why = _decide(tool, data, folder, moved, skills)
+    decision, why = decide(tool, data, folder, moved, skills)
     shown = {"tool": tool, "badge": badge(tool), "title": TITLES.get(tool, "use a tool"), "text": "",
              "folder": _clip(str(folder)), "site": "", "lines": [], "hidden": 0, "size": None, "binary": False,
              "why": why, "always": decision == "ask" and not why and rule_for(tool, data) is not None,

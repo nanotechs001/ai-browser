@@ -30,7 +30,7 @@ from .tasklog import TaskLog, new_task_id
 from .workfs import PathError, WorkDir
 
 DESCRIPTION_LIMIT = 160
-NO_DOCKER_SHELL = "Docker isn't running, so there's no shell here: run it with your own Bash: {command}"
+NO_DOCKER_SHELL = "There's no shell without Docker. Use your own Bash; AI Browser asks the user as usual."
 CHROME_ALLOW_WAIT = 60  # seconds a call waits for the user's "Allow"; the question itself stays until they answer
 RECONNECTED = {"chrome": "(reconnected to your {name}: earlier tabs and element ids from this session are gone)\n"}
 BROWSER_KINDS = {"": "chrome", "own": "chrome", "chrome": "chrome", "brave": "chrome",
@@ -784,7 +784,7 @@ class Engine:
             return self.gate.refusal("shell") or (f"⛔ {problem}" if problem else None)
 
         async def told():  # no shell to start: what the shell refuses stays refused
-            return refuse() or NO_DOCKER_SHELL.format(command=command)
+            return refuse() or NO_DOCKER_SHELL  # never the command back, as an instruction (the re-review's N5)
 
         if not await asyncio.to_thread(self._docker_running):
             return await self._run("shell", {"command": command, "timeout": timeout}, told)
