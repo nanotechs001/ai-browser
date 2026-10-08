@@ -100,6 +100,20 @@ def test_launch_refuses_every_real_browser_folder(monkeypatch):
             chrome.launch(folder)
 
 
+def test_a_throwaway_chrome_never_asks_for_a_keychain(monkeypatch, tmp_path):
+    """macOS asks "A keychain cannot be found to store Chrome" when a test Chrome starts under a HOME with no keychain:
+    a throwaway profile never needs one, so it gets Chrome's mock keychain."""
+    import subprocess
+
+    import ai_browser.chrome as chrome
+
+    started = []
+    monkeypatch.setattr(chrome, "chrome_binary", lambda: "/fake/chrome")
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **_: started.append(args))
+    launch(tmp_path / "profile")
+    assert "--use-mock-keychain" in started[0]
+
+
 def test_missing_folder_explains_the_fix(tmp_path):
     with pytest.raises(ChromeError, match="chrome://inspect/#remote-debugging"):
         find_ws_url(tmp_path / "nope")
