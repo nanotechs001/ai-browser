@@ -60,6 +60,9 @@ function load(tab, hash = "") { // the tab's frame, made the first time it is sh
   if (tab.live) frame.setAttribute("sandbox", "allow-scripts"); // another origin's page: no way out of its frame
   if (tab.key === "/mission") frame.allow = "microphone"; // talking to the Brain
   if (tab.key === "/home") frame.addEventListener("load", () => watchCount(frame));
+  frame.addEventListener("load", () => { // the page that loaded hears whether its tab is in front: show()'s word
+    frame.contentWindow?.postMessage({ type: "shown", on: active === tab.key }, location.origin); // went to about:blank
+  });
   frame.src = tab.src + hash;
   view.append(frame);
   $("views").append(view);

@@ -14,6 +14,8 @@ from test_brain_sources import Ask
 from test_brain_talk import Recorder
 from test_bridge import EVENTS
 from test_home import CHROME, home, stack  # noqa: F401  (fixtures)
+from test_home import until as page_until
+from test_tab_menu import connected, pick, shell  # noqa: F401  (fixture)
 from ui_socket import ui_socket
 
 GONE = "That account isn't in Settings → Accounts any more"  # the agent manager's own words (accounts.GONE)
@@ -402,4 +404,26 @@ async def test_a_page_says_when_it_is_hidden_and_shown(home):
     await js(hide % "true")  # the window hidden (the desktop app hides it on close)
     assert await eventually(lambda: not brain.visible())
     await js(hide % "false")
+    assert await eventually(brain.visible)
+
+
+@CHROME
+async def test_a_tab_behind_another_in_the_window_counts_as_unseen(shell):
+    from ai_browser.brain.handoffs import HELD
+
+    js, stack = shell  # the window's tab menu (app.js), AI Home's tab in front
+    brain = stack["brain"]
+    brain.countdown = Clock()
+    assert await eventually(brain.visible)  # AI Home's tab, shown: the tab menu says so as its page loads
+    handoff = brain.give(row(), "Check the prices", "you")
+    assert handoff.state == "counting"
+    await pick(js, "/settings")  # Settings in front: AI Home's tab is hidden, and Settings shows no card
+    assert await eventually(lambda: handoff.state != "counting")
+    assert brain.visible() is False and (handoff.state, handoff.note) == ("waiting", HELD)
+    await pick(js, "/mission")  # Mission Control's first load, in front
+    assert await page_until(js, connected("/mission"))
+    assert await eventually(brain.visible)
+    await pick(js, "/settings")
+    assert await eventually(lambda: not brain.visible())
+    await pick(js, "/home")
     assert await eventually(brain.visible)
