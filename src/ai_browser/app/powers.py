@@ -59,7 +59,8 @@ OPTION_LIMIT = 256  # characters of a cluster of short options whose every tail 
 _NEVER_PLAIN = re.compile(r"[\n\r\x00`$\\{}*?\[\]!]")  # a new line, a substitution, a variable, an escape, a glob
 _OPERATOR = re.compile(r"[;&|<>()]+")
 _PROGRAM = re.compile(r"(?:\./|/)?[A-Za-z0-9_][A-Za-z0-9_.+-]*(?:/[A-Za-z0-9_.+-]+)*")
-_WORD = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.@+:/-]*")  # a word a rule may hold: no option, quote or space
+# a word a rule may hold: no option, quote or space, and no full path (/… here, C:/… on Windows)
+_WORD = re.compile(r"(?![A-Za-z]:[\\/])[A-Za-z0-9_][A-Za-z0-9_.@+:/-]*")
 _DRIVE = re.compile(r"[A-Za-z]:[\\/]")
 _CMD_VARIABLE = re.compile(r"%[^%\s]+%")  # %USERPROFILE%: cmd.exe, which runs npm's scripts on Windows, expands it
 _CLIMB = re.compile(r"(?:^|[\\/])\.\.(?:[\\/]|$)")

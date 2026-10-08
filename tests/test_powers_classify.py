@@ -193,6 +193,13 @@ def test_deleting_files_or_discarding_work_never_offers_always(project, command)
     assert decide(command, project) == "ask_always" and rule(command) is None
 
 
+def test_a_full_path_is_never_a_rules_word_on_any_system():  # Windows run 37761012088: python C:/… made its own rule
+    for command in ("python /Users/me/project/src/app.py", "python C:/Users/me/project/src/app.py",
+                    "python c:/x.py", "node D:/work/app.js --fast"):
+        assert rule(command) == f"Bash({command.split()[0]}:*)", command  # as a saved python rule covers it
+    assert rule("python src/app.py") == "Bash(python src/app.py:*)"  # the folder's own file stays in its rule
+
+
 def test_the_safe_uses_of_find_and_git_still_offer_always(project):  # F2 keeps the everyday ones
     assert decide("find . -name app.py", project) == "ask" and rule("find . -name app.py") == "Bash(find:*)"
     for command, expected in (("git commit -m 'Fix'", "Bash(git commit:*)"), ("git push origin main", "Bash(git push:*)"),
