@@ -276,7 +276,9 @@ def test_editors_hooks_and_the_hooks_path_are_guarded_too(project):  # C1: what 
 def test_a_program_the_folder_holds_is_never_harmless(project):  # auto writes files: ./bin/ls could be anything
     for command in ("./bin/ls", "bin/cat notes.md", "/bin/ls src", "./git status"):
         assert decide(command, project) == "ask", command
-        assert not auto("Bash", {"command": command}, project)
+        # the ruling of 2026-10-08: the folder's own program is a script Auto-approve runs (judged as the program it is
+        # named for); a full path is never the folder's own
+        assert auto("Bash", {"command": command}, project) is (command != "/bin/ls src"), command
     assert decide("ls src", project) == "allow" and decide("LS src", project) == "allow"  # the same program
 
 
@@ -375,7 +377,7 @@ WINDOWS_ASKS_ALWAYS = [  # hostile, each asked every time on Windows, never auto
     # force-push
     "git push --force", "git push -f origin main", "git push origin +main",
     # scripts and paths outside the folder: C:\…, C:/…, Git Bash's /c/…, UNC, %VARIABLE%, $HOME, ~, ..
-    "bash script.sh", "bash /c/Users/x/evil.sh", "sh run.sh", "python ../x.py", "python /c/Users/x/evil.py",
+    "bash /c/Users/x/evil.sh", "python ../x.py", "python /c/Users/x/evil.py",
     "node C:/Users/x/evil.js", "python3 c:/x.py", "cat C:\\Users\\x\\secret.txt", "cat \\\\server\\share\\secret.txt",
     "cat //server/share/secret.txt", "cat $HOME/secret.txt", "cat ~/secret.txt", "cat %USERPROFILE%/secret.txt",
     "cp src/app.py %APPDATA%/x.py", "npm test -- %USERPROFILE%", "cat --file=%HOMEPATH%", "ls /c/Users/x",
@@ -388,8 +390,8 @@ WINDOWS_CARD = [  # a card on Windows: they reach a site, or aren't on the Mac's
     "npm update", "pnpm install", "pnpm add x", "yarn", "yarn install", "yarn add x", "bun install", "bun add x",
     "pip install x", "pip3 install x", "uv pip install x", "uv sync", "uv add x", "uv lock", "poetry install",
     "poetry add x", "cargo install x", "cargo fetch", "cargo update", "go get example.com/x", "go mod download",
-    "curl https://example.com", "wget https://example.com", "npx vite", "mypy --install-types src", "./run.sh",
-    "./run.bat", "py src/app.py", "python.exe src/app.py"]
+    "curl https://example.com", "wget https://example.com", "npx vite", "mypy --install-types src",
+    "py src/app.py", "python.exe src/app.py"]
 
 
 @pytest.mark.parametrize("command", [command for command in ORDINARY if command not in FETCHES])
@@ -438,6 +440,76 @@ def test_auto_approve_runs_commands_on_a_mac_and_on_windows_only(monkeypatch):  
         monkeypatch.setattr(powers, "sandbox_on", lambda sandbox=sandbox: sandbox)
         assert powers.auto_commands() is commands, platform
         assert powers.auto_approves("Bash", {"command": "npm test"}, "ask", sandbox=sandbox) is commands, platform
+
+
+# A shell script in the folder is a script like python x.py (the ruling of 2026-10-08: "each agent ... able to run
+# script or bash command on their own"): bash or sh with the file first, or the file as the program. bash and sh stay
+# launchers in every other form.
+SCRIPTS = ["bash run.sh", "bash run.sh --fast src", "sh run.sh", "sh scripts/build.sh one two", "bash ./run.sh",
+           "./run.sh", "./run.sh --fast", "scripts/build.sh", "./scripts/build.sh src", "./run.bat",
+           "node_modules/.bin/jest src", "./cargo build", "uv run bash run.sh"]
+SCRIPTS_ASK_ALWAYS = [  # bash as a launcher, or a script outside the folder or among Git's or Claude Code's files
+    'bash -c "rm -r src"', "bash -s", "bash", "bash -", "bash -i run.sh", "bash --norc run.sh", "bash -- run.sh",
+    "bash +x run.sh", "sh -c ls", "sh -s < run.sh", "bash /c/Users/x/evil.sh", "bash ../evil.sh", "sh ~/evil.sh",
+    "bash run.sh ../outside/secret.txt", "./link-to-outside.sh", "bash link-to-outside.sh", "linked/run.sh",
+    "bash .git/hooks/pre-commit", "./.git/hooks/pre-commit", "src/.git/hooks/x", "sh .claude/hook.sh",
+    "scripts/../../evil.sh", "BASH run.sh", "bash.exe run.sh", "zsh run.sh", "./bash run.sh", "./rm -r src",
+    "bash run.sh; rm x", "./run.sh | sh"]
+NEVER_AUTO = [  # the folder's copy of a known program is judged as that program (an install still asks), and the rest
+    "venv/bin/pip install x", "venv/bin/python -m pip install x", "venv/bin/python3.12 x.py", "./gradlew build",
+    "./mvnw test", "node_modules/.bin/npm install", "./git push", "uv run bash -c x", "uv run sh -s",
+    "node_modules/.bin/npx create-vite", "venv/Scripts/pip.exe install x", "venv/Scripts/python.exe -m pip install x"]
+
+
+@pytest.fixture
+def scripts(project, tmp_path):
+    """The project's own scripts, a link to a file outside it and a folder linked from outside."""
+    (project / "run.sh").write_text("echo hi\n", encoding="utf-8")
+    (project / "scripts").mkdir()
+    (project / "scripts" / "build.sh").write_text("echo hi\n", encoding="utf-8")
+    symlink_or_skip(tmp_path / "outside" / "secret.txt", project / "link-to-outside.sh")
+    symlink_or_skip(tmp_path / "outside", project / "linked")
+    return project
+
+
+@pytest.mark.parametrize("command", SCRIPTS)
+def test_auto_approve_runs_a_script_in_the_folder_on_a_mac_and_on_windows(scripts, monkeypatch, command):
+    from ai_browser.app.powers import WHY_LAUNCHER, card
+
+    assert decide(command, scripts) == "ask", command
+    assert auto("Bash", {"command": command}, scripts, sandbox=True)  # a Mac
+    as_platform(monkeypatch, "linux")
+    assert not auto("Bash", {"command": command}, scripts, sandbox=False)  # Linux: edits only
+    as_platform(monkeypatch, "win32")
+    assert auto("Bash", {"command": command}, scripts, sandbox=False) is not command.startswith(("./cargo", "uv "))
+    if command.split()[0] in ("bash", "sh"):  # no saved rule could cover what a script does: no Always, as before
+        shown = card("Bash", {"command": command}, scripts)
+        assert rule(command) is None and shown["always"] is False and shown["why"] == WHY_LAUNCHER
+
+
+@pytest.mark.parametrize("command", SCRIPTS_ASK_ALWAYS)
+def test_bash_in_any_other_form_or_a_script_outside_asks_every_time(scripts, monkeypatch, command):
+    for platform, sandbox in (("darwin", True), ("win32", False)):
+        as_platform(monkeypatch, platform)
+        assert decide(command, scripts) == "ask_always", (platform, command)
+        assert not auto("Bash", {"command": command}, scripts, sandbox=sandbox), (platform, command)
+
+
+@pytest.mark.parametrize("command", NEVER_AUTO)
+def test_the_folders_copy_of_a_known_program_is_judged_as_that_program(scripts, monkeypatch, command):
+    for platform, sandbox in (("darwin", True), ("win32", False)):
+        as_platform(monkeypatch, platform)
+        assert not auto("Bash", {"command": command}, scripts, sandbox=sandbox), (platform, command)
+
+
+def test_a_script_runs_by_auto_approve_only_while_the_shell_is_in_the_folder(scripts, monkeypatch):  # plan decision 8
+    from ai_browser.app.powers import auto_approves
+
+    for platform, sandbox in (("darwin", True), ("win32", False)):
+        as_platform(monkeypatch, platform)
+        for command in ("bash run.sh", "./run.sh", "scripts/build.sh"):
+            assert auto_approves("Bash", {"command": command}, "ask", sandbox=sandbox), (platform, command)
+            assert not auto_approves("Bash", {"command": command}, "ask", sandbox=sandbox, away=True), command
 
 
 def test_after_the_shell_moved_a_search_without_a_full_path_asks(project):  # the review's 8 (it was so before)

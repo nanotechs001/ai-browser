@@ -278,6 +278,8 @@ Web Fetch, sub-agents, and a to-do list.
   - `sudo`, `rm`, `unlink`, `chmod`, `chown`, `dd` and `mkfs`;
   - Windows' shells, launchers and admin programs: `powershell`, `cmd`, `start`, `wsl`, `reg`, `schtasks`, `icacls`,
     `del` and `rd`, and the like;
+  - `bash` or `sh` in any other form (`bash -c`, `bash -s`, `bash` alone) than running a script file in the folder,
+    which asks without Always;
   - programs that run the command after them (`env`, `xargs`, `caffeinate`, `strace`, `flock`…), and code written on
     the command line (`python -c`, `node -e`, `deno eval`, a `sed` script that runs a command or writes a file);
   - uses that delete files or throw work away: `find -delete` or `-exec`, `git clean`, `git reset --hard`,
@@ -298,9 +300,12 @@ Web Fetch, sub-agents, and a to-do list.
   - on a Mac, where the sandbox holds commands in the folder, ordinary commands run without a card too: reading and
     listing (`ls`, `cat`, `grep`, `find`…), making files (`mkdir`, `touch`, `cp`, `mv`), everyday Git (`status`,
     `diff`, `add`, `commit`, a new branch), a package's own scripts (`npm test`, `npm run build`), and the project's
-    checks and builds (`make`, `pytest`, `cargo test`, `python script.py`…). Any other command asks;
+    checks and builds (`make`, `pytest`, `cargo test`, `python script.py`…), and a script of the folder's own
+    (`bash script.sh`, `sh script.sh`, `./script.sh`, `scripts/build.sh`; its copy of a known program, like
+    `venv/bin/pip`, counts as that program). Any other command asks;
   - on Windows, the same ordinary commands run without a card, except a build that downloads what it lacks (`cargo`,
-    `go`, `dotnet`, `mvn`, `gradle`, `swift`, `uv run`, `bun`), which asks there. Windows has no sandbox: a script it
+    `go`, `dotnet`, `mvn`, `gradle`, `swift`, `uv run`, `bun`, `npx`, `./gradlew`), which asks there. Windows has no
+    sandbox: a script it
     runs (`python script.py`, or a package's own, like `npm test`) can read your files and reach sites. A path with a
     `%VARIABLE%` in it asks every time there. The switch and the drawer say so;
   - on Linux, commands still ask: only file edits run without a card. The switch and the drawer say so;

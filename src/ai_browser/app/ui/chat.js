@@ -18,9 +18,9 @@ export function autoTitle(commands, sandbox) { // the switch's title, for this c
       + `and Git's, Claude Code's or an editor's own settings, still ask. ${AUTO_JUDGED}`;
   }
   return sandbox
-    ? "Edits, new files and ordinary commands (reading, building, testing, everyday Git) inside the task's folder run "
-      + "without a card, the commands in Claude Code's sandbox. Deleting, sudo, anything outside the folder, "
-      + `force-push and reaching a site still ask. ${AUTO_JUDGED}`
+    ? "Edits, new files, ordinary commands and scripts (reading, building, testing, everyday Git) inside the task's "
+      + "folder run without a card, the commands in Claude Code's sandbox. Deleting, sudo, anything outside the "
+      + `folder, force-push and reaching a site still ask. ${AUTO_JUDGED}`
     : "Edits, new files, ordinary commands and scripts (reading, building, testing, everyday Git) inside the task's "
       + `folder run without a card. ${AUTO_NO_SANDBOX}. Deleting, admin, anything outside its folder, force-push and `
       + "reaching a site (installing, git push or pull, a build that downloads, like cargo or go) still ask. "

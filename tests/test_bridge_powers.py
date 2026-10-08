@@ -513,19 +513,20 @@ async def test_on_windows_auto_approve_runs_ordinary_commands_but_not_what_reach
     monkeypatch.setattr(powers, "sys", SimpleNamespace(platform="win32"))  # Windows, as powers sees it: no sandbox
     runner, log, script = fake_claude
     ordinary = [ask("Bash", {"command": command}, tool_id=f"u{index}")
-                for index, command in enumerate(("npm test", "python x.py", "mkdir build", "cd src", "npm test"))]
+                for index, command in enumerate(("npm test", "python x.py", "mkdir build", "bash run.sh", "./run.sh",
+                                                 "cd src", "npm test"))]  # a script in the folder too (2026-10-08)
     carded = ["cargo build", "npm install", "git push", "rm x", "cat %USERPROFILE%/secret.txt", "powershell -c x",
-              "cmd //c del x"]
-    script.write_text(json.dumps([INIT, *ordinary[:3], *[ask("Bash", {"command": command}, tool_id=f"c{index}")
+              "cmd //c del x", "bash -c x", "bash ../evil.sh"]
+    script.write_text(json.dumps([INIT, *ordinary[:5], *[ask("Bash", {"command": command}, tool_id=f"c{index}")
                                                          for index, command in enumerate(carded)],
-                                  ordinary[3], ordinary[4], ask("Bash", {"command": "cd /c/Users"}, tool_id="m"),
+                                  ordinary[5], ordinary[6], ask("Bash", {"command": "cd /c/Users"}, tool_id="m"),
                                   ask("Bash", {"command": "npm test"}, tool_id="late"), RESULT]), encoding="utf-8")
     bridge, shown = bridge_for(tmp_path, runner, ["once"] * (len(carded) + 2), work=project, auto=True)
     await run(bridge)
     assert [request["card"]["text"] for request in shown] == [*carded, "cd /c/Users", "npm test"]  # the shell left
     assert all(request["card"]["sandbox"] == "" for request in shown)  # no sandbox to name on Windows
     assert behaviors(log) == ["allow"] * (len(ordinary) + len(carded) + 2)
-    assert bridge._auto_ids == {"u0", "u1", "u2", "u3", "u4"}
+    assert bridge._auto_ids == {f"u{index}" for index in range(len(ordinary))}
 
 
 async def test_a_request_without_its_tool_use_never_runs_by_auto_approve(  # the review's 4: the mark fails closed

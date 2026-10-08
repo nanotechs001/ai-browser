@@ -230,6 +230,21 @@ def _bare(word: str) -> bool:
     return "/" not in word and "\\" not in word
 
 
+def _own_program(word: str) -> bool:
+    """A program named by a path in the folder (./run.sh, scripts/build.sh), not a name on the PATH or a full path."""
+    return "/" in word and not word.startswith("/")
+
+
+SHELLS = ("bash", "sh")  # with a script file first, they run the folder's own script, like python x.py
+
+
+def _shell_script(words: list[str]) -> bool:
+    """bash or sh running a file: its first word after it isn't an option (-c, -s, -i, --norc, +x, -, --), so it
+    neither runs code given on the command line nor reads stdin (the ruling of 2026-10-08). Where the file is, the
+    caller checks."""
+    return words[0] in SHELLS and len(words) > 1 and not words[1].startswith(("-", "+"))
+
+
 def _git_runs_programs(folder) -> bool:
     """Whether Git could run a program of the folder's own on git status, diff or log: settings that name one
     (fsmonitor, a pager, a diff driver, an include, an alias), or a .git that isn't a plain folder of this folder's
@@ -459,22 +474,25 @@ def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
     words = words_of(data.get("command"))
     if words is None:
         return "ask_always", WHY_NOT_PLAIN
-    program = _name(words[0])
-    if program in LAUNCHERS:
+    program, script = _name(words[0]), _shell_script(words)
+    if program in LAUNCHERS and not script:
         return "ask_always", WHY_LAUNCHER
     if program in RISKY or program.startswith("mkfs"):
         return "ask_always", WHY_RISKY
     why = _destroys(program, words)
     if why:
         return "ask_always", why
-    if any(_outside(word, folder) for word in words[1:]):
+    named = words if _own_program(words[0]) else words[1:]  # the folder's own program: its path counts too
+    if any(_outside(word, folder) for word in named):
         return "ask_always", WHY_OUTSIDE
     guarded = _guard(folder)
-    if any(guarded(target) for word in words[1:] for target in _targets(word)) \
+    if any(guarded(target) for word in named for target in _targets(word)) \
             or (program == "git" and words[1:2] == ["config"] and _git_config_writes(words[2:])):
         return "ask_always", WHY_GUARDED  # C1: what Git, Claude Code or an editor runs or loads later
     if not moved and _harmless(program, words, folder):
         return "allow", ""
+    if script:
+        return "ask", WHY_LAUNCHER  # no rule covers what a script does (no Always); Auto-approve may run it
     prefix, why = _prefix(words)
     return ("ask", "") if prefix else ("ask_always", why)
 
@@ -702,9 +720,11 @@ AUTO_GIT: dict[str, tuple[str, ...]] = {  # git's everyday uses, and what turns 
     "init": ("--template", "--separate-git-dir"),  # a template folder fills .git/hooks
 }
 GIT_STASH = (None, "push", "list", "show")  # git stash alone pushes
-# AUTO_BASH's programs that download what a build or a run lacks (crates, modules, packages; Bun installs on import).
-# On a Mac the sandbox asks for each site they reach; on Windows nothing would, so there they keep their card.
-AUTO_FETCHES = frozenset({"cargo", "go", "dotnet", "mvn", "gradle", "swift", "uv", "bun"})
+# Programs that download what a build or a run lacks (crates, modules, packages; Bun installs on import; the Gradle
+# and Maven wrappers fetch the tool itself; npx and its kin fetch the package they run). On a Mac the sandbox asks
+# for each site they reach; on Windows nothing would, so there they keep their card.
+AUTO_FETCHES = frozenset({"cargo", "go", "dotnet", "mvn", "gradle", "swift", "uv", "bun", "gradlew", "mvnw", "npx",
+                          "pnpx", "bunx", "pipx"})
 
 
 def _refused(word: str, options: tuple[str, ...]) -> bool:
@@ -724,8 +744,17 @@ def _refused(word: str, options: tuple[str, ...]) -> bool:
 
 
 def ordinary(words: list[str]) -> bool:
-    """Whether one plain command is an ordinary use in AUTO_BASH (C2)."""
+    """Whether one plain command is an ordinary use in AUTO_BASH (C2), or runs a script of the folder's own: bash or sh
+    with the file first, or the file as the program (the ruling of 2026-10-08). classify, which asked, has checked its
+    paths are inside the folder and none is Git's or Claude Code's. The folder's copy of a program known here (pip,
+    python3.12, git, gradlew) is judged as that program, so an install still asks."""
     program, rest = words[0], words[1:]
+    if program in SHELLS:
+        return _shell_script(words)
+    if _own_program(program):
+        name = _name(program)
+        known = name in AUTO_BASH or name in SUBCOMMANDS or name in AUTO_FETCHES or _INTERPRETER.fullmatch(name)
+        return ordinary([name, *rest]) if known else True
     use = AUTO_BASH.get(program)
     if use is None or any(_refused(arg, AUTO_REFUSED.get(program, ())) for arg in rest):
         return False
@@ -772,7 +801,7 @@ def auto_approves(tool: str, data, decision: str, sandbox: bool = False, away: b
     if away or not (held or sys.platform == "win32"):
         return False
     words = words_of(data.get("command") if isinstance(data, dict) else None)
-    return words is not None and ordinary(words) and (held or words[0] not in AUTO_FETCHES)
+    return words is not None and ordinary(words) and (held or _name(words[0]) not in AUTO_FETCHES)
 
 
 # ---- the card: what a request will do, as plain text (Decision 2), and each action's badge (Decision 10) -------------

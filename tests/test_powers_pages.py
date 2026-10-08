@@ -445,6 +445,7 @@ async def test_the_switch_says_what_runs_without_a_card_on_this_computer(stack, 
     assert "judged from what a command names, not from what a script it runs does" in words
     assert words.startswith(EDITS_ONLY) is (computer == "linux")
     assert ("ordinary commands" in words) is (computer != "linux")
+    assert ("ordinary commands and scripts" in words) is (computer != "linux")  # bash script.sh too (2026-10-08)
     assert ("in Claude Code's sandbox" in words) is (computer == "mac")  # the user's choice, 2026-10-08: say which
     assert (NO_SANDBOX in words and "reaching a site" in words and "Deleting, admin" in words) is (computer == "windows")
     assert await until(mission, f"{station('a1')} != null")
@@ -474,6 +475,10 @@ def test_the_readme_explains_auto_approve():  # the user's choice, 2026-10-07: w
                    "`npm test`) can read your files and reach sites",
                    "`powershell`, `cmd`, `start`, `wsl`, `reg`, `schtasks`, `icacls`, `del` and `rd`",
                    "or, on Windows, a script **Auto-approve in its folder** runs",
+                   # the ruling of 2026-10-08: a shell script in the folder is a script like python x.py
+                   "and a script of the folder's own (`bash script.sh`, `sh script.sh`, `./script.sh`, "
+                   "`scripts/build.sh`", "its copy of a known program, like `venv/bin/pip`, counts as that program",
+                   "`bash` or `sh` in any other form (`bash -c`, `bash -s`, `bash` alone)",
                    "On Windows, commands don't run in a sandbox: the cards and Auto-approve's list are the guard",
                    "Web Search and Web Fetch, a command reaching a site, your own tools",
                    "a `cd` that isn't into a folder inside", "Once the shell has left the folder, commands ask again",
