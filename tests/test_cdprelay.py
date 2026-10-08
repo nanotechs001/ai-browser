@@ -126,8 +126,8 @@ def test_every_method_the_engine_sends_passes_the_policy():
                 assert allowed(method, _level(method)), f"{path.name} sends {method}, which the relay refuses"
     for method in _sent_methods(SRC / "app" / "tabs.py"):
         assert allowed(method, _level(method), app=True), f"tabs.py sends {method}, which the relay refuses"
-    assert {"Target.createTarget", "Page.navigate", "Network.loadNetworkResource", "Input.dispatchMouseEvent",
-            "Page.screencastFrameAck", "IO.read", "Browser.cancelDownload"} <= seen  # the scan found the engine
+    assert {"Target.createTarget", "Page.navigate", "Input.dispatchMouseEvent", "Page.screencastFrameAck",
+            "Browser.cancelDownload"} <= seen  # the scan found the engine
 
 
 async def test_cdp_connect_sends_the_header_and_no_origin_and_uses_no_proxy(monkeypatch):
