@@ -718,7 +718,8 @@ async def test_no_agent_3_moves_the_talks_handoff_there_with_the_same_words(tmp_
 
 
 CANCELS = ("cancel it", "Stop it.", "don't send it", "dont send it", "No, wait!", "hold on", "nevermind", "wait",
-           "Never mind.")
+           "Never mind.", "cancel that", "Stop that!", "don't send", "dont send", "Forget it.", "abort",
+           "scratch that")
 
 
 async def test_the_words_people_cancel_with_cancel_the_talks_handoff_without_claude(tmp_path):
@@ -799,3 +800,49 @@ async def test_a_card_the_talk_shows_later_takes_its_yes_not_the_held_handoff(tm
     brain.talks.proposal_ttl = -1  # the card's two minutes are up
     assert (await brain.respond("k1", "yes", proposal=card["id"]))["say"] == EXPIRED  # that yes was the card's
     assert handoff.state == "waiting" and agents.sent == []
+
+
+PRICING = "have someone check the pricing pages"  # names no agent: the Brain asks which
+ASK_WHICH = {"pricing": {"say": "Sure.", "action": "message_agent", "agent": ""}, **TO_A2}
+
+
+async def test_a_which_agent_question_takes_the_talks_answer_from_its_held_handoff(tmp_path):
+    from ai_browser.brain.handoffs import FROM_BRAIN, HELD
+    from ai_browser.brain.service import NOTHING_DONE
+
+    brain, agents, _, _ = brain_with(tmp_path / "pick", [row(), row("a3", "Other")], ask=Ask(ASK_WHICH))
+    first = brain.handoffs[(await brain.respond("k1", WORDS))["handoff"]["id"]]
+    assert (await brain.respond("k1", PRICING))["say"].startswith("Which agent: 2 · Research competitors")
+    assert (first.state, first.note) == ("waiting", HELD)
+    given = (await brain.respond("k1", "agent 3"))["handoff"]  # the question's words, not the held hand-off's
+    assert (given["agent"], given["instruction"], given["state"]) == ("a3", PRICING, "counting")
+    assert first.state == "waiting"  # it waits for Send on its own card
+    await brain.countdown.tick()
+    assert agents.sent == [("a3", f"{FROM_BRAIN} {PRICING}")]  # nothing of the first
+    brain, agents, _, _ = brain_with(tmp_path / "no", [row(), row("a3", "Other")], ask=Ask(ASK_WHICH))
+    first = brain.handoffs[(await brain.respond("k1", WORDS))["handoff"]["id"]]
+    await brain.respond("k1", PRICING)
+    assert await brain.respond("k1", "no") == {"say": NOTHING_DONE}  # it answers the question
+    assert first.state == "waiting" and brain.talks.asking("k1") is None
+    await brain.countdown.tick()
+    assert agents.sent == []
+
+
+async def test_a_send_cancelled_midway_ends_its_card(tmp_path):
+    from ai_browser.brain.handoffs import NOT_SENT
+
+    class Stuck(Recorder):
+        async def send(self, agent_id, text, tab=None):
+            await asyncio.Event().wait()  # never answers: the app quits meanwhile
+
+    brain, _, shown, _ = brain_with(tmp_path, [row()])
+    brain.agents = Stuck([row()])
+    handoff = brain.give(row(), "Check the prices", "agent")
+    sending = asyncio.ensure_future(brain.send_handoff(handoff.id))  # Send
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert handoff.state == "sending"
+    sending.cancel()
+    await asyncio.gather(sending, return_exceptions=True)
+    assert sending.cancelled() and (handoff.state, handoff.note) == ("not_sent", NOT_SENT)
+    assert cards(shown)[-1]["state"] == "not_sent"

@@ -1226,7 +1226,10 @@ class BrainService:
             handoff.state, handoff.note = "not_sent", _clip(str(exc), 200) or failed
         except Exception:  # anything else: the card ends, in fixed words, never an error's text
             handoff.state, handoff.note = "not_sent", failed
-        self._show_handoff(handoff)
+        finally:
+            if handoff.state == "sending":  # cancelled midway (the app quit): the card still ends, in fixed words
+                handoff.state, handoff.note = "not_sent", failed
+            self._show_handoff(handoff)
 
     def cancel_handoff(self, handoff_id: str, note: str = CANCELLED) -> None:
         """Cancel on a card: a countdown stops, and nothing is sent or started."""

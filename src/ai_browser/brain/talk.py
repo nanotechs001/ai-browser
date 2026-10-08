@@ -81,7 +81,8 @@ YES = frozenset({"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "go ahead", 
                  "confirm"})
 NO = frozenset({"no", "nope", "cancel", "stop", "never mind", "don't"})
 # How people stop the talk's own hand-off while it counts (a no too, never sent to Claude): "cancel it", "no, wait"
-CANCEL = NO | frozenset({"cancel it", "stop it", "don't send it", "dont send it", "wait", "hold on", "nevermind"})
+CANCEL = NO | frozenset({"cancel it", "stop it", "don't send it", "dont send it", "wait", "hold on", "nevermind",
+                         "cancel that", "stop that", "don't send", "dont send", "forget it", "abort", "scratch that"})
 _SECRET_WORDS = (("password",), ("passcode",), ("pin",), ("cvv",), ("cvc",), ("security", "code"),
                  ("one-time", "code"), ("one", "time", "code"), ("verification", "code"))
 _TELLS = frozenset({"is", "was", "are", "were", ":"})  # "my password is …", "the PINs were …"
@@ -703,7 +704,9 @@ class Talks:
         return self.proposal_ttl - (self.clock() - proposal.created)
 
     def ask_which(self, talk_id: str, words: str, candidates) -> None:
-        self._get(talk_id).asking = Asking(words, tuple(candidates), self.clock())
+        talk = self._get(talk_id)
+        talk.asking = Asking(words, tuple(candidates), self.clock())
+        talk.handoff = None  # the question takes the talk's yes, no and "agent 3" (its hand-off waits on its card)
 
     def asking(self, talk_id: str) -> Asking | None:
         talk = self._get(talk_id)
