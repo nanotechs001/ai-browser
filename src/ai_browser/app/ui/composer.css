@@ -32,7 +32,8 @@
 .dropping { outline: 2px dashed var(--accent-2); outline-offset: 2px; } /* files dragged over a box (paste.js) */
 .controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .pickers { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
-.pickers select { max-width: 190px; }
+.pickers select { max-width: 190px; height: 31px; } /* a select's line is the system font's own (Segoe UI's is taller):
+   its height is set, so the composer and the room above it stand the same on every computer */
 .icon-button { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }
 .options { display: none; }
 .mic { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }

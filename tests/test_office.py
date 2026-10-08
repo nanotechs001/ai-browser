@@ -614,6 +614,16 @@ async def test_no_step_card_hides_the_name_of_a_desk_behind_it(stack, count, siz
 
 
 @CHROME
+async def test_the_composer_stands_as_tall_whatever_the_system_font(stack):  # Windows run 37737082260: Segoe UI's
+    js = await open_with(stack, size=(1024, 700))  # taller lines in a select pushed the room up: a chip hid half a name
+    tall = "document.getElementById('composer').getBoundingClientRect().height"
+    before = await js(tall)
+    await js("document.documentElement.style.setProperty('--font', '\"Comic Sans MS\", cursive'); true")  # taller
+    assert (await js("getComputedStyle(document.body).fontFamily")).startswith('"Comic Sans MS"')
+    assert await js(tall) == before
+
+
+@CHROME
 async def test_long_words_clip_on_the_step_card_with_a_tooltip(stack):  # Review Focus 1
     step = "Read every page of the site and " + "check each link " * 20
     todos = {"todos": [{"content": step, "status": "in_progress", "activeForm": step}]}
