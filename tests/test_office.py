@@ -23,15 +23,18 @@ CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is no
 
 
 async def front(stack, js):
-    """Bring the page to the front: a hidden tab runs no animations."""
+    """Bring the page to the front, moving: a hidden tab runs no animations, and nor does a computer whose Reduce Motion
+    is on (GitHub's Windows runner has Windows' animations off, which Chrome reads as on). Only here: a room that moves
+    in every test's page made the Windows run half an hour longer."""
     await stack["cdp"].send("Page.bringToFront", session_id=js.session)
     assert await until(js, "document.visibilityState === 'visible'")
+    await reduce_motion(stack, js, on=False)
 
 
 async def reduce_motion(stack, js, on=True):
     """The system's Reduce Motion, switched on (or off) in this page, as the user would while it is open."""
     await stack["cdp"].send("Emulation.setEmulatedMedia", {"features": [
-        {"name": "prefers-reduced-motion", "value": "reduce" if on else ""}]}, session_id=js.session)
+        {"name": "prefers-reduced-motion", "value": "reduce" if on else "no-preference"}]}, session_id=js.session)
 
 
 # ---- the workers, in a pose harness: one worker per state ------------------------------------------------------------
@@ -645,6 +648,7 @@ async def test_long_words_clip_on_the_step_card_with_a_tooltip(stack):  # Review
 @CHROME
 async def test_the_room_pauses_while_its_tab_is_hidden(shell):  # the spec's performance line
     js, stack = shell
+    await reduce_motion(stack, js, on=False)  # the window's tabs move, whatever this computer's setting
     await pick(js, "/mission")
     assert await until(js, connected("/mission"))
     stack["script"].write_text(json.dumps([INIT, use("u1", "Bash", {"command": "ls"}), {"sleep": 30}]),
