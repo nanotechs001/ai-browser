@@ -29,10 +29,16 @@ GONE = "That workspace was deleted"
 UNREADABLE = "Couldn't read your workspaces file: {path} ({why}). Fix it or remove it, then try again."
 
 
+def one_line(text) -> str:
+    """The user's words as one line of text: control characters and direction marks dropped, whitespace squeezed; ""
+    for anything that isn't text. A workspace's name, and a mission's name and description (app/agents.py)."""
+    return " ".join(_CONTROL.sub("", text).split()) if isinstance(text, str) else ""
+
+
 def clean_name(name) -> str:
     """One line: control characters and direction marks dropped, whitespace squeezed. ValueError when it is empty or
     too long."""
-    text = " ".join(_CONTROL.sub("", name).split()) if isinstance(name, str) else ""
+    text = one_line(name)
     if not text:
         raise ValueError(NO_NAME)
     if len(text) > NAME_LIMIT:

@@ -24,6 +24,7 @@ from . import attachments
 from . import move as moving
 from . import powers
 from .bridge import ClaudeBridge
+from .workspaces import one_line
 
 COLORS = ("blue", "green", "cyan", "pink", "yellow", "red", "grey")  # the agents' chip colours, minus the Brain's
 # purple and Claude Code's orange, so a chip's colour never suggests the wrong owner
@@ -31,6 +32,10 @@ HANDED_NOTE = ("The user handed you a tab: call tabs list and switch to it (it i
                "user)")
 KEEP_EVENTS = 5000  # an agent's conversation kept for the chat views (the newest)
 NAME_LIMIT = 40
+MISSION_NAME_LIMIT = 60  # Build a Mission's Name: the user's own name for the agent
+ABOUT_LIMIT = 160  # Build a Mission's What it works on: one line
+NAME_TOO_LONG = f"A mission's name is at most {MISSION_NAME_LIMIT} characters"
+ABOUT_TOO_LONG = f"What it works on is at most {ABOUT_LIMIT} characters"
 CLOSE_WAIT = 10  # seconds a closing agent's turn gets to end after Stop
 # What the agent hears from Continue and Skip this site: fixed texts, never a site's name or any page data.
 CONTINUE_TEXT = "I've dealt with the bot check. Call observe and carry on with the task."
@@ -80,6 +85,16 @@ def _name(text: str) -> str:
     while len(parts) > 1 and parts[-1].lower().strip(",.;:") in _FILLER:
         parts.pop()
     return " ".join(parts).rstrip(",.;:") or "task"
+
+
+def mission_words(value, limit: int, too_long: str) -> str:
+    """A mission's name or description: the user's own words, shown as text only and never sent to the agent's Claude
+    (its task stays its instruction). One line, cleaned as a workspace's name is; "" for none. ValueError past
+    `limit` characters."""
+    text = one_line(value)
+    if len(text) > limit:
+        raise ValueError(too_long)
+    return text
 
 
 def _own_scratch(scratch: Path) -> None:
@@ -188,12 +203,13 @@ class Agent:
     workspace: str | None = None  # the new look: its workspace, a filter only (in memory: ids start again each run)
     web: str = "web"  # the new look's Web ▾: "web", "brave" or "none"
     auto: bool = False  # Auto-approve in its folder: the user's switch (the composer's, the drawer's), off by default
+    description: str = ""  # Build a Mission's What it works on: the user's one line, shown under its name
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
                                          "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
-                                         "result", "files", "workspace", "web", "auto")
+                                         "result", "files", "workspace", "web", "auto", "description")
 
     @property
     def number(self) -> int:
@@ -276,14 +292,18 @@ class AgentManager:
     async def create(self, text: str, skills=(), model: str = "sonnet", adopt: str | None = None,
                      tab: dict | None = None, servers: list[str] | None = None,
                      account: str | None = None, folder: str | None = None, workspace: str | None = None,
-                     files=(), web: str = "web", auto: bool = False) -> Agent:
+                     files=(), web: str = "web", auto: bool = False, name: str | None = None,
+                     description: str | None = None) -> Agent:
         """A new agent for `text`; with `adopt`, it works in that tab of the user's (started from the panel). Its MCP
         servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list). It runs on
         `account`, else on the default account for new agents; ValueError for an account that isn't listed. With
         `folder` it works there (agent powers, Decision 6): a folder no task may use, or one whose "Trust this
         folder?" isn't answered yet, is a ValueError too. Without, it works in its own scratch folder. `auto`:
         Auto-approve in its folder, only when the user's own switch says True (the Brain and templates never pass
-        it)."""
+        it). `name` and `description` are Build a Mission's Name and What it works on (mission_words): without a name,
+        the task's first words name it, as before."""
+        given = mission_words(name, MISSION_NAME_LIMIT, NAME_TOO_LONG)  # first: refused words leave nothing behind
+        about = mission_words(description, ABOUT_LIMIT, ABOUT_TOO_LONG)
         chosen = self._account_row(account)  # first: a refused account leaves no agent and no number behind
         work, trusted = self._folder_for(folder)  # and so does a refused folder
         web = web if web in powers.WEB_CHOICES else "web"
@@ -308,8 +328,9 @@ class AgentManager:
                               trusted=trusted, auto=auto)
         if self.accounts is not None:  # its account must be signed in before its Claude Code starts
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
-        agent = Agent(agent_id, _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge, account=chosen,
-                      task=text, folder=work, trusted=trusted, workspace=workspace, web=web, auto=auto)
+        agent = Agent(agent_id, given or _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge,
+                      account=chosen, task=text, folder=work, trusted=trusted, workspace=workspace, web=web, auto=auto,
+                      description=about)
         if work is not None:
             with contextlib.suppress(OSError):  # a read-only home: the folder isn't listed as recent, nothing more
                 self.rules.note_used(work)
