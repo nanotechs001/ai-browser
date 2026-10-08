@@ -1,4 +1,4 @@
-# Handoff: where AI Browser stands (2026-10-05)
+# Handoff: where AI Browser stands (2026-10-08)
 
 This note carries what a new session needs that isn't in the code: the decisions taken, the order of work, the rules,
 and what only the user can check on their own machines. The work ledgers (`.superpowers/`) are git-ignored.
@@ -78,18 +78,21 @@ capability for faster navigation and all feature of the claude app". Four projec
      runs, `limits.USAGE_KEY` is None and the Usage card never shows a percentage).
    - **The build's ledger** stays at `../Ai_Browser-wt/look/.superpowers/sdd/2026-10-05-new-look/progress.md` (git-ignored)
      until the hand check, whose findings go there.
-2b. **Without Docker: PAUSED by the user on 2026-10-08** ("paise the no docker task for now. make a savepoint to continue
-   it later").
-   - **Spec** `docs/superpowers/specs/2026-10-07-no-docker-design.md`, **plan** `docs/superpowers/plans/2026-10-07-no-docker.md`
-     (11 tasks, dry-run).
-   - **The save point:** branch `no-docker` (pushed), commit 3f8aa7c. Tasks 1–3 are complete and reviewed; Task 4
-     (`LocalSandboxes`) has three review rounds fixed and is waiting only for its round-3 scoped re-review. Task 5 had
-     not started changing files.
-   - **The ledger** (git-ignored): `../Ai_Browser-wt/no-docker/.superpowers/sdd/2026-10-07-no-docker/progress.md`. It holds
-     every ruling, every deferred minor, and the notes carried to Tasks 5, 6 and 9.
-   - **To continue:** merge `main` into `no-docker`; re-run Task 4's round-3 re-review (base a4ae9d1); then Task 5 with the
-     carried rulings (fake `socket.getaddrinfo`, check WebSocket handshakes and QA's `loadNetworkResource` redirects
-     under Fetch, keep Local Network Access on), then Tasks 6–11.
+2b. **2026-10-08, merged:** brain delegation (named missions, templates out of Mission Control, Ask AI's history,
+   Settings → Brain sources, the Brain's hand-offs — only the user's own words count down; 6c753e9, report in its
+   ledger `../Ai_Browser-wt/brain-b/.superpowers/sdd/2026-10-08-brain-delegation/progress.md`); Website QA removed and
+   the CDP relay tightened (4f67d82); on Windows, Auto-approve runs ordinary commands and scripts in the agent's folder,
+   agents run their installed skills' own scripts, and without Docker skill scripts go through the agent's own
+   commands (175c94f); throwaway test Chromes use the mock keychain (dfa173b).
+   - **No-Docker shrank** (the user's choice): only "skill scripts without Docker" was kept (in 175c94f). The local
+     sandbox browser is dropped; branch `no-docker` (3f8aa7c) stays unmerged as the record.
+   - **The user's goal now:** every agent works in their own Brave and runs scripts/commands on its own; any browser
+     testing uses their actual browser.
+2c. **Next to build: saved agents and Mission Control without AI Home.** Spec
+   `docs/superpowers/specs/2026-10-08-saved-agents-design.md`, plan `docs/superpowers/plans/2026-10-08-saved-agents.md`
+   (21 tasks, two lanes, three merge points; base 8d5fb44; 583 quotes checked). The user chose: per-agent Brave profiles
+   with the wait (agents in different profiles take turns opening tabs), saved agents may keep Auto-approve, and the
+   build starts right after the Windows test fixes (branch `win-fixes`, running), followed by a fresh Windows .exe.
 3. **Projects, sessions and chat:** not designed yet. The user wants coding in project folders, sessions and history,
    and plain chat with Claude.
 4. **Claude artifacts:** not designed yet. Claude Code 2.1.263 carries claude.ai artifact tools (list and read with
