@@ -35,27 +35,31 @@ Control takes over everything AI Home had, becomes the window's first tab, and A
 **Spec:** `docs/superpowers/specs/2026-10-08-saved-agents-design.md`, with the user's answers of 2026-10-08 at its end.
 This plan argues from it: read both.
 
-**Branches:** create `saved-agents` from `main` once the two changes still to come below have merged (brain delegation
-and Website QA's removal already have: `main` at a6e0953); then `agents-a` (Lane A) and `agents-b` (Lane B) from it.
-Every quoted text was read at a6e0953 and replayed there, in this plan's order and in the lanes' order (see the
-Self-review); find every place a step changes by the text it quotes, never by a line number.
+**Branches:** create `saved-agents` from `main` at 8d5fb44 (brain delegation, Website QA's removal and win-auto have
+merged: below); then `agents-a` (Lane A) and `agents-b` (Lane B) from it. Every quoted text was read at 8d5fb44 and
+replayed there, in this plan's order and in the lanes' order (see the Self-review); find every place a step changes by
+the text it quotes, never by a line number.
 
 **The ledger:** `.superpowers/sdd/2026-10-08-saved-agents/progress.md` (git-ignored). Note in it each task's result,
 each merge point, and every hand-check finding.
 
 ## Lanes and order
 
-**Before Task 1, on `main`** (none of them is planned here; no step quotes a line they change):
-1. **Website QA goes:** the MCP `qa` tool, `qa/`, `skills/website-qa/`, the QA pages and tests, and every word about
-   QA. *Landed* (`main` 4f67d82): this plan was built and checked on top of it, and no quoted text mentions QA.
-2. **Auto-approve on Windows** runs the same allow-listed commands as on a Mac (`powers.py`'s allow-list, the "edits
-   only" words). This plan doesn't touch either.
-3. **No-Docker shrinks to one piece:** without Docker, skill scripts run through the agent's own commands
-   (`engine.py`'s `load_skill` words, `skills.py`'s `Catalog.load`, the shell tool's offer). Task 4 quotes neither;
-   Task 5's `preload` calls `Catalog.load` as `load_skill` does (pass the engine's argument if it gained one). The rest
-   of the paused no-docker plan (the local sandbox browser, Settings → Sandbox, AI Home's sandbox line, `doctor`) is
-   dropped by the user's answer; if any of it lands anyway, the tasks marked **No-docker overlap** below re-read their
-   quotes, and Task 20 moves AI Home's sandbox line to Settings → Sandbox.
+**Landed on `main` before this plan** (none of it is planned here; this plan was built and checked on top of all of it,
+at 8d5fb44):
+1. **Website QA went** (4f67d82): the MCP `qa` tool, `qa/`, `skills/website-qa/`, the QA pages and tests, and every
+   word about QA. No quoted text mentions QA.
+2. **win-auto** (175c94f): on Windows, Auto-approve runs the Mac's ordinary commands and the folder's own scripts
+   (`powers.py`'s `decide()`, the bridge's `skill_folders()` and `SKILLS_TTL`, the drawer's and the switch's words);
+   agents run their installed skills' scripts (`skills.py`'s `SkillFolders`, `skill_folders`); and, no-Docker's one
+   piece, without Docker a skill's scripts run with the agent's own commands (`engine.py`'s `load_skill(…)` passes
+   `Catalog.load(ref, host=True)`, and the shell says so). Task 5's Load at start follows `load_skill` there: the
+   skill's own folder while Docker doesn't answer. Tasks 13 and 17 keep win-auto's Auto-approve words in the drawer;
+   Task 21 keeps its README lines.
+3. **The CI check's 75 minutes** (8d5fb44): `tests/test_portable.py` agrees with the workflow again.
+
+The rest of the paused no-docker plan (the local sandbox browser, Settings → Sandbox, `doctor`) is dropped by the
+user's answer.
 
 **The lanes.** Each task owns the files it lists; no file is changed by both lanes at the same time.
 
@@ -65,7 +69,7 @@ each merge point, and every hand-check finding.
 | 2 | A | 1 | `app/server.py`, `tests/test_watcher_rules.py` |
 | 3 | A | 1 | `app/bridge.py`, `app/agents.py` |
 | 4 | A | 1 | `skills.py`, `engine.py`, `app/agents.py` |
-| 5 | A | 1 | `app/agents.py`, `app/server.py`, `tests/test_workflows.py` |
+| 5 | A | 1 | `app/agents.py`, `app/server.py`, `tests/test_workflows.py`, `tests/conftest.py` |
 | 6 | A | 1 | `app/agents.py`, `app/server.py` |
 | 7 | A | 1 | `app/place.py`, `app/bravelink.py`, `app/cdprelay.py`, `app/server.py`, `app/agents.py`, `tests/fake_brave.py`, `tests/test_agent_profiles.py` (new) |
 | 8 | A | 1 | `brain/workflows.py`, `app/server.py`, `tests/test_workflows.py` |
@@ -105,11 +109,6 @@ each merge point, and every hand-check finding.
 AI Home's tests. Each "AI Home" word in a page that
 Lane A changes in phase 2 (`mission.js`, `composer.js`, `drawer.js`, `workflows.js`, `calendar.js`, `folderpick.js`) is
 changed by the task that owns that file, so Task 21's check finds none left.
-
-**No-docker overlap** (the paused plan's files): Task 3 (`bridge.py`), Task 4 (`engine.py`'s skill tools, `skills.py`),
-Task 10 (`settings.html`, `settings.js`: Settings → Sandbox would sit beside Settings → Brave), Task 19 (`cli.py`'s
-`doctor`, `engine.py`), Task 20 (AI Home's sandbox line), Task 21 (README). If no-Docker lands first in more than its one
-piece, these tasks wait for it and re-read their quotes.
 
 ## Plan decisions
 
@@ -189,16 +188,20 @@ meets the code, this plan rules. Each ruling says why, and what it costs if it i
     had moves to Mission Control's (the permission cards to the drawer, New task's folder to Build a Mission); a test of
     AI Home's own layout goes. `tests/test_home.py` keeps its name: 40 test files import the `stack` fixture from it.
     *If wrong:* a rename is one search and replace, in a later change.
-18. **Built on `main` after Website QA's removal (a6e0953), not on brain delegation's merge (a6249b5).** QA's removal
-    landed while this plan was written, so its texts are the ones the builder meets. *If wrong:* nothing; the other two
-    changes still to come (Windows Auto-approve, no-Docker's piece) touch few quoted lines, and the tasks that may meet
-    them say so (Lanes and order).
+18. **Built on `main` at 8d5fb44, not on brain delegation's merge (a6249b5).** QA's removal and win-auto landed while
+    this plan was written, so their texts are the ones the builder meets. *If wrong:* nothing: a later `main` only
+    means re-reading the quotes it moved.
 19. **A deleted agent's tasks are deleted with it** (`_forget_tasks`): the spec's dialog says "its N tasks are
     deleted". A template that runs as no agent would run as a new agent with no word to the user; deleting it is what
     the user was told. *If wrong:* the user writes the task again under Tasks for any agent.
-20. **The README's new lines stay clear of the lines the two changes still to come edit** (Docker, the sandbox,
-    Windows, Auto-approve's list): Auto-approve as a saved agent's setting is said in Saved agents, and in one sentence
-    after Auto-approve's list. *If wrong:* Task 21 re-reads a quote or two.
+20. **win-auto's README lines stay as they are** (Auto-approve's list, Windows, the skill scripts): Auto-approve as a
+    saved agent's setting is said in Saved agents, and in one sentence after Auto-approve's list. *If wrong:* a reader
+    looks for it under Auto-approve first.
+21. **Load at start follows `load_skill`'s Docker answer** (win-auto's no-Docker piece): the sandbox's paths while
+    Docker answers, else the skill's own folder on this computer. The app asks Docker once per run of the app
+    (`Sandboxes.check`, which starts nothing), as the engine does once per session. *Why:* a preloaded skill must name
+    paths the agent can use. *If wrong:* a Docker started after the app's first run with skills is seen at the next
+    start; until then its preloaded skills name their own folders (still runnable, with a card).
 
 ## Global Constraints
 
@@ -252,10 +255,6 @@ floating chat."
   OK; every new page message is app-only in `MESSAGE_RULES` with its copy in `tests/test_watcher_rules.py`; tests never
   touch the user's real browsers, `~/.ai-browser`, `~/.claude`, `~/Downloads` or port 8792; never run the real
   `claude`."
-
-**Known on `main`, not this plan's:** `tests/test_portable.py::test_the_ci_workflow_runs_only_by_hand` fails at
-a6e0953 (the workflow's timeout became 75 minutes; the test still says 40). Where a step's run includes
-`tests/test_portable.py`, "Expected: PASS" means every other test; if `main` has fixed it by then, nothing fails.
 
 **Coordination rules (earlier waves, still binding):**
 - text files name `encoding="utf-8"`; every Python module imports on a Windows-like Python (`tests/test_portable.py`);
@@ -661,7 +660,7 @@ class SavedAgents:
 
 Run: `uv run pytest tests/test_saved_agents.py tests/test_portable.py -q -p no:randomly`
 
-Expected: PASS, but for `main`'s own `test_portable.py::test_the_ci_workflow_runs_only_by_hand` (Global Constraints).
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -927,7 +926,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 3: Its instruction in its system prompt (security-sensitive: the user's words reach the system prompt)
 
-**Lane A**, phase 1. Owns: `src/ai_browser/app/bridge.py`, `src/ai_browser/app/agents.py`. **No-docker overlap:** no-Docker's Task 8 changes `bridge.py` (its `__init__` and `_command`, other lines): if it has merged, find each quoted text as it reads then.
+**Lane A**, phase 1. Owns: `src/ai_browser/app/bridge.py`, `src/ai_browser/app/agents.py`.
 
 A run of a saved agent starts its Claude Code with AI Browser's own prompt, then a fixed line, then the agent's standing
 instruction: `--append-system-prompt "<BRAVE_PROMPT>\n\nThe user's standing instruction for this agent:\n<its
@@ -1181,7 +1180,7 @@ with:
 
 Run: `uv run pytest tests/test_saved_agents.py tests/test_bridge.py tests/test_agents.py tests/test_portable.py -q -p no:randomly`
 
-Expected: PASS, but for `main`'s own `test_portable.py::test_the_ci_workflow_runs_only_by_hand` (Global Constraints).
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -1196,7 +1195,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 4: Can use, enforced by AI Browser's own skill tools (security-sensitive: the engine's skill tools)
 
-**Lane A**, phase 1. Owns: `src/ai_browser/skills.py`, `src/ai_browser/engine.py` (the `catalog` property only), `src/ai_browser/app/agents.py`. **No-docker overlap:** no-Docker's skill-scripts piece (landing before this plan) changes `engine.py`'s `load_skill` and `skills.py`'s `Catalog.load`; this task quotes neither. Re-check the quotes after it lands.
+**Lane A**, phase 1. Owns: `src/ai_browser/skills.py`, `src/ai_browser/engine.py` (the `catalog` property only), `src/ai_browser/app/agents.py`.
 
 A run of a saved agent whose Can use names skills tells its ai-browser tool server which ones, in `AIB_APP_SKILLS`
 (a JSON list, set by the app in the server's environment, which Claude can't change). The engine's catalog then lists
@@ -1375,19 +1374,6 @@ with:
 In `src/ai_browser/skills.py`, replace:
 
 ```python
-import re
-```
-
-with:
-
-```python
-import os
-import re
-```
-
-In `src/ai_browser/skills.py`, replace:
-
-```python
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
 ```
 
@@ -1475,7 +1461,7 @@ with:
 
 Run: `uv run pytest tests/test_saved_agents.py tests/test_skills.py tests/test_engine.py tests/test_portable.py -q -p no:randomly -m "not docker"`
 
-Expected: PASS, but for `main`'s own `test_portable.py::test_the_ci_workflow_runs_only_by_hand` (Global Constraints).
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -1490,32 +1476,59 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 5: Load at start: the skills' own text in a run's first message
 
-**Lane A**, phase 1. Owns: `src/ai_browser/app/agents.py`, `src/ai_browser/app/server.py` (the catalog hook), `tests/test_workflows.py` (one assertion).
+**Lane A**, phase 1. Owns: `src/ai_browser/app/agents.py`, `src/ai_browser/app/server.py` (the catalog hook), `tests/test_workflows.py` (one assertion), `tests/conftest.py` (one fixture).
 
 A run's first message carries its skills' SKILL.md text, before the task, under "Skills the user loaded for you:", so
 the agent doesn't spend turns finding and loading them. Each skill's text is what `load_skill` gives (its paths
 rewritten the same way). At most 60,000 characters in all: a skill past that is named in today's line ("Load and use
 these skills with load_skill: …"); one no longer installed is skipped with a note on the run. The chat shows the task
 only. This applies to every run's skills: a saved agent's Load at start, Build a Mission's Skills (Task 12) and a
-template's skills (plan decision 7). If the no-Docker piece gave `Catalog.load` a `local` argument, pass what the
-engine passes for that sandbox.
+template's skills (plan decision 7). As `load_skill` does since win-auto, the paths are the sandbox's while Docker
+answers, else the skill's own folder on this computer ("Run its scripts with your own commands (Bash)"): the app asks
+Docker once (`Sandboxes.check`, which starts nothing). In tests Docker "answers" (a `conftest.py` fixture), so no test
+asks the real Docker, and one test says it doesn't.
 
 **Files:**
 - Modify: `src/ai_browser/app/agents.py`
 - Modify: `src/ai_browser/app/server.py`
+- Test: `tests/conftest.py`
 - Test: `tests/test_saved_agents.py`
 - Test: `tests/test_workflows.py`
 
 **Interfaces:**
-- Consumes: `Catalog.load(ref) -> str` (`load_skill`'s text); `AppServer._catalog`.
+- Consumes: `Catalog.load(ref, host=False) -> str` (`load_skill`'s text); `Sandboxes(home).check()`, `DockerError`;
+  `AppServer._catalog`.
 - Produces:
   - `agents.PRELOAD_LIMIT = 60_000`, `agents.PRELOAD_LINE = "Skills the user loaded for you:"`,
     `agents.NOT_INSTALLED = "Not loaded, no longer installed: {names}"`;
-  - `agents.preload(catalog, refs, limit=PRELOAD_LIMIT) -> (block, loaded, later, gone)`;
+  - `agents.preload(catalog, refs, limit=PRELOAD_LIMIT, host=False) -> (block, loaded, later, gone)`;
+    `agents.docker_answers(home) -> bool`; `AgentManager._skills_on_host()` (asked once per manager);
+  - `tests/conftest.py`'s autouse `_docker_answers_load_at_start` (Docker "answers" unless a test says not);
   - `AgentManager.catalog: Callable[[], Catalog] | None` (the app sets it: `AppServer._skill_catalog`); the loaded
     refs join `agent.loaded_skills` at once.
 
 - [ ] **Step 1: Write the failing tests**
+
+In `tests/conftest.py`, replace:
+
+```python
+    monkeypatch.setattr(server, "_bind", lambda host, port: None if port == USERS_APP_PORT else bind(host, port))
+```
+
+with:
+
+```python
+    monkeypatch.setattr(server, "_bind", lambda host, port: None if port == USERS_APP_PORT else bind(host, port))
+
+
+@pytest.fixture(autouse=True)
+def _docker_answers_load_at_start(monkeypatch):
+    """Load at start asks whether Docker answers, as load_skill does (app/agents.py's docker_answers): in tests it does,
+    unless a test says otherwise. No test asks the real Docker for it."""
+    import ai_browser.app.agents as agents
+
+    monkeypatch.setattr(agents, "docker_answers", lambda home: True, raising=False)
+```
 
 In `tests/test_saved_agents.py`, replace:
 
@@ -1550,7 +1563,7 @@ def test_load_at_start_fits_its_cap_and_names_the_rest():
     from ai_browser.app.agents import PRELOAD_LINE, preload
 
     class Skills:  # a catalog: load() as load_skill gives it
-        def load(self, ref):
+        def load(self, ref, host=False):
             if ref == "personal:gone":
                 raise KeyError(ref)
             return f"skill {ref}\n\n" + "x" * 30
@@ -1595,6 +1608,34 @@ async def test_load_at_start_goes_before_the_task_and_never_into_the_chat(fake_c
         assert told(fake_claude[1])[1] == "and the yearly ones"  # only the first message carries them
     finally:
         await manager.close_all()
+
+
+async def test_load_at_start_names_the_skills_own_folder_when_docker_doesnt_answer(fake_claude, tmp_path,
+                                                                                  monkeypatch):
+    import json
+
+    import ai_browser.app.agents as agents_module
+    from ai_browser.app.agents import AgentManager
+    from test_app_server import told, wait_for
+    from test_bridge import EVENTS
+
+    monkeypatch.setattr(agents_module, "docker_answers", lambda home: False)  # as load_skill: its own folder, then
+    runner, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    catalog = skill_catalog(tmp_path)
+    manager = AgentManager(tmp_path / "home", claude=runner)
+    manager.catalog = lambda: catalog
+    try:
+        run = await manager.create("List the prices", skills=["personal:prices"])
+        await wait_for(lambda: run.state == "your_turn")
+        first = told(fake_claude[1])[0]
+        folder = catalog.get("personal:prices").host_dir.as_posix()
+        assert first.startswith(f"Skills the user loaded for you:\n\nskill personal:prices · folder {folder} · Run its "
+                                "scripts with your own commands (Bash), from your task's folder.")
+        assert f"Run {folder}/x.py" in first and "/skills/personal" not in first
+    finally:
+        await manager.close_all()
+
 ```
 
 In `tests/test_workflows.py`, replace:
@@ -1615,9 +1656,22 @@ with:
 
 Run: `uv run pytest tests/test_saved_agents.py tests/test_workflows.py -q -p no:randomly`
 
-Expected: FAIL. 3 failed: `ImportError: cannot import name 'PRELOAD_LINE' from 'ai_browser.app.agents'`, the first message still starts "Load and use these skills" (`AssertionError`), and test_workflows' `test_run_by_hand_over_the_socket` finds no note on the run.
+Expected: FAIL. 4 failed: `ImportError: cannot import name 'PRELOAD_LINE' from 'ai_browser.app.agents'`, the first message still starts "Load and use these skills" (`AssertionError`), `AttributeError: <module 'ai_browser.app.agents'> has no attribute 'docker_answers'`, and test_workflows' `test_run_by_hand_over_the_socket` finds no note on the run.
 
 - [ ] **Step 3: Write the code**
+
+In `src/ai_browser/app/agents.py`, replace:
+
+```python
+from ..skills import USABLE_ENV
+```
+
+with:
+
+```python
+from ..sandbox import DockerError, Sandboxes
+from ..skills import USABLE_ENV
+```
 
 In `src/ai_browser/app/agents.py`, replace:
 
@@ -1646,14 +1700,25 @@ with:
     return text
 
 
-def preload(catalog, refs, limit: int = PRELOAD_LIMIT) -> tuple[str, list[str], list[str], list[str]]:
+def docker_answers(home: Path) -> bool:
+    """Whether Docker answers with the sandbox image (Sandboxes.check: it starts nothing), as load_skill asks. Without
+    it, a loaded skill names its folder on this computer, for the agent's own commands."""
+    try:
+        Sandboxes(home).check()
+    except DockerError:
+        return False
+    return True
+
+
+def preload(catalog, refs, limit: int = PRELOAD_LIMIT,
+            host: bool = False) -> tuple[str, list[str], list[str], list[str]]:
     """Load at start (the saved-agents spec, 3): (the block for a run's first message, the refs in it, the refs past
     `limit` characters, which the agent is asked to load with load_skill as before, the refs no longer installed). Each
-    skill's text is what load_skill gives, so its paths are rewritten the same way."""
+    skill's text is what load_skill gives, so its paths are rewritten the same way (`host`: Docker doesn't answer)."""
     parts, loaded, later, gone, size = [], [], [], [], 0
     for ref in dict.fromkeys(refs):
         try:
-            text = catalog.load(ref)
+            text = catalog.load(ref, host=host)
         except (KeyError, OSError, ValueError):  # SkillNotFound and AmbiguousSkill are KeyErrors
             gone.append(ref)
             continue
@@ -1669,14 +1734,17 @@ def preload(catalog, refs, limit: int = PRELOAD_LIMIT) -> tuple[str, list[str], 
 In `src/ai_browser/app/agents.py`, replace:
 
 ```python
-        self._asks: dict[str, asyncio.Future] = {}  # agent id -> its tool request waiting for the user
+        self.on_limit: Callable[[str], None] | None = None  # set by the app: an account hit its usage limit
+        self.on_usage: Callable[[str], None] | None = None  # set by the app: an account reported how much is used
 ```
 
 with:
 
 ```python
+        self._docker: bool | None = None  # whether Docker answers (Load at start's paths), asked once
+        self.on_limit: Callable[[str], None] | None = None  # set by the app: an account hit its usage limit
+        self.on_usage: Callable[[str], None] | None = None  # set by the app: an account reported how much is used
         self.catalog: Callable[[], object] | None = None  # set by the app: the skills a run's first message loads
-        self._asks: dict[str, asyncio.Future] = {}  # agent id -> its tool request waiting for the user
 ```
 
 In `src/ai_browser/app/agents.py`, replace:
@@ -1689,7 +1757,7 @@ with:
 
 ```python
                 if skills and self.catalog is not None:  # Load at start: the skills' text goes first, never to the chat
-                    text, skills = self._preload(agent, text, skills)
+                    text, skills = self._preload(agent, text, skills, await self._skills_on_host())
                 resuming, started = agent.handover is not None, False  # the first turn after a move that copied
 ```
 
@@ -1704,11 +1772,18 @@ with:
 
 ```python
 
-    def _preload(self, agent: Agent, text: str, skills: list[str]) -> tuple[str, list[str]]:
+    async def _skills_on_host(self) -> bool:
+        """Whether Load at start names the skills' folders on this computer: Docker doesn't answer, as load_skill
+        decides."""
+        if self._docker is None:
+            self._docker = await asyncio.to_thread(docker_answers, self.home)
+        return not self._docker
+
+    def _preload(self, agent: Agent, text: str, skills: list[str], host: bool = False) -> tuple[str, list[str]]:
         """A run's first message with its skills' own text before the task (preload); the skills past the cap are
         left to load_skill, and one no longer installed is skipped with a note on the run."""
         try:
-            block, loaded, later, gone = preload(self.catalog(), skills, PRELOAD_LIMIT)
+            block, loaded, later, gone = preload(self.catalog(), skills, PRELOAD_LIMIT, host)
         except Exception:  # the skills couldn't be read: the agent loads them itself, as before
             return text, skills
         if gone:
@@ -1765,7 +1840,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/ai_browser/app/agents.py src/ai_browser/app/server.py tests/test_saved_agents.py tests/test_workflows.py
+git add src/ai_browser/app/agents.py src/ai_browser/app/server.py tests/conftest.py tests/test_saved_agents.py tests/test_workflows.py
 git commit -m "feat: Load at start: a run's first message carries its skills' own text, up to 60,000 characters
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1804,15 +1879,16 @@ run going, as a one-off run.
 In `tests/test_saved_agents.py`, replace:
 
 ```python
-        assert told(fake_claude[1])[1] == "and the yearly ones"  # only the first message carries them
+        assert f"Run {folder}/x.py" in first and "/skills/personal" not in first
     finally:
         await manager.close_all()
+
 ```
 
 with:
 
 ```python
-        assert told(fake_claude[1])[1] == "and the yearly ones"  # only the first message carries them
+        assert f"Run {folder}/x.py" in first and "/skills/personal" not in first
     finally:
         await manager.close_all()
 
@@ -2952,7 +3028,7 @@ with:
 
 Run: `uv run pytest tests/test_saved_agents.py tests/test_workflows.py tests/test_brain_service.py tests/test_portable.py -q -p no:randomly -k "not page and not home"`
 
-Expected: PASS, but for `main`'s own `test_portable.py::test_the_ci_workflow_runs_only_by_hand` (Global Constraints).
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -3199,7 +3275,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 10: Settings → Brave, and Settings' own styles
 
-**Lane B**, phase 1. Owns: `src/ai_browser/app/ui/settings.html`, `settings.js`, `settings.css` (new), `bravesettings.js` (new), `placesettings.js`, `brainsettings.js`, `tests/test_place.py`, `tests/test_tab_menu.py`. **No-docker overlap:** no-Docker's Settings → Sandbox (its Task 10) edits `settings.html` and `settings.js` beside these lines.
+**Lane B**, phase 1. Owns: `src/ai_browser/app/ui/settings.html`, `settings.js`, `settings.css` (new), `bravesettings.js` (new), `placesettings.js`, `brainsettings.js`, `tests/test_place.py`, `tests/test_tab_menu.py`.
 
 Settings gains **Brave**: whether it is connected, what uses it through AI Browser's one connection (AI Browser
 itself, each agent and Claude Code session) with Disconnect, and, while an earlier AI Browser's copy of Brave's old
@@ -7144,14 +7220,14 @@ export function confirmAction({ title, lines = [], yes, no = "Keep" }) {
 In `src/ai_browser/app/ui/drawer.js`, replace:
 
 ```javascript
-import { AUTO_EDITS_ONLY, AUTO_LABEL, agentLabel, autoTitle, createChat, el } from "./chat.js";
+import { AUTO_EDITS_ONLY, AUTO_LABEL, AUTO_NO_SANDBOX, agentLabel, autoTitle, createChat, el } from "./chat.js";
 ```
 
 with:
 
 ```javascript
 import { confirmAction } from "./confirm.js";
-import { AUTO_EDITS_ONLY, AUTO_LABEL, agentLabel, autoTitle, createChat, el } from "./chat.js";
+import { AUTO_EDITS_ONLY, AUTO_LABEL, AUTO_NO_SANDBOX, agentLabel, autoTitle, createChat, el } from "./chat.js";
 ```
 
 In `src/ai_browser/app/ui/drawer.js`, replace:
@@ -12100,8 +12176,8 @@ profile, Auto-approve as the agent's own setting, Can use and its refusal, Load 
 run at a time, Runs as, Delete's question and the agent's file. It says Build a Mission's **Agent ▾** and **Skills**,
 and the drawer's Save as skill, Save as agent and Close's question. A new test keeps every page, the electron app, `server.py`
 and the README free of "AI Home"; another ties the README's saved-agent words to the code's (`INSTRUCTION_LINE`,
-`NOT_ALLOWED`). The quoted README lines avoid those the two changes still to come edit (Docker, the sandbox, Windows,
-Auto-approve's list: plan decision 20); if one of those changes moved a quoted line anyway, re-read it there.
+`NOT_ALLOWED`). Auto-approve's list and the skill-scripts lines are win-auto's: they stay as they are (plan decision
+20).
 
 **Files:**
 - Modify: `README.md`
@@ -12867,10 +12943,8 @@ Expected: PASS.
 
 Run: `uv run pytest -m "not docker" -q -p no:randomly`
 
-Expected: PASS. The skips are as on `main` (Windows-only tests, a real Electron's, the opt-in ones). One failure is
-`main`'s own, not this plan's: `tests/test_portable.py::test_the_ci_workflow_runs_only_by_hand` fails at a6e0953 (the
-workflow's timeout became 75 minutes; the test still says 40). If `main` has fixed it by then, nothing fails. Before
-going on, fix any other failure in the task that owns it.
+Expected: PASS. The skips are as on `main` (Windows-only tests, a real Electron's, the opt-in ones). Before going on,
+fix any failure in the task that owns it.
 
 - [ ] **Step 6: Commit**
 
@@ -12946,15 +13020,16 @@ Checked against the spec, section by section:
     that stay: app-only rows with their copy (Task 2), Auto-approve only by the user's click (Tasks 6 and 8, Review
     Focus 1), a run's tabs only in its profile (Task 7), `textContent` everywhere (`tests/test_ui_static.py` in each
     page task's run), the tests' throwaway homes and browsers and the fake `claude` (Global Constraints).
-  - Order and overrides: the three earlier changes (Lanes and order); the templates move to the Agents page (Task 15,
+  - Order and overrides: QA's removal and win-auto landed first (Lanes and order); the templates move to the Agents page (Task 15,
     merge point M2) and AI Home's hand-off slot goes with it (Task 20, `HANDOFF_VIEWS`).
   - Testing's list: each line has its tests, named in the tasks above and in Review Focus.
-  - The user's answers: Auto-approve as a setting (above); QA's removal (landed), Windows Auto-approve and no-Docker's
-    piece (Lanes and order, before Task 1).
+  - The user's answers: Auto-approve as a setting (above); QA's removal, Windows Auto-approve and no-Docker's piece
+    (all landed before this plan: Lanes and order), and Load at start follows the last (Task 5, plan decision 21).
 - **Placeholders:** none. Every step's code is the code the scratch build ran; every replace block was replayed.
 - **Names across tasks:** `SavedAgent`, `SavedAgents`, `check`, `clean_instruction`, the limits and words of Task 1;
   `SAVED_MESSAGES`, `SAVED_FIELDS`, `_saved_snapshot`, `_saved_check`, `_saved_command`, `_forget_tasks`;
   `INSTRUCTION_LINE`, `system_prompt`; `USABLE_ENV`, `NOT_ALLOWED`, `usable_skills`, `Catalog.allowed`; `preload`,
+  `docker_answers`, `_skills_on_host`,
   `PRELOAD_LIMIT`, `PRELOAD_LINE`, `NOT_INSTALLED`; `run_as`, `run_of`, `forget_saved`, `note`, `GOING`;
   `NOT_LEARNED`, `OWN_PROFILE`, `placed_only`, `ready`, `context`, `agents_context`, `open_ai_tab`; `runs_as`,
   `BAD_RUNS_AS`; `mountBraveBar`, `mountBraveSettings`, `mountTabsPage`, `pickSkill`, `focusOn`, `mountAgentsPage`,
@@ -12966,22 +13041,23 @@ Checked against the spec, section by section:
   common). In phase 2, Tasks 16–18 and Tasks 19–20 share none, nor do Tasks 15 and 19; Tasks 15 and 20 share two test
   files, and M2 puts Task 20 after Task 15.
 - **Dry run (2026-10-08, macOS, in throwaway clones under the session's scratch folder; HOME never set):**
-  - *How:* every task was built as a commit in a scratch clone, first on a6249b5, then carried onto `main`'s a6e0953
-    when Website QA's removal landed (the only conflicts were in words QA's removal had changed: `engine.py`'s
-    `ASK_AGENT` lines, the live-view labels in `tests/test_check_card.py` and `tests/test_tab_menu.py`, and AI Home's
-    files). A script then wrote each task's steps from its commit, and a second script (`replay.py`) read this plan
-    and replayed it on a fresh clone of a6e0953: every Create, Delete, replace block and named function deletion, in
-    task order, comparing the tree after each task with the build's commit; and again in the lanes' order (Tasks 9–14,
-    1–8, 19, 15, 20, 16, 17, 18, 21).
-  - *Result:* quotes found exactly once: 582 of 582 (573 replace blocks and 9 functions deleted by name), 11 files
+  - *How:* every task was built as a commit in a scratch clone, first on a6249b5, then carried onto `main` twice as it
+    moved: to a6e0953 (Website QA's removal: the conflicts were its words, `engine.py`'s `ASK_AGENT` lines, the
+    live-view labels in `tests/test_check_card.py` and `tests/test_tab_menu.py`, and AI Home's files), then to 8d5fb44
+    (win-auto: the conflicts were the drawer's Auto-approve words in Tasks 13 and 17 and two README lines in Task 21,
+    each solved by keeping win-auto's lines beside this plan's). A script then wrote each task's steps from its
+    commit, and a second script (`replay.py`) read this plan and replayed it on a fresh clone of 8d5fb44: every
+    Create, Delete, replace block and named function deletion, in task order, comparing the tree after each task with
+    the build's commit; and again in the lanes' order (Tasks 9–14, 1–8, 19, 15, 20, 16, 17, 18, 21).
+  - *Result:* quotes found exactly once: 583 of 583 (574 replace blocks and 9 functions deleted by name), 11 files
     created, 4 deleted. In task order every task's tree is its build commit, file for file; the lanes' order ends in
     the same tree.
   - *Runs:* the Python tasks' Step 2 and Step 4 ran in throwaway worktrees of the build, with the real environment
     (no HOME override) and every page test deselected: Tasks 1–8, 19 and 21 each failed at Step 2 as written (16, 6,
-    2, 2, 3, 2, 4, 4, 9 and 6 failures) and passed at Step 4 (Task 7: 156 passed; Task 19: 348), but for `main`'s own
-    `test_portable.py` failure where a run includes it. The suite without page tests on Task 20's tree: 1951 passed,
-    10 skipped, 1 failed (that same test of `main`'s). Some of these tests start their own throwaway headless Chrome
-    as a fake Brave (`tests/test_bravelink.py` and the like), as on every run of the suite; no page test ran.
+    2, 2, 4, 2, 4, 4, 9 and 6 failures) and passed at Step 4 (Task 7: 157 passed; Task 19: 349). The suite without
+    page tests on Task 21's tree: 2280 passed, 10 skipped, none failed. Some of these tests start their own throwaway
+    headless Chrome as a fake Brave (`tests/test_bravelink.py` and the like), as on every run of the suite; no page
+    test ran.
   - *Not run:* the page tests in headless Chrome (Tasks 9–18 and 20, and Task 21's page neighbours), as the controller
     asked: their Step 2 reasons are what each test's first wait meets on the code before its task, read from the code.
     Nor Windows, the user's own Brave and its profiles, or the real `claude`: Task 21's hand checks and the GitHub
@@ -12993,8 +13069,6 @@ Checked against the spec, section by section:
     - `AgentManager.create`'s new argument met a local `saved` (the attachments): it is `saved_agent` (Task 3);
     - after QA's removal, `engine.py`'s `_app_link` docstring still named AI Home: Task 19 changes it, and its test
       reads `engine.py` too;
-    - the README's new lines keep clear of the lines the two changes still to come edit (plan decision 20).
-  - *Against the two changes still to come:* not merged yet, so not replayed. Windows Auto-approve changes
-    `powers.py`'s allow-list and its words, which no step quotes. No-Docker's piece changes `engine.py`'s `load_skill`
-    words and `skills.py`'s `Catalog.load`: Task 4 quotes neither, and Task 5 calls `Catalog.load` as `load_skill`
-    does (Lanes and order). The README lines they change are kept out of Task 21's quotes.
+    - after win-auto, `load_skill` names a skill's own folder while Docker doesn't answer, and Load at start gave the
+      sandbox's paths regardless: Task 5 now asks Docker once and passes `host` as `load_skill` does (plan decision
+      21), with a `conftest.py` fixture so that no test asks the real Docker.
