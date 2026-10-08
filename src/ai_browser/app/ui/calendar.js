@@ -1,6 +1,6 @@
 // The Calendar (the new look, Decision 8): a month, or a week, with the scheduled templates' next runs (the app's
 // workflows list: brain/workflows.py's schedule) and this run's finished agents, at the time each one finished. A
-// template opens Templates; an agent opens its drawer. Every word is set as text.
+// template opens AI Home at its templates; an agent opens its drawer. Every word is set as text.
 "use strict";
 
 import { agentLabel, el } from "./chat.js";

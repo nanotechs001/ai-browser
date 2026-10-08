@@ -9,7 +9,7 @@ import { mountComposer } from "./composer.js";
 import { mountDrawer } from "./drawer.js";
 import { icon } from "./icons.js";
 import { connect } from "./link.js";
-import { mountIntegrations, mountKnowledge, mountTemplates } from "./library.js";
+import { mountIntegrations, mountKnowledge } from "./library.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
 import { mountHistory, mountList, mountMissions } from "./pages.js";
 import { createScene } from "./scene.js";
@@ -21,7 +21,7 @@ import { createVoice } from "./voice.js";
 import { fillMove, mountWorkspaces } from "./workspaces.js";
 
 const $ = (id) => document.getElementById(id);
-const PAGES = ["dashboard", "missions", "templates", "knowledge", "integrations", "history"];
+const PAGES = ["dashboard", "missions", "knowledge", "integrations", "history"];
 const VIEWS = ["flow", "list", "calendar"];
 const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
 const agents = new Map(); // id -> the agent, as the app describes it
@@ -62,7 +62,7 @@ function inWorkspace(agent) { // the menu's workspace filter: every agent while 
   return !workspace || agent?.workspace === workspace;
 }
 
-function templateInWorkspace(slug) { // the same filter for a template: Templates and the Calendar use this one
+function templateInWorkspace(slug) { // the same filter for a template: the Calendar uses it
   return !workspace || workspaceOfTemplate(slug) === workspace;
 }
 
@@ -98,19 +98,14 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                              browserOf: () => ({ tabs, scope: tabScope, browser }) });
 const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
 const list = mountList($("view-list"), { onOpen: select });
-const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI, Build a Mission, Use a Template
+const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI and Build a Mission
 parts.push(composer);
 const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible: inWorkspace,
                                                      decorate: (row, agent) => moveFor(row, { agent: agent.id },
                                                                                        agent.workspace) });
 const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
 parts.push(missions, history);
-const templates = mountTemplates($("page-templates"), link, {
-  inWorkspace: templateInWorkspace,
-  decorate: (row, slug) => moveFor(row.querySelector(".row") || row, { template: slug }, workspaceOfTemplate(slug)),
-});
-parts.push(templates, mountKnowledge($("page-knowledge"), link, { tabs: () => tabs,
-                                                                   model: () => $("task-model").value }),
+parts.push(mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value }),
            mountIntegrations($("page-integrations"), link));
 
 const spaces = mountWorkspaces($("workspaces"), { send, onFilter: setWorkspace });
@@ -119,7 +114,6 @@ parts.push(spaces, {
   onMessage(message) {
     if (message.type === "snapshot" || message.type === "workspaces") {
       workspaceRows = message.workspaces || [];
-      templates.refresh();
       renderAll();
     }
     if (message.type === "snapshot" || message.type === "accounts") usage.render(message.accounts || []);
@@ -128,17 +122,15 @@ parts.push(spaces, {
 parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
                                                 visibleTemplate: templateInWorkspace }));
 
-function openTemplate(slug) { // a template in the Calendar: Templates, at that template
-  showPage("templates");
-  document.querySelector(`#page-templates .workflow[data-slug="${CSS.escape(slug)}"]`)
-    ?.scrollIntoView({ block: "center" });
+function openTemplate() { // a template in the Calendar: AI Home, at its templates (Run, Edit, New are AI Home's)
+  openTab("/home#workflows-section");
 }
 
 function workspaceOfTemplate(slug) {
   return workspaceRows.find((row) => (row.templates || []).includes(slug))?.id || null;
 }
 
-function moveFor(container, target, current) { // Workspace ▾: moves an agent or a template (a filter, no right)
+function moveFor(container, target, current) { // Workspace ▾: moves an agent (a filter, no right)
   let select = container.querySelector(":scope > select.move");
   if (!select) {
     select = el("select", "move");
@@ -150,12 +142,11 @@ function moveFor(container, target, current) { // Workspace ▾: moves an agent 
   fillMove(select, workspaceRows, current);
 }
 
-function setWorkspace(id) { // the menu's filter: the Dashboard, My Missions and Templates show only this one's
+function setWorkspace(id) { // the menu's filter: the Dashboard, My Missions and the Calendar show only this one's
   workspace = id;
   spaces.setActive(id);
   scene.setFilter(inWorkspace);
   composer.workspaceChanged();
-  templates.refresh();
   renderAll();
 }
 
@@ -386,7 +377,9 @@ function handle(message) {
       if (drawer.id) link.send({ type: "events", id: drawer.id });
       eventsFor = null; // and the right column asks for its agent's actions again
       renderAll();
-      for (const kind of ["accounts", "thumbs", "brain", "hearing", "permission_rules"]) link.send({ type: kind });
+      for (const kind of ["accounts", "thumbs", "brain", "hearing", "permission_rules", "workflows"]) { // workflows:
+        link.send({ type: kind }); // the Calendar's scheduled templates, and each workspace's count of them
+      }
       break;
     }
     case "agent_event":

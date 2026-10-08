@@ -1,60 +1,12 @@
-// Mission Control's Templates, Knowledge and Integrations (the new look, Decision 5): AI Home's own pieces, on the
-// menu's pages. Templates are the workflows (Run, Edit, New template), filtered by the menu's workspace. Knowledge is
-// the skills (what each one teaches, Remove, Bring back) and Train. Integrations are the Tools, each server on or off
-// per account. Every word is set as text.
+// Mission Control's Knowledge and Integrations (the new look, Decision 5): AI Home's own pieces, on the menu's pages.
+// Knowledge is the skills (what each one teaches, Remove, Bring back) and Train. Integrations are the Tools, each
+// server on or off per account. Templates stay AI Home's alone (the brain-delegation spec). Every word is set as text.
 "use strict";
 
 import { el } from "./chat.js";
 import { pageHead } from "./pages.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
-import { mountWorkflows } from "./workflows.js";
-
-function defaultAccount(rows) {
-  return (Array.isArray(rows) ? rows : []).find((row) => row.default)?.id || "default";
-}
-
-export function mountTemplates(root, link, { inWorkspace = () => true, decorate = () => {} } = {}) {
-  let skills = [];
-  let sites = [];
-  let servers = [];
-  let account = "default";
-  const body = el("div", "templates-body");
-  root.replaceChildren(pageHead("Templates"), el("p", "page-note", "Recipes in plain words, kept as files: run one, "
-    + "edit it, or write a new one."), body);
-  const workflows = mountWorkflows(body, link, { skills: () => skills, sites: () => sites, servers: () => servers,
-                                                 heading: "New template" });
-
-  function refresh() { // each template shown only in its workspace (when the menu picks one), and its Workspace ▾
-    for (const row of body.querySelectorAll(".workflow[data-slug]")) {
-      row.hidden = !inWorkspace(row.dataset.slug);
-      decorate(row, row.dataset.slug);
-    }
-  }
-
-  return {
-    refresh,
-    onMessage(message) {
-      workflows.onMessage(message);
-      if (message.type === "workflows_snapshot") {
-        refresh();
-      } else if (message.type === "skills") {
-        skills = message.skills || [];
-        workflows.options();
-      } else if (message.type === "brain_snapshot" || message.type === "brain_state") {
-        sites = message.watch_list || [];
-        workflows.options();
-      } else if (message.type === "tools_snapshot" && (message.account || "default") === account) {
-        servers = (message.servers || []).filter((server) => server.enabled);
-        workflows.options();
-      } else if (message.type === "snapshot") {
-        account = defaultAccount(message.accounts);
-        link.send({ type: "skills" });
-        link.send({ type: "tools", account }); // the servers a template may use
-      }
-    },
-  };
-}
 
 export function mountKnowledge(root, link, { tabs = () => [], model = () => "sonnet" } = {}) {
   const search = el("input", "search");

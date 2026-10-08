@@ -104,6 +104,15 @@ function focusOn(message) { // a notification's click: AI Home's tab, and the ag
   setTimeout(() => target.classList.remove("focus"), 2000);
 }
 
+function openSection() { // Mission Control's Calendar opens AI Home at its templates: that section, open, in view
+  if (location.hash !== "#workflows-section") return;
+  $("workflows-section").open = true;
+  $("workflows-section").scrollIntoView({ block: "start" });
+}
+
+addEventListener("hashchange", openSection);
+openSection();
+
 function flash(text) {
   $("hint").textContent = text;
   setTimeout(() => { if ($("hint").textContent === text) $("hint").textContent = ""; }, 5000);
