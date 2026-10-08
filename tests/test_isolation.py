@@ -46,22 +46,3 @@ async def test_a_react_style_select_still_sees_the_change(chrome_browser):
     page = await browser.open(base + "checks/react-select.html")
     await browser.act(parse_steps([f'select {element_of(page, "Size")} "Large"']))
     assert await browser.js("document.getElementById('state').textContent") == '"Large"'
-
-
-@CHROME
-async def test_qas_probe_runs_in_the_isolated_world_too(chrome_browser):
-    from ai_browser.qa.page import PageVisitor
-
-    browser, base, _ = chrome_browser
-    tab = await browser.open_worker()
-    visitor = PageVisitor(browser, tab)
-    try:
-        page = await visitor.visit(base + "qa/about.html")
-        assert page.title == "About us" and not page.error
-        seen = await browser.cdp.send("Runtime.evaluate", {
-            "expression": "typeof window.__aibqa + ' ' + typeof window.__aib", "returnByValue": True},
-            session_id=tab.session)
-        assert seen["result"]["value"] == "undefined undefined"
-    finally:
-        visitor.close()
-        await browser.close_tab(tab)

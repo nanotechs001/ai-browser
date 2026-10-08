@@ -1,5 +1,5 @@
 """Through the app's relay, in a throwaway headless Chrome (started with --remote-debugging-port=0, which never asks):
-two agents' engines on one connection, Take back, a reconnect, the live view with thumbnails, and Website QA."""
+two agents' engines on one connection, Take back, a reconnect, and the live view with thumbnails."""
 
 import asyncio
 import base64
@@ -179,32 +179,3 @@ async def test_live_view_and_thumbnails_through_the_relay(relayed, throwaway_chr
         assert picture[:2] == b"\xff\xd8"
     finally:
         await engine.close()
-
-
-@CHROME
-async def test_website_qa_through_the_relay(relayed, tmp_path, monkeypatch):
-    from ai_browser.browser import Browser
-    from ai_browser.config import Config
-    from ai_browser.qa import run as run_module
-    from ai_browser.workfs import WorkDir
-    from test_qa_browser import EXPECTED, matches
-
-    server, brave, base, own = relayed
-    captured, real_write = {}, run_module.write_report
-
-    def keep(work, run):
-        captured["run"] = run
-        return real_write(work, run)
-
-    monkeypatch.setattr(run_module, "write_report", keep)
-    cdp = await CDP.connect(server.url.replace("http://", "ws://", 1) + "/cdp",
-                            headers={"X-AIB-Agent-Token": server.token_for("a1")})
-    browser = Browser(cdp, WorkDir(tmp_path / "work", "qa-task"), Config(), mode="chrome")
-    try:
-        await browser.start()
-        await run_module.run_qa(browser, browser.work, base + "qa/index.html", delay=0.05)
-        matches(captured["run"].issues, EXPECTED)  # the same issues the direct run finds
-        assert brave.relay.upstream_opens == 1
-    finally:
-        await browser.close()
-        await cdp.close()

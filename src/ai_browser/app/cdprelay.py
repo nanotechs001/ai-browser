@@ -58,14 +58,13 @@ BROWSER_COMMANDS = frozenset({
     "Target.closeTarget", "Target.activateTarget", "Target.getTargets", "Target.getTargetInfo", "Browser.getVersion",
     "Browser.cancelDownload", "Browser.getWindowForTarget"})
 APP_COMMANDS = frozenset({"Target.getBrowserContexts"})  # the app's client's one extra read (wave 1B's profiles)
-SESSION_DOMAINS = frozenset({"Runtime", "DOM", "Input", "IO", "Log"})  # they act only inside that page
+SESSION_DOMAINS = frozenset({"Runtime", "DOM", "Input", "Log"})  # they act only inside that page
 SESSION_METHODS = frozenset({
     "Page.enable", "Page.setLifecycleEventsEnabled", "Page.addScriptToEvaluateOnNewDocument", "Page.getFrameTree",
     "Page.navigate", "Page.getNavigationHistory", "Page.navigateToHistoryEntry", "Page.reload",
     "Page.createIsolatedWorld", "Page.getLayoutMetrics", "Page.captureScreenshot", "Page.handleJavaScriptDialog",
     "Page.startScreencast", "Page.stopScreencast", "Page.screencastFrameAck", "Network.enable",
-    "Network.loadNetworkResource", "Emulation.setFocusEmulationEnabled", "Emulation.setDeviceMetricsOverride",
-    "Emulation.clearDeviceMetricsOverride"})
+    "Emulation.setFocusEmulationEnabled", "Emulation.setDeviceMetricsOverride", "Emulation.clearDeviceMetricsOverride"})
 WEB_ONLY = "only web pages (http, https, data:, about:blank) open through AI Browser's connection"
 APP_PAGE = "AI Browser's own pages don't open in your browser through its connection"
 UNREADABLE = "not an address the browser could read"
@@ -82,9 +81,8 @@ def allowed(method, level: str, app: bool = False) -> bool:
 
 
 def address_problem(url, app_port: int) -> str | None:
-    """Why the relay won't open `url` (Target.createTarget, Page.navigate, Network.loadNetworkResource), or None: web
-    pages, data: and about:blank only, and never the app's own origin, however the host is spelled (read as Chrome
-    reads it)."""
+    """Why the relay won't open `url` (Target.createTarget, Page.navigate), or None: web pages, data: and about:blank
+    only, and never the app's own origin, however the host is spelled (read as Chrome reads it)."""
     if not isinstance(url, str):
         return WEB_ONLY
     text = url.strip("\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17"
@@ -685,7 +683,7 @@ class Relay:
                 return self._error(client, client_id, NO_SESSION, session_id)
             if not allowed(method, "session", client.app):
                 return self._refuse(client, client_id, method, session_id)
-            if method in ("Page.navigate", "Network.loadNetworkResource"):
+            if method == "Page.navigate":
                 problem = address_problem(params.get("url"), self.port)
                 if problem:
                     return self._error(client, client_id, (-32000, problem), session_id)

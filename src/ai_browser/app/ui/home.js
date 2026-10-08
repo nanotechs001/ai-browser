@@ -675,7 +675,7 @@ function closeChat() {
   $("chat").hidden = true;
 }
 
-function showLive(url, agent) { // a bot check in QA's sandbox: its live view, in the agent's own tab of the window
+function showLive(url, agent) { // a bot check shown in a live view: it opens in the agent's own tab of the window
   openLive(url, agent.id, agentLabel(agent));
 }
 

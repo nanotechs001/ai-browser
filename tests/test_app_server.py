@@ -157,7 +157,7 @@ async def test_skills_for_the_dashboard(fake_claude, tmp_path):
 async def test_long_histories_are_capped(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
-        agent = await server.agents.create("long qa")
+        agent = await server.agents.create("long history")
         await asyncio.sleep(1)
         for n in range(6000):
             server.agents._record(agent, {"type": "delta", "text": str(n)})
@@ -1247,23 +1247,23 @@ async def test_an_agents_turn_asks_for_the_turn_with_its_id(fake_claude, tmp_pat
         await server.stop()
 
 
-async def test_a_bot_check_qa_meets_in_its_sandbox_reaches_ai_home_in_brave_mode(fake_claude, tmp_path):
-    """Plan review, Critical 1: QA's sandbox tab is no tab of the user's Brave, so the relay never grants it; its bot
+async def test_a_bot_check_shown_in_a_live_view_reaches_ai_home_in_brave_mode(fake_claude, tmp_path):
+    """Plan review, Critical 1: a live view's tab is no tab of the user's Brave, so the relay never grants it; its bot
     check (with the live-view link) must still reach AI Home. A check about a Brave tab the relay doesn't grant
     stays dropped."""
     server, url = await started(fake_claude, tmp_path, EVENTS)
     brave = FakeBrave([])
     server.attach_brave(brave)
     agent = add_agent(server.agents)
-    qa = {**CHECK_REPORT, "agent": "a1", "target": "QA-TARGET", "live": "http://127.0.0.1:8799/live?token=abc"}
+    shown = {**CHECK_REPORT, "agent": "a1", "target": "LIVE-TARGET", "live": "http://127.0.0.1:8799/live?token=abc"}
     try:
         async with httpx.AsyncClient() as client:
             stray = await client.post(url + "/agent-events", headers=agent_headers(server),
                                       json={**CHECK_REPORT, "agent": "a1", "target": "T-NOT-ITS-OWN"})
             assert stray.status_code == 204 and agent.check is None
-            answer = await client.post(url + "/agent-events", headers=agent_headers(server), json=qa)
-        assert answer.status_code == 204 and agent.check is not None and agent.check["live"] == qa["live"]
-        assert agent.check["target"] == "QA-TARGET" and agent.check["adopted"] is False
+            answer = await client.post(url + "/agent-events", headers=agent_headers(server), json=shown)
+        assert answer.status_code == 204 and agent.check is not None and agent.check["live"] == shown["live"]
+        assert agent.check["target"] == "LIVE-TARGET" and agent.check["adopted"] is False
     finally:
         await server.stop()
 

@@ -22,8 +22,7 @@ from .chrome import ChromeError, _same_folder, browser_name, find_ws_url, own_br
 from .config import READ_LIMIT, SHELL_LIMIT, load_config, project_root
 from .grouping import Placer
 from .live import LiveView
-from .qa import run_qa
-from .sandbox import DockerError, SandboxInfo, Sandboxes
+from .sandbox import SandboxInfo, Sandboxes
 from .shellguard import shell_problem
 from .skills import Catalog
 from .steps import parse_steps
@@ -41,9 +40,6 @@ RETIRED_BROWSER = ("AIB_BROWSER=app is retired: AI Browser's own Chrome is gone.
 ASK_SESSION = ("Ask the user to turn the switch on, or whether they want the Docker sandbox instead "
                "(sandbox_start()).")
 ASK_AGENT = "Ask the user to turn the switch on (AI Home shows how)."
-QA_PROFILE = "qa"  # QA's own named sandbox: it stays up between runs, `ai-browser stop qa` stops it
-QA_HINT = "or, if the user wants QA in their own browser, sandbox_start(chrome=true) first"
-QA_WHERE = "checked in the Docker sandbox"
 RELAY_WAIT = 65  # seconds to wait for the app's relay: its own wait for Allow (60 s) answers first
 APP_GONE = ("AI Browser stopped, so this session lost its connection to your {name}. Ask the user to start AI Browser "
             "again, or, if they want this session to connect to {name} by itself ({name} will ask \"Allow remote "
@@ -157,7 +153,6 @@ class Engine:
         self._agent_id = ""  # AIB_APP_AGENT: this engine serves an agent of ai-browser app
         self.gate = CheckGate()  # the bot-check hold and the skipped sites: they outlast any browser this session uses
         self._notes: list[str] = []  # a hold that ended between calls (the user closed the tab): the next call says so
-        self._qa_browser: Browser | None = None  # QA's sandbox browser, kept while a bot check it found is held
         self._relayed = False  # this browser connection goes through the app's relay
         self._via_relay = False  # this session went through the relay before (if the app stops, it says so)
         self._direct_ok = False  # sandbox_start(chrome=true): the user chose a direct connection
@@ -360,7 +355,7 @@ class Engine:
 
     def _app_link(self) -> AgentLink | None:
         """An agent of ai-browser app reports to the app (AIB_APP_EVENTS) from its first call, whichever browser that
-        call uses: a bot check QA meets in its own sandbox, before any Brave is connected, reaches AI Home too."""
+        call uses, so a bot check reaches AI Home even before any browser is connected."""
         agent = os.environ.get("AIB_APP_AGENT", "")
         if self._link is None and agent and os.environ.get("AIB_APP_EVENTS"):
             self._link = AgentLink(os.environ["AIB_APP_EVENTS"], os.environ.get("AIB_APP_AGENT_TOKEN", ""), agent)
@@ -392,7 +387,7 @@ class Engine:
         if self.browser is None or self.cdp is None or self.cdp.closed or self.browser.handed is None:
             return ""
         held, note = self.gate.held, ""
-        if held is not None and held.where == "session" and held.adopted:
+        if held is not None and held.adopted:
             detached = any(tab.detached for tab in self.browser.owned.values() if tab.target == held.target)
             if detached or held.target not in {item["target"] for item in await self.browser._handed_now()}:
                 note = self._release("closed")  # wave 1's sync release: the site is skipped
@@ -558,21 +553,19 @@ class Engine:
         """A bot check in this session's browser (wave 1's hook, set by _wire)."""
         return await self._hold(self.browser, tab, check)
 
-    async def _hold(self, browser, tab: Tab, check: Check, where: str = "session") -> str:
+    async def _hold(self, browser, tab: Tab, check: Check) -> str:
         """A bot check in `tab` of `browser`: hold the session, bring its tab forward (even for an agent working in
-        the background), tell the app; returns the hand-off. `where` is "session" (this session's browser) or "qa"
-        (QA's own sandbox browser). The live-view link is given in the sandbox and for a hold in QA's sandbox, where
-        the user can't see the tab otherwise."""
-        self.gate.hold(tab.key, tab.target, check, tab.adopted, where=where)
+        the background), tell the app; returns the hand-off. The live-view link is given in the sandbox, where the
+        user can't see the tab otherwise."""
+        self.gate.hold(tab.key, tab.target, check, tab.adopted)
         if browser is not None:
             with contextlib.suppress(BrowserError, CDPError):
                 await browser.bring_to_front(tab)
-        sandbox = where == "qa" or (self.info is not None and not self.info.chrome)
+        sandbox = self.info is not None and not self.info.chrome
         live = self.live.url if sandbox and self.live is not None and self.live.url else None
-        link = self._app_link()  # even when QA's sandbox is the first browser this agent used
+        link = self._app_link()
         if link is not None:
-            link.report("check", tab.target, tab.adopted, check=check.kind, site=check.site,
-                        **({"live": live} if where == "qa" and live else {}))
+            link.report("check", tab.target, tab.adopted, check=check.kind, site=check.site)
         return self.gate.handoff(check, tab.key, live)
 
     def _release(self, how: str) -> str:
@@ -593,14 +586,14 @@ class Engine:
 
     def _on_tab_event(self, kind: str, tab: Tab) -> None:
         held = self.gate.held
-        if kind == "closed" and held is not None and held.where == "session" and held.target == tab.target:
+        if kind == "closed" and held is not None and held.target == tab.target:
             self._notes.append(self._release("closed"))
 
     async def _held_after_reconnect(self) -> str:
         """After a reconnect our held tab was closed with the old connection (or the browser restarted), so its site is
         skipped; the user's own (adopted) tab is taken on again if it is still open."""
         held = self.gate.held
-        if held is None or held.where != "session":
+        if held is None:
             return ""
         if held.adopted:
             with contextlib.suppress(BrowserError, CDPError):
@@ -715,12 +708,9 @@ class Engine:
                                         lambda: self.gate.refusal("open", url=url))
 
     async def observe(self, find: str | None = None) -> ToolResult:
-        if self._qa_hold():  # the held tab is in QA's sandbox: read it there
-            return await self._run("observe", {"find": find}, lambda: self._observe_qa_hold(find))
-
         async def action(browser: Browser) -> str:
             held = self.gate.held
-            if held is None or held.where != "session":  # (a hold in QA's own browser: the everyday-Brave spec)
+            if held is None:
                 return await browser.observe(find)
             tab = next((tab for tab in browser.owned.values() if tab.target == held.target), None)
             if tab is None:  # its tab went without a word (it can't be read any more): as closed, the site is skipped
@@ -758,10 +748,6 @@ class Engine:
                                         action)
 
     async def tabs(self, action: str = "list", tab: str | None = None, url: str | None = None) -> ToolResult:
-        if self._qa_hold() and (action == "list" or (action == "close" and tab == self.gate.held.tab_key)):
-            return await self._run("tabs", {"action": action, "tab": tab, "url": url},
-                                   lambda: self._tabs_qa_hold(action, tab))
-
         async def run(browser: Browser) -> str:
             text = await browser.tabs(action, tab, url)
             return self._mark_held(text) if action == "list" else text
@@ -776,151 +762,6 @@ class Engine:
 
     async def js(self, code: str) -> ToolResult:
         return await self._with_browser("js", {"code": code}, lambda browser: browser.js(code))
-
-    async def qa(self, url: str, max_pages: int = 30, progress=None, ignore_robots: bool = False) -> ToolResult:
-        """Website QA of a whole site, politely; returns the summary (the report is in the work folder). In the user's
-        own browser by default, QA crawls in its own Docker sandbox instead (Decision 11). A bot check QA finds holds
-        the session like any other, and a host that refused cools down."""
-        args = {"url": url, "max_pages": max_pages, "ignore_robots": ignore_robots}
-        try:
-            sandboxed = self._qa_in_sandbox()
-        except ValueError as exc:
-            return await self._run("qa", args, lambda: _raise(exc))
-        if sandboxed:
-            async def work():
-                # First, as in every call: a taken-back held tab ends the hold (Decision 4)
-                notes = await self._taken_back() + self._take_notes()
-                try:
-                    return notes + await self._qa_sandboxed(url, max_pages, progress, ignore_robots)
-                except BaseException:
-                    self._notes.insert(0, notes)  # not lost: the next call says it
-                    raise
-            return await self._run("qa", args, work)
-
-        async def action(browser):  # wave 1's: in this session's own browser
-            return await run_qa(browser, self.work, url, max_pages, progress=progress, on_tabs=self._register,
-                                ignore_robots=ignore_robots, on_check=self._on_check,
-                                on_host_stopped=self.gate.qa_stop, skipped=self.gate.skipped_for)
-        return await self._with_browser("qa", args, action, lambda: self.gate.refusal("qa", url=url))
-
-    def _qa_in_sandbox(self) -> bool:
-        """QA's browser, by a fixed rule before the run (Decision 11): the Docker sandbox when this session browses
-        in the user's own browser by default; their browser only after sandbox_start(chrome=true), which they asked
-        for. Any other session's browser (a sandbox) runs QA itself."""
-        return self._wanted is None and self._default_kind() == "chrome"
-
-    def _qa_work(self) -> WorkDir:
-        """The session's own work folder, even before its browser is connected: QA's report lands where read_file
-        looks. (A folder left from a browser this session stopped is not it: the next call connects the default.)"""
-        if self.browser is not None and self.work is not None:
-            return self.work
-        return WorkDir(self.home / "sandboxes" / "chrome" / "work", self.task_id)
-
-    async def _qa_sandbox_browser(self) -> Browser:
-        """A Browser in QA's named sandbox (started, or reused), opening no tab of its own; its tabs are q1…"""
-        if self.sandboxes is None:
-            self.sandboxes = Sandboxes(self.home, mounts=self.catalog.mounts())
-        try:
-            info = await asyncio.to_thread(self.sandboxes.start, QA_PROFILE)
-        except DockerError as exc:
-            raise DockerError(f"{exc}; {QA_HINT}") from None
-        cdp = await CDP.connect(await asyncio.to_thread(self.sandboxes.ws_url, info))
-        try:
-            browser = Browser(cdp, self._qa_work(), self.cfg, key_prefix="q",
-                              app_origin=os.environ.get("AIB_APP_ORIGIN", ""))
-            await browser.start(first_tab=False)
-        except BaseException:
-            await cdp.close()
-            raise
-        return browser
-
-    async def _close_qa_browser(self, browser: Browser) -> None:
-        with contextlib.suppress(Exception):
-            await browser.close()
-        with contextlib.suppress(Exception):
-            await browser.cdp.close()
-
-    async def _qa_sandboxed(self, url: str, max_pages: int, progress, ignore_robots: bool) -> str:
-        refused = self.gate.refusal("qa", url=url)  # first: a refused qa starts no sandbox
-        if refused:
-            return refused
-        browser = await self._qa_sandbox_browser()
-
-        async def on_check(tab, check) -> str:  # a bot check on one of the site's pages: held there, in QA's sandbox
-            await self._show_live(browser)  # first, so the tab brought to the front is the one the live view shows
-            return await self._hold(browser, tab, check, where="qa")
-
-        try:
-            summary = await run_qa(browser, self._qa_work(), url, max_pages, progress=progress,
-                                   ignore_robots=ignore_robots, on_check=on_check,
-                                   on_host_stopped=self.gate.qa_stop, skipped=self.gate.skipped_for)
-        finally:
-            if self.gate.held is not None and self.gate.held.where == "qa":
-                self._qa_browser = browser  # kept, with its held tab, until the hold ends
-            else:
-                await self._close_qa_browser(browser)
-        return f"{QA_WHERE} (profile {QA_PROFILE})\n{summary}"
-
-    async def _show_live(self, browser: Browser) -> None:
-        """Point the live view at `browser` (starting it if needed): the user solves a check in QA's sandbox there."""
-        if self.live is None:
-            live = LiveView()
-            try:
-                await live.start()
-            except RuntimeError:
-                return  # no free port: the hand-off says so without a link
-            self.live = live
-        await self.live.attach(browser)
-
-    def _qa_hold(self) -> bool:
-        held = self.gate.held
-        return held is not None and held.where == "qa" and self._qa_browser is not None
-
-    async def _end_qa_hold(self) -> None:
-        """The hold in QA's sandbox ended (solved or skipped): the live view goes back to the session's browser, then
-        QA's browser closes (in that order, so the live view never streams from a closed connection)."""
-        browser, self._qa_browser = self._qa_browser, None
-        if self.live is not None:
-            if self.browser is not None and self.cdp is not None and not self.cdp.closed:
-                await self.live.attach(self.browser)
-            else:
-                await self.live.detach()
-        if browser is not None:
-            await self._close_qa_browser(browser)
-
-    async def _qa_release(self, how: str) -> str:
-        """End a hold in QA's sandbox: wave 1's release (the note, the report, a skipped site), then QA's browser
-        goes. `_release` stays sync because wave 1's tab-closed callback calls it."""
-        note = self._release(how)
-        await self._end_qa_hold()
-        return note
-
-    async def _observe_qa_hold(self, find: str | None) -> str:
-        browser, held = self._qa_browser, self.gate.held
-        tab = browser.owned.get(held.tab_key)
-        if tab is None or browser.cdp.closed:  # closed in the live view, by the page, or with QA's sandbox: skipped
-            return await self._qa_release("closed")
-        await browser._switch(tab)
-        check = await browser.check_now(tab)
-        if check is not None:  # still there after the user's Continue: in front again, handed over again
-            with contextlib.suppress(BrowserError, CDPError):
-                await browser.bring_to_front(tab)
-            return self.gate.handoff(check, tab.key, self.live.url if self.live is not None else None)
-        page = await browser.observe(find)
-        return await self._qa_release("solved") + page
-
-    async def _tabs_qa_hold(self, action: str, tab: str | None) -> str:
-        browser, held = self._qa_browser, self.gate.held
-        if action == "close":  # the user asked to skip the site: closed there, and the site is off-limits
-            closing = browser.owned.get(tab)
-            if closing is not None:
-                with contextlib.suppress(BrowserError, CDPError):  # QA's sandbox may be gone: skipped all the same
-                    await browser.close_tab(closing)
-            return await self._qa_release("closed")
-        mine = await self.browser.tabs("list") if self.browser is not None and self.cdp is not None \
-            and not self.cdp.closed else ""
-        line = f"  {held.tab_key}  in QA's Docker sandbox: {held.check.site} (bot check: waiting for the user)"
-        return "\n".join(part for part in (mine, line) if part)
 
     # ---- shell and files --------------------------------------------------------------------------------
 
@@ -993,12 +834,9 @@ class Engine:
 
     async def close(self) -> None:
         """End this session: close its tabs; throwaway sandboxes are removed, named ones stay warm."""
-        if self._qa_browser is not None:
-            await self._close_qa_browser(self._qa_browser)
-            self._qa_browser = None
         if self.browser is not None:
             await self._teardown(stop_container=bool(self.info and self.info.fresh))
-        if self._link is not None:  # reports from calls that used no browser of the session's (QA's sandbox)
+        if self._link is not None:  # reports from calls that used no browser of the session's
             await self._link.flush()
         if self.live is not None:
             await self.live.stop()

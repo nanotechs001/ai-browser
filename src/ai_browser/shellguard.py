@@ -16,8 +16,8 @@ from .checks import on_site
 
 USER_AGENT = ("the shell doesn't send a browser's user agent (curl -A \"Mozilla/…\"): use curl's own, or open the "
               "page with open")
-PARALLEL = ("the shell doesn't fetch in parallel (xargs -P 10 … curl): fetch one URL at a time, or use qa for a whole "
-            "site")
+PARALLEL = ("the shell doesn't fetch in parallel (xargs -P 10 … curl): fetch one URL at a time, and never crawl a "
+            "site from the shell")
 SKIPPED = "the shell doesn't reach {site}: the user skipped it after a bot check. Ask the user if you need it."
 FETCHERS = frozenset({"curl", "wget"})
 _BROWSER = re.compile(r"mozilla/|chrome/|safari/|firefox/|edg/|opr/|googlebot|bingbot", re.IGNORECASE)

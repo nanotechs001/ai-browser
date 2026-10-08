@@ -47,7 +47,7 @@ async def test_every_agent_has_a_station_and_names_stay_text(mission):
     js, stack = mission
     agents = stack["server"].agents
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
-    for name in ("Fix the footer", HOSTILE, "QA my-site.com"):
+    for name in ("Fix the footer", HOSTILE, "Check my-site.com"):
         await agents.create(name)
     assert await until(js, "document.querySelectorAll('.station').length === 3")
     assert "<img" in await js(f"{station('a2', '.nameplate')}.textContent")

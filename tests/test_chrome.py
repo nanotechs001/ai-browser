@@ -100,6 +100,20 @@ def test_launch_refuses_every_real_browser_folder(monkeypatch):
             chrome.launch(folder)
 
 
+def test_a_throwaway_chrome_never_asks_for_a_keychain(monkeypatch, tmp_path):
+    """macOS asks "A keychain cannot be found to store Chrome" when a test Chrome starts under a HOME with no keychain:
+    a throwaway profile never needs one, so it gets Chrome's mock keychain."""
+    import subprocess
+
+    import ai_browser.chrome as chrome
+
+    started = []
+    monkeypatch.setattr(chrome, "chrome_binary", lambda: "/fake/chrome")
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **_: started.append(args))
+    launch(tmp_path / "profile")
+    assert "--use-mock-keychain" in started[0]
+
+
 def test_missing_folder_explains_the_fix(tmp_path):
     with pytest.raises(ChromeError, match="chrome://inspect/#remote-debugging"):
         find_ws_url(tmp_path / "nope")
@@ -941,28 +955,6 @@ async def test_downloads_need_the_users_ok_in_their_own_browser(own_browser, tmp
     assert "⛔ a download of setup.dmg was stopped: ask the user, then repeat with confirmed=true" in out
     await asyncio.sleep(3.5)  # longer than the whole file takes to arrive
     assert not downloads.exists() or not list(downloads.iterdir())
-
-
-@CHROME
-async def test_a_download_qa_meets_is_not_the_agents(own_browser, tmp_path):
-    from ai_browser.qa import run_qa
-
-    make, base, cdp = own_browser
-    await cdp.send("Browser.setDownloadBehavior", {"behavior": "allow", "downloadPath": str(tmp_path / "downloads"),
-                                                   "eventsEnabled": True})
-    browser = await make()
-    await browser.open(base + "form.html")
-    await run_qa(browser, browser.work, base + "qa/autodownload.html", 1, delay=0.05)  # it starts a download itself
-    assert "was stopped" not in await browser.observe()  # QA's report says it; the agent wasn't the one downloading
-
-
-@CHROME
-async def test_qa_after_sandbox_start_chrome_crawls_in_the_users_browser(chrome_engine):
-    engine, base, _ = chrome_engine
-    await engine.sandbox_start(chrome=True)  # the user asked for their own browser
-    result = (await engine.qa(base + "qa/index.html", 2)).text
-    assert not result.startswith("checked in the Docker sandbox") and not result.startswith("error")
-    assert list(engine.work.host_task.rglob("report.html"))
 
 
 # ---- the engine in the user's browser: the link, the placer, kept tabs, handed tabs ---------------------------

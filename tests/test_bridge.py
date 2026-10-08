@@ -204,10 +204,10 @@ async def test_picked_skills_are_asked_for_in_the_first_message(fake_claude, tmp
     runner, log, script = fake_claude
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
     bridge = ClaudeBridge(tmp_path / "home", claude=runner)
-    [event async for event in bridge.send("check the shop", skills=["ai-browser:website-qa", "bad name;rm"])]
+    [event async for event in bridge.send("check the shop", skills=["ai-browser:elementor", "bad name;rm"])]
     await bridge.close()
     content = json.loads(log.read_text(encoding="utf-8").splitlines()[1])["message"]["content"]
-    assert content.splitlines()[0] == "Load and use these skills with load_skill: ai-browser:website-qa"
+    assert content.splitlines()[0] == "Load and use these skills with load_skill: ai-browser:elementor"
     assert content.endswith("check the shop") and "bad name" not in content
 
 
@@ -216,16 +216,16 @@ async def test_the_bridge_notes_loaded_skills_and_tool_ids(fake_claude, tmp_path
 
     runner, _, script = fake_claude
     use = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "u9",
-           "name": "mcp__ai-browser__load_skill", "input": {"name": "ai-browser:website-qa"}}]}}
+           "name": "mcp__ai-browser__load_skill", "input": {"name": "ai-browser:elementor"}}]}}
     result = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "u9",
               "content": [{"type": "text", "text": "skill text\n⏱ 41 ms"}]}]}}
     script.write_text(json.dumps([EVENTS[0], use, result, EVENTS[-1]]), encoding="utf-8")
     bridge = ClaudeBridge(tmp_path / "home", claude=runner)
-    events = [event async for event in bridge.send("qa it")]
+    events = [event async for event in bridge.send("check it")]
     await bridge.close()
     tool = next(event for event in events if event["type"] == "tool")
     done = next(event for event in events if event["type"] == "tool_result")
-    assert bridge.loaded_skills == {"ai-browser:website-qa"} and tool["id"] == "u9"
+    assert bridge.loaded_skills == {"ai-browser:elementor"} and tool["id"] == "u9"
     assert done["id"] == "u9" and done["ms"] == 41
 
 
