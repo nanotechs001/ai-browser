@@ -338,7 +338,7 @@ async def test_every_desk_has_a_worker_in_the_agents_colour_and_names_stay_text(
     js = await open_with(stack)
     agents = stack["server"].agents
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
-    for name in ("Fix the footer", HOSTILE, "QA my-site.com"):
+    for name in ("Fix the footer", HOSTILE, "Check my-site.com"):
         await agents.create(name)
     assert await until(js, "document.querySelectorAll('.station').length === 3")
     assert await js("[...document.querySelectorAll('.station')].every(node =>"

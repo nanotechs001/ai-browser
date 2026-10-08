@@ -883,7 +883,7 @@ class AppServer:
         if self.brave is None or report.get("kind") not in ("tab_opened", "working_tab", "check"):
             return False
         if report.get("kind") == "check" and report.get("live") and _valid_check(report):
-            report["adopted"] = False  # a bot check in QA's own sandbox (its live view): no tab of the user's Brave
+            report["adopted"] = False  # a bot check shown in a live view: no tab of the user's Brave
             return False
         granted = self._granted(report["agent"], report.get("target"))
         if granted is None:
@@ -1495,7 +1495,7 @@ class AppServer:
 
     async def _show_check(self, agent_id: str) -> None:
         """Show me (a bot check's card): bring forward the tab where this agent's bot check waits. The app holds
-        that tab, so no page names one. A check shown in the live view (QA's sandbox) has no tab here, and without a
+        that tab, so no page names one. A check shown in a live view has no tab here, and without a
         tab source nothing happens. It uses the link's one connection and never opens one."""
         agent = self.agents.agents.get(agent_id)
         check = agent.check if agent is not None else None

@@ -11,22 +11,6 @@ def _get(url: str) -> http.client.HTTPResponse:
     return conn.getresponse()
 
 
-def test_host_server_has_the_qa_routes():
-    base, _, stop = testpages.serve_host()
-    try:
-        first = _get(base + "qa/old")
-        assert first.status == 301 and first.getheader("Location") == "/qa/older"
-        second = _get(base + "qa/older")
-        assert second.status == 301 and second.getheader("Location") == "/qa/about.html"
-        assert _get(base + "qa/forbidden").status == 403
-        attachment = _get(base + "qa/attachment")
-        assert attachment.status == 200 and "attachment" in attachment.getheader("Content-Disposition")
-        assert _get(base + "qa/index.html").status == 200
-        assert _get(base + "qa/missing.html").status == 404
-    finally:
-        stop()
-
-
 def test_host_server_has_the_bot_check_routes():
     from urllib.parse import quote
 
@@ -44,12 +28,12 @@ def test_host_server_has_the_bot_check_routes():
         stop()
 
 
-def test_host_server_has_the_polite_qa_routes():
+def test_host_server_has_the_download_routes():
     base, _, stop = testpages.serve_host()
     try:
-        busy = _get(base + "qa2/busy")
-        assert busy.status == 429 and busy.getheader("Retry-After") == "120"
-        first, second = _get(base + "qa2/later"), _get(base + "qa2/later")
-        assert (first.status, first.getheader("Retry-After"), second.status) == (503, "1", 200)
+        big = _get(base + "downloads/bigfile")
+        assert big.status == 200 and "setup.dmg" in big.getheader("Content-Disposition")
+        big.close()
+        assert _get(base + "downloads/brochure.zip").status == 200
     finally:
         stop()

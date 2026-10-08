@@ -218,7 +218,7 @@ async def test_while_a_check_waits_nothing_else_runs(chrome_engine, monkeypatch)
     refused = [engine.act([f"click {count}"]), engine.act(["reload"]), engine.act([f"goto {base}checks/counter.html"]),
                engine.js("1 + 1"), engine.screenshot(), engine.extract("links"), engine.tabs("new"),
                engine.tabs("switch", counter.key), engine.tabs("close", counter.key),
-               engine.open(base + "checks/counter.html"), engine.qa(base + "qa/index.html"), engine.shell("ls"),
+               engine.open(base + "checks/counter.html"), engine.shell("ls"),
                engine.sandbox_start(chrome=True), engine.sandbox_stop()]
     for call in refused:
         assert (await call).text.startswith(waiting)
@@ -276,7 +276,6 @@ async def test_a_closed_check_tab_makes_its_site_off_limits(chrome_engine):
     assert (await engine.open(base + "checks/counter.html")).text.startswith(refused)
     assert (await engine.act([f"goto {base}form.html"])).text.startswith(refused)
     assert (await engine.tabs("new", url=base + "form.html")).text.startswith(refused)
-    assert (await engine.qa(base + "qa/index.html")).text.startswith(refused)
     assert (await engine.shell("curl -s http://localhost:8000/")).text.startswith("⛔ the shell doesn't reach localhost")
     await engine.sandbox_stop()
     assert "your Chrome" in (await engine.sandbox_start(chrome=True)).text  # a new connection, the same Engine
@@ -352,7 +351,7 @@ async def test_in_the_sandbox_the_hand_off_gives_the_live_view(tmp_path):
     text = await engine._on_check(Tab("t2", "TARGET", "SESSION"), Check("captcha", "shop.example.com"))
     assert "The tab is now in front." in text  # on Windows the taskbar words follow it
     assert "The user can solve it in the live view: http://127.0.0.1:8770/live?token=abc" in text
-    assert fronted == ["t2"] and (engine.gate.held.tab_key, engine.gate.held.where) == ("t2", "session")
+    assert fronted == ["t2"] and engine.gate.held.tab_key == "t2"
 
 
 async def test_the_shell_refuses_the_crawl_pattern_before_anything_starts(tmp_path, monkeypatch):
@@ -366,62 +365,3 @@ async def test_the_shell_refuses_the_crawl_pattern_before_anything_starts(tmp_pa
     engine.gate.skipped.add("google.com")
     result = await engine.shell("curl -s https://www.google.com/search?q=flights")
     assert result.text.startswith("⛔ the shell doesn't reach google.com") and engine.browser is None
-
-
-async def test_a_refused_qa_starts_nothing(tmp_path, monkeypatch):
-    from ai_browser.engine import Engine
-    from ai_browser.skills import Catalog
-
-    never_starts(monkeypatch)
-    engine = Engine(home=tmp_path / "home", catalog=Catalog([], set()))
-    assert (await engine.qa("https://www.google.com/search?q=flights")).text.startswith(
-        "⛔ www.google.com is a big site")
-    engine.gate.qa_stop("shop.example.com", time.time() + 60, "429, it asked for 1 minute")
-    assert (await engine.qa("https://shop.example.com/")).text.startswith("QA stopped on shop.example.com at ")
-    assert engine.browser is None and engine.sandboxes is None
-
-
-@CHROME
-async def test_qa_holds_the_session_at_a_check_it_finds(chrome_engine):
-    engine, base = await started(chrome_engine)
-    text = (await engine.qa(base + "qa2/check.html")).text
-    held = engine.gate.held
-    assert held is not None and held.where == "session" and held.check == Check("traffic", "localhost")
-    assert text.startswith(f"⛔ bot check in tab {held.tab_key} (localhost)") and "\n\nqa " in text
-    assert engine.browser.current.key == held.tab_key and held.tab_key in engine.browser.owned
-    assert (await engine.open(base + "form.html")).text.startswith("⏸ waiting for the user")
-    assert "is gone: carrying on" in await solve(engine, base)
-
-
-@CHROME
-async def test_qa_never_checks_a_link_to_a_site_the_user_skipped(chrome_engine, monkeypatch):
-    from ai_browser.qa.checker import LinkChecker
-
-    asked, real = [], LinkChecker._fetch
-
-    async def fetch(self, url, credentials):
-        asked.append(url)
-        return await real(self, url, credentials)
-
-    monkeypatch.setattr(LinkChecker, "_fetch", fetch)
-    engine, base = await started(chrome_engine)
-    engine.gate.skipped.add("127.0.0.1")  # as after the user skipped it at a bot check
-    text = (await engine.qa(base + "qa2/partner.html", max_pages=1)).text  # its "Partner shop" link is on 127.0.0.1
-    assert asked == [base + "qa/about.html"]  # its other link, checked; never the skipped site's
-    assert "not checked: 1 link to sites the user skipped (127.0.0.1)" in text
-    assert "<h3>skipped after a bot check</h3>" in engine.work.to_host(
-        next(line for line in text.splitlines() if line.startswith("report: ")).split()[1]).read_text(encoding="utf-8")
-
-
-@CHROME
-async def test_qa_waits_out_a_hosts_pause_and_can_ignore_robots_when_asked(chrome_engine):
-    engine, base = await started(chrome_engine)
-    busy = (await engine.qa(base + "qa2/busy.html")).text
-    assert "stopped early: localhost answered 429 Too Many Requests" in busy
-    again = (await engine.qa(base + "qa-robots/index.html", ignore_robots=True)).text
-    assert again.startswith("QA stopped on localhost at ") and \
-        "(429, it asked for 2 minutes): qa can run there again from " in again
-    assert 'page  "Counter"' in (await engine.open(base + "checks/counter.html")).text  # single pages stay allowed
-    engine.gate.qa_stopped.clear()  # as if the two minutes had passed
-    ignored = (await engine.qa(base + "qa-robots/index.html", ignore_robots=True)).text
-    assert "robots.txt: ignored at the user's request" in ignored

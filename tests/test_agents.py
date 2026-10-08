@@ -141,7 +141,7 @@ async def test_names_colours_skills_and_models(fake_claude, tmp_path):
     task = "please check every page of the shop for broken links and layout problems"
     try:
         first = await manager.create(task)
-        second = await manager.create("two", skills=["ai-browser:website-qa"])
+        second = await manager.create("two", skills=["ai-browser:elementor"])
         assert len(first.name) <= 40 and task.startswith(first.name) and task[len(first.name)] == " "
         assert (first.color, second.color) == ("blue", "green")
         assert await settle(manager, lambda agents: all(a["state"] == "your_turn" for a in agents))
@@ -151,7 +151,7 @@ async def test_names_colours_skills_and_models(fake_claude, tmp_path):
         sent = sent_to_claude(log)
         assert {"subtype": "set_model", "model": "haiku"} in [line.get("request") for line in sent]
         assert any(line.get("type") == "user" and line["message"]["content"].startswith(
-            "Load and use these skills with load_skill: ai-browser:website-qa") for line in sent)
+            "Load and use these skills with load_skill: ai-browser:elementor") for line in sent)
     finally:
         await manager.close_all()
 
@@ -161,8 +161,8 @@ def test_agent_names_stay_readable_with_addresses_in_the_task():
 
     assert _name("Open https://shop.example.com/products/shoes and list the prices") == \
         "Open shop.example.com/products/shoes"  # no scheme, no dangling "and"
-    assert _name("Open http://localhost:61257/qa/index.html and list the link texts") == \
-        "Open localhost:61257/qa/index.html"
+    assert _name("Open http://localhost:61257/site/index.html and list the link texts") == \
+        "Open localhost:61257/site/index.html"
     long = _name("https://example.com/a/very/long/path/that/goes/on/and/on/forever")
     assert len(long) <= 40 and long.endswith("…") and long.startswith("example.com/a/very")
 
@@ -239,7 +239,7 @@ async def test_skip_closes_only_the_agents_own_tab_and_tells_it_so(fake_claude, 
 
     manager = AgentManager(tmp_path / "home", claude=runner, close_tabs=close_tabs)
     try:
-        own, mine, sandboxed = [await manager.create(name) for name in ("own tab", "the user's tab", "qa sandbox")]
+        own, mine, sandboxed = [await manager.create(name) for name in ("own tab", "the user's tab", "live view")]
         assert await settle(manager, lambda agents: all(a["state"] == "your_turn" for a in agents))
         manager.tab_event(own.id, "tab_opened", "T1")
         manager.tab_event(mine.id, "tab_opened", "U1", adopted=True)
@@ -249,7 +249,7 @@ async def test_skip_closes_only_the_agents_own_tab_and_tells_it_so(fake_claude, 
         manager.check_event(sandboxed.id, {**CHECK, "target": "Q1", "live": "http://127.0.0.1:8770/live?token=abc"})
         await manager.skip_check(mine.id)
         await manager.skip_check(sandboxed.id)
-        assert closed == [] and mine.check is not None and sandboxed.check is not None  # never the user's, nor QA's
+        assert closed == [] and mine.check is not None and sandboxed.check is not None  # never the user's, nor one in a live view
         await manager.skip_check(own.id)
         assert closed == [["T1"]] and own.check is None
         assert await settle(manager, lambda _: sum(e["type"] == "done" for e in manager.events_of(own.id)) == 2)

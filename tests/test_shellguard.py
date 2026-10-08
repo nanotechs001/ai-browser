@@ -74,7 +74,7 @@ def test_ordinary_commands_run(command, skipped):
 def test_the_reasons_say_what_to_do_instead():
     assert USER_AGENT == ("the shell doesn't send a browser's user agent (curl -A \"Mozilla/…\"): use curl's own, or "
                           "open the page with open")
-    assert PARALLEL == ("the shell doesn't fetch in parallel (xargs -P 10 … curl): fetch one URL at a time, or use qa "
-                        "for a whole site")
+    assert PARALLEL == ("the shell doesn't fetch in parallel (xargs -P 10 … curl): fetch one URL at a time, and never crawl "
+                        "a site from the shell")
     assert SKIPPED.format(site="google.com") == ("the shell doesn't reach google.com: the user skipped it after a bot "
                                                  "check. Ask the user if you need it.")

@@ -85,7 +85,7 @@ async def test_skip_is_offered_only_for_the_agents_own_tab(home):
     seen = recorded(stack)
     own = await checked(stack, "Own tab")
     users = await checked(stack, "Your tab", target="U1", adopted=True)
-    sandboxed = await checked(stack, "QA sandbox", target="Q1", live=LIVE)
+    sandboxed = await checked(stack, "Live view", target="Q1", live=LIVE)
     for agent in (own, users, sandboxed):
         assert await until(js, f"{row_card(agent)} !== null")
     assert "It's in your own tab" in await js(f"{row_card(users)}.textContent")
@@ -99,7 +99,7 @@ async def test_skip_is_offered_only_for_the_agents_own_tab(home):
              "origin])}; true")
     await js(f"{row_card(sandboxed)}.querySelector('.show-me').click(); true")
     assert await js("window.asked") == [[{"type": "live", "url": LIVE, "agent": sandboxed.id,
-                                          "label": f"{sandboxed.number} · QA sandbox"}, stack["url"]]]
+                                          "label": f"{sandboxed.number} · Live view"}, stack["url"]]]
     await asyncio.sleep(0.5)
     assert ("watch", "Q1") not in seen
     await js(f"{row_card(own)}.querySelector('.skip-site').click(); true")

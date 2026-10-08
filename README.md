@@ -14,9 +14,8 @@ Claude is the worker, so no LLM API keys are needed.
 - **Guarded actions:** before every click or keystroke, the target is re-checked to make sure it's still there, unchanged, enabled and not covered. Risky buttons (publish, delete, submit, pay…) need an explicit confirmation.
 - **All your Claude skills, on demand:** the 400+ installed skills are searchable. Nothing loads until it's needed, and skill scripts run inside the sandbox.
 
-Three parts, with designs and plans in `docs/superpowers/`:
+Two parts, with designs and plans in `docs/superpowers/`:
 - **the engine** (tools, sandbox, your-own-browser mode);
-- **Website QA** (`qa` tool and skill);
 - **the AI Browser app** (its own window: AI Home, Mission Control and the Brain).
 
 WordPress and Elementor skills come next.
@@ -146,8 +145,7 @@ as a way around a block:
   `AIB_PROFILE` (a sandbox profile, see [Logging in to sites](#logging-in-to-sites)) chooses it too.
 
 If your Brave can't be reached, the agent says how to turn the switch on and asks you. It never moves to another
-browser by itself. Website QA (`qa`) crawls in the Docker sandbox, unless you ask for your own browser first
-(`sandbox_start(chrome=true)`).
+browser by itself.
 
 ## Logging in to sites
 
@@ -213,9 +211,8 @@ Browser's extension is still in Brave, AI Home says you can remove it, until you
 **Tabs and links:** AI Home, Mission Control and Settings are tabs in a row under the title bar, and the window's
 title follows the one shown ("Mission Control · AI Browser"). A tab loads the first time you pick it, and then stays
 as you left it while you look at another: a half-typed message, the scroll and Mission Control's room are all still
-there when you come back. The setup steps and an agent's live view (**Show me** on a bot check in QA's sandbox) open
-as tabs at the end of the row, each with a × to close it; a second **Show me** for the same agent goes to its open
-tab. Nothing opens a window: a link between AI Browser's pages switches tabs, and a link to a website opens in your
+there when you come back. The setup steps open as tabs at the end of the row, each with a × to close it. Nothing
+opens a window: a link between AI Browser's pages switches tabs, and a link to a website opens in your
 Brave, never in AI Browser's window. The AI's tabs open in windows of their own in your Brave, never among your
 windows, and AI Home and Mission Control say which agent owns each one.
 
@@ -802,7 +799,6 @@ $env:AIB_CHROME_DIR = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data";
 | `act` | Steps in one call: `click e5`, `type e4 "text"`, `append`, `key Enter`, `select`, `check`, `drag e7 e12`, `upload e5 file.png`, `scroll`, `wait "Saved"`, `goto`, `back`… |
 | `screenshot` | JPEG at desktop / tablet / mobile / all, full page, or one element |
 | `tabs` · `page_log` · `extract` · `js` | Tabs; console errors and failed requests; links / tables (CSV) / SEO meta; run JavaScript |
-| `qa` | Website QA in one call: crawls the site, checks layout on desktop/tablet/mobile, page errors and every link, writes `report.html`, `issues.csv` and screenshots |
 | `shell` · `read_file` · `write_file` | Bash and files inside the sandbox's work folder |
 | `find_skills` · `load_skill` · `read_skill_file` | Search and load installed Claude skills |
 
@@ -817,27 +813,6 @@ e9   button   "Submit order" ⚠
 ⏱ 4 ms
 ```
 
-## Website QA
-
-Ask Claude to *"QA client-site.com"*. It calls `qa(url, max_pages=30)`, which:
-- visits same-site pages in a tab of its own, one at a time. It never clicks, types or submits, and skips links
-  such as log out, delete or add to cart;
-- checks each page on desktop, tablet and mobile. It reports sideways scrolling, naming the elements that stick
-  out, along with script and console errors, failed or blocked requests, broken images and insecure `http://`
-  content;
-- checks every link once (internal ones with your logins, external ones without), politely: one request at a time
-  per site, with a short pause, following robots.txt and Retry-After. A site that answers 429, 403 or a bot check
-  isn't asked again in that run, and links to big sites such as Google, or to a site you skipped at a bot check,
-  aren't checked: they are listed under "Not checked", not as broken. `qa(url, ignore_robots=true)` only for a site
-  you say is yours (staging sites often ask every crawler to stay out);
-- visits the site's pages first and checks the site's other links after them, so the pages always get their turn.
-  30 pages take about three minutes; a site with many links takes longer, about six minutes at most (it stops
-  visiting pages after five). The summary says where it stopped and why;
-- writes `qa/<site>-<time>/report.html` (one shareable file with screenshots), `issues.csv` and full-page shots.
-
-The skill `ai-browser:website-qa` (in `skills/`) tells Claude how to verify each finding before reporting it, and how
-to write it up for a client.
-
 ## Speed
 
 From `uv run ai-browser bench` (medians, local test pages, MacBook):
@@ -850,12 +825,6 @@ From `uv run ai-browser bench` (medians, local test pages, MacBook):
 | one type step | 51 ms | 150 ms |
 | open a local page | 13 ms | 500 ms |
 | viewport screenshot | 49 ms | 300 ms |
-| Website QA, 30 pages × 3 sizes (one request at a time per site, 1 s apart) | 80 s; 140 s with 61 more links; 6 min with 1,171 | visits stop at 5 min, link checks at about 6 |
-
-The QA row is not from `bench`: it was measured in a throwaway headless Chrome on a local test site whose pages each
-link 1, 3 or 40 more of its own, so 1, 61 or 1,171 links are left after the 30 visits (with 1,171, about 280 are
-checked before the limit and the rest are listed as not checked). Those pages load in under a second; real pages load
-slower, so 30 pages of a typical site take about three minutes.
 
 ## Commands
 

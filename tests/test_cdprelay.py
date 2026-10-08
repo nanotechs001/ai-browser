@@ -117,7 +117,6 @@ def _level(method: str) -> str:
 def test_every_method_the_engine_sends_passes_the_policy():
     """The drift guard (spec test 18): a new CDP call in the engine fails here until the relay's lists allow it."""
     files = [SRC / name for name in ("browser.py", "live.py", "engine.py", "checks.py", "grouping.py")]
-    files += sorted((SRC / "qa").glob("*.py"))
     sandbox_only = {"Browser.setDownloadBehavior"}  # browser.py sends it in the Docker sandbox only, never here
     seen = set()
     for path in files:

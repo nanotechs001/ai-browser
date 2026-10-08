@@ -34,8 +34,8 @@ WORK = "electron-work"  # beside the package, on its drive: the unpacked Electro
 BUNDLE = "_internal"  # PyInstaller's folder of everything but the program
 BUNDLED = ("ai_browser/app/ui/app.html", "ai_browser/app/ui/icon.png", "ai_browser/desktop/electron/main.js",
            "ai_browser/desktop/electron/thispage.ps1", "ai_browser/brain/readers/gmail.js", "ai_browser/reader.js",
-           "ai_browser/qa/probe.js", "ai_browser/static/live.html", "ai_browser/pages/_serve.py",
-           "ai_browser/pages/form.html", "skills/website-qa/SKILL.md", "docker/Dockerfile")
+           "ai_browser/static/live.html", "ai_browser/pages/_serve.py", "ai_browser/pages/form.html",
+           "docker/Dockerfile")
 COMMANDS = ("mcp", "build", "doctor", "bench", "live", "stop", "app")
 TOOLS = ("act", "observe", "open", "find_skills")
 WAIT = 120  # seconds for one run of the program (a first start on Windows is slow while Defender scans it)

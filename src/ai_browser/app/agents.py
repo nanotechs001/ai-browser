@@ -667,7 +667,7 @@ class AgentManager:
 
     async def skip_check(self, agent_id: str) -> None:
         """The user's Skip this site: the app closes the agent's own tab with the check (never the user's tab, never
-        one in QA's sandbox), and the agent hears SKIP_TEXT. The engine sees the tab close and skips the site."""
+        one shown in a live view), and the agent hears SKIP_TEXT. The engine sees the tab close and skips the site."""
         agent = self.agents.get(agent_id)
         check = agent.check if agent is not None else None
         if check is None or check["adopted"] or check["live"] or check["target"] not in agent.tabs:

@@ -277,7 +277,7 @@ async def test_show_me_opens_one_live_view_tab_per_agent_and_closing_it_ends_onl
     from ai_browser.live import LiveView
 
     js, stack = shell
-    live = LiveView()  # an engine's live view (QA's sandbox), with no browser behind it
+    live = LiveView()  # an engine's live view, with no browser behind it
     address = await live.start()
     try:
         agent = await checked(stack, "Flights to Manila", target="Q1", live=address)
@@ -414,7 +414,7 @@ async def test_the_close_tab_key_in_a_live_view_never_reaches_the_browser(shell)
     address = await live.start()
     try:
         await in_frame(js, "/home", "parent.postMessage({type: 'live', url: " + json.dumps(address)
-                       + ", agent: 'a1', label: '1 · QA'}, location.origin); true")
+                       + ", agent: 'a1', label: '1 · Live'}, location.origin); true")
         assert await until(js, active_is("live:a1"))
         assert await settled(lambda: len(live.viewers) == 1)
         windows = stack["server"].window_count

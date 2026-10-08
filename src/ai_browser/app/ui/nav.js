@@ -39,7 +39,7 @@ export function openTab(path) {
   else location.assign(path);
 }
 
-// An engine's live view (a bot check in QA's sandbox) as a closable tab: one per agent, so a second Show me brings the
+// An engine's live view (where a bot check waits) as a closable tab: one per agent, so a second Show me brings the
 // first forward. A page opened by itself has no window to show it in.
 export function openLive(url, agent, label) {
   windowPage()?.postMessage({ type: "live", url, agent, label }, location.origin);

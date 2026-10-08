@@ -180,7 +180,7 @@ async def test_each_action_has_a_badge_a_summary_and_a_time(fake_claude, tmp_pat
     runner, _, script = fake_claude
     script.write_text(json.dumps([INIT, use("u1", "Bash", {"command": "npm test"}), result("u1", "3 passed"),
                                   use("u2", "WebFetch", {"url": "https://docs.python.org/3/", "prompt": "x"}),
-                                  use("u3", "mcp__ai-browser__load_skill", {"name": "ai-browser:website-qa"}),
+                                  use("u3", "mcp__ai-browser__load_skill", {"name": "ai-browser:elementor"}),
                                   use("u4", "mcp__ai-browser__open", {"url": "https://shop.example/"}), RESULT]),
                       encoding="utf-8")
     bridge, _ = bridge_for(tmp_path, runner)
