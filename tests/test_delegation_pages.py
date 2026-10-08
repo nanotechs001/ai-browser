@@ -403,3 +403,30 @@ async def test_the_floating_chats_words_count_down_on_its_own_card(stack):
     await chat(f"{card}.querySelector('.handoff-cancel').click(); true")
     assert await until(chat, f"{card}?.querySelector('.handoff-line').textContent === 'Cancelled: nothing was sent'")
     assert sent_by_the_brain(stack) == []
+
+
+# ---- the README (Task 11) -------------------------------------------------------------------------------------------
+
+def test_the_readme_explains_names_handoffs_sources_and_the_history():
+    from pathlib import Path
+
+    text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for needed in ("**Name** (at most 60 characters) and **What it works on** (one line, at most 160)",
+                   "neither is sent to the agent (your task is its instruction)",
+                   "**Ask AI** keeps this run's talk above the box", "the wheel scrolls your talk, not the office",
+                   "a short strip", "turns solid and scrolls",
+                   "**What the Brain listens to:**", "What you uncheck is never sent to the Brain",
+                   "**Hand tasks to working agents by itself (15 s to cancel):**", "**Hand-offs:**",
+                   "it sends after **15 seconds** unless you press **Cancel**",
+                   "it never counts down: it waits for your **Send**", "A **new agent** is only ever a suggestion",
+                   '"From the Brain: …"', "A click on a template opens AI Home at its templates",
+                   "**Current Task:** its name and what it works on",
+                   "the card counts down 15 seconds and then sends, unless you press **Cancel**",
+                   # the build's rulings (2026-10-08): who counts down, what cancels and pauses, where it runs
+                   "only when you named the agent (or only one agent is open)",
+                   'cancels it; saying anything else pauses it, and it then waits for your **Send**',
+                   "a hidden window, or another tab in front, makes it wait for your **Send**",
+                   "Several cards at once all show", "**Send now** and **Cancel**"):
+        assert needed in text, needed
+    for gone in ("**Use a Template**", "**Templates:** your workflows", "**It only proposes.**"):
+        assert gone not in text, gone
