@@ -1,7 +1,7 @@
 // The menu's workspaces (the new look, Decision 6): named groups of agents and templates. Each shows its count (its
 // agents this run, and its templates the workflows list still has); a click filters the Dashboard, My Missions and
-// Templates, and a second click shows every agent again. ⋯ renames or deletes one (deleting removes the grouping only:
-// its agents keep running, in no workspace); New Workspace adds one. Names are set as text.
+// the Calendar, and a second click shows every agent again. ⋯ renames or deletes one (deleting removes the grouping
+// only: its agents keep running, in no workspace); New Workspace adds one. Names are set as text.
 "use strict";
 
 import { el } from "./chat.js";

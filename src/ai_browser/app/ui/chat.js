@@ -40,6 +40,11 @@ export function agentLabel(agent) { // "1 · Fix the footer": every page names a
   return number === null ? name : `${number} · ${name}`;
 }
 
+// A clipped line's tooltip: the whole name, then what it works on.
+export function agentTip(agent, label = agentLabel(agent)) {
+  return agent?.description ? `${label}\n${agent.description}` : label;
+}
+
 export function renderText(node, text) {
   node.textContent = "";
   let last = 0;

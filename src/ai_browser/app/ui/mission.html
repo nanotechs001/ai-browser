@@ -24,8 +24,6 @@
         class="label">Dashboard</span></button></li>
       <li><button class="page-link" type="button" data-page="missions" data-icon="missions"><span class="label">My
         Missions</span></button></li>
-      <li><button class="page-link" type="button" data-page="templates" data-icon="template"><span
-        class="label">Templates</span></button></li>
       <li><button class="page-link" type="button" data-page="knowledge" data-icon="book"><span
         class="label">Knowledge</span></button></li>
       <li><button class="page-link" type="button" data-page="integrations" data-icon="cube"><span
@@ -53,13 +51,12 @@
       <div id="view-calendar" class="view-calendar" hidden></div>
     </section>
     <section id="page-missions" class="page" hidden aria-label="My Missions"></section>
-    <section id="page-templates" class="page" hidden aria-label="Templates"></section>
     <section id="page-knowledge" class="page" hidden aria-label="Knowledge"></section>
     <section id="page-integrations" class="page" hidden aria-label="Integrations"></section>
     <section id="page-history" class="page" hidden aria-label="History"></section>
     <section id="composer" class="composer" data-mode="build" aria-label="Give an agent a task">
       <section id="talk" class="talk panel" hidden data-state="idle" aria-label="Ask AI: the Brain's answers">
-        <ol id="talk-log" class="talk-log" aria-live="polite"></ol>
+        <ol id="talk-log" class="talk-log" aria-live="polite" tabindex="0" aria-label="Your talk with the Brain"></ol>
         <div id="talk-status" class="talk-status muted"></div>
         <div id="talk-notice" class="talk-notice" role="status"></div>
         <div id="talk-card" class="talk-card"></div>
@@ -74,8 +71,12 @@
                   aria-selected="false">Ask AI</button>
           <button id="mode-build" type="button" role="tab" data-mode="build" data-icon="missions"
                   aria-selected="true">Build a Mission</button>
-          <button id="mode-template" type="button" role="tab" data-mode="template" data-icon="template"
-                  aria-selected="false">Use a Template</button>
+          <div id="mission-words" class="mission-words">
+            <input id="task-name" type="text" maxlength="60" autocomplete="off" placeholder="Name this agent"
+                   aria-label="Name this agent">
+            <input id="task-about" type="text" maxlength="160" autocomplete="off"
+                   placeholder="What it works on, in one line" aria-label="What it works on">
+          </div>
           <label class="voice-switch" title="Updates spoken aloud, with a voice that runs on this computer only"><input
             id="voice" type="checkbox"> Voice</label>
           <span id="voice-note" class="muted" role="status"></span>
@@ -105,7 +106,6 @@
               <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
               <label id="task-auto-switch" class="auto-switch"><input id="task-auto"
                 type="checkbox"> Auto-approve in its folder</label>
-              <select id="task-template" aria-label="Template" hidden></select>
               <select id="task-workspace" aria-label="Workspace"></select>
             </div>
             <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
@@ -133,6 +133,8 @@
       <div id="current-body" class="current-body" hidden>
         <div class="current-head"><span id="current-avatar" class="avatar"></span>
           <div class="current-words">
+            <strong id="current-name" class="current-name clip" hidden></strong>
+            <div id="current-about" class="current-about muted clip" hidden></div>
             <div class="current-top"><strong id="current-step" class="clip"></strong><span id="current-timer"
               class="timer"></span></div>
             <div id="current-line" class="muted clip"></div>

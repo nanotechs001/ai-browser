@@ -1433,7 +1433,8 @@ class AppServer:
                 files = self.uploads.take(ws, listed)  # each attached file whole, or nothing starts
                 agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
                                             folder=folder, workspace=self._workspace_of(message), files=files,
-                                            web=web, auto=message.get("auto") is True)  # the composer's switch
+                                            web=web, auto=message.get("auto") is True,  # the composer's switch
+                                            name=message.get("name"), description=message.get("description"))
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return

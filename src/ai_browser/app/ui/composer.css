@@ -12,6 +12,10 @@
                 color: var(--text-2); cursor: pointer; }
 .auto-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2);
                cursor: pointer; white-space: nowrap; }  /* Auto-approve in its folder, beside Folder */
+/* Build a Mission's Name and What it works on: in the modes' row, above the box, so the office keeps its height */
+.mission-words { display: flex; gap: 8px; flex: 1 1 260px; min-width: 0; margin: 0 4px; }
+.mission-words input { flex: 2 1 0; min-width: 0; width: 100%; padding: 6px 10px; }
+.mission-words #task-name { flex: 1 1 0; }
 .box { border-radius: 12px; background: var(--field); border: 1px solid var(--line-strong); padding: 10px 12px; }
 .box textarea { width: 100%; border: none; outline: none; resize: none; background: transparent; color: var(--text);
                 font-size: 15px; field-sizing: content; min-height: 44px; max-height: 160px; padding: 2px 4px; }
@@ -45,6 +49,24 @@
 .folder-ask p { margin: 0; }
 .folder-ask .folder-path { font: 12px var(--mono); overflow-wrap: anywhere; }
 .talk { max-height: 38vh; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+/* Ask AI's history: over the office, above the box. Idle it is a short strip, only as tall as its lines, so the office
+   stays within reach around it: the newest line is at the bottom, older ones fade out towards the top. On hover (or
+   keyboard focus inside) it grows upwards from the box, turns solid and scrolls, and the wheel scrolls it, never the
+   office. A card (Start, Send) keeps it solid. A mouse click on the log is no keyboard focus: it pins nothing. */
+.composer > .talk { position: absolute; left: 24px; right: 24px; bottom: 100%; z-index: 4; background: transparent;
+                    border-color: transparent; }
+.composer > .talk .talk-log { max-height: 12vh; overflow: hidden; overscroll-behavior: contain; scrollbar-gutter: stable;
+                              text-shadow: 0 0 8px var(--bg);
+                              -webkit-mask-image: linear-gradient(to top, #000 35%, transparent);
+                              mask-image: linear-gradient(to top, #000 35%, transparent); }
+.composer > .talk .talk-note { opacity: 0; }
+.composer > .talk:is(:hover, :has(:focus-visible)) { background: var(--panel); border-color: var(--line); }
+.composer > .talk:has(.talk-card:not(:empty)) { background: var(--panel); border-color: var(--line); }
+.composer > .talk:is(:hover, :has(:focus-visible)) .talk-log { max-height: 26vh; overflow-y: auto;
+                                                               -webkit-mask-image: none; mask-image: none; }
+.composer > .talk:is(:hover, :has(:focus-visible)) .talk-note { opacity: 1; }
+.talk-log:empty { display: none; }
+.talk-log:focus-visible { outline: 2px solid var(--accent); }
 .talk-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .talk-log li { white-space: pre-wrap; word-break: break-word; }
 .talk-log li.you { color: var(--muted); }

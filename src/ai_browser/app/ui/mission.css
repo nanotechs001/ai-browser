@@ -167,6 +167,7 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 #drawer-body .status { font: 12px var(--mono); }
 #drawer-body .buttons { margin-top: 0; }
 #drawer-body .moved { color: var(--ok); }
+#drawer-body .about { margin: 0; overflow-wrap: anywhere; }  /* What it works on, under the agent's name */
 #drawer-body .auto-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2);
                             cursor: pointer; align-self: flex-start; }
 #drawer-body .auto-words { color: var(--accent-2); }

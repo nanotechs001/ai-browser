@@ -72,7 +72,7 @@ async def test_the_icon_only_menu_still_names_each_button(stack):  # the final r
         tree = await cdp.send("Accessibility.getPartialAXTree", {"nodeId": node, "fetchRelatives": False},
                               session_id=session)
         names.append(tree["nodes"][0].get("name", {}).get("value", ""))
-    assert names == ["New Mission", "Dashboard", "My Missions", "Templates", "Knowledge", "Integrations", "History"]
+    assert names == ["New Mission", "Dashboard", "My Missions", "Knowledge", "Integrations", "History"]
     assert await js("[...document.querySelectorAll('#new-mission, .page-link')].map(node => node.title)") == names
 
 
@@ -86,7 +86,7 @@ async def test_the_menu_counts_and_opens_its_pages(stack):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await agents.create("keep working")
     assert await until(js, "document.getElementById('counts').textContent === '1 active task · 1 completed'")
-    for name in ("missions", "templates", "knowledge", "integrations", "history", "dashboard"):
+    for name in ("missions", "knowledge", "integrations", "history", "dashboard"):
         await js(f"{page_link(name)}.click(); true")
         shown = await js("[...document.querySelectorAll('.centre > .page')].filter(node => !node.hidden)"
                          ".map(node => node.id)")
@@ -470,23 +470,6 @@ async def test_ask_ai_asks_the_brain_and_shows_its_answer(stack):
 
 
 @CHROME
-async def test_use_a_template_runs_its_workflow(stack):
-    stack["workflows"].save({"name": "Weekly report", "instructions": "Write the weekly report"})
-    js = await open_mission(stack)
-    await js("document.getElementById('mode-template').click(); true")
-    assert await until(js, "[...document.getElementById('task-template').options].some(option =>"
-                           " option.value === 'weekly-report')")
-    assert await js("document.getElementById('start-label').textContent") == "Run Template"
-    assert await js("document.getElementById('task-model').hidden && !document.getElementById('task-template').hidden")
-    await js("document.getElementById('task-template').value = 'weekly-report';"
-             "document.getElementById('task').value = 'for the sales team';"
-             "document.getElementById('start').click(); true")
-    agents = stack["server"].agents
-    await wait_for(lambda: "a1" in agents.agents)
-    assert agents.agents["a1"].task.endswith("The user adds: for the sales team")
-
-
-@CHROME
 async def test_attach_sends_files_into_the_agents_folder(stack):
     from test_app_server import told
 
@@ -564,28 +547,6 @@ HOLD = ("(() => { const send = WebSocket.prototype.send; const held = [];"  # a 
         "   return send.call(this, data); };"
         " window.release = () => { window.released = true; for (const [socket, data] of held.splice(0))"
         " send.call(socket, data); }; })();")
-
-
-@CHROME
-async def test_a_template_run_leaves_the_attached_files_alone(stack):  # review of Task 13, F1
-    stack["workflows"].save({"name": "Weekly report", "instructions": "Write the weekly report"})
-    js = await open_mission(stack)
-    await js(f"({ATTACH})([['notes.txt', 2000]])")
-    assert await until(js, DONE, 15)
-    await js("document.getElementById('mode-template').click(); true")
-    assert await until(js, "[...document.getElementById('task-template').options].some(option =>"
-                           " option.value === 'weekly-report')")
-    await js("document.getElementById('task-template').value = 'weekly-report';"
-             "document.getElementById('start').click(); true")
-    agents = stack["server"].agents
-    await wait_for(lambda: "a1" in agents.agents)
-    assert await until(js, "!document.getElementById('start').disabled")  # the run's "created" came
-    await js("document.getElementById('mode-build').click(); true")
-    assert await js(DONE) and await js(f"{CHIPS}.length") == 1  # the chip is still there: the app still holds the file
-    await js("document.getElementById('task').value = 'look at this'; document.getElementById('start').click(); true")
-    folder = stack["home"] / "app" / "agents" / "a2" / "work" / "attachments"
-    await wait_for(lambda: (folder / "notes.txt").is_file())  # and the next Start sent it
-    assert await until(js, f"{CHIPS}.length === 0")
 
 
 @CHROME
@@ -672,9 +633,9 @@ async def test_a_pasted_picture_is_attached_as_attach_does_and_goes_with_the_mis
 
 
 @CHROME
-async def test_ask_ai_and_use_a_template_take_no_picture_and_say_where_pictures_go(stack):
+async def test_ask_ai_takes_no_picture_and_says_where_pictures_go(stack):
     js = await open_mission(stack)
-    for mode in ("ask", "template"):
+    for mode in ("ask",):
         await js(f"document.getElementById('mode-{mode}').click(); true")
         await js(f"({PASTE})('#task', {json.dumps(PICTURE)})")
         assert await until(js, f"{NOTE} === {json.dumps(PICTURES_GO)}"), mode
@@ -980,15 +941,8 @@ async def test_a_long_run_time_stays_on_one_line_in_my_missions_and_history(stac
 # ---- Templates, Knowledge and Integrations (Task 15) -----------------------------------------------------------------
 
 @CHROME
-async def test_templates_and_integrations_are_ai_homes_own(stack):
-    stack["workflows"].save({"name": "Weekly report", "instructions": "Write the weekly report"})
+async def test_integrations_are_ai_homes_own(stack):
     js = await open_mission(stack)
-    await js(f"{page_link('templates')}.click(); true")
-    row = "document.querySelector('#page-templates .workflow[data-slug=\"weekly-report\"]')"
-    assert await until(js, f"{row} !== null")
-    assert await js("document.querySelector('#page-templates h3').textContent") == "New template"
-    await js(f"{row}.querySelector('.run').click(); true")
-    await wait_for(lambda: "a1" in stack["server"].agents.agents)
     await js(f"{page_link('integrations')}.click(); true")
     assert await until(js, "document.querySelector('#page-integrations .tool-servers') !== null")
 
@@ -1041,7 +995,6 @@ async def test_workspaces_are_made_renamed_and_filter_the_pages(stack):
     agents = stack["server"].agents
     for name in ("research the market", "plan the launch"):
         await agents.create(name)
-    stack["workflows"].save({"name": "Weekly report", "instructions": "Write it"})
     js = await open_mission(stack)
     box = "#workspaces input.workspace-name"
     await js("document.querySelector('#workspaces .workspace-new').click(); true")
@@ -1057,11 +1010,7 @@ async def test_workspaces_are_made_renamed_and_filter_the_pages(stack):
     assert await until(js, f"{move} !== null")
     await js(f"{move}.value = {json.dumps(research['id'])}; {move}.dispatchEvent(new Event('change')); true")
     await wait_for(lambda: agents.agents["a1"].workspace == research["id"])
-    await js(f"{page_link('templates')}.click(); true")
-    template = "document.querySelector('#page-templates .workflow[data-slug=\"weekly-report\"] select.move')"
-    assert await until(js, f"{template} !== null")
-    await js(f"{template}.value = {json.dumps(research['id'])}; {template}.dispatchEvent(new Event('change')); true")
-    assert await until(js, f"{pick}.querySelector('.count').textContent === '2'")  # an agent and a template
+    assert await until(js, f"{pick}.querySelector('.count').textContent === '1'")  # an agent
     await js(f"{pick}.click(); {page_link('dashboard')}.click(); true")  # the filter
     shown = "[...document.querySelectorAll('.station:not(.away)')].map(node => node.dataset.id)"
     assert await until(js, f"JSON.stringify({shown}) === '[\"a1\"]'")
@@ -1482,7 +1431,8 @@ async def test_the_calendar_shows_scheduled_templates_and_finished_agents(stack)
     assert await until(js, "document.getElementById('drawer-title').textContent === '1 · Fix the footer'")
     await js("document.getElementById('drawer-close').click();"
              "document.querySelector('#view-calendar .entry.template').click(); true")
-    assert await js("document.getElementById('page-templates').hidden") is False
+    assert await until(js, "location.pathname === '/home'"
+                           " && document.getElementById('workflows-section')?.open === true")  # AI Home's templates
 
 
 CALENDAR_FUNCTIONS = """import('/calendar.js').then(({ monthGrid, weekDays, everyWords, calendarItems }) => {

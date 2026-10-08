@@ -1,11 +1,11 @@
 // Mission Control's composer (the new look, Decision 9): Ask AI (the Brain: it answers and proposes, and nothing runs
-// without the user's Start, Send or a plain yes), Build a Mission (start an agent) and Use a Template (run a workflow,
-// with the box as its extra words). Under the box: Attach (uploads.js), Web ▾, Model ▾, Account ▾, Folder ▾ (agent
-// powers' picker), Auto-approve in its folder (a switch, off again for each new task), Template ▾ and Workspace ▾, the
-// mic, and the main button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter makes a new line. A picture
-// pasted into the box, or a file dropped on it (paste.js), is attached as Attach does in Build a Mission; Ask AI and
-// Use a Template take none, and say where pictures go. Narrow windows fold the pickers into ⋯ Options. Every word is
-// set as text.
+// without the user's Start, Send or a plain yes) and Build a Mission (start an agent). Templates are AI Home's own
+// (Run, Edit, New): Mission Control has none since the brain-delegation spec. Under the box: Attach (uploads.js),
+// Web ▾, Model ▾, Account ▾, Folder ▾ (agent powers' picker), Auto-approve in its folder (a switch, off again for each
+// new task) and Workspace ▾, the mic, and the main button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter
+// makes a new line. A picture pasted into the box, or a file dropped on it (paste.js), is attached as Attach does in
+// Build a Mission; Ask AI takes none, and says where pictures go. Narrow windows fold the pickers into ⋯ Options.
+// Every word is set as text.
 "use strict";
 
 import { fillPicker, pickDefault } from "./accountui.js";
@@ -18,7 +18,6 @@ const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform 
 const MODES = {
   ask: { label: "Ask", placeholder: "Ask anything about your agents, your messages or what to do next…" },
   build: { label: "Start Mission", placeholder: "Describe what you want to accomplish…" },
-  template: { label: "Run Template", placeholder: "Anything to add for this template (optional)" },
 };
 const WAIT = 10000; // ms a press waits for "created" before the button works again
 const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
@@ -31,7 +30,6 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   let taking = []; // the upload ids sent with a pending new_task: only those chips go when it is created
   let timer = null;
   let rows = []; // the accounts
-  let templates = []; // the workflows, as Templates lists them
   let workspaces = [];
   let workspacePicked = false; // the user chose one here: the menu's filter no longer sets it
   const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") }, send);
@@ -52,9 +50,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     $("start-label").textContent = MODES[mode].label;
     $("task").placeholder = MODES[mode].placeholder;
     const build = mode === "build";
-    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "attach"]) $(id).hidden = !build;
+    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "attach", "mission-words"]) {
+      $(id).hidden = !build;
+    }
     $("task-account").hidden = !build || rows.length < 2;
-    $("task-template").hidden = mode !== "template";
     $("task-workspace").hidden = mode === "ask";
     $("attached").hidden = !build || uploads.count() === 0;
   }
@@ -95,14 +94,6 @@ export function mountComposer({ link, workspaceOf = () => null }) {
       return;
     }
     if (pending) return;
-    if (mode === "template") {
-      if (!$("task-template").value) {
-        note("Pick a template, or write one in Templates");
-        return;
-      }
-      begin({ type: "workflow_run", slug: $("task-template").value, text, ...workspace() });
-      return;
-    }
     if (!text) {
       note("Write what the agent should do");
       return;
@@ -116,7 +107,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     const files = uploads.ids();
     const account = $("task-account").hidden ? {} : { account: $("task-account").value };
     const auto = $("task-auto").checked ? { auto: true } : {}; // the user's own tick, never a default
+    const name = $("task-name").value.trim(); // Name and What it works on: shown as text, never the agent's instruction
+    const description = $("task-about").value.trim();
     begin({ type: "new_task", text, skills: [], model: $("task-model").value, web: $("task-web").value, ...account,
+            ...(name ? { name } : {}), ...(description ? { description } : {}),
             ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...auto, ...workspace() });
   }
 
@@ -124,17 +118,6 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     const node = el("option", "", label);
     node.value = value;
     return node;
-  }
-
-  function fillTemplates() { // rebuilt only when the list changes, so a pick stays
-    const select = $("task-template");
-    const signature = JSON.stringify(templates.map((row) => [row.slug, row.name]));
-    if (select.dataset.rows === signature) return;
-    const kept = select.value;
-    select.replaceChildren(option("", templates.length ? "Pick a template" : "No templates yet"),
-                           ...templates.map((row) => option(row.slug, row.name)));
-    select.value = templates.some((row) => row.slug === kept) ? kept : "";
-    select.dataset.rows = signature;
   }
 
   function fillWorkspaces() {
@@ -164,7 +147,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   $("attach").addEventListener("click", () => $("attach-files").click());
   takeFiles($("task"), (pasted) => { // a picture pasted or a file dropped: Build a Mission's, as Attach
     if (mode === "build") uploads.add(pasted);
-    else note(PICTURES_NOTE); // Ask AI and Use a Template take none, and nothing switches by itself
+    else note(PICTURES_NOTE); // Ask AI takes none, and nothing switches by itself
   }, { area: $("task").closest(".box") });
   $("attach-files").addEventListener("change", () => {
     uploads.add([...$("attach-files").files]);
@@ -209,7 +192,6 @@ export function mountComposer({ link, workspaceOf = () => null }) {
           setMode(mode);
           uploads.lost(); // a new connection: the app dropped the files staged for the old one
           if (pending) finish(); // and an unanswered press can be pressed again
-          send({ type: "workflows" }); // Use a Template's list
           break;
         case "accounts":
           rows = message.accounts || [];
@@ -220,17 +202,15 @@ export function mountComposer({ link, workspaceOf = () => null }) {
           workspaces = message.workspaces || [];
           fillWorkspaces();
           break;
-        case "workflows_snapshot":
-          templates = message.workflows || [];
-          fillTemplates();
-          break;
         case "created":
           if (pending && message.request === pending) {
             const took = taking;
             finish();
             $("task").value = "";
+            $("task-name").value = "";
+            $("task-about").value = "";
             $("task-auto").checked = false; // each task is its own choice: the next one starts off
-            uploads.taken(took); // the app moved those into the agent's folder: a template run took none
+            uploads.taken(took); // the app moved those into the agent's folder
             setMode(mode); // the chips show in Build a Mission only
             pickDefault($("task-account"), rows);
           }
