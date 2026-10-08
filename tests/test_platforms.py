@@ -585,7 +585,8 @@ def test_a_connection_the_peer_reset_still_leaves_its_server_on_windows(monkeypa
     from asyncio import proactor_events
 
     transport_class = proactor_events._ProactorBasePipeTransport
-    monkeypatch.setattr(transport_class, "_call_connection_lost", transport_class._call_connection_lost)  # restored
+    current = transport_class._call_connection_lost  # on Windows an app server here may have finished it already
+    monkeypatch.setattr(transport_class, "_call_connection_lost", getattr(current, "python_own", current))  # restored
 
     class Reset:
         closed = False

@@ -206,8 +206,16 @@ async def test_chrome_mode_leaves_the_users_tabs_alone(chrome_browser):
     ours = set(browser.owned_targets())
     assert not ours & before
     await browser.close()
-    after = {t["targetId"] for t in (await browser.cdp.send("Target.getTargets"))["targetInfos"]
-             if t["type"] == "page"}
+
+    async def pages():
+        return {t["targetId"] for t in (await browser.cdp.send("Target.getTargets"))["targetInfos"]
+                if t["type"] == "page"}
+
+    for _ in range(50):  # a closed tab is listed a moment longer (on Windows, more than at once)
+        if not ours & await pages():
+            break
+        await asyncio.sleep(0.1)
+    after = await pages()
     assert before <= after and not ours & after
 
 

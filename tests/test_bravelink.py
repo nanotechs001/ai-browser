@@ -406,7 +406,8 @@ async def test_brave_link_in_a_throwaway_chrome(throwaway_chrome, patient_thumbn
         assert link.state == "connected"
         agent = await relay_client(url, link.relay.tokens.mint("a1"))
         target = (await agent.send("Target.createTarget", {"url": base + "privacy.html"}))["targetId"]
-        assert await until(lambda: any(tab["target"] == target and tab["title"] == "Privacy" for tab in link.tabs()))
+        assert await until(lambda: any(tab["target"] == target and tab["title"] == "Privacy" for tab in link.tabs()),
+                           20)  # GitHub's Windows runner took more than 5 s to load it
         link.set_owner(target, AGENT)
         assert (await link.thumbnail(target))[:2] == b"\xff\xd8"
         await link.close_targets([target, "no-such-target"])  # closing an agent closes its own tabs

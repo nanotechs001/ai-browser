@@ -671,5 +671,5 @@ def finish_reset_closes() -> None:
                 server._detach(*(self,) if sys.version_info >= (3, 13) else ())  # 3.13 tells it which one
             self._called_connection_lost = True
 
-    call_connection_lost.finishes_reset_closes = True
+    call_connection_lost.finishes_reset_closes, call_connection_lost.python_own = True, original
     transport._call_connection_lost = call_connection_lost
