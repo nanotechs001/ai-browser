@@ -28,6 +28,7 @@ from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, GIVING_SAY, HAND_OVER_AN
                    label, number_of, parse_answer, reference_pick, resolve_agent, resolve_among, secret_like,
                    shown_rows, state_summary, tab_hint, talk_prompt, target_state)
 from .talk import PAGE_ANSWERED, PAGE_ONLY, PAGE_SAY_LIMIT  # the floating chat's questions about a page
+from .talk import _newest  # the newest 20 agents: what a prompt lists
 
 KINDS = {"needs_reply", "new", "skip"}
 SUGGESTIONS = {"draft", "agent", "tell"}
@@ -170,13 +171,23 @@ def _instruction(value) -> str:
     return "" if secret_like(text) else text
 
 
+def _one_of(value, allowed, default=None):
+    """Words from Claude's answer that are one of `allowed`, else `default` (a list or an object there is neither)."""
+    return value if isinstance(value, str) and value in allowed else default
+
+
+def _gives_note(note: str) -> bool:
+    """Whether an item's note is GIVE_NOTE: about a hand-off card of this run."""
+    head, tail = GIVE_NOTE.split("{label}")
+    return note.startswith(head) and note.endswith(tail)
+
+
 def _give(value, agents: frozenset[str]) -> dict | None:
     """A "give" in Claude's answer: an agent of `agents`, and its instruction. Nothing else in it counts (a source, a
     countdown it asks for): None for anything else."""
-    if not isinstance(value, dict) or value.get("agent") not in agents:
-        return None
-    instruction = _instruction(value.get("instruction"))
-    return {"agent": value["agent"], "instruction": instruction} if instruction else None
+    agent = _one_of(value.get("agent"), agents) if isinstance(value, dict) else None
+    instruction = _instruction(value.get("instruction")) if agent else ""
+    return {"agent": agent, "instruction": instruction} if instruction else None
 
 
 def _agents_block(rows: list[dict]) -> str:
@@ -197,11 +208,11 @@ def _verdicts(text: str, ids: set[str], workflows: frozenset[str] = frozenset(),
         return {}
     verdicts = {}
     for entry in data if isinstance(data, list) else []:
-        if isinstance(entry, dict) and entry.get("id") in ids and entry.get("kind") in KINDS:
+        if isinstance(entry, dict) and _one_of(entry.get("id"), ids) and _one_of(entry.get("kind"), KINDS):
             verdicts[entry["id"]] = {"kind": entry["kind"], "summary": _clip(entry.get("summary"), 200),
                                      "why": _clip(entry.get("why"), 200),
-                                     "suggest": entry["suggest"] if entry.get("suggest") in SUGGESTIONS else "tell",
-                                     "workflow": entry["workflow"] if entry.get("workflow") in workflows else None,
+                                     "suggest": _one_of(entry.get("suggest"), SUGGESTIONS, "tell"),
+                                     "workflow": _one_of(entry.get("workflow"), workflows),
                                      "give": _give(entry.get("give"), agents)}
     return verdicts
 
@@ -245,6 +256,8 @@ class BrainService:
         self._asking: dict[str, asyncio.Task] = {}  # talk id -> the answer being worked out now
         self._talk_jobs: set[asyncio.Task] = set()  # drafts a talk started, and agents' answers being read
         self._agent_states: dict[str, str] = {}  # each agent's state as last seen (_turn_ended)
+        self._answers_read: dict[str, str] = {}  # each agent's answer last read for a hand-off: never read twice
+        self._reading: set[str] = set()  # agents whose answer is being read now: one at a time
         # Hand-offs (handoffs.py): this run's, oldest first. A countdown runs only while the app says Settings →
         # Brain's switch is on (auto_hand) and a page can show the card (visible); a Brain on its own counts down none
         self.handoffs: dict[str, Handoff] = {}
@@ -294,6 +307,8 @@ class BrainService:
                 item.note = (f"Its agent finished: {item.result}" if item.result else "Its agent finished") if ended \
                     else "Its agent stopped when the app restarted: hand it again if you like"
                 item.state, item.agent_id, item.agent_state = "open", None, ""
+            elif _gives_note(item.note):  # its hand-off card was the last run's: gone with it
+                item.note = ""
             else:
                 continue
             self.store.put(item)
@@ -424,7 +439,7 @@ class BrainService:
         if self.reading == "off" or entry is None or not entry.enabled or not self.listens(source_of(site)):
             return  # reading turned off, or the site switched off or unchecked, while waiting: nothing reaches Claude
         workflows = self._message_workflows(site)
-        working = [row for row in self._rows() if row_state(row) in WORKING]  # an item may be work for one of them
+        working = _newest([row for row in self._rows() if row_state(row) in WORKING])  # an item may be work for one
         try:
             with self._busy(f"Sorting {len(batch)} new message{'' if len(batch) == 1 else 's'} from {entry.label}"):
                 answer = await self.ask(self._sort_prompt(entry, batch, workflows, working), model="haiku",
@@ -675,7 +690,7 @@ class BrainService:
                     item.agent_state, item.result = state, result[:RESULT_LIMIT]
                     self._show(item)
 
-    def _agent_result(self, agent_id: str, limit: int = RESULT_LIMIT) -> str:
+    def _agent_result(self, agent_id: str, limit: int | None = RESULT_LIMIT) -> str:
         events = list(self.agents.events_of(agent_id))
         last_user = max((index for index, event in enumerate(events) if event.get("type") == "user"), default=-1)
         return "".join(str(event.get("text", "")) for event in events[last_user + 1:]
@@ -699,21 +714,31 @@ class BrainService:
         """One tool-less call: should an agent that is working take something on because of this answer (a hand-off
         that waits for Send: an agent's own result), or a NEW agent start (only ever a suggestion)? The answer and the
         agents are quoted as data; Claude only names an agent and writes the instruction."""
+        if not self.listens("agents") or agent_id in self._reading:
+            return  # unchecked since its turn ended (nothing of it is sent), or its answer is being read now
         rows = self._rows()
         finished = next((row for row in rows if row["id"] == agent_id), None)
-        working = [row for row in rows if row["id"] != agent_id and row_state(row) in WORKING]
-        result = self._agent_result(agent_id, ANSWER_LIMIT)
-        if finished is None or not working or not result:
-            return
-        prompt = HANDOFF.format(label=_quoted(label(finished)), answer=_quoted(result), agents=_agents_block(working))
-        with self._busy(f"Reading what {label(finished)} found"):
-            answer = await self.ask(prompt, model="haiku", claude=self.claude, cwd=self.store.folder / "calls",
-                                    timeout=TALK_TIMEOUT)
+        working = _newest([row for row in rows if row["id"] != agent_id and row_state(row) in WORKING])
+        whole = self._agent_result(agent_id, None)
+        result = whole if len(whole) <= ANSWER_LIMIT else f"… {whole[-ANSWER_LIMIT:]}"  # its end: what it found
+        if finished is None or not working or not result or self._answers_read.get(agent_id) == result:
+            return  # nothing new to read: an answer is read once
+        self._answers_read[agent_id] = result
+        self._reading.add(agent_id)
+        try:
+            prompt = HANDOFF.format(label=_quoted(label(finished)), answer=_quoted(result),
+                                    agents=_agents_block(working))
+            with self._busy(f"Reading what {label(finished)} found"):
+                answer = await self.ask(prompt, model="haiku", claude=self.claude, cwd=self.store.folder / "calls",
+                                        timeout=TALK_TIMEOUT)
+        finally:
+            self._reading.discard(agent_id)
         if answer.error or not self.listens("agents"):
             return  # unchecked while Claude read it: nothing comes of it
         choice = _object(answer.text)
-        rows = [row for row in self._rows() if row["id"] != agent_id]  # read again: who works now
-        give = _give(choice.get("give"), frozenset(row["id"] for row in rows if row_state(row) in WORKING))
+        listed = {row["id"] for row in working}  # only an agent its prompt listed, and still working now
+        rows = [row for row in self._rows() if row["id"] in listed and row_state(row) in WORKING]
+        give = _give(choice.get("give"), frozenset(row["id"] for row in rows))
         start = _instruction(choice["start"].get("instruction")) if isinstance(choice.get("start"), dict) else ""
         if give is not None:
             self.give(next(row for row in rows if row["id"] == give["agent"]), give["instruction"], "agent")
@@ -1186,6 +1211,9 @@ class BrainService:
         self.broadcast({"type": "brain_handoff", "handoff": handoff.public(self.clock())})
         if notify:  # AI Browser's own app says it too, in fixed words (desktop/notes.py)
             self.outbox({"type": "handoff", "kind": handoff.kind, "counting": handoff.state == "counting"})
+        item = self.store.get(handoff.item) if handoff.item and handoff.state not in OPEN else None
+        if item is not None and _gives_note(item.note):  # its card ended: the item's "Send or Cancel" note goes
+            self._note(item, "")
 
     async def _count(self, handoff_id: str) -> None:
         await self.countdown(COUNTDOWN)

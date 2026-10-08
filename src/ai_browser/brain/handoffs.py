@@ -35,17 +35,20 @@ NOT_WORKING = "Not sent: {label} isn't working any more"
 HELD = "Waiting for your Send"
 NOT_SENT = "Couldn't send it: try again from the agent's chat"  # a send failed: never the error's own text
 NOT_STARTED = "Couldn't start it: try again from Build a Mission"
-TAGS = ("\U000e0000", "\U000e007f")  # the tag block: words no card shows (Cf, and its unassigned rest)
+HIDDEN = (("\U000e0000", "\U000e007f"),  # the tag block: words no card shows (Cf, and its unassigned rest)
+          ("\ufe00", "\ufe0f"), ("\U000e0100", "\U000e01ef"))  # variation selectors: a run of them spells bytes
+BLANKS = frozenset("\u115f\u1160\u3164\uffa0\u2800")  # fillers that show as nothing (Hangul fillers, the braille blank)
 
 
 def clean(instruction) -> str:
     """An instruction as its card shows it and its agent gets it, so the card shows all the agent gets: no format
-    character (Cf: direction and zero-width marks, tags that can spell hidden words) and no control character but line
-    breaks and tabs."""
+    character (Cf: direction and zero-width marks, tags that can spell hidden words), no variation selector, no blank
+    filler and no control character but line breaks and tabs."""
     if not isinstance(instruction, str):
         return ""
     return "".join(char for char in instruction if char in "\n\t" or (
-        unicodedata.category(char) not in ("Cf", "Cc") and not TAGS[0] <= char <= TAGS[1]))
+        unicodedata.category(char) not in ("Cf", "Cc") and char not in BLANKS
+        and not any(low <= char <= high for low, high in HIDDEN)))
 
 
 def row_state(row: dict) -> str:
