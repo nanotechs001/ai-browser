@@ -3,6 +3,7 @@
 // the menu's pages and the composer), and the right column (side.js) for the agent picked. On the same line
 // to the app as AI Home (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
 import { askError } from "./accountui.js";
+import { mountHandoffSlot } from "./brainui.js";
 import { mountCalendar } from "./calendar.js";
 import { el } from "./chat.js";
 import { mountComposer } from "./composer.js";
@@ -46,6 +47,7 @@ let browser = null; // where agents browse: {kind, name, state}
 let accountRows = []; // Settings → Accounts as the app lists them: names and "signed in", never an email
 let tabHidden = false; // the tab menu shows another tab (app.js tells its frames)
 let paused = false;
+const spoken = new Set(); // the hand-offs the Brain has spoken of: each once
 
 for (const node of document.querySelectorAll("[data-icon]")) {
   node.prepend(icon(node.dataset.icon));
@@ -119,6 +121,7 @@ parts.push(spaces, {
     if (message.type === "snapshot" || message.type === "accounts") usage.render(message.accounts || []);
   },
 });
+parts.push(mountHandoffSlot($("handoff"), send)); // the Brain's hand-offs, by the globe (its inbox lists them all)
 parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
                                                 visibleTemplate: templateInWorkspace }));
 
@@ -359,6 +362,16 @@ function handle(message) {
       brainItems.delete(message.id);
       renderBrain();
       break;
+    case "brain_handoff": { // a new one: a word from the Brain (names only, never the instruction)
+      const handoff = message.handoff;
+      if (!handoff?.id || spoken.has(handoff.id) || !["counting", "waiting"].includes(handoff.state)) break;
+      spoken.add(handoff.id);
+      const who = `${Number.isInteger(handoff.number) ? `${handoff.number} · ` : ""}${handoff.name || "an agent"}`;
+      if (handoff.kind === "start") voice.say("I suggest a new agent: press Start if you want it");
+      else if (handoff.state === "counting") voice.say(brief(`Giving ${who} a task. Cancel within 15 seconds`));
+      else voice.say(brief(`I have a task for ${who}: press Send if you want it`));
+      break;
+    }
     case "brain_activity":
       Object.assign(brainState, { busy: Boolean(message.busy), what: String(message.what || "") });
       renderBrain();

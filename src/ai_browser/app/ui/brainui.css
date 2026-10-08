@@ -32,6 +32,18 @@
 .brain-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap;
                          font-size: 13px; }
 .brain-card .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* A hand-off (brainui.js's handoffCard): in the Brain's inbox, by Mission Control's globe and in the floating chat */
+.handoff { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 12px; display: flex;
+           flex-direction: column; gap: 4px; background: var(--card, var(--panel)); }
+.handoff:not([data-state="counting"], [data-state="waiting"]) { border-color: var(--line); }
+.handoff p { margin: 0; font-size: 13px; }
+.handoff blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap;
+                      overflow-wrap: anywhere; font-size: 14px; }
+.handoff .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 2px; }
+.handoff button { font-size: 13px; padding: 2px 10px; }
+.brain-handoffs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.handoff-slot { display: flex; flex-direction: column; gap: 8px; } /* every countdown at once (mountHandoffSlot) */
+.brain-handoffs:empty { display: none; }
 /* A tool request waiting for the user (permission.js): on AI Home's agent rows, in the chat panel, on the Brain page. */
 .permission { border-color: var(--needs); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .permission-head { font-weight: 600; font-size: 14px; }

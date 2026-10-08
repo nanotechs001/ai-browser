@@ -7,6 +7,7 @@
 // over this page's own line); the Brain's box takes text only, and says so. Every word from Claude, pages and agents
 // is set as text.
 import { fillPicker, pickDefault } from "./accountui.js";
+import { mountHandoffSlot } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { agentLabel, el } from "./chat.js";
 import { connect } from "./link.js";
@@ -34,6 +35,7 @@ let talk = null;
 let bar = null;
 let folders = null; // the Folder picker (agent powers)
 let uploads = null; // New task's attached files: pasted or dropped
+let handoffs = null; // the Brain's open hand-offs: every countdown, else the newest waiting; Send now and Cancel
 
 function setStatus(state) {
   talk?.connection(state); // a lost line ends a turn, or a question, at once
@@ -152,6 +154,7 @@ function useModel(value) { // the model picked last, in AI Home or Mission Contr
 function handle(message) {
   folders?.onMessage(message);
   uploads?.onMessage(message);
+  handoffs?.onMessage(message);
   switch (message.type) {
     case "snapshot":
       uploads?.lost(); // a new connection: the app dropped the files staged for the old one
@@ -163,6 +166,7 @@ function handle(message) {
       if (pending) finish(); // a new connection: an unanswered Start can be pressed again
       link.send({ type: "accounts" }); // each account's status, now
       link.send({ type: "permission_rules" });
+      link.send({ type: "brain" }); // the Brain's hand-offs still open
       break;
     case "agent":
       agents.set(message.agent.id, message.agent);
@@ -211,6 +215,7 @@ bar = mountPageBar($("page"), { link, aib: window.aib, agents: ordered, input: $
 folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },
                             (message) => link.send(message)); // agent powers: the task's folder
 uploads = mountUploads({ list: $("attached"), send: (message) => link.send(message), note: flash });
+handoffs = mountHandoffSlot($("handoff"), (message) => link.send(message));
 takeFiles($("task"), (files) => uploads.add(files), { area: $("new") }); // pasted or dropped: as Build a Mission
 takeFiles($("talk-text"), () => flash(PICTURES_HERE)); // the Brain's box: text only, and nothing opens by itself
 talk = mountTalk({ panel: $("talk"), micButton: $("mic"), link, voice: quiet, hintVoice: false,

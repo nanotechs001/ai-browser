@@ -110,3 +110,4 @@ select { border: 1px solid var(--line); background: var(--card); border-radius: 
 .folder-ask p { margin: 0; }
 .folder-ask .folder-path { font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
 #task-folder { max-width: 180px; }
+.handoff-slot { margin: 4px 10px; }  /* the Brain's open hand-offs (brainui.js) */

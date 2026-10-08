@@ -8,8 +8,9 @@ import json
 import pytest
 
 from ai_browser.chrome import chrome_binary
-from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
-from test_mission import open_mission, open_with
+from test_brain_handoffs import Clock
+from test_home import HOSTILE, home, stack, until  # noqa: F401  (fixtures)
+from test_mission import WORKING, open_mission, open_with
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 
@@ -174,3 +175,119 @@ async def test_settings_brain_checks_what_the_brain_listens_to_and_keeps_it(stac
     assert await until(again, f"{SOURCES}.length === 6 && {SOURCES}.filter(box => !box.checked)"
                               ".map(box => box.dataset.source).join() === 'gmail,chat'")
     assert await again("document.getElementById('auto-hand').checked") is False
+
+
+# ---- the Brain's hand-off cards (spec 5) -----------------------------------------------------------------------------
+
+SLOT = "document.querySelector('#handoff .handoff')"
+IN_SLOT = "[...document.querySelectorAll('#handoff .handoff')]"
+
+
+async def working_agent(stack, name="Find Acme's prices"):
+    """Agent 1, at work (it stays so), and the Brain's countdown on the test's clock: its row, as the Brain reads it."""
+    from test_app_server import wait_for
+
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    stack["brain"].countdown = Clock()
+    agents = stack["server"].agents
+    await agents.create("Find Acme's prices and plans", name=name)
+    await wait_for(lambda: agents.agents["a1"].state == "working")
+    return next(row for row in agents.snapshot()["agents"] if row["id"] == "a1")
+
+
+def sent_by_the_brain(stack):
+    return [event["text"] for event in stack["server"].agents.events_of("a1")
+            if event.get("type") in ("queued", "user") and str(event.get("text", "")).startswith("From the Brain:")]
+
+
+@CHROME
+async def test_a_countdown_card_shows_by_the_globe_and_cancel_stops_it(stack):
+    row = await working_agent(stack, name=f"Prices {HOSTILE}")
+    js = await open_mission(stack)
+    handoff = stack["brain"].give(row, f"Compare the annual plans {HOSTILE}", "you")
+    assert await until(js, f"{SLOT}?.dataset.state === 'counting'")
+    assert await js(f"{SLOT}.querySelector('.handoff-head').textContent") == f"Giving 1 · Prices {HOSTILE}:"
+    assert await js(f"{SLOT}.querySelector('.handoff-words').textContent") == f"Compare the annual plans {HOSTILE}"
+    assert await js(f"{SLOT}.querySelector('.handoff-from').textContent") == "From your words"
+    assert (await js(f"{SLOT}.querySelector('.handoff-line').textContent")).startswith("Sends in 1")  # 15 or 14 s
+    assert await js(f"[...{SLOT}.querySelectorAll('button')].map(button => button.textContent)") == [
+        "Send now", "Cancel"]
+    assert await js("document.querySelectorAll('img[src=x]').length === 0 && document.title !== 'pwned'")
+    await js(f"{SLOT}.querySelector('.handoff-cancel').click(); true")
+    assert await until(js, f"{SLOT}?.querySelector('.handoff-line').textContent === 'Cancelled: nothing was sent'")
+    await stack["brain"].countdown.tick()
+    assert handoff.state == "cancelled" and sent_by_the_brain(stack) == []
+    stack["brain"].countdown = Clock()
+    stack["brain"].give(row, "Compare the logos", "agent")  # an agent's result waits for Send (2026-10-08)
+    assert await until(js, f"{SLOT}?.dataset.state === 'waiting'")
+    assert await js(f"{SLOT}.querySelector('.handoff-from').textContent") == "From an agent's result"
+    assert await js(f"{SLOT}.querySelector('.handoff-line').textContent") == "Waiting for your Send"  # no countdown
+    assert await js(f"[...{SLOT}.querySelectorAll('button')].map(button => button.textContent)") == ["Send", "Cancel"]
+    stack["brain"].give(row, "Reply to Maria with the prices", "gmail")  # the newest waiting one shows
+    assert await until(js, f"{SLOT}?.querySelector('.handoff-words').textContent === 'Reply to Maria with the prices'")
+    stack["brain"].give(row, "Check the logos too", "you")  # one counting down shows first
+    assert await until(js, f"{SLOT}?.querySelector('.handoff-words').textContent === 'Check the logos too'")
+    stack["brain"].give(row, "Check the fonts too", "you")  # and every one counting down shows: none counts unseen
+    words = f"{IN_SLOT}.map(card => card.querySelector('.handoff-words').textContent)"
+    assert await until(js, f"JSON.stringify({words}) === '[\"Check the fonts too\",\"Check the logos too\"]'")
+    assert await js(f"{IN_SLOT}.every(card => card.dataset.state === 'counting'"
+                    " && card.querySelector('.handoff-line').textContent.startsWith('Sends in 1'))")
+    await js("document.getElementById('brain').click(); true")  # the Brain's inbox lists them all, newest first
+    states = "[...document.querySelectorAll('#drawer .brain-handoffs .handoff')].map(card => card.dataset.state)"
+    assert await until(js, f"JSON.stringify({states})"
+                           " === '[\"counting\",\"counting\",\"waiting\",\"waiting\",\"cancelled\"]'")
+
+
+@CHROME
+async def test_send_now_sends_the_words_shown_and_the_chat_says_from_the_brain(stack):
+    row = await working_agent(stack)
+    js = await open_mission(stack)
+    stack["brain"].give(row, "Compare the annual plans", "you")
+    assert await until(js, f"{SLOT}?.dataset.state === 'counting'")
+    await js(f"{SLOT}.querySelector('.handoff-go').click(); true")
+    assert await until(js, f"{SLOT}?.querySelector('.handoff-line').textContent === 'Sent to agent 1'")
+    assert sent_by_the_brain(stack) == ["From the Brain: Compare the annual plans"]  # exactly the card's words
+    await js("document.querySelector('.station[data-id=\"a1\"]').click();"
+             " document.getElementById('current-chat').click(); true")
+    assert await until(js, "[...document.querySelectorAll('#drawer .msg.user')]"
+                           ".some(node => node.textContent === 'From the Brain: Compare the annual plans')")
+    assert await until(js, f"document.getElementById('handoff').hidden === true", 10)  # gone from the globe after
+
+
+@CHROME
+async def test_an_emails_handoff_waits_for_send_in_ai_home(home):
+    js, stack = home
+    row = await working_agent(stack)
+    stack["brain"].give(row, "Reply to Maria with the new prices", "gmail", item="gmail:t1")
+    card = "document.querySelector('#brain .brain-handoffs .handoff')"
+    assert await until(js, f"{card}?.dataset.state === 'waiting'")
+    assert await js(f"{card}.querySelector('.handoff-line').textContent") == "Waiting for your Send"  # no countdown
+    assert await js(f"{card}.querySelector('.handoff-from').textContent") == "From an email in Gmail"
+    assert await js(f"[...{card}.querySelectorAll('button')].map(button => button.textContent)") == ["Send", "Cancel"]
+    await stack["brain"].countdown.tick()
+    assert sent_by_the_brain(stack) == []  # it waits, however long
+    await js(f"{card}.querySelector('.handoff-go').click(); true")
+    assert await until(js, f"{card}?.dataset.state === 'sent'")
+    assert sent_by_the_brain(stack) == ["From the Brain: Reply to Maria with the new prices"]
+
+
+@CHROME
+async def test_the_floating_chats_words_count_down_on_its_own_card(stack):
+    from test_chat_page import open_chat
+    from test_talk import talk_script
+
+    await working_agent(stack, name="Fix the footer")
+    talk_script(stack, {"say": "OK.", "action": "message_agent", "agent": "a1"})
+    chat, _ = await open_chat(stack)
+    await chat("document.getElementById('talk-text').value = 'tell agent 1 to check the header too';"
+               " document.getElementById('talk-form').requestSubmit(); true")
+    card = "document.querySelector('#handoff .handoff')"
+    assert await until(chat, f"{card}?.dataset.state === 'counting'", 15)
+    assert await chat(f"{card}.querySelector('.handoff-words').textContent") == "tell agent 1 to check the header too"
+    said = ("Brain: Giving your words to 1 · Fix the footer in 15 seconds. Press Cancel on its card, or say no, to "
+            "stop it.")
+    log = "[...document.querySelectorAll('#talk-log li')].map(li => li.textContent)"
+    assert await until(chat, f"{log}.includes({json.dumps(said)})")
+    await chat(f"{card}.querySelector('.handoff-cancel').click(); true")
+    assert await until(chat, f"{card}?.querySelector('.handoff-line').textContent === 'Cancelled: nothing was sent'")
+    assert sent_by_the_brain(stack) == []

@@ -1,6 +1,7 @@
 // The Brain's inbox, in AI Home and Mission Control: only what is new or needs the user, each with what the Brain
-// makes of it and what to do next. Message text is set as text, never as HTML. Use draft sends the reply the user
-// sees (and may have edited), once; AI Browser then puts it in the reply box, and the user presses Send.
+// makes of it and what to do next; above them, its hand-offs (handoffCard). Message text is set as text, never as
+// HTML. Use draft sends the reply the user sees (and may have edited), once; AI Browser then puts it in the reply box,
+// and the user presses Send.
 "use strict";
 
 const KIND = { needs_reply: "needs your reply", new: "new" };
@@ -18,6 +19,10 @@ const CARD_STATE = { // a send card's state line: the same three lines as talk.j
   permission: "It's waiting for your Allow or Deny: your words wait too, and don't answer it.",
 };
 const EXPIRED = "This has expired: ask again";
+const OPEN = new Set(["counting", "waiting"]); // a hand-off still open: Send now (Send, Start) and Cancel
+const FROM = { you: "From your words", agent: "From an agent's result", gmail: "From an email in Gmail",
+               slack: "From a Slack message", asana: "From an Asana task", pages: "From a part of a page you watch" };
+const SHOWN_AFTER = 5000; // ms a slot shows a hand-off that is done (its note), before it empties
 
 function digits(id) { // "a12" is 12: this file imports nothing, so it works the number out itself
   const found = String(id || "").replace(/\D/g, "");
@@ -37,6 +42,100 @@ function el(tag, className, text) {
   return node;
 }
 
+// A hand-off's card (the brain-delegation spec, 5): "Giving 2 · Research competitors:", the instruction word for word,
+// where it came from, and Send now and Cancel while it counts down (the seconds left), Send and Cancel while it waits,
+// or Start and Cancel for a NEW agent the Brain suggests; once done, what happened. One click each: the app runs a card
+// once. Every word is set as text.
+export function handoffCard(handoff, send) {
+  const card = el("div", "handoff card");
+  card.dataset.id = String(handoff.id || "");
+  card.dataset.state = String(handoff.state || "");
+  const head = el("p", "handoff-head");
+  if (handoff.kind === "start") {
+    head.textContent = "Start a NEW agent with this task:";
+  } else {
+    const number = Number.isInteger(handoff.number) ? handoff.number : digits(handoff.agent);
+    head.append("Giving ", el("strong", "", `${number === null ? "" : `${number} · `}${handoff.name || "an agent"}`),
+                ":");
+  }
+  const line = el("p", "handoff-line muted");
+  card.append(head, el("blockquote", "handoff-words", String(handoff.instruction || "")),
+              el("p", "handoff-from muted", FROM[handoff.source] || ""), line);
+  if (OPEN.has(handoff.state)) {
+    const go = el("button", "handoff-go primary",
+                  handoff.kind === "start" ? "Start" : handoff.state === "counting" ? "Send now" : "Send");
+    const cancel = el("button", "handoff-cancel ghost", "Cancel");
+    for (const [button, type] of [[go, "handoff_send"], [cancel, "handoff_cancel"]]) {
+      button.type = "button";
+      button.addEventListener("click", () => {
+        if (!button.disabled && send({ type, id: handoff.id })) go.disabled = cancel.disabled = true;
+      });
+    }
+    const buttons = el("div", "row");
+    buttons.append(go, cancel);
+    card.append(buttons);
+  }
+  if (handoff.state === "counting") { // the seconds left, as the app counts them
+    const ends = Date.now() + (Number(handoff.seconds) || 0) * 1000;
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((ends - Date.now()) / 1000));
+      line.textContent = `Sends in ${left} s, unless you cancel`;
+      if (left > 0 && card.dataset.state === "counting") setTimeout(tick, 250);
+    };
+    tick();
+  } else {
+    line.textContent = handoff.note
+      || (handoff.state === "waiting" ? (handoff.kind === "start" ? "Waiting for your Start" : "Waiting for your Send")
+        : "");
+  }
+  return card;
+}
+
+// The Brain's hand-offs, in a slot of their own (under Mission Control's view switch, in the floating chat): every one
+// counting down, newest first, so none counts down unseen; else the newest waiting for Send. Each stays until it is
+// done, and the newest done shows what happened for a moment while nothing else is open. The Brain's inbox lists them
+// all.
+export function mountHandoffSlot(slot, send) {
+  const handoffs = new Map(); // id -> the hand-off, oldest first
+  function render() {
+    const all = [...handoffs.values()].reverse(); // newest first
+    const counting = all.filter((one) => one.state === "counting");
+    const shown = counting.length ? counting : [all.find((one) => one.state === "waiting") || all[0]].filter(Boolean);
+    const drawn = new Map([...slot.children].map((card) => [card.dataset.id, card]));
+    const cards = shown.map((one) => { // a card as it is stays (its countdown runs on); a changed one is drawn again
+      const current = drawn.get(one.id);
+      return current?.dataset.state === one.state ? current : handoffCard(one, send);
+    });
+    for (const card of slot.children) if (!cards.includes(card)) card.dataset.state = "replaced"; // its countdown stops
+    slot.replaceChildren(...cards);
+    slot.hidden = !cards.length;
+  }
+  function keep(handoff) {
+    if (!handoff?.id) return;
+    handoffs.set(handoff.id, handoff);
+    if (!OPEN.has(handoff.state)) { // done: shown for a moment, then gone from the slot
+      setTimeout(() => {
+        if (handoffs.get(handoff.id) === handoff) {
+          handoffs.delete(handoff.id);
+          render();
+        }
+      }, SHOWN_AFTER);
+    }
+  }
+  return {
+    onMessage(message) {
+      if (message.type === "brain_snapshot") {
+        handoffs.clear();
+        for (const handoff of message.handoffs || []) if (OPEN.has(handoff.state)) keep(handoff);
+        render();
+      } else if (message.type === "brain_handoff") {
+        keep(message.handoff);
+        render();
+      }
+    },
+  };
+}
+
 export function mountBrain(root, link, { compact = false, openAgent = null, openSettings = null } = {}) {
   const head = el("div", "brain-head");
   const counts = el("span", "brain-others muted");
@@ -45,10 +144,12 @@ export function mountBrain(root, link, { compact = false, openAgent = null, open
   turnOn.hidden = true;
   turnOn.addEventListener("click", () => openSettings?.());
   head.append(counts, reading, turnOn);
+  const handoffs = el("div", "brain-handoffs"); // this run's hand-offs, newest first, each updated in place
   const list = el("div", "brain-items list");
   const more = el("button", "brain-more ghost");
   more.hidden = true;
-  root.replaceChildren(head, list, more);
+  root.replaceChildren(head, handoffs, list, more);
+  const handoffNodes = new Map(); // id -> its card
   const items = new Map(); // id -> the item as the Brain describes it
   const rows = new Map(); // id -> its row, built once and updated in place
   let order = []; // ids, newest first
@@ -291,6 +392,19 @@ export function mountBrain(root, link, { compact = false, openAgent = null, open
     readingState = message.reading || "off";
   }
 
+  function showHandoff(handoff) { // a new one on top; a changed one in its place
+    if (!handoff?.id) return;
+    const node = handoffCard(handoff, send);
+    const old = handoffNodes.get(handoff.id);
+    if (old) {
+      old.dataset.state = "replaced"; // its countdown stops
+      old.replaceWith(node);
+    } else {
+      handoffs.prepend(node);
+    }
+    handoffNodes.set(handoff.id, node);
+  }
+
   function onMessage(message) {
     if (message.type === "brain_snapshot") {
       items.clear();
@@ -300,7 +414,12 @@ export function mountBrain(root, link, { compact = false, openAgent = null, open
         order.push(item.id);
       }
       settings(message);
+      handoffs.replaceChildren();
+      handoffNodes.clear();
+      for (const handoff of message.handoffs || []) showHandoff(handoff);
       render();
+    } else if (message.type === "brain_handoff") {
+      showHandoff(message.handoff);
     } else if (message.type === "brain_item" && message.item?.id) {
       if (!items.has(message.item.id)) order.unshift(message.item.id);
       items.set(message.item.id, message.item);
