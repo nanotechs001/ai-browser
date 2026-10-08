@@ -49,6 +49,7 @@ QUEUED_WORKING_SAY = "Queued for {label}: it reads it when it finishes what it's
 QUEUED_LINE_SAY = "Queued for {label}: it reads it when its turn comes."
 SENT_SAY = "Sent to {label}."
 GIVING_SAY = "Giving your words to {label} in {seconds} seconds. Press Cancel on its card, or say no, to stop it."
+HELD_SAY = "Your words for {label} wait for your Send."  # other words held its countdown (names only: never its words)
 STARTED_SAY = "Started: {label}"
 HAND_OVER_SAY = ("Only you can give {label} one of your tabs: under Your tabs, press Give to this agent on it. Or tell "
                  "it the page's address, and it opens it in a tab of its own, with your logins.")
@@ -633,6 +634,7 @@ class Talk:
     asking: Asking | None = None
     last_agent: str | None = None  # the agent this talk last sent to, started or opened ("it")
     handoff: str | None = None  # the hand-off this talk's words made (a yes sends it now, a no cancels it)
+    answered: bool = False  # Claude answered since it was made: a yes is that answer's now (a no still cancels it)
 
 
 class Talks:
@@ -718,7 +720,15 @@ class Talks:
         self._get(talk_id).asking = None
 
     def set_handoff(self, talk_id: str, handoff_id: str | None) -> None:
-        self._get(talk_id).handoff = handoff_id
+        talk = self._get(talk_id)
+        talk.handoff, talk.answered = handoff_id, False
+
+    def claude_answered(self, talk_id: str) -> None:
+        """Claude answered something in this talk: a later yes (or "agent 3") is for that, not the talk's hand-off."""
+        self._get(talk_id).answered = True
+
+    def yes_reaches_handoff(self, talk_id: str) -> bool:
+        return not self._get(talk_id).answered
 
     def handoff(self, talk_id: str) -> str | None:
         return self._get(talk_id).handoff
