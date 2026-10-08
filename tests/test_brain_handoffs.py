@@ -487,3 +487,26 @@ async def test_a_question_about_a_page_never_makes_a_handoff(tmp_path):
     brain, agents, _, _ = brain_with(tmp_path, [row()], ask=Ask(TO_A2))
     answer = await brain.respond("k1", "what does this page say?", page=read)
     assert answer == {"say": PAGE_ONLY} and brain.handoffs == {} and agents.sent == []
+
+
+async def test_no_agent_3_moves_the_talks_handoff_there_with_the_same_words(tmp_path):
+    from ai_browser.brain.handoffs import FROM_BRAIN
+    from ai_browser.brain.talk import GIVING_SAY
+
+    ask = Ask(TO_A2)  # Claude would say agent 2 again: "no, agent 3" never reaches it
+    brain, agents, _, _ = brain_with(tmp_path / "working", [row(), row("a3", "Other")], ask=ask)
+    first = (await brain.respond("k1", WORDS))["handoff"]
+    moved = await brain.respond("k1", "no, agent 3")
+    assert moved["say"] == GIVING_SAY.format(label="3 · Other", seconds=15) and "proposal" not in moved
+    assert (moved["handoff"]["agent"], moved["handoff"]["instruction"]) == ("a3", WORDS)  # the same words, not "no…"
+    assert brain.handoffs[first["id"]].state == "cancelled" and len(ask.prompts) == 1
+    await brain.countdown.tick()
+    assert agents.sent == [("a3", f"{FROM_BRAIN} {WORDS}")]  # the first one sends nothing
+    ask = Ask(TO_A2)
+    brain, agents, _, _ = brain_with(tmp_path / "done", [row(), row("a3", "Other", state="your_turn")], ask=ask)
+    first = (await brain.respond("k1", WORDS))["handoff"]
+    card = (await brain.respond("k1", "no, agent 3"))["proposal"]  # a finished agent 3: today's Send card
+    assert (card["kind"], card["agent"], card["task"]) == ("message_agent", "a3", WORDS) and len(ask.prompts) == 1
+    assert brain.handoffs[first["id"]].state == "cancelled" and len(brain.handoffs) == 1
+    await brain.countdown.tick()
+    assert agents.sent == []

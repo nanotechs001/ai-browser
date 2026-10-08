@@ -800,6 +800,12 @@ class BrainService:
                 reply = {"say": handoff.note}
             self.talks.add(talk, text, reply["say"])
             return reply
+        if handoff is not None and handoff.state in OPEN and (pick := reference_pick(text, rows)) is not None:
+            self.cancel_handoff(handoff.id)  # "no, agent 3": it moves there with its words, as a send card does
+            self.talks.set_handoff(talk, None)
+            reply = self._answer_pick(talk, pick, handoff.instruction, rows)
+            self.talks.add(talk, text, reply["say"])
+            return reply
         stale = bool(proposal_id) and (card is None or card.id != proposal_id)  # its card is gone: expired, or replaced
         self.talks.drop(talk)  # any other words close the card: they are a new question
         self.talks.set_handoff(talk, None)  # and a yes or no no longer speaks to its hand-off
