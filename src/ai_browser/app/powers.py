@@ -429,10 +429,16 @@ def _prefix(words: list[str]) -> tuple[list[str] | None, str]:
     program, rest = _name(words[0]), words[1:]
     if _inline(program, rest):
         return None, WHY_INLINE
-    runs = rest[1:2] if rest[:1] and rest[0] in RUNNERS and program in SUBCOMMANDS else \
-        rest[:1] if program in PACKAGE_RUNNERS else []
-    if any(_name(word) in LAUNCHERS or _name(word) in RISKY or _name(word).startswith("mkfs") for word in runs):
+    if rest[:1] and rest[0] in RUNNERS and program in SUBCOMMANDS:  # uv run X …, npm exec X …
+        runs, after = rest[1:2], rest[2:]
+    else:  # npx X …
+        runs, after = (rest[:1], rest[1:]) if program in PACKAGE_RUNNERS else ([], [])
+    ran = _name(runs[0]) if runs else ""
+    if ran in LAUNCHERS or ran in RISKY or ran.startswith("mkfs"):
         return None, WHY_LAUNCHER  # uv run bash, npm exec sh, npx bash: no rule may cover bash -c later
+    if ran and (_inline(ran, after) or (_INTERPRETER.fullmatch(ran) and after
+                                        and (after[0] in INLINE or after[0][:2] in ("-c", "-e")))):
+        return None, WHY_INLINE  # uv run python -c, npx node -e: no rule of the interpreter's may cover them
     if _INTERPRETER.fullmatch(program) and rest:
         if rest[0] in INLINE or rest[0][:2] in ("-c", "-e"):
             return None, WHY_INLINE

@@ -583,6 +583,26 @@ def test_the_skills_folders_are_read_again_so_a_blocked_skill_asks_without_a_res
     assert not runs()
 
 
+
+async def test_when_the_skills_folders_cant_be_read_a_skills_script_shows_a_card(  # fail closed: no skill roots
+        fake_claude, tmp_path, project, monkeypatch, sandboxed):
+    from ai_browser.app import bridge as bridge_module
+
+    scripts = a_skill(tmp_path, monkeypatch)
+
+    def vanished(blocked=frozenset()):
+        raise FileNotFoundError("a synced skills folder went away between glob and stat")
+
+    monkeypatch.setattr(bridge_module, "skill_folders", vanished)
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": f"python3 {scripts}/x.py"}, tool_id="u1"),
+                                  ask("Bash", {"command": "npm test"}, tool_id="u2"), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"], work=project, auto=True)
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == [f"python3 {scripts}/x.py"]
+    assert bridge._auto_ids == {"u2"} and behaviors(log) == ["allow", "allow"]  # the rest works as before
+
+
 async def test_a_saved_rule_for_the_interpreter_never_runs_a_skills_script(  # the re-review's N4
         fake_claude, tmp_path, project, monkeypatch):
     from ai_browser.app import powers

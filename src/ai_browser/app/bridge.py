@@ -375,7 +375,11 @@ class ClaudeBridge:
         blocked (Knowledge's Remove) takes effect without restarting the agent (the re-review's N2)."""
         now = time.monotonic()
         if self._skills_read is None or now - self._skills_read[0] >= SKILLS_TTL:
-            self._skills_read = (now, skill_folders(set(load_config(self.home).blocked_skills)))
+            try:
+                self._skills_read = (now, skill_folders(set(load_config(self.home).blocked_skills)))
+            except Exception:  # fail closed: no skill's folder, so their scripts show a card (read again next time)
+                log.warning("couldn't read the installed skills' folders", exc_info=True)
+                return SkillFolders()
         return self._skills_read[1]
 
     def _rules(self) -> set[str]:

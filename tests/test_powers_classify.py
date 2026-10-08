@@ -706,6 +706,21 @@ def test_a_runner_of_a_launcher_or_a_risky_program_has_no_rule(project, command)
     assert rule(command) is None and decide(command, project) == "ask_always", command
 
 
+@pytest.mark.parametrize("command", ["uv run python -c x", "uv run python3 -c x", "npx node -e x", "pnpm exec node -e x",
+                                     "uv run python -cx", "npm exec node --eval x", "uv run deno eval x",
+                                     "npx sqlite3 x.db .shell", "uv run python3.12 -c x", "bunx node -p x"])
+def test_a_runner_of_an_interpreter_with_code_on_the_command_line_has_no_rule(project, command):  # the re-review
+    from ai_browser.app.powers import WHY_INLINE, card
+
+    assert rule(command) is None and decide(command, project) == "ask_always", command
+    assert card("Bash", {"command": command}, project)["why"] == WHY_INLINE, command
+
+
+def test_a_runner_of_an_interpreter_running_a_script_keeps_its_rule(project):
+    assert rule("uv run python x.py") == "Bash(uv run python:*)" and decide("uv run python x.py", project) == "ask"
+    assert rule("npx node x.js") == "Bash(npx node:*)"
+
+
 def test_after_the_shell_moved_a_search_without_a_full_path_asks(project):  # the review's 8 (it was so before)
     from ai_browser.app.powers import classify
 
