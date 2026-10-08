@@ -512,6 +512,7 @@ async def test_on_windows_auto_approve_runs_ordinary_commands_but_not_what_reach
 
     monkeypatch.setattr(powers, "sys", SimpleNamespace(platform="win32"))  # Windows, as powers sees it: no sandbox
     runner, log, script = fake_claude
+    (project / "run.sh").write_text("echo hi\n", encoding="utf-8")  # bash runs it from the folder, not the PATH
     ordinary = [ask("Bash", {"command": command}, tool_id=f"u{index}")
                 for index, command in enumerate(("npm test", "python x.py", "mkdir build", "bash run.sh", "./run.sh",
                                                  "cd src", "npm test"))]  # a script in the folder too (2026-10-08)

@@ -474,7 +474,10 @@ def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
     words = words_of(data.get("command"))
     if words is None:
         return "ask_always", WHY_NOT_PLAIN
-    program, script = _name(words[0]), _shell_script(words)
+    program = _name(words[0])
+    # A file's name without a slash: bash runs the folder's file, else the first one on the PATH (the review's C1):
+    # only one that is there, while the shell is still in the folder
+    script = _shell_script(words) and ("/" in words[1] or (not moved and os.path.isfile(Path(folder) / words[1])))
     if program in LAUNCHERS and not script:
         return "ask_always", WHY_LAUNCHER
     if program in RISKY or program.startswith("mkfs"):
@@ -570,10 +573,11 @@ def _guard(folder):
             relative = os.path.relpath(real, root)
         except ValueError:  # another drive: outside, which is asked for already
             return False
-        parts = [part.casefold() for part in Path(relative).parts]  # .GIT is .git where case is ignored
+        # .GIT is .git where case is ignored, and Windows drops a name's trailing dots and spaces: .git. is .git (M1)
+        parts = [part.rstrip(". ").casefold() for part in Path(relative).parts]
         if any(part in GUARDED_FOLDERS for part in parts):
             return True
-        if Path(real).name.casefold() in GUARDED_FILES and _same(str(Path(real).parent), root):
+        if Path(real).name.rstrip(". ").casefold() in GUARDED_FILES and _same(str(Path(real).parent), root):
             return True
         return hooks is not None and (_same(real, hooks) or _under(real, hooks))
 
@@ -767,7 +771,8 @@ def ordinary(words: list[str]) -> bool:
     if not rest or rest[0] not in use:
         return False
     if program == "uv":
-        return len(rest) > 1 and rest[1] != "uv" and ordinary(rest[1:])
+        # not bash or sh: what they run by name, classify checked for the command's own first word only (C1)
+        return len(rest) > 1 and rest[1] not in ("uv", *SHELLS) and ordinary(rest[1:])
     if program != "git":
         return True
     sub, args = rest[0], rest[1:]

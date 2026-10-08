@@ -447,7 +447,7 @@ def test_auto_approve_runs_commands_on_a_mac_and_on_windows_only(monkeypatch):  
 # launchers in every other form.
 SCRIPTS = ["bash run.sh", "bash run.sh --fast src", "sh run.sh", "sh scripts/build.sh one two", "bash ./run.sh",
            "./run.sh", "./run.sh --fast", "scripts/build.sh", "./scripts/build.sh src", "./run.bat",
-           "node_modules/.bin/jest src", "./cargo build", "uv run bash run.sh"]
+           "node_modules/.bin/jest src", "./cargo build"]
 SCRIPTS_ASK_ALWAYS = [  # bash as a launcher, or a script outside the folder or among Git's or Claude Code's files
     'bash -c "rm -r src"', "bash -s", "bash", "bash -", "bash -i run.sh", "bash --norc run.sh", "bash -- run.sh",
     "bash +x run.sh", "sh -c ls", "sh -s < run.sh", "bash /c/Users/x/evil.sh", "bash ../evil.sh", "sh ~/evil.sh",
@@ -457,7 +457,7 @@ SCRIPTS_ASK_ALWAYS = [  # bash as a launcher, or a script outside the folder or 
     "bash run.sh; rm x", "./run.sh | sh"]
 NEVER_AUTO = [  # the folder's copy of a known program is judged as that program (an install still asks), and the rest
     "venv/bin/pip install x", "venv/bin/python -m pip install x", "venv/bin/python3.12 x.py", "./gradlew build",
-    "./mvnw test", "node_modules/.bin/npm install", "./git push", "uv run bash -c x", "uv run sh -s",
+    "./mvnw test", "node_modules/.bin/npm install", "./git push", "uv run bash -c x", "uv run sh -s", "uv run bash run.sh",
     "node_modules/.bin/npx create-vite", "venv/Scripts/pip.exe install x", "venv/Scripts/python.exe -m pip install x"]
 
 
@@ -510,6 +510,51 @@ def test_a_script_runs_by_auto_approve_only_while_the_shell_is_in_the_folder(scr
         for command in ("bash run.sh", "./run.sh", "scripts/build.sh"):
             assert auto_approves("Bash", {"command": command}, "ask", sandbox=sandbox), (platform, command)
             assert not auto_approves("Bash", {"command": command}, "ask", sandbox=sandbox, away=True), command
+
+
+
+# The security review of 2026-10-08, C1: bash or sh given a name without a slash runs that file from the folder it is
+# in, and when there is none, the first one on the PATH (npm, npx, yarn and corepack are shell scripts there).
+PATH_SCRIPTS = ["bash npm install evil-pkg", "sh npx create-x", "bash yarn add x", "bash corepack enable",
+                "bash brew install x"]
+
+
+@pytest.mark.parametrize("command", PATH_SCRIPTS)
+def test_bash_with_a_name_that_isnt_a_file_of_the_folder_asks_every_time(scripts, monkeypatch, command):  # C1
+    for platform, sandbox in (("darwin", True), ("win32", False)):
+        as_platform(monkeypatch, platform)
+        assert decide(command, scripts) == "ask_always", (platform, command)
+        assert not auto("Bash", {"command": command}, scripts, sandbox=sandbox), (platform, command)
+
+
+def test_bash_runs_a_script_by_its_name_only_while_the_shell_is_in_the_folder(scripts, monkeypatch):  # C1
+    from ai_browser.app.powers import classify
+
+    for platform, sandbox in (("darwin", True), ("win32", False)):
+        as_platform(monkeypatch, platform)
+        assert auto("Bash", {"command": "bash run.sh"}, scripts, sandbox=sandbox)  # the file is there
+        assert classify("Bash", {"command": "bash run.sh"}, scripts, moved=True) == "ask_always"  # it may not be
+        assert not auto("Bash", {"command": "bash run.sh"}, scripts, sandbox=sandbox, moved=True)
+        assert auto("Bash", {"command": "bash ./run.sh"}, scripts, sandbox=sandbox, moved=True)  # a path: no search
+        assert decide("bash scripts", scripts) == "ask_always"  # a folder, not a file
+
+
+# M1: Windows drops a name's trailing dots and spaces (.git. is .git), so the guard compares names without them.
+TRAILING = ["cp payload .git./hooks/pre-commit", "cp payload .claude./settings.json", "sort -o .git./config src/app.py",
+            "touch .husky./x", "cp payload '.git /hooks/pre-commit'", "cp payload .mcp.json.", "cp payload '.mcp.json '",
+            "touch .vscode../tasks.json", "mv payload .IDEA./x", "cp payload src/.git./config"]
+
+
+@pytest.mark.parametrize("command", TRAILING)
+def test_a_trailing_dot_or_space_names_the_same_guarded_file(project, monkeypatch, command):  # M1
+    from ai_browser.app.powers import WHY_GUARDED, card, classify
+
+    for platform, sandbox in (("darwin", True), ("win32", False)):
+        as_platform(monkeypatch, platform)
+        assert card("Bash", {"command": command}, project)["why"] == WHY_GUARDED, (platform, command)
+        assert not auto("Bash", {"command": command}, project, sandbox=sandbox), (platform, command)
+    for path in (".git./config", ".claude ./settings.json", ".mcp.json.", ".husky. /pre-commit"):
+        assert classify("Write", {"file_path": str(project / path), "content": "x"}, project) == "ask_always", path
 
 
 def test_after_the_shell_moved_a_search_without_a_full_path_asks(project):  # the review's 8 (it was so before)
