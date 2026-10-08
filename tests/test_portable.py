@@ -336,7 +336,7 @@ def test_the_ci_workflow_runs_only_by_hand():
     assert workflow["permissions"] == {"contents": "read"}
     assert "windows-latest" in text and "macos-latest" in text
     job = workflow["jobs"]["test"]
-    assert job["strategy"]["fail-fast"] is False and job["timeout-minutes"] == 40
+    assert job["strategy"]["fail-fast"] is False and job["timeout-minutes"] == 75
     runs = [step.get("run", "") for step in job["steps"]]
     assert any(run.startswith("uv sync --locked") for run in runs)
     assert any(run.startswith("uv run --no-sync pytest") for run in runs)
