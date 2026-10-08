@@ -171,7 +171,8 @@ def launch(user_data_dir: Path, headless: bool = True, extra_args: tuple[str, ..
         raise ChromeError("refusing to launch a browser on the user's own profile folder")
     folder.mkdir(parents=True, exist_ok=True)
     args = [binary, f"--user-data-dir={folder}", "--remote-debugging-port=0", "--no-first-run",
-            "--no-default-browser-check", "--disable-search-engine-choice-screen", "--window-size=1440,960"]
+            "--no-default-browser-check", "--disable-search-engine-choice-screen", "--window-size=1440,960",
+            "--use-mock-keychain"]  # a throwaway profile keeps no secrets: macOS never asks for a keychain for it
     if headless:
         args.append("--headless=new")
     args += [*extra_args, "about:blank"]
