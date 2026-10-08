@@ -75,13 +75,14 @@ export function mountSide({ send, openDrawer, openHistory }) {
     const state = stateOf(agent);
     avatar($("current-avatar"), agent);
     const label = agentLabel(agent);
-    const named = step.title !== label; // with a to-do list the step is the list's: the name gets a line of its own
-    setClip($("current-name"), named ? label : "");
-    $("current-name").hidden = !named;
+    // with a to-do list the step is the list's: a name the user gave gets a line of its own (else the step is it)
+    const nameLine = agent.named === true && step.title !== label;
+    setClip($("current-name"), nameLine ? label : "");
+    $("current-name").hidden = !nameLine;
     const about = $("current-about"); // What it works on: under the name, wherever the name is
     setClip(about, String(agent.description || ""));
     about.hidden = !agent.description;
-    const under = named ? $("current-name") : $("current-step").parentElement;
+    const under = nameLine ? $("current-name") : $("current-step").parentElement;
     if (under.nextElementSibling !== about) under.after(about);
     setClip($("current-step"), step.title);
     setClip($("current-line"), step.line);

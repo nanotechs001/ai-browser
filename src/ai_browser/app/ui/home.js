@@ -5,7 +5,7 @@ import { askBox, askError, askKey, brainCard, fillPicker, pickDefault } from "./
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { connect } from "./link.js";
-import { agentLabel, createChat, el } from "./chat.js";
+import { agentLabel, agentTip, createChat, el } from "./chat.js";
 import { permissionCard } from "./permission.js";
 import { folderName, planProgress, subagentCount } from "./plan.js";
 import { mountTabList } from "./tablist.js";
@@ -190,7 +190,7 @@ function fillAgentRow(row, agent) {
   row.style.borderLeftColor = color;
   parts.dot.style.background = color;
   setText(parts.name, agentLabel(agent));
-  if (parts.name.title !== (agent.description || "")) parts.name.title = agent.description || ""; // What it works on
+  if (parts.name.title !== agentTip(agent)) parts.name.title = agentTip(agent); // the whole name, then what it works on
   const paused = Boolean(agent.limit) && agent.state === "failed"; // at a usage limit: paused, not failed
   setText(parts.state, paused ? "paused" : STATES[agent.state] || agent.state);
   parts.state.className = `chip ${paused ? "waiting" : agent.state}`;

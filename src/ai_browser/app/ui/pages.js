@@ -2,7 +2,7 @@
 // place; every word is the app's or Claude's, set as text, with its whole as a tooltip where it may be clipped.
 "use strict";
 
-import { agentLabel, el } from "./chat.js";
+import { agentLabel, agentTip, el } from "./chat.js";
 import { createAvatar } from "./chibi.js";
 import { folderName } from "./plan.js";
 import { clock, FINISHED, isFinished, STATES, stateOf, stepOf } from "./step.js";
@@ -42,7 +42,7 @@ export function fillMissionRow(row, agent, now = Date.now() / 1000) {
   const step = stepOf(agent);
   const state = stateOf(agent);
   const label = agentLabel(agent);
-  setClip(row.parts.label, label, agent.description || label); // What it works on, as its tooltip
+  setClip(row.parts.label, label, agentTip(agent, label)); // the whole name, then what it works on
   setClip(row.parts.step, step.title === label ? step.line : step.title);
   setClip(row.parts.folder, agent.folder ? folderName(agent.folder) : "No folder",
           agent.folder || "Its own scratch folder");
@@ -196,7 +196,8 @@ export function mountHistory(root, { onOpen, visible = () => true }) {
 
   function fill(item, agent) {
     const state = stateOf(agent);
-    setClip(item.parts.label, agentLabel(agent), agent.description || agentLabel(agent));
+    const label = agentLabel(agent);
+    setClip(item.parts.label, label, agentTip(agent, label));
     setClip(item.parts.result, agent.result || agent.status || STATES[state] || state);
     setText(item.parts.state, MARKS[state] || state);
     if (item.parts.state.className !== `chip ${state}`) item.parts.state.className = `chip ${state}`;

@@ -204,12 +204,13 @@ class Agent:
     web: str = "web"  # the new look's Web ▾: "web", "brave" or "none"
     auto: bool = False  # Auto-approve in its folder: the user's switch (the composer's, the drawer's), off by default
     description: str = ""  # Build a Mission's What it works on: the user's one line, shown under its name
+    named: bool = False  # the user gave it a name (False: its task's first words name it); the pages can't tell
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
                                          "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
-                                         "result", "files", "workspace", "web", "auto", "description")
+                                         "result", "files", "workspace", "web", "auto", "description", "named")
 
     @property
     def number(self) -> int:
@@ -330,7 +331,7 @@ class AgentManager:
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
         agent = Agent(agent_id, given or _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge,
                       account=chosen, task=text, folder=work, trusted=trusted, workspace=workspace, web=web, auto=auto,
-                      description=about)
+                      description=about, named=bool(given))
         if work is not None:
             with contextlib.suppress(OSError):  # a read-only home: the folder isn't listed as recent, nothing more
                 self.rules.note_used(work)

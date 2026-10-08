@@ -5,7 +5,7 @@
 // Every word is set as text, with its whole as a tooltip; the picture is only ever the app's own JPEG.
 "use strict";
 
-import { agentLabel } from "./chat.js";
+import { agentLabel, agentTip } from "./chat.js";
 import { createWorker } from "./chibi.js";
 import { BADGE_ICONS, icon } from "./icons.js";
 import { STATES, stepOf, timerOf } from "./step.js";
@@ -140,7 +140,7 @@ export function createDesk(id, onSelect = () => {}) {
     const color = COLORS[agent.color] || COLORS.grey;
     if (node.style.getPropertyValue("--c") !== color) node.style.setProperty("--c", color);
     const name = agentLabel(agent);
-    setTitled(parts.nameplate, name, agent.description || name); // What it works on, as its tooltip
+    setTitled(parts.nameplate, name, agentTip(agent, name)); // the whole name, then what it works on
     setTitled(parts.title, step.title);
     setTitled(parts.ticker, step.line);
     setText(parts.badgeText, step.badge);

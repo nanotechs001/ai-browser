@@ -9,6 +9,7 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from test_app_server import started, told, until, wait_for
 from test_bridge import EVENTS
+from test_bridge_powers import INIT, PLAN, use
 from test_home import HOSTILE, stack  # noqa: F401  (fixtures)
 from test_home import until as shows
 from test_mission import WORKING, open_with, station
@@ -32,6 +33,7 @@ async def test_a_mission_keeps_its_name_and_description(fake_claude, tmp_path):
         assert (plain.name, plain.description) == ("Fix the footer on my site", "")  # no name: today's words
         rows = {row["id"]: row for row in manager.snapshot()["agents"]}
         assert (rows["a1"]["name"], rows["a1"]["description"]) == (NAME, ABOUT)
+        assert (rows["a1"]["named"], rows["a2"]["named"]) == (True, False)  # the pages can tell a given name from words
         await wait_for(lambda: all(agent.state == "your_turn" for agent in manager.agents.values()))
         assert "Open example.com and list its prices" in " ".join(told(log))  # the task is the instruction
         everything = log.read_text(encoding="utf-8")  # its argv, system text and every line it was sent
@@ -58,6 +60,7 @@ async def test_names_and_descriptions_are_one_clean_line(fake_claude, tmp_path, 
     try:
         agent = await manager.create("Fix the footer", name=given, description=given)
         assert agent.name == (kept or "Fix the footer") and agent.description == kept
+        assert agent.named is bool(kept) and agent.public()["named"] is bool(kept)  # only a name that survives cleaning
     finally:
         await manager.close_all()
 
@@ -148,8 +151,10 @@ async def test_build_a_mission_names_the_agent_everywhere(stack):
     assert await shows(js, f"{station('a1', '.nameplate')}?.textContent === {json.dumps('1 · ' + name)}")
     agent = stack["server"].agents.agents["a1"]
     assert (agent.name, agent.description, agent.task) == (name, ABOUT, "Open example.com and list its prices")
-    assert await js("document.getElementById('task-name').value + document.getElementById('task-about').value") == ""
-    assert await js(f"{station('a1', '.nameplate')}.title") == ABOUT  # its tooltip elsewhere
+    both = "document.getElementById('task-name').value + document.getElementById('task-about').value"
+    assert await shows(js, f"{both} === ''")  # a created agent clears both (after the app's reply)
+    tip = f"1 · {name}\n{ABOUT}"  # a clipped line keeps its whole name, then what it works on
+    assert await js(f"{station('a1', '.nameplate')}.title") == tip
     assert await shows(js, "document.getElementById('current-step').textContent === " + json.dumps("1 · " + name))
     assert await js("document.getElementById('current-about').textContent") == ABOUT  # under its name
     assert await js("!document.getElementById('current-about').hidden"
@@ -157,8 +162,13 @@ async def test_build_a_mission_names_the_agent_everywhere(stack):
                     " === 'current-about'")
     await js("document.querySelector('.page-link[data-page=\"missions\"]').click(); true")
     label = "document.querySelector('#page-missions .mission[data-id=\"a1\"] .label')"
-    assert await shows(js, f"{label}?.title === {json.dumps(ABOUT)}")
+    assert await shows(js, f"{label}?.title === {json.dumps(tip)}")
     await js("document.querySelector('.page-link[data-page=\"dashboard\"]').click();"
+             "document.querySelector('#views-switch [data-view=\"list\"]').click(); true")
+    row = "document.querySelector('#view-list .mission[data-id=\"a1\"] .label')"  # the List
+    assert await shows(js, f"{row}?.title === {json.dumps(tip)}")
+    assert await js(f"{row}.textContent") == "1 · " + name
+    await js("document.querySelector('#views-switch [data-view=\"flow\"]').click();"
              "document.getElementById('current-chat').click(); true")
     assert await shows(js, "document.querySelector('#drawer-body .about')?.textContent === " + json.dumps(ABOUT))
     assert await js("document.title") != "pwned" and await js("document.querySelectorAll('img[src=x]').length") == 0
@@ -166,5 +176,74 @@ async def test_build_a_mission_names_the_agent_everywhere(stack):
     assert await js("document.getElementById('mission-words').hidden")  # Ask AI: no fields
     home = stack["home_js"]
     row = "document.querySelector('#agents .agent[data-id=\"a1\"] .name')"
-    assert await shows(home, f"{row}?.title === {json.dumps(ABOUT)}")
+    assert await shows(home, f"{row}?.title === {json.dumps(tip)}")
     assert await home(f"{row}.textContent") == "1 · " + name
+
+
+@CHROME
+async def test_history_and_the_list_say_the_name_and_what_it_works_on(stack):
+    server = stack["server"]
+    await server.agents.create("Open example.com and list its prices", name=NAME, description=ABOUT)
+    await server.agents.create("Fix the footer on my site")  # no name, no description: today's words
+    await wait_for(lambda: all(agent.state == "your_turn" for agent in server.agents.agents.values()))
+    js = await open_with(stack)
+    await js("document.querySelector('#views-switch [data-view=\"list\"]').click(); true")
+    listed = "[...document.querySelectorAll('#view-list .mission .label')].map(n => [n.textContent, n.title])"
+    assert await shows(js, f"{listed}.length === 2")
+    assert await js(listed) == [[f"1 · {NAME}", f"1 · {NAME}\n{ABOUT}"],
+                                ["2 · Fix the footer on my site", "2 · Fix the footer on my site"]]
+    await js("document.querySelector('.page-link[data-page=\"history\"]').click(); true")
+    kept = "[...document.querySelectorAll('#page-history .history-row')].map(r => [r.dataset.id," \
+           " r.querySelector('.label').textContent, r.querySelector('.label').title])"
+    assert await shows(js, f"{kept}.length === 2")
+    assert sorted(await js(kept)) == [["a1", f"1 · {NAME}", f"1 · {NAME}\n{ABOUT}"],
+                                      ["a2", "2 · Fix the footer on my site", "2 · Fix the footer on my site"]]
+
+
+@CHROME
+async def test_the_name_gets_its_own_line_in_current_task_only_when_the_user_gave_it(stack):
+    stack["script"].write_text(json.dumps([INIT, use("t1", "TodoWrite", PLAN), {"sleep": 30}]), encoding="utf-8")
+    server = stack["server"]
+    await server.agents.create("Open example.com and list its prices", name=NAME, description=ABOUT)
+    await server.agents.create("Fix the footer on my site")  # a to-do list, but no name and no description
+    js = await open_with(stack)
+    step = "document.getElementById('current-step').textContent"
+    assert await shows(js, f"{station('a2')} !== null && {station('a1')} !== null")
+    await js(f"{station('a1')}.click(); true")
+    assert await shows(js, f"{step} === '2. Fixing the bug' && document.getElementById('current-name').textContent"
+                       f" === {json.dumps('1 · ' + NAME)}")  # named + a to-do list: the name has a line of its own
+    assert await js("!document.getElementById('current-name').hidden"
+                    " && document.getElementById('current-name').nextElementSibling.id === 'current-about'"
+                    " && !document.getElementById('current-about').hidden")  # and what it works on is under it
+    assert await js("document.getElementById('current-about').textContent") == ABOUT
+    await js(f"{station('a2')}.click(); true")
+    assert await shows(js, "document.getElementById('current-avatar').dataset.id === 'a2'")
+    assert await js(step) == "2. Fixing the bug"  # unnamed + a to-do list: today's card, no extra line
+    assert await js("document.getElementById('current-name').hidden && document.getElementById('current-about').hidden")
+
+
+@CHROME
+async def test_a_refused_start_keeps_the_typed_fields(stack):
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    js = await open_with(stack)
+    too_long = "n" * 61  # past the page's maxlength, as a script (or a changed page) can set it
+    await js(f"document.getElementById('task-name').value = {json.dumps(too_long)};"
+             f"document.getElementById('task-about').value = {json.dumps(ABOUT)};"
+             "document.getElementById('task').value = 'Open example.com and list its prices';"
+             "document.getElementById('start').click(); true")
+    assert await shows(js, "document.getElementById('task-note').textContent"
+                           " === \"A mission's name is at most 60 characters\"")
+    assert await shows(js, "!document.getElementById('start').disabled")  # the button works again
+    assert await js("[document.getElementById('task-name').value, document.getElementById('task-about').value,"
+                    " document.getElementById('task').value]") == [too_long, ABOUT, "Open example.com and list its prices"]
+    assert not stack["server"].agents.agents  # nothing started
+    await js(f"document.getElementById('task-name').value = {json.dumps(NAME)};"
+             "document.getElementById('start').click(); true")  # mended, pressed again
+    assert await shows(js, "document.getElementById('task-name').value === ''")
+    assert (stack["server"].agents.agents["a1"].name, stack["server"].agents.agents["a1"].description) == (NAME, ABOUT)
+    await js("document.getElementById('task').value = 'Fix the footer on my site';"
+             "document.getElementById('start').click(); true")  # no name, no description
+    assert await shows(js, f"{station('a2')} !== null")
+    await js(f"{station('a2')}.click(); true")
+    assert await shows(js, "document.getElementById('current-step').textContent === '2 · Fix the footer on my site'")
+    assert await js("document.getElementById('current-about').hidden && document.getElementById('current-name').hidden")
