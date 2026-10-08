@@ -42,7 +42,7 @@ export function fillMissionRow(row, agent, now = Date.now() / 1000) {
   const step = stepOf(agent);
   const state = stateOf(agent);
   const label = agentLabel(agent);
-  setClip(row.parts.label, label);
+  setClip(row.parts.label, label, agent.description || label); // What it works on, as its tooltip
   setClip(row.parts.step, step.title === label ? step.line : step.title);
   setClip(row.parts.folder, agent.folder ? folderName(agent.folder) : "No folder",
           agent.folder || "Its own scratch folder");
@@ -196,7 +196,7 @@ export function mountHistory(root, { onOpen, visible = () => true }) {
 
   function fill(item, agent) {
     const state = stateOf(agent);
-    setClip(item.parts.label, agentLabel(agent));
+    setClip(item.parts.label, agentLabel(agent), agent.description || agentLabel(agent));
     setClip(item.parts.result, agent.result || agent.status || STATES[state] || state);
     setText(item.parts.state, MARKS[state] || state);
     if (item.parts.state.className !== `chip ${state}`) item.parts.state.className = `chip ${state}`;

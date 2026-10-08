@@ -71,6 +71,12 @@
                   aria-selected="false">Ask AI</button>
           <button id="mode-build" type="button" role="tab" data-mode="build" data-icon="missions"
                   aria-selected="true">Build a Mission</button>
+          <div id="mission-words" class="mission-words">
+            <input id="task-name" type="text" maxlength="60" autocomplete="off" placeholder="Name this agent"
+                   aria-label="Name this agent">
+            <input id="task-about" type="text" maxlength="160" autocomplete="off"
+                   placeholder="What it works on, in one line" aria-label="What it works on">
+          </div>
           <label class="voice-switch" title="Updates spoken aloud, with a voice that runs on this computer only"><input
             id="voice" type="checkbox"> Voice</label>
           <span id="voice-note" class="muted" role="status"></span>
@@ -127,6 +133,8 @@
       <div id="current-body" class="current-body" hidden>
         <div class="current-head"><span id="current-avatar" class="avatar"></span>
           <div class="current-words">
+            <strong id="current-name" class="current-name clip" hidden></strong>
+            <div id="current-about" class="current-about muted clip" hidden></div>
             <div class="current-top"><strong id="current-step" class="clip"></strong><span id="current-timer"
               class="timer"></span></div>
             <div id="current-line" class="muted clip"></div>

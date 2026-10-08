@@ -190,6 +190,7 @@ function fillAgentRow(row, agent) {
   row.style.borderLeftColor = color;
   parts.dot.style.background = color;
   setText(parts.name, agentLabel(agent));
+  if (parts.name.title !== (agent.description || "")) parts.name.title = agent.description || ""; // What it works on
   const paused = Boolean(agent.limit) && agent.state === "failed"; // at a usage limit: paused, not failed
   setText(parts.state, paused ? "paused" : STATES[agent.state] || agent.state);
   parts.state.className = `chip ${paused ? "waiting" : agent.state}`;

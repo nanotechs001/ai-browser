@@ -112,6 +112,8 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
     const state = stateOf(agent);
     $("drawer-dot").style.background = COLORS[agent.color] || COLORS.grey;
     setText($("drawer-title"), agentLabel(agent));
+    setText(parts.about, String(agent.description || "")); // What it works on, under its name
+    parts.about.hidden = !agent.description;
     const paused = Boolean(agent.limit) && state === "failed"; // at a usage limit: paused, not failed
     setText(parts.state, paused ? "paused" : STATES[state] || state);
     parts.state.className = `chip ${paused ? "waiting" : state}`;
@@ -165,7 +167,8 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
     if (!agent) return;
     drawer.brain = null;
     drawer.id = id;
-    const parts = { state: el("span", "chip"), status: el("div", "status muted"), buttons: el("div", "row buttons"),
+    const parts = { about: el("p", "about muted"), state: el("span", "chip"), status: el("div", "status muted"),
+                    buttons: el("div", "row buttons"),
                     permission: el("div", "permission-slot"), yourTabs: el("details", "your-tabs"),
                     messages: el("div", "messages"), card: null, account: el("span", "chip account"),
                     moved: el("div", "status muted moved"),
@@ -195,7 +198,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
     }
     drawer.yourTabs = mountYourTabs(parts.yourTabs, { send, agentId: () => id });
     parts.yourTabs.open = showTabs; // folded, unless the user asked to hand a tab over
-    $("drawer-body").replaceChildren(parts.status, parts.moved, parts.folder, parts.auto, parts.autoWords,
+    $("drawer-body").replaceChildren(parts.about, parts.status, parts.moved, parts.folder, parts.auto, parts.autoWords,
                                      parts.autoNote, parts.buttons, parts.permission,
                                      parts.askSlot, parts.plan, parts.subs, parts.yourTabs, parts.messages,
                                      drawer.line.element);

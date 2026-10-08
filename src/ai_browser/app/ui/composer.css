@@ -12,6 +12,10 @@
                 color: var(--text-2); cursor: pointer; }
 .auto-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2);
                cursor: pointer; white-space: nowrap; }  /* Auto-approve in its folder, beside Folder */
+/* Build a Mission's Name and What it works on: in the modes' row, above the box, so the office keeps its height */
+.mission-words { display: flex; gap: 8px; flex: 1 1 260px; min-width: 0; margin: 0 4px; }
+.mission-words input { flex: 2 1 0; min-width: 0; width: 100%; padding: 6px 10px; }
+.mission-words #task-name { flex: 1 1 0; }
 .box { border-radius: 12px; background: var(--field); border: 1px solid var(--line-strong); padding: 10px 12px; }
 .box textarea { width: 100%; border: none; outline: none; resize: none; background: transparent; color: var(--text);
                 font-size: 15px; field-sizing: content; min-height: 44px; max-height: 160px; padding: 2px 4px; }

@@ -50,7 +50,9 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     $("start-label").textContent = MODES[mode].label;
     $("task").placeholder = MODES[mode].placeholder;
     const build = mode === "build";
-    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "attach"]) $(id).hidden = !build;
+    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "attach", "mission-words"]) {
+      $(id).hidden = !build;
+    }
     $("task-account").hidden = !build || rows.length < 2;
     $("task-workspace").hidden = mode === "ask";
     $("attached").hidden = !build || uploads.count() === 0;
@@ -105,7 +107,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     const files = uploads.ids();
     const account = $("task-account").hidden ? {} : { account: $("task-account").value };
     const auto = $("task-auto").checked ? { auto: true } : {}; // the user's own tick, never a default
+    const name = $("task-name").value.trim(); // Name and What it works on: shown as text, never the agent's instruction
+    const description = $("task-about").value.trim();
     begin({ type: "new_task", text, skills: [], model: $("task-model").value, web: $("task-web").value, ...account,
+            ...(name ? { name } : {}), ...(description ? { description } : {}),
             ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...auto, ...workspace() });
   }
 
@@ -202,6 +207,8 @@ export function mountComposer({ link, workspaceOf = () => null }) {
             const took = taking;
             finish();
             $("task").value = "";
+            $("task-name").value = "";
+            $("task-about").value = "";
             $("task-auto").checked = false; // each task is its own choice: the next one starts off
             uploads.taken(took); // the app moved those into the agent's folder
             setMode(mode); // the chips show in Build a Mission only

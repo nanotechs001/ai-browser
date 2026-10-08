@@ -48,9 +48,9 @@ function setText(node, text) {
   if (node.textContent !== text) node.textContent = text;
 }
 
-function setTitled(node, text) { // a line that may be clipped: its whole words as a tooltip (Review Focus 1)
+function setTitled(node, text, title = text) { // a line that may be clipped: its whole words as a tooltip
   setText(node, text);
-  if (node.title !== text) node.title = text;
+  if (node.title !== title) node.title = title;
 }
 
 export function art(className, viewBox, shapes) { // a small fixed drawing from [tag, attributes] pairs, never parsed
@@ -140,7 +140,7 @@ export function createDesk(id, onSelect = () => {}) {
     const color = COLORS[agent.color] || COLORS.grey;
     if (node.style.getPropertyValue("--c") !== color) node.style.setProperty("--c", color);
     const name = agentLabel(agent);
-    setTitled(parts.nameplate, name);
+    setTitled(parts.nameplate, name, agent.description || name); // What it works on, as its tooltip
     setTitled(parts.title, step.title);
     setTitled(parts.ticker, step.line);
     setText(parts.badgeText, step.badge);
