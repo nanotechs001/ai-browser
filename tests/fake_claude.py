@@ -44,11 +44,33 @@ for stream in (sys.stdin, sys.stdout, sys.stderr):  # UTF-8 on every OS, as Clau
 API_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 
+def write_line(handle, text: str) -> None:
+    """One whole line at the end of a log that several fakes (two agents) append to at once. On Windows an append is a
+    seek to the end, then a write: two fakes could write at the same place, one line over the other's (Windows run
+    37766680170). There a lock on a file beside the log keeps them apart; elsewhere one append is one write already."""
+    if os.name != "nt":
+        handle.write(text)
+        handle.flush()
+        return
+    import msvcrt  # Windows only
+
+    with open(handle.name + ".lock", "a+b") as lock:
+        lock.seek(0)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)  # waits (up to 10 s) while another fake writes
+        try:
+            handle.write(text)
+            handle.flush()
+        finally:
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
+
 def auth_status() -> None:
     """`claude auth status`, as Claude Code 2.1.263 prints it (JSON), for the folder in CLAUDE_CONFIG_DIR."""
     folder = os.environ.get("CLAUDE_CONFIG_DIR") or ""
     with open(os.environ["FAKE_CLAUDE_LOG"] + ".auth", "a", encoding="utf-8") as calls:
-        calls.write(json.dumps({"config": folder, "api": [key for key in API_VARIABLES if key in os.environ]}) + "\n")
+        write_line(calls, json.dumps({"config": folder, "api": [key for key in API_VARIABLES if key in os.environ]})
+                   + "\n")
     signed = None
     if folder and os.path.isfile(os.path.join(folder, SIGNED_IN)):
         with open(os.path.join(folder, SIGNED_IN), encoding="utf-8") as marker:
@@ -83,8 +105,8 @@ def one_shot(argv: list[str]) -> None:
     except FileNotFoundError:
         earlier = 0
     with open(os.environ["FAKE_CLAUDE_LOG"], "a", encoding="utf-8") as call_log:
-        call_log.write(json.dumps({"oneshot": prompt, "argv": argv,
-                                   "config": os.environ.get("CLAUDE_CONFIG_DIR")}) + "\n")
+        write_line(call_log, json.dumps({"oneshot": prompt, "argv": argv,
+                                         "config": os.environ.get("CLAUDE_CONFIG_DIR")}) + "\n")
     with open(os.environ["FAKE_CLAUDE_SCRIPT"], encoding="utf-8") as script:
         entries = json.load(script)
     if isinstance(entries, dict):
@@ -151,7 +173,7 @@ def emit(event: dict) -> None:
 
 def read(log) -> None:
     for line in sys.stdin:
-        log.write(line if line.endswith("\n") else line + "\n")
+        write_line(log, line if line.endswith("\n") else line + "\n")
         message = json.loads(line)
         if message.get("type") == "control_request":
             if message.get("request", {}).get("subtype") == "interrupt":
@@ -184,7 +206,7 @@ def ask_permission(request: dict) -> str:
 
 
 with open(os.environ["FAKE_CLAUDE_LOG"], "a", buffering=1, encoding="utf-8") as log:
-    log.write(json.dumps(sys.argv[1:]) + "\n")
+    write_line(log, json.dumps(sys.argv[1:]) + "\n")
     if RESUME is not None and project_folder() is not None \
             and not os.path.isfile(os.path.join(project_folder(), f"{RESUME}.jsonl")):
         print(f"No conversation found with session ID: {RESUME}", file=sys.stderr, flush=True)
@@ -207,7 +229,7 @@ with open(os.environ["FAKE_CLAUDE_LOG"], "a", buffering=1, encoding="utf-8") as 
                 continue
             if "spawn" in event:  # a child of its own, as Claude Code starts its MCP servers
                 child = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep({float(event['spawn'])})"])
-                log.write(json.dumps({"child": child.pid}) + "\n")
+                write_line(log, json.dumps({"child": child.pid}) + "\n")
                 continue
             if "ask_permission" in event:
                 behavior = ask_permission(event["ask_permission"])
