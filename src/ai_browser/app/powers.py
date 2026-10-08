@@ -19,7 +19,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import sys
 import time
 from collections.abc import Iterable
@@ -234,6 +233,12 @@ def _name(word: str) -> str:
 def _bare(word: str) -> bool:
     """A program found on the PATH, not one the folder holds (./bin/ls could be anything the agent wrote)."""
     return "/" not in word and "\\" not in word
+
+
+def _on_path(name: str) -> bool:
+    """Whether a folder on the PATH holds a file of this name, as bash looks for a script there: runnable or not, and
+    on Windows whatever its extension (shutil.which finds only PATHEXT's programs there, never a run.sh)."""
+    return any(os.path.isfile(os.path.join(folder, name)) for folder in os.get_exec_path() if folder)
 
 
 def _own_program(word: str) -> bool:
@@ -523,7 +528,7 @@ def _bash(data: dict, folder, moved: bool, skills=()) -> tuple[str, str]:
     # A file's name without a slash: bash runs the folder's file, else the first one on the PATH (the review's C1):
     # only one that is there, while the shell is still in the folder
     script = _shell_script(words) and ("/" in words[1] or (not moved and os.path.isfile(Path(folder) / words[1])
-                                                          and shutil.which(words[1]) is None))
+                                                          and not _on_path(words[1])))
     if program in LAUNCHERS and not script:
         return "ask_always", WHY_LAUNCHER
     if program in RISKY or program.startswith("mkfs"):
