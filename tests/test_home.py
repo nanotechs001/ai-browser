@@ -117,7 +117,9 @@ async def stack(fake_claude, tmp_path):
     server.attach_brave(brave)
     agents.close_tabs = brave.close_targets
     profile = tmp_path / "profile"
-    process = launch(profile, headless=True)
+    # The system's Reduce Motion starts off whatever the computer's setting (GitHub's Windows runner has animations
+    # off, which Chrome reads as on): the tests that need it switch it on in their page (test_office's reduce_motion)
+    process = launch(profile, headless=True, extra_args=("--force-prefers-no-reduced-motion",))
     ws_url = find_ws_url(profile, timeout=20)
     cdp = await CDP.connect(ws_url)
     target, js = await open_page(cdp, f"{url}/open?code={server.new_launch_code()}")  # the cookie, the real way
