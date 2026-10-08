@@ -152,6 +152,25 @@ def test_mounts(env):
     assert (env["project"], "/skills/ai-browser") in mounts
 
 
+
+def test_skill_roots_are_the_folders_the_catalog_reads(env, monkeypatch):  # Part 2 of the review of 2026-10-08
+    from ai_browser import skills
+
+    monkeypatch.setattr(skills, "user_folders", lambda: (env["claude"], env["app"]))  # never the user's own
+    roots = set(skills.skill_roots())
+    assert {env["claude"] / "skills", env["ecc"], env["sp"], env["new"]} <= roots
+    assert not {env["claude"] / "plugins/cache/x/off/1.0", env["app"] / "local-agent-mode-sessions/skills-plugin/a/old/skills"} & roots
+
+
+def test_load_without_docker_names_the_skills_own_folder(env):  # Part 2: its scripts run with the agent's own Bash
+    text = catalog(env).load("ecc:api-design", host=True)
+    folder = (env["ecc"] / "skills" / "api-design").as_posix()
+    assert folder in text.splitlines()[0] and "/skills/plugins" not in text
+    assert "Run its scripts with your own commands (Bash), from your task's folder." in text
+    assert f"Run {env['ecc'].as_posix()}/skills/api-design/scripts/run.py" in text
+    assert "files: scripts/run.py" in text and "${CLAUDE_PLUGIN_ROOT}" not in text
+
+
 def test_summary_groups_by_namespace(env):
     summary = catalog(env).summary()
     assert "9 skills" in summary

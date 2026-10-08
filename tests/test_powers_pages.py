@@ -478,6 +478,10 @@ def test_the_readme_explains_auto_approve():  # the user's choice, 2026-10-07: w
                    # the ruling of 2026-10-08: a shell script in the folder is a script like python x.py
                    "and a script of the folder's own (`bash script.sh`, `sh script.sh`, `./script.sh`, "
                    "`scripts/build.sh`", "its copy of a known program, like `venv/bin/pip`, counts as that program",
+                   # Part 2 of the review of 2026-10-08: skills' scripts, and without Docker
+                   "and a script of an installed skill (`python ~/.claude/skills/<name>/scripts/run.py`), its "
+                   "arguments still inside the folder",
+                   "When Docker isn't running, an agent runs a skill's scripts with its own commands",
                    "`bash` or `sh` in any other form (`bash -c`, `bash -s`, `bash` alone)",
                    "On Windows, commands don't run in a sandbox: the cards and Auto-approve's list are the guard",
                    "Web Search and Web Fetch, a command reaching a site, your own tools",
@@ -491,5 +495,6 @@ def test_the_readme_explains_auto_approve():  # the user's choice, 2026-10-07: w
                    "`.husky`, `.vscode` or `.idea` settings, its Git hooks folder"):
         assert phrase in readme, phrase
     for gone in ("a command whose job is reaching a site asks", "or one **Auto-approve in its folder** runs",
-                 "on Windows and Linux, commands still ask", "on Windows and Linux it asks with a card too"):
+                 "on Windows and Linux, commands still ask", "on Windows and Linux it asks with a card too",
+                 "Shell commands and skill scripts always run in Docker"):
         assert gone not in readme, gone

@@ -530,6 +530,30 @@ async def test_on_windows_auto_approve_runs_ordinary_commands_but_not_what_reach
     assert bridge._auto_ids == {f"u{index}" for index in range(len(ordinary))}
 
 
+
+async def test_auto_approve_runs_an_installed_skills_script_but_never_writes_into_it(  # Part 2 of the review of
+        fake_claude, tmp_path, project, monkeypatch, sandboxed):  # 2026-10-08: their skills' scripts too
+    from ai_browser import skills
+
+    claude = tmp_path / "users" / ".claude"  # the agent's skills, as the catalog finds them: never the user's own
+    scripts = claude / "skills" / "tidy" / "scripts"
+    scripts.mkdir(parents=True)
+    (claude / "skills" / "tidy" / "SKILL.md").write_text("---\nname: tidy\n---\n", encoding="utf-8")
+    (scripts / "x.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(skills, "user_folders", lambda: (claude, tmp_path / "users" / "Claude"))
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": f"python3 {scripts}/x.py src/app.py"}, tool_id="u1"),
+                                  ask("Bash", {"command": f"cp src/app.py {scripts}/x.py"}, tool_id="u2"),
+                                  ask("Bash", {"command": f"python3 {scripts}/x.py ../outside"}, tool_id="u3"),
+                                  RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"] * 2, work=project, auto=True)
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == [f"cp src/app.py {scripts}/x.py",
+                                                              f"python3 {scripts}/x.py ../outside"]
+    assert all(request["card"]["why"] for request in shown)  # each asked every time
+    assert bridge._auto_ids == {"u1"}
+
+
 async def test_a_request_without_its_tool_use_never_runs_by_auto_approve(  # the review's 4: the mark fails closed
         fake_claude, tmp_path, project, sandboxed):
     runner, log, script = fake_claude

@@ -557,6 +557,73 @@ def test_a_trailing_dot_or_space_names_the_same_guarded_file(project, monkeypatc
         assert classify("Write", {"file_path": str(project / path), "content": "x"}, project) == "ask_always", path
 
 
+
+# Part 2 of the review of 2026-10-08: an installed skill's script runs like one of the folder's own (the user's goal:
+# "agents run scripts on their own", their skills' too, without Docker). Only running it: its arguments follow the
+# folder's rules, and writing into a skill's folder is outside the folder.
+@pytest.fixture
+def skill(tmp_path, project):
+    """(a throwaway skills root, as the catalog's: never the user's ~/.claude; its skill's scripts folder)."""
+    root = tmp_path / "skills-root"
+    scripts = root / "tidy" / "scripts"
+    scripts.mkdir(parents=True)
+    (root / "tidy" / "SKILL.md").write_text("---\nname: tidy\n---\nTidy up.\n", encoding="utf-8")
+    for name in ("x.py", "x.js", "run.sh"):
+        (scripts / name).write_text("x\n", encoding="utf-8")
+    symlink_or_skip(tmp_path / "outside" / "secret.txt", scripts / "link.py")
+    return root, scripts
+
+
+SKILL_RUNS = ["python {s}/x.py", "python3 {s}/x.py src/app.py --fast", "node {s}/x.js", "bash {s}/run.sh",
+              "sh {s}/run.sh one two", "{s}/run.sh", "{s}/run.sh src", "python {s}/../scripts/x.py"]
+SKILL_ASKS_ALWAYS = ["python {s}/x.py ../outside/secret.txt", "cp src/app.py {s}/x.py", "touch {s}/new.py",
+                     "python {s}/link.py", "bash {s}/link.py", "{s}/link.py", "python -u {s}/x.py",
+                     "bash -c {s}/run.sh", "python {s}/../../../outside/secret.txt", "{s}/python3 -c 'x'",
+                     "sed -i s/a/b/ {s}/x.py", "mv {s}/x.py src/x.py"]
+
+
+def skill_auto(command, folder, skills, sandbox, away=False):
+    from ai_browser.app.powers import auto_approves, classify
+
+    data = {"command": command}
+    return auto_approves("Bash", data, classify("Bash", data, folder, skills=skills), sandbox=sandbox, away=away,
+                         skills=skills)
+
+
+@pytest.mark.parametrize("command", SKILL_RUNS)
+def test_auto_approve_runs_an_installed_skills_script_on_a_mac_and_on_windows(project, skill, monkeypatch, command):
+    from ai_browser.app.powers import WHY_SKILL, card, classify
+
+    root, scripts = skill
+    command = command.format(s=scripts)
+    if not command.startswith("/"):  # a full path as the program was never the folder's: a card, as /bin/ls
+        assert classify("Bash", {"command": command}, project) == "ask_always"  # without the skills: outside
+    assert classify("Bash", {"command": command}, project, skills=[root]) == "ask"
+    shown = card("Bash", {"command": command}, project, skills=[root])
+    assert shown["why"] == WHY_SKILL and shown["always"] is False  # without the switch: a card, never Always
+    for platform, sandbox, runs in (("darwin", True, True), ("win32", False, True), ("linux", False, False)):
+        as_platform(monkeypatch, platform)
+        assert skill_auto(command, project, [root], sandbox) is runs, (platform, command)
+        assert not skill_auto(command, project, [root], sandbox, away=True), (platform, command)
+        assert not skill_auto(command, project, [], sandbox), (platform, command)
+
+
+@pytest.mark.parametrize("command", SKILL_ASKS_ALWAYS)
+def test_a_skills_script_with_an_outside_argument_or_a_write_into_a_skill_asks_every_time(project, skill, monkeypatch,
+                                                                                            command):
+    from ai_browser.app.powers import classify
+
+    root, scripts = skill
+    command = command.format(s=scripts)
+    for platform, sandbox in (("darwin", True), ("win32", False)):
+        as_platform(monkeypatch, platform)
+        assert classify("Bash", {"command": command}, project, skills=[root]) == "ask_always", (platform, command)
+        assert not skill_auto(command, project, [root], sandbox), (platform, command)
+    for tool, data in (("Write", {"file_path": str(scripts / "x.py"), "content": "x"}),
+                       ("Edit", {"file_path": str(scripts / "x.py"), "old_string": "x", "new_string": "y"})):
+        assert classify(tool, data, project, skills=[root]) == "ask_always"  # a skill's files are outside
+
+
 def test_after_the_shell_moved_a_search_without_a_full_path_asks(project):  # the review's 8 (it was so before)
     from ai_browser.app.powers import classify
 

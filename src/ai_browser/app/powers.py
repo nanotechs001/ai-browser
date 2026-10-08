@@ -118,6 +118,7 @@ WHY_MOVED = "The shell has left the task's folder: a path that isn't a full one 
 WHY_EDIT = "It changes a file outside the task's folder"
 WHY_GUARDED = "It changes Git's, Claude Code's or an editor's own settings or hooks in this folder"
 WHY_WEB = "That isn't a web address"
+WHY_SKILL = "It runs a script of an installed skill, outside the task's folder"
 
 
 def user_home() -> Path:
@@ -243,6 +244,23 @@ def _shell_script(words: list[str]) -> bool:
     neither runs code given on the command line nor reads stdin (the ruling of 2026-10-08). Where the file is, the
     caller checks."""
     return words[0] in SHELLS and len(words) > 1 and not words[1].startswith(("-", "+"))
+
+
+def _skill_file(word: str, folder, skills) -> bool:
+    """Whether a word names a file in an installed skill's folder (`skills`: the catalog's roots), once symlinks and
+    .. are resolved; a relative one is read from the task's folder (Part 2 of the review of 2026-10-08)."""
+    if not skills or not isinstance(word, str) or not word or word.startswith(("-", "+")):
+        return False
+    path = Path(os.path.expanduser(word))
+    path = path if path.is_absolute() else Path(folder) / path
+    return any(inside(str(path), root) for root in skills)
+
+
+def _skill_link(word: str, skills) -> bool:
+    """Whether a full path names a file in an installed skill's folder as written, though its links lead elsewhere."""
+    seen = os.path.normcase(os.path.abspath(word))
+    return any(seen.startswith(top.rstrip(os.sep) + os.sep)
+               for root in skills for top in (os.path.normcase(os.path.abspath(root)), _real(root)))
 
 
 def _git_runs_programs(folder) -> bool:
@@ -468,7 +486,7 @@ def _git_config_writes(args: list[str]) -> bool:
     return len([arg for arg in args if not arg.startswith("-")]) != 1
 
 
-def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
+def _bash(data: dict, folder, moved: bool, skills=()) -> tuple[str, str]:
     if data.get("dangerouslyDisableSandbox") is True:
         return "ask_always", WHY_SANDBOX
     words = words_of(data.get("command"))
@@ -485,7 +503,14 @@ def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
     why = _destroys(program, words)
     if why:
         return "ask_always", why
-    named = words if _own_program(words[0]) else words[1:]  # the folder's own program: its path counts too
+    # An installed skill's script, run as the program or by bash, sh, python, python3 or node with it first: its path
+    # isn't the folder's, but its arguments still are (Part 2 of the review of 2026-10-08)
+    runner = words[0] in SHELLS or AUTO_BASH.get(words[0]) is _SCRIPT
+    skill = 0 if "/" in words[0] and _skill_file(words[0], folder, skills) else \
+        1 if runner and len(words) > 1 and _skill_file(words[1], folder, skills) else None
+    named = words[skill + 1:] if skill is not None else words if _own_program(words[0]) else words[1:]
+    if skill is None and words[0].startswith("/") and _skill_link(words[0], skills):
+        return "ask_always", WHY_OUTSIDE  # a skill's file linked to one outside it
     if any(_outside(word, folder) for word in named):
         return "ask_always", WHY_OUTSIDE
     guarded = _guard(folder)
@@ -494,10 +519,12 @@ def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
         return "ask_always", WHY_GUARDED  # C1: what Git, Claude Code or an editor runs or loads later
     if not moved and _harmless(program, words, folder):
         return "allow", ""
-    if script:
-        return "ask", WHY_LAUNCHER  # no rule covers what a script does (no Always); Auto-approve may run it
+    if script:  # no rule covers what a script does (no Always); Auto-approve may run it
+        return "ask", WHY_SKILL if skill is not None else WHY_LAUNCHER
     prefix, why = _prefix(words)
-    return ("ask", "") if prefix else ("ask_always", why)
+    if not prefix:
+        return "ask_always", why
+    return "ask", WHY_SKILL if skill is not None else ""  # a skill's script: no Always either
 
 
 def _glob_root(pattern: str) -> str:
@@ -600,13 +627,13 @@ def _host(url) -> str:
     return host if parts.scheme in ("http", "https") and re.fullmatch(r"[a-z0-9.-]{1,253}", host) else ""
 
 
-def _decide(tool: str, data, folder, moved: bool = False) -> tuple[str, str]:
+def _decide(tool: str, data, folder, moved: bool = False, skills=()) -> tuple[str, str]:
     """classify's answer, and why a card that asks every time does."""
     data = data if isinstance(data, dict) else {}
     if tool in FREE or tool in SUBAGENTS:
         return "allow", ""
     if tool == "Bash":
-        return _bash(data, folder, moved)
+        return _bash(data, folder, moved, skills)
     if tool in READS:
         return _reads(tool, data, folder, moved)
     if tool in EDITS:
@@ -623,11 +650,11 @@ def _decide(tool: str, data, folder, moved: bool = False) -> tuple[str, str]:
     return "ask_always", ""
 
 
-def classify(tool: str, data, folder, moved: bool = False) -> str:
+def classify(tool: str, data, folder, moved: bool = False, skills=()) -> str:
     """"allow", "ask" or "ask_always" for one request (Decisions 3 and 4). `moved`: an allowed command may have taken
     the shell out of the folder, so no command is harmless for the rest of that Claude Code process (plan decision
     8)."""
-    return _decide(tool, data, folder, moved)[0]
+    return _decide(tool, data, folder, moved, skills)[0]
 
 
 def rule_for(tool: str, data) -> str | None:
@@ -747,7 +774,7 @@ def _refused(word: str, options: tuple[str, ...]) -> bool:
     return False
 
 
-def ordinary(words: list[str]) -> bool:
+def ordinary(words: list[str], skills=()) -> bool:
     """Whether one plain command is an ordinary use in AUTO_BASH (C2), or runs a script of the folder's own: bash or sh
     with the file first, or the file as the program (the ruling of 2026-10-08). classify, which asked, has checked its
     paths are inside the folder and none is Git's or Claude Code's. The folder's copy of a program known here (pip,
@@ -755,8 +782,8 @@ def ordinary(words: list[str]) -> bool:
     program, rest = words[0], words[1:]
     if program in SHELLS:
         return _shell_script(words)
-    if _own_program(program):
-        name = _name(program)
+    if _own_program(program) or (program.startswith("/") and any(inside(program, root) for root in skills)):
+        name = _name(program)  # the folder's own program, or an installed skill's (`skills`: their roots)
         known = name in AUTO_BASH or name in SUBCOMMANDS or name in AUTO_FETCHES or _INTERPRETER.fullmatch(name)
         return ordinary([name, *rest]) if known else True
     use = AUTO_BASH.get(program)
@@ -791,7 +818,7 @@ def auto_commands() -> bool:
     return (sandbox_on() and SANDBOX_NETWORK) or sys.platform == "win32"
 
 
-def auto_approves(tool: str, data, decision: str, sandbox: bool = False, away: bool = False) -> bool:
+def auto_approves(tool: str, data, decision: str, sandbox: bool = False, away: bool = False, skills=()) -> bool:
     """Whether Auto-approve in its folder runs this request without a card: an "ask" (never "ask_always") of Edit or
     Write, so an edit or a new file inside the task's folder; and an "ask" of Bash that AUTO_BASH lists, where the
     sandbox holds commands (`sandbox`), or on Windows unless it downloads what it lacks (AUTO_FETCHES), and in both
@@ -806,7 +833,7 @@ def auto_approves(tool: str, data, decision: str, sandbox: bool = False, away: b
     if away or not (held or sys.platform == "win32"):
         return False
     words = words_of(data.get("command") if isinstance(data, dict) else None)
-    return words is not None and ordinary(words) and (held or _name(words[0]) not in AUTO_FETCHES)
+    return words is not None and ordinary(words, skills) and (held or _name(words[0]) not in AUTO_FETCHES)
 
 
 # ---- the card: what a request will do, as plain text (Decision 2), and each action's badge (Decision 10) -------------
@@ -907,15 +934,16 @@ def _lines(shown: dict, old: str | None, new: str) -> None:
     shown["hidden"] = len(rows) - len(shown["lines"])
 
 
-def card(tool: str, data, folder, moved: bool = False, sandbox: bool = False) -> dict:
+def card(tool: str, data, folder, moved: bool = False, sandbox: bool = False, skills=()) -> dict:
     """What a card shows for one request, as plain text (Decision 2): the command and its folder, a clipped diff or
     the new file, the path, the site or the query; whether Always allow is offered, and if not, why. `sandbox`: the
     command will run in Claude Code's sandbox (R1)."""
     data = data if isinstance(data, dict) else {}
-    decision, why = _decide(tool, data, folder, moved)
+    decision, why = _decide(tool, data, folder, moved, skills)
     shown = {"tool": tool, "badge": badge(tool), "title": TITLES.get(tool, "use a tool"), "text": "",
              "folder": _clip(str(folder)), "site": "", "lines": [], "hidden": 0, "size": None, "binary": False,
-             "why": why, "always": decision == "ask" and rule_for(tool, data) is not None, "sandbox": ""}
+             "why": why, "always": decision == "ask" and not why and rule_for(tool, data) is not None,
+             "sandbox": ""}
     if tool == "Bash":
         shown["text"] = _said(data.get("command"))
         if data.get("dangerouslyDisableSandbox") is True:

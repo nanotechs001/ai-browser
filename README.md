@@ -8,11 +8,11 @@ Claude is the worker, so no LLM API keys are needed.
   with your logins. It works only in background tabs it opens itself and tabs you hand it; it never reads your other
   tabs. While the switch is on, any program on this computer can reach your Brave.
 - **Or a sandbox, apart from your logins:** the Docker sandbox runs Chromium inside Docker. It can't see your files,
-  your Brave, or your Claude login ([Which browser](#which-browser)). Shell commands and skill scripts always run in
-  Docker.
+  your Brave, or your Claude login ([Which browser](#which-browser)). Shell commands and skill scripts run in Docker.
+  When Docker isn't running, an agent runs a skill's scripts with its own commands, which ask first.
 - **Fast, compact page reading:** every page becomes a short numbered list (`e3 button "Publish" ⚠`). Claude acts by number, many steps per call, and gets back only what changed.
 - **Guarded actions:** before every click or keystroke, the target is re-checked to make sure it's still there, unchanged, enabled and not covered. Risky buttons (publish, delete, submit, pay…) need an explicit confirmation.
-- **All your Claude skills, on demand:** the 400+ installed skills are searchable. Nothing loads until it's needed, and skill scripts run inside the sandbox.
+- **All your Claude skills, on demand:** the 400+ installed skills are searchable. Nothing loads until it's needed, and skill scripts run inside the sandbox (without Docker, with the agent's own commands).
 
 Two parts, with designs and plans in `docs/superpowers/`:
 - **the engine** (tools, sandbox, your-own-browser mode);
@@ -220,7 +220,7 @@ How it works:
 - **Claude:** each agent is Claude Code on this computer (`claude -p`), signed in with one of your Claude accounts
   (AI accounts, below), with no API keys. Besides ai-browser's tools it has Claude Code's own, each asked first
   ([Agent powers](#agent-powers-commands-file-edits-the-web-sub-agents-and-to-do-lists)). Skill scripts run in the
-  Docker sandbox.
+  Docker sandbox, or, without Docker, with the agent's own commands.
 - **Background agents:** tasks from AI Home or Mission Control work in background tabs. They
   never take your focus, and they stay at full speed. **Watch** brings one to the front.
 - **Stop and Close:** **Stop** interrupts an agent and keeps its tabs. **Close** ends it and closes the tabs it
@@ -299,7 +299,8 @@ Web Fetch, sub-agents, and a to-do list.
     `diff`, `add`, `commit`, a new branch), a package's own scripts (`npm test`, `npm run build`), and the project's
     checks and builds (`make`, `pytest`, `cargo test`, `python script.py`…), and a script of the folder's own
     (`bash script.sh`, `sh script.sh`, `./script.sh`, `scripts/build.sh`; its copy of a known program, like
-    `venv/bin/pip`, counts as that program). Any other command asks;
+    `venv/bin/pip`, counts as that program), and a script of an installed skill
+    (`python ~/.claude/skills/<name>/scripts/run.py`), its arguments still inside the folder. Any other command asks;
   - on Windows, the same ordinary commands run without a card, except a build that downloads what it lacks (`cargo`,
     `go`, `dotnet`, `mvn`, `gradle`, `swift`, `uv run`, `bun`, `npx`, `./gradlew`), which asks there. Windows has no
     sandbox: a script it
@@ -787,7 +788,8 @@ What happens in your Brave:
 - **Downloads ask first:** a download would land in your Downloads folder, so download buttons and links are ⚠. A
   download that starts on its own is cancelled, and the agent asks you.
 - **Only web pages open there:** Claude can't open files on your computer (`file://`) or Brave's own pages.
-- **The sandbox's place:** shell and skill scripts still run in the Docker sandbox. The work folder is
+- **The sandbox's place:** shell and skill scripts still run in the Docker sandbox (without Docker, skill scripts run
+  with the agent's own commands). The work folder is
   `~/.ai-browser/sandboxes/chrome/work/<task>`.
 - **If Brave isn't reachable** (closed, or the switch is off), the agent says so and asks you. It never switches to
   the sandbox on its own.

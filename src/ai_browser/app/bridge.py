@@ -21,6 +21,7 @@ from ..accounts import clean_env
 from ..brain.tools import ToolsConfig, server_of
 from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
 from ..limits import from_event, from_text, windows_from_event
+from ..skills import skill_roots
 from ..syncdir import write_atomic
 from . import powers
 
@@ -146,6 +147,9 @@ class ClaudeBridge:
         self._moved = False  # an allowed command may have moved the shell: nothing is harmless (plan decision 8)
         self._away = False  # a move auto-approve didn't make (only its cd into the folder is): it runs no command
         self.loaded_skills: set[str] = set()  # skills Claude loaded in this conversation
+        # The installed skills' folders, once per agent: their scripts run like the task folder's own (Part 2 of the
+        # review of 2026-10-08), while their arguments stay the folder's
+        self.skills = tuple(str(root) for root in skill_roots())
         self.model = model  # a change applies from the next message, in the same process (set_model)
         self.claude = claude  # resolved when a process starts (claude_argv): a list too, such as the tests' fake
         self.env = dict(env or {})  # extra settings for the ai-browser MCP server
@@ -340,16 +344,17 @@ class ClaudeBridge:
         (Review Focus 3). (answer, note, whether auto-approve answered)."""
         if self._stopping:
             return "deny", "", False
-        decision = powers.classify(tool, data, self.work, moved=self._moved)
+        decision = powers.classify(tool, data, self.work, moved=self._moved, skills=self.skills)
         rule = powers.rule_for(tool, data) if decision == "ask" else None
         auto = False
         if decision == "allow" or (rule is not None and rule in self._rules()):
             answer, note = "once", ""
         elif self.auto and request.get("tool_use_id") and powers.auto_approves(  # no id, no mark: a card
-                tool, data, decision, sandbox=powers.sandbox_on(), away=self._away):
+                tool, data, decision, sandbox=powers.sandbox_on(), away=self._away, skills=self.skills):
             answer, note, auto = "once", "", True
         else:
-            shown = {**powers.card(tool, data, self.work, moved=self._moved, sandbox=powers.sandbox_on()),
+            shown = {**powers.card(tool, data, self.work, moved=self._moved, sandbox=powers.sandbox_on(),
+                                   skills=self.skills),
                      "scratch": not self.chosen}
             parent = self._parents.get(str(request.get("tool_use_id", "")))
             sub = self._subagents.get(parent, "") if parent else ""
