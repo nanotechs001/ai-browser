@@ -49,6 +49,18 @@
 .folder-ask p { margin: 0; }
 .folder-ask .folder-path { font: 12px var(--mono); overflow-wrap: anywhere; }
 .talk { max-height: 38vh; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+/* Ask AI's history: over the office, above the box. The newest line is at the bottom, older ones fade out towards the
+   top; on hover, or with focus inside, it turns solid and scrolls, and the wheel scrolls it, never the office. A card
+   (Start, Send) keeps it solid. */
+.composer > .talk { position: absolute; left: 24px; right: 24px; bottom: 100%; z-index: 4; background: transparent;
+                    border-color: transparent; }
+.composer > .talk .talk-log { max-height: 26vh; overflow: hidden; overscroll-behavior: contain; outline: none;
+                              text-shadow: 0 0 8px var(--bg);
+                              -webkit-mask-image: linear-gradient(to top, #000 35%, transparent);
+                              mask-image: linear-gradient(to top, #000 35%, transparent); }
+.composer > .talk:is(:hover, :focus-within) { background: var(--panel); border-color: var(--line); }
+.composer > .talk:has(.talk-card:not(:empty)) { background: var(--panel); border-color: var(--line); }
+.composer > .talk:is(:hover, :focus-within) .talk-log { overflow-y: auto; -webkit-mask-image: none; mask-image: none; }
 .talk-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .talk-log li { white-space: pre-wrap; word-break: break-word; }
 .talk-log li.you { color: var(--muted); }

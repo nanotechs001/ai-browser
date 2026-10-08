@@ -10,7 +10,7 @@ import { CONSTRAINTS, openMic } from "./mic.js";
 import { agentLabel } from "./chat.js";
 
 const HOLD_MS = 300; // a shorter press of Space is a slip; a shorter press of the mic button is a click (it toggles)
-const LOG_LINES = 6;
+const LOG_LINES = 6; // the lines a talk keeps, unless its page asks for more (Mission Control's Ask AI: this run's)
 const BYTES_PER_SECOND = 32000; // 16 kHz, 16-bit, mono
 const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
 const CONTROLS = "button, input, textarea, select, a, label, summary, [contenteditable]";
@@ -62,10 +62,10 @@ function base64(buffer) {
 // marked on it, or null. hintVoice: say once that Voice reads answers aloud (Mission Control has the switch; the chat
 // answers in text only).
 // fill(words): the page may take heard words into its own box instead (Mission Control's composer outside Ask AI):
-// true when it did, and the Brain isn't asked.
+// true when it did, and the Brain isn't asked. keep: how many lines the log keeps, the newest at the bottom.
 export function mountTalk({ panel, micButton, link, voice, onState = () => {}, openAgent = () => {},
                             openBrain = () => {}, model = () => "sonnet", aboutPage = () => null,
-                            hintVoice = true, fill = () => false }) {
+                            hintVoice = true, fill = () => false, keep = LOG_LINES }) {
   const log = panel.querySelector(".talk-log");
   const status = panel.querySelector(".talk-status");
   const notice = panel.querySelector(".talk-notice");
@@ -108,7 +108,8 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     show();
     const node = el("li", who === "You" ? "you" : "brain", `${who}: ${text}`);
     log.append(node);
-    while (log.children.length > LOG_LINES) log.firstElementChild.remove();
+    while (log.children.length > keep) log.firstElementChild.remove();
+    log.scrollTop = log.scrollHeight; // the newest line in view, at the bottom
     return node;
   }
 

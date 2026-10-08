@@ -163,6 +163,7 @@ talk = mountTalk({
   openBrain: () => drawer.openBrain(),
   model: () => $("task-model").value, // the model last picked here or in AI Home
   fill: (words) => composer.fill(words), // the mic outside Ask AI fills the box
+  keep: 200, // Ask AI's history: this run's talk with the Brain, scrolled on hover (composer.css)
 });
 
 function setText(node, text) {
