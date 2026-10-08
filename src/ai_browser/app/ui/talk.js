@@ -612,9 +612,10 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
 
   // ---- Space, Esc, the mic button and the box ------------------------------------------------------------------
 
-  function talkable() { // Space talks only when no control has focus (the mic button itself counts as none)
+  function talkable() { // Space talks only when no control has focus (the mic button and the history count as none)
     const active = document.activeElement;
-    return !active || active === document.body || active === document.documentElement || active === micButton;
+    return !active || active === document.body || active === document.documentElement || active === micButton
+      || active === log;
   }
 
   function isSpace(event) {
@@ -637,6 +638,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     if (!isSpace(event) || event.metaKey || event.ctrlKey || event.altKey || event.isComposing || !talkable()) return;
     event.preventDefault(); // no scrolling, and the mic button isn't pressed by it
     event.stopImmediatePropagation();
+    if (document.activeElement === log) log.blur(); // the history is only read: a key on it would pin it solid
     if (!event.repeat && !turn) press("space");
   }, { capture: true });
 

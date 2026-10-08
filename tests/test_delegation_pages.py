@@ -44,6 +44,7 @@ PANEL = "document.getElementById('talk')"
 CENTRE = (f"(() => {{ const r = {LOG}.getBoundingClientRect();"
           " return [r.left + r.width / 2, r.top + r.height / 2]; })()")
 ZOOM = "document.querySelector('.room').style.transform"
+RECT = f"(() => {{ const r = {PANEL}.getBoundingClientRect(); return [r.left + r.width / 2, r.top, r.height]; }})()"
 
 
 @CHROME
@@ -67,15 +68,69 @@ async def test_ask_ai_keeps_this_runs_talk_fading_upwards_and_solid_on_hover(sta
     assert await js(f"{LOG}.scrollHeight > {LOG}.clientHeight"
                     f" && Math.abs({LOG}.scrollTop + {LOG}.clientHeight - {LOG}.scrollHeight) <= 1")  # newest in view
     cdp, session = stack["cdp"], js.session
+    left, top, height = await js(RECT)
+    assert height < await js("innerHeight * 0.2")  # the idle strip is short: it doesn't cover the office
+    above = f"document.elementFromPoint({left}, {top - 10})"
+    assert await js(f"{above}.closest('.viewport') !== null && {above}.closest('#talk') === null")
+    zoom = await js(ZOOM)
+    await cdp.send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": left, "y": top - 10, "deltaX": 0,
+                                                "deltaY": -400}, session_id=session)
+    assert await until(js, f"{ZOOM} !== {json.dumps(zoom)}")  # the wheel just above the strip zooms the office
+    assert await js(f"{style}.overflowY") == "hidden" and await js(f"{LOG}.scrollTop > 0")  # and not the history
     x, y = await js(CENTRE)
     await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, session_id=session)
     assert await until(js, f"{style}.overflowY === 'auto'")  # hovered: solid, and it scrolls
+    assert await js(RECT + "[2]") > height and await js(RECT + "[1]") < top  # it grew upwards, under the pointer
     assert await js(f"({style}.maskImage || {style}.webkitMaskImage) === 'none'")
     assert await js(f"getComputedStyle({PANEL}).backgroundColor") != "rgba(0, 0, 0, 0)"
     zoom, bottom = await js(ZOOM), await js(f"{LOG}.scrollTop")
     await cdp.send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": -400},
                    session_id=session)
-    assert await until(js, f"{LOG}.scrollTop < {bottom}")  # the wheel scrolls the history
-    assert await js(ZOOM) == zoom  # and never the office
+    assert await until(js, f"{LOG}.scrollTop < {bottom}")  # over the strip the wheel scrolls the history
+    assert await js(ZOOM) == zoom  # and the office stays as it was
     await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": 5, "y": 5}, session_id=session)
     assert await until(js, f"{style}.overflowY === 'hidden'")  # faded again
+    page = "document.querySelector('.page-link[data-page=\"%s\"]').click(); true"
+    await js(page % "history")  # the composer goes, and comes back with the newest line in view
+    assert await until(js, "document.getElementById('composer').hidden")
+    await js(page % "dashboard")
+    assert await until(js, f"Math.abs({LOG}.scrollTop + {LOG}.clientHeight - {LOG}.scrollHeight) <= 1")
+
+
+@CHROME
+async def test_an_empty_history_takes_no_space_and_a_click_on_it_leaves_space_to_talking(stack):
+    from test_talk import SPACE, eventually, mic, mouse, open_talk, talk, talk_script, tap
+
+    talk_script(stack, {"say": "Noted", "action": "none"})
+    js = await open_talk(stack, mic())
+    await tap(stack, js, SPACE, " ")  # too short: "Hold Space while you talk", and the panel shows with no lines
+    assert await until(js, "document.getElementById('talk-notice').textContent === 'Hold Space while you talk'")
+    assert await js(f"{PANEL}.hidden") is False and await js(f"getComputedStyle({LOG}).display") == "none"
+    await js("document.getElementById('task').value = 'hello'; document.getElementById('start').click(); true")
+    assert await until(js, f"{LOG}.querySelectorAll('li.brain').length === 1", 15)
+    assert await js(f"getComputedStyle({LOG}).display") != "none"
+    await mouse(stack, js, "#talk-log", "mousePressed")  # a real click on the history
+    await mouse(stack, js, "#talk-log", "mouseReleased")
+    assert await js(f"document.activeElement === {LOG}")
+    await talk(stack, js)  # the log has the focus, and Space still talks
+    assert await eventually(lambda: len(stack["engine"].heard) == 1)
+    await stack["cdp"].send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": 5, "y": 5},
+                            session_id=js.session)
+    assert await until(js, f"getComputedStyle({PANEL}).backgroundColor === 'rgba(0, 0, 0, 0)'")  # a click pins nothing
+    await js(f"{LOG}.blur(); {LOG}.focus(); true")  # but the keyboard's focus keeps it solid
+    assert await until(js, f"getComputedStyle({PANEL}).backgroundColor !== 'rgba(0, 0, 0, 0)'")
+
+
+@CHROME
+async def test_the_floating_chat_keeps_six_lines(stack):
+    from test_chat_page import open_chat
+    from test_talk import ask_typed, eventually, talk_calls, talk_script
+
+    talk_script(stack, {"say": "Noted", "action": "none"})
+    js, _ = await open_chat(stack)
+    for number in range(4):  # 8 lines asked for
+        await ask_typed(js, f"question {number}")
+        assert await eventually(lambda: len(talk_calls(stack)) == number + 1)
+        assert await until(js, f"{LOG}.lastElementChild.classList.contains('brain')", 15)
+    assert await js(f"{LOG}.children.length") == 6
+    assert await js(f"{LOG}.firstElementChild.textContent") == "You: question 1"

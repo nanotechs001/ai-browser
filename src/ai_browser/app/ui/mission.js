@@ -304,6 +304,7 @@ function showPage(name) {
     else button.removeAttribute("aria-current");
   }
   $("composer").hidden = page !== "dashboard" && page !== "missions";
+  $("talk-log").scrollTop = $("talk-log").scrollHeight; // a hidden log loses its place: newest in view again
   if (page === "dashboard" && view === "flow") scene.refit();
   for (const part of parts) part.shown?.(page, view);
 }
