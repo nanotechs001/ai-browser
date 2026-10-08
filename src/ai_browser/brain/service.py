@@ -20,7 +20,7 @@ from .handoffs import (CANCELLED, COUNTDOWN, FROM_BRAIN, HELD, INSTRUCTION_LIMIT
 from .handoffs import SOURCES as HANDOFF_SOURCES
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
-from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HAND_OVER_ANY_SAY, HAND_OVER_SAY, HIDDEN,
+from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, GIVING_SAY, HAND_OVER_ANY_SAY, HAND_OVER_SAY, HIDDEN,
                    NO_AGENT_SAY, NO_SUCH_SAY, NOTHING_OPEN, NOTHING_OPEN_WAITING, NOTHING_TO_CANCEL, PRESSED,
                    QUEUED_LINE_SAY, QUEUED_PERMISSION_SAY, QUEUED_WORKING_SAY, RELAY, SECRET_ANSWER, SEND_SAY, SENT_SAY,
                    START_SAY, STARTED_SAY, TELL_NO_AGENT, TELL_SEND, TELL_START, TELL_WHICH, WHICH_SAY,
@@ -790,8 +790,19 @@ class BrainService:
                 reply = self._answer_pick(talk, pick, words, rows)
                 self.talks.add(talk, text, reply["say"])
                 return reply
+        handoff = self.handoffs.get(self.talks.handoff(talk) or "")  # this talk's words, counting down or held
+        if handoff is not None and handoff.state in OPEN and (is_yes(text) or is_send_yes(text) or is_no(text)):
+            if is_no(text):  # "no", "cancel", "stop": nothing is sent
+                self.cancel_handoff(handoff.id)
+                reply = {"say": NOTHING_DONE}
+            else:  # "yes", "send it": now, without waiting
+                await self.send_handoff(handoff.id)
+                reply = {"say": handoff.note}
+            self.talks.add(talk, text, reply["say"])
+            return reply
         stale = bool(proposal_id) and (card is None or card.id != proposal_id)  # its card is gone: expired, or replaced
         self.talks.drop(talk)  # any other words close the card: they are a new question
+        self.talks.set_handoff(talk, None)  # and a yes or no no longer speaks to its hand-off
         asking = self.talks.asking(talk)
         if is_yes(text) or is_no(text) or (stale and is_send_yes(text)):  # a yes or no with no card to run: never
             reply = self._bare(talk, text, proposal_id, asking, rows)  # Claude, and never a card
@@ -937,6 +948,13 @@ class BrainService:
         self.talks.clear_asking(talk)
         if isinstance(row.get("check"), dict):
             return {"say": check_say(row)}
+        if counts_down("you", self.auto_hand(), self.visible(), row_state(row)) and not tab_hint(words):
+            handoff = self.give(row, words, "you")  # the user's own words: sent after the countdown, unless cancelled
+            if handoff is not None:
+                self.talks.set_last(talk, row["id"])
+                self.talks.set_handoff(talk, handoff.id)
+                return {"say": GIVING_SAY.format(label=label(row), seconds=COUNTDOWN),
+                        "handoff": handoff.public(self.clock())}
         card = self.talks.propose(talk, "message_agent", task=words, agent=row["id"], number=number_of(row),
                                   name=str(row.get("name") or ""), color=str(row.get("color") or ""),
                                   target_state=target_state(row),
