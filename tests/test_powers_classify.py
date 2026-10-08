@@ -310,7 +310,8 @@ NOT_ORDINARY = ["npm install", "npm exec vite", "npm publish", "git push", "git 
 
 
 @pytest.mark.parametrize("command", ORDINARY)
-def test_auto_approve_runs_an_ordinary_use_where_the_sandbox_holds_it(project, command):  # C2's table, I3
+def test_auto_approve_runs_an_ordinary_use_where_the_sandbox_holds_it(project, monkeypatch, command):  # C2's table, I3
+    as_platform(monkeypatch, "darwin")  # Windows runs them without a sandbox: its own tests below
     assert decide(command, project) == "ask", command
     assert auto("Bash", {"command": command}, project, sandbox=True)
     assert not auto("Bash", {"command": command}, project, sandbox=False)  # I3: only file edits run there
@@ -597,7 +598,10 @@ def test_auto_approve_runs_an_installed_skills_script_on_a_mac_and_on_windows(pr
     from ai_browser.app.powers import WHY_SKILL, card, classify
 
     root, scripts = skill
-    command = command.format(s=scripts)
+    command = command.format(s=scripts.as_posix())  # as Git Bash names it: C:/… on Windows
+    if os.name == "nt" and command.startswith(scripts.as_posix()):  # C:/… as the program is never a plain command
+        assert classify("Bash", {"command": command}, project, skills=[root]) == "ask_always"
+        return
     if not command.startswith("/"):  # a full path as the program was never the folder's: a card, as /bin/ls
         assert classify("Bash", {"command": command}, project) == "ask_always"  # without the skills: outside
     assert classify("Bash", {"command": command}, project, skills=[root]) == "ask"
@@ -616,7 +620,7 @@ def test_a_skills_script_with_an_outside_argument_or_a_write_into_a_skill_asks_e
     from ai_browser.app.powers import classify
 
     root, scripts = skill
-    command = command.format(s=scripts)
+    command = command.format(s=scripts.as_posix())
     for platform, sandbox in (("darwin", True), ("win32", False)):
         as_platform(monkeypatch, platform)
         assert classify("Bash", {"command": command}, project, skills=[root]) == "ask_always", (platform, command)
@@ -655,7 +659,7 @@ NOT_A_SKILLS_SCRIPT = [
 def test_a_plugins_packages_hooks_and_hidden_files_are_no_skills_script(project, plugin, monkeypatch, command):  # N1
     from ai_browser.app.powers import classify
 
-    command = command.format(P=plugin)
+    command = command.format(P=plugin.as_posix())
     for platform, sandbox in (("darwin", True), ("win32", False)):
         as_platform(monkeypatch, platform)
         assert classify("Bash", {"command": command}, project, skills=[str(plugin)]) == "ask_always", command
@@ -663,7 +667,8 @@ def test_a_plugins_packages_hooks_and_hidden_files_are_no_skills_script(project,
 
 
 def test_a_plugins_own_scripts_still_run(project, plugin, monkeypatch):  # N1: its skills' and its own scripts folder
-    for command in (f"python {plugin}/skills/x/scripts/a.py", f"python3 {plugin}/scripts/tool.py src/app.py"):
+    for command in (f"python {plugin.as_posix()}/skills/x/scripts/a.py",
+                    f"python3 {plugin.as_posix()}/scripts/tool.py src/app.py"):
         assert skill_auto(command, project, [str(plugin)], True), command
 
 
@@ -672,10 +677,10 @@ def test_a_blocked_skills_scripts_ask_every_time(project, plugin, monkeypatch): 
     from ai_browser.skills import SkillFolders
 
     folders = SkillFolders(roots=(str(plugin),), blocked=(str(plugin / "skills" / "x"),))
-    for command in (f"python {plugin}/skills/x/scripts/a.py", f"{plugin}/skills/x/scripts/a.py"):
+    for command in (f"python {plugin.as_posix()}/skills/x/scripts/a.py", f"{plugin.as_posix()}/skills/x/scripts/a.py"):
         assert classify("Bash", {"command": command}, project, skills=folders) == "ask_always", command
         assert not skill_auto(command, project, folders, True), command
-    assert skill_auto(f"python {plugin}/skills/y/scripts/b.py", project, folders, True)  # the others still run
+    assert skill_auto(f"python {plugin.as_posix()}/skills/y/scripts/b.py", project, folders, True)  # the others run
 
 
 def test_bash_runs_a_script_by_its_name_only_when_the_path_holds_none_of_that_name(scripts, monkeypatch, tmp_path):
@@ -687,6 +692,8 @@ def test_bash_runs_a_script_by_its_name_only_when_the_path_holds_none_of_that_na
     assert decide("bash run.sh", scripts) == "ask_always"
     assert not auto("Bash", {"command": "bash run.sh"}, scripts)
     assert auto("Bash", {"command": "bash ./run.sh"}, scripts)  # a path: no search
+    (bin_folder / "run.sh").chmod(0o644)  # bash reads a script it finds there, runnable or not; and on Windows,
+    assert decide("bash run.sh", scripts) == "ask_always"  # where shutil.which sees only PATHEXT's programs (.exe…)
 
 
 def test_a_trailing_dot_or_space_names_the_same_hooks_folder(project):  # M1, the hooks folder too

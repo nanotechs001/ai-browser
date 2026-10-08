@@ -488,8 +488,11 @@ async def test_under_auto_approve_what_is_risky_or_reaches_a_site_still_shows_a_
 
 
 async def test_without_the_sandbox_auto_approve_runs_edits_only(fake_claude, tmp_path, project, monkeypatch):  # I3
+    from types import SimpleNamespace
+
     from ai_browser.app import powers
 
+    monkeypatch.setattr(powers, "sys", SimpleNamespace(platform="darwin"))  # Windows runs them: its own test below
     monkeypatch.setattr(powers, "sandbox_on", lambda: False)  # Linux (or a Mac's sandbox off): nothing holds them in
     runner, log, script = fake_claude
     edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
@@ -549,8 +552,9 @@ async def test_auto_approve_runs_an_installed_skills_script_but_never_writes_int
 
 
 
-def a_skill(tmp_path, monkeypatch):
-    """A personal skill with a script, where the catalog finds the agent's skills (never the user's own)."""
+def a_skill(tmp_path, monkeypatch) -> str:
+    """A personal skill with a script, where the catalog finds the agent's skills (never the user's own): its scripts
+    folder as a command names it in Git Bash (C:/… on Windows, where a backslash is an escape and asks every time)."""
     from ai_browser import skills
 
     claude = tmp_path / "users" / ".claude"
@@ -559,7 +563,7 @@ def a_skill(tmp_path, monkeypatch):
     (claude / "skills" / "tidy" / "SKILL.md").write_text("---\nname: tidy\n---\n", encoding="utf-8")
     (scripts / "x.py").write_text("print(1)\n", encoding="utf-8")
     monkeypatch.setattr(skills, "user_folders", lambda: (claude, tmp_path / "users" / "Claude"))
-    return scripts
+    return scripts.as_posix()
 
 
 def test_the_skills_folders_are_read_again_so_a_blocked_skill_asks_without_a_restart(  # the re-review's N2
@@ -613,8 +617,8 @@ async def test_a_saved_rule_for_the_interpreter_never_runs_a_skills_script(  # t
     rules.add(project, "Bash(python:*)")  # Always allow, saved for another python command
     runner, log, script = fake_claude
     script.write_text(json.dumps([INIT, ask("Bash", {"command": f"python {scripts}/x.py"}, tool_id="u1"),
-                                  ask("Bash", {"command": f"python {project}/src/app.py"}, tool_id="u2"), RESULT]),
-                      encoding="utf-8")
+                                  ask("Bash", {"command": f"python {project.as_posix()}/src/app.py"}, tool_id="u2"),
+                                  RESULT]), encoding="utf-8")
     bridge, shown = bridge_for(tmp_path, runner, ["once"], work=project, rules=rules)  # Auto-approve off
     await run(bridge)
     assert [request["card"]["text"] for request in shown] == [f"python {scripts}/x.py"]  # the rule ran the other
