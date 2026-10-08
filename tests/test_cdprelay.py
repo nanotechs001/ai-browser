@@ -497,7 +497,7 @@ async def test_a_slow_client_is_cut_not_the_upstream(rig, monkeypatch):
     while not flood.done():
         started = time.monotonic()
         await a1.send("Browser.getVersion")
-        assert time.monotonic() - started < 1
+        assert time.monotonic() - started < 5  # a blocked upstream never answers; the flood's parsing slows one (1.3 s)
         await asyncio.sleep(0.05)
     async def read_to_the_end():
         with contextlib.suppress(Exception):

@@ -150,6 +150,6 @@ def test_only_one_place_spells_uv_run_for_the_user():
     from pathlib import Path
 
     source = Path(__file__).parents[1] / "src" / "ai_browser"
-    found = sorted(str(path.relative_to(source)) for path in source.rglob("*.py")
+    found = sorted(path.relative_to(source).as_posix() for path in source.rglob("*.py")
                    if "uv run ai-browser" in path.read_text(encoding="utf-8"))
     assert found == ["desktop/release.py", "platforms.py"]

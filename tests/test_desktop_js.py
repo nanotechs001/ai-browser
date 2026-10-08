@@ -3,6 +3,7 @@ functions with no Electron in them. Skipped where Node.js isn't installed, since
 shortcuts' Python side (desktop/shortcut.py) needs no Node."""
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -315,9 +316,10 @@ def test_the_command_runs_without_a_shell_and_a_slow_one_is_stopped():
 
 @NEEDS_NODE
 def test_the_apps_profile_is_beside_it_or_for_the_packaged_exe_in_the_users_own_folder():
-    # (where its program is, the system, $AIB_HOME, the files there) -> its profile; the home folder is /u
+    # (where its program is, the system, $AIB_HOME, the files there) -> its profile; the home folder is /u. Paths are
+    # this system's: on Windows /u is D:\u (the working folder's drive), as Node's path and Python's os.path read it
     got = run_js("""
-      const there = (...paths) => (file) => paths.includes(file);
+      const there = (...paths) => (file) => paths.map((one) => require("node:path").resolve(one)).includes(file);
       const exe = "/dl/AI Browser/desktop/AI Browser/AI Browser.exe"; // the zip, unzipped in Downloads
       const packaged = there("/dl/AI Browser/_internal", "/dl/AI Browser/AI Browser.exe");
       const own = (execPath, platform, env, exists) =>
@@ -331,11 +333,12 @@ def test_the_apps_profile_is_beside_it_or_for_the_packaged_exe_in_the_users_own_
         own("/u/.ai-browser/desktop/AI Browser.app/Contents/MacOS/Electron", "darwin", {}, there()),
         own(exe, "win32", {}, there("/dl/AI Browser/AI Browser.exe")),
       ];""")
-    assert got == ["/u/.ai-browser/desktop-profile",  # the packaged exe's app: the home the engine uses
-                   "/data/aib/desktop-profile", "/u/aib/desktop-profile", "/w/aib/desktop-profile",
-                   "/u/.ai-browser/desktop/profile",  # an app doctor --setup built: beside it, as before
-                   "/u/.ai-browser/desktop/profile",  # the Mac's, as before
-                   "/dl/AI Browser/desktop/profile"]  # no PyInstaller bundle beside it: not the packaged exe's
+    assert got == [os.path.abspath(path) for path in [
+        "/u/.ai-browser/desktop-profile",  # the packaged exe's app: the home the engine uses
+        "/data/aib/desktop-profile", "/u/aib/desktop-profile", "/w/aib/desktop-profile",
+        "/u/.ai-browser/desktop/profile",  # an app doctor --setup built: beside it, as before
+        "/u/.ai-browser/desktop/profile",  # the Mac's, as before
+        "/dl/AI Browser/desktop/profile"]]  # no PyInstaller bundle beside it: not the packaged exe's
 
 
 @NEEDS_NODE
@@ -365,7 +368,7 @@ def test_the_start_menu_entry_is_made_or_kept_and_never_stops_the_start():
         policy.startMenuEntry(app("/r"), shell({ ...ours, target: "/old/AI Browser.exe" }), exe),
         done.filter((step) => step[0] !== "id"),
       ];""")
-    link = "/r/Microsoft/Windows/Start Menu/Programs/AI Browser.lnk"
+    link = os.path.normpath("/r/Microsoft/Windows/Start Menu/Programs/AI Browser.lnk")  # \r\… on Windows
     assert got == ["failed: Failed to get 'appData' path", "made", "kept", "made",
                    [["create", link, "/x/AI Browser.exe", "io.github.nanotechs001.ai-browser"],
                     ["replace", link, "/x/AI Browser.exe", "io.github.nanotechs001.ai-browser"]]]

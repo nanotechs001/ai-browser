@@ -406,7 +406,7 @@ async def test_a_message_with_files_is_refused_whole_and_keeps_them_for_the_next
 async def test_a_message_with_files_never_goes_through_a_scratch_folder_that_became_a_link(  # agents.py _own_scratch
         fake_claude, tmp_path, linked):
     from ai_browser.app.agents import LINKED
-    from conftest import symlink_or_skip
+    from conftest import let_its_folder_go, symlink_or_skip
 
     agents = scratch_manager(fake_claude, tmp_path)
     outside = tmp_path / "user project"
@@ -414,6 +414,7 @@ async def test_a_message_with_files_never_goes_through_a_scratch_folder_that_bec
     try:
         agent = await agents.create("x")
         await wait_for(lambda: agent.state == "your_turn")
+        await let_its_folder_go(agent.bridge)
         agent_folder = tmp_path / "home" / "app" / "agents" / "a1"
         moved = tmp_path / "moved"
         if linked == "agent":  # a1 itself is replaced by a link
@@ -438,6 +439,7 @@ async def test_a_message_with_files_to_a_chosen_folder_that_is_gone_is_refused(f
     import shutil
 
     from ai_browser.app.powers import GONE
+    from conftest import let_its_folder_go
 
     agents = scratch_manager(fake_claude, tmp_path)
     project = tmp_path / "project"
@@ -446,6 +448,7 @@ async def test_a_message_with_files_to_a_chosen_folder_that_is_gone_is_refused(f
     try:
         agent = await agents.create("x", folder=str(project))
         await wait_for(lambda: agent.state == "your_turn")
+        await let_its_folder_go(agent.bridge)
         shutil.rmtree(project)
         path = staged(tmp_path)
         with pytest.raises(ValueError) as refused:

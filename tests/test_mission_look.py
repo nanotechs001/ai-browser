@@ -957,6 +957,8 @@ async def test_knowledge_lists_skills_and_remove_hides_one_without_deleting_it(s
     (skill / "SKILL.md").write_text("---\nname: footer-fixer\ndescription: Fixes footers the way I like\n---\nSteps.\n",
                                     encoding="utf-8")
     monkeypatch.setenv("HOME", str(user))  # the skills come from this throwaway folder, never the user's own
+    monkeypatch.setenv("USERPROFILE", str(user))  # Path.home() on Windows
+    monkeypatch.setenv("APPDATA", str(user / "AppData" / "Roaming"))  # and the Claude app's synced skills there
     stack["server"]._catalog = None
     js = await open_mission(stack)
     await js(f"{page_link('knowledge')}.click(); true")

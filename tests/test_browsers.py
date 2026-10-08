@@ -974,7 +974,9 @@ def test_detection_reads_only_its_files_and_writes_nothing(fake, tmp_path, monke
     inside = [(Path(path), flags) for path, flags in opened if Path(path).is_relative_to(tmp_path)]
     names = {path.name for path, _ in inside} | {Path(path).name for path in shared
                                                  if Path(path).is_relative_to(tmp_path)}
-    assert "Local State" in {Path(path).name for path, _ in opened}  # the audit hook sees every open
+    # the audit hook sees every open; on Windows open_shared's reads are CreateFileW calls (read only), which it can't
+    hooked = {Path(path).name for path, _ in opened} if os.name != "nt" else {Path(path).name for path in shared}
+    assert "Local State" in hooked
     assert names <= READ_NAMES, names - READ_NAMES  # never Cookies, Login Data, History or Web Data
     assert [path.name for path, flags in inside if flags is None or flags & WRITE_FLAGS] == []  # each open: read only
     assert after == before  # nothing written, touched or created

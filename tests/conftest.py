@@ -297,6 +297,14 @@ def fake_python() -> str:
     return sys._base_executable if sys.platform == "win32" else sys.executable
 
 
+async def let_its_folder_go(bridge) -> None:
+    """Before a test renames or deletes the folder an agent works in: on Windows, a folder a running program works in
+    can't be renamed or deleted (Windows refuses: the file is in use), so its Claude Code process ends first, as it
+    does when Claude Code exits between turns. Elsewhere the folder goes while Claude Code runs, as it may there."""
+    if os.name == "nt":
+        await bridge.close()
+
+
 @pytest.fixture
 def fake_claude(tmp_path, monkeypatch):
     """The fake `claude`: (runner, log, script). runner is an argv prefix, [python, fake_claude.py], which every

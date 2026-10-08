@@ -250,7 +250,7 @@ async def test_run_by_hand_over_the_socket(fake_claude, tmp_path):
             await ws.send(json.dumps({"type": "workflow_save", "request": "s1",
                                       **{**FOOTER, "trigger": "manual", "tools": []}}))
             saved = await until(ws, lambda m: m["type"] == "workflow_saved")
-            assert saved["slug"] == "footer-fix" and saved["path"].endswith("workflows/footer-fix.md")
+            assert saved["slug"] == "footer-fix" and saved["path"] == str(home / "workflows" / "footer-fix.md")
             snapshot = await until(ws, lambda m: m["type"] == "workflows_snapshot")
             assert [workflow["name"] for workflow in snapshot["workflows"]] == ["Footer fix"]
             await ws.send(json.dumps({"type": "workflow_save", "request": "s2", "name": "", "instructions": "x"}))

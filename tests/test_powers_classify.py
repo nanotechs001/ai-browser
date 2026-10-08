@@ -3,6 +3,7 @@ never run. Every folder is a throwaway one, and so is ~ (HOME), so no test names
 
 import os
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -47,7 +48,7 @@ def test_reads_inside_the_list_a_sub_agent_and_harmless_commands_are_allowed(pro
     assert classify("TodoWrite", {"todos": []}, project) == "allow"
     assert classify(SUBAGENT_TOOL, {"description": "Research", "prompt": "Look it up"}, project) == "allow"
     for command in ("ls", "ls -la src", "cat src/app.py", "pwd", "git status", "git diff --stat",
-                    "git log --oneline -5", f"cat {shlex.quote(inside)}"):
+                    "git log --oneline -5", f"cat {shlex.quote(Path(inside).as_posix())}"):  # C:/…: a backslash asks
         assert decide(command, project) == "allow", command
 
 

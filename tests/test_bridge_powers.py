@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import file_mode, symlink_or_skip
+from conftest import file_mode, let_its_folder_go, symlink_or_skip
 from test_app_server import told
 from test_bridge import EVENTS
 from test_tools import answers, commands
@@ -154,6 +154,7 @@ async def test_a_folder_gone_between_turns_is_said_plainly(fake_claude, tmp_path
     script.write_text(json.dumps(EVENTS), encoding="utf-8")
     bridge, _ = bridge_for(tmp_path, runner, work=project, trusted=False)
     assert [event async for event in bridge.send("one")][-1]["type"] == "done"
+    await let_its_folder_go(bridge)
     project.rename(tmp_path / "renamed")
     events = [event async for event in bridge.send("two")]
     await bridge.close()

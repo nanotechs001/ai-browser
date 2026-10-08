@@ -307,7 +307,10 @@ async def test_a_tab_that_fails_to_set_up_is_closed_again(chrome_browser, monkey
     monkeypatch.setattr(Browser, "_setup_tab", broken)
     with pytest.raises(CDPError):
         await browser.tabs("new")
-    await asyncio.sleep(0.2)
+    for _ in range(50):  # a closed tab is listed a moment longer (on Windows, more than 0.2 s)
+        if await pages() == before:
+            break
+        await asyncio.sleep(0.1)
     assert await pages() == before
 
 

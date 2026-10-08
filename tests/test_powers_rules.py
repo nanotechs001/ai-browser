@@ -104,7 +104,7 @@ def test_refused_folders(tmp_path, user_home):  # Decision 6, Review Focus 2
         return powers.check_folder(str(path), home=home, claude_dirs=[str(claude)])
 
     assert check(project) is None and check(user_home / "code" / "app") is None
-    assert check(os.sep) == powers.WHOLE_DISK and check(user_home) == powers.WHOLE_HOME
+    assert check(tmp_path.anchor) == powers.WHOLE_DISK and check(user_home) == powers.WHOLE_HOME  # / or C:\\
     assert "Library" in check(user_home / "Library") and "Library" in check(user_home / "Library" / "Caches")
     assert "Claude Code's own folder" in check(user_home / ".claude") and "Claude Code's own folder" in check(claude)
     assert "AI Browser's own folder" in check(home) and "AI Browser's own folder" in check(home / "app")

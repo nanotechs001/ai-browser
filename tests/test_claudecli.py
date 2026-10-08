@@ -65,8 +65,10 @@ async def test_the_panel_the_brain_and_the_probe_say_why(tmp_path, monkeypatch):
 
 
 def test_the_fake_claude_is_an_argv_prefix(fake_claude):
+    from conftest import fake_python
+
     runner, _, _ = fake_claude
-    assert runner[0] == sys.executable and runner[1].endswith("fake_claude.py") and os.path.isfile(runner[1])
+    assert runner[0] == fake_python() and runner[1].endswith("fake_claude.py") and os.path.isfile(runner[1])
 
 
 def test_claude_code_gets_its_own_process_group_on_windows(monkeypatch):
