@@ -48,3 +48,23 @@ def test_the_readme_tells_the_new_way_and_not_the_old_one():
         assert words in text, words
     for gone in ("type `ai`", "tab group", "Load unpacked", "the watcher's Brain page", "Pause watching", "**Approve**"):
         assert gone not in text, gone
+
+
+async def test_website_qa_is_gone():
+    """The user's own skill does Website QA now: no `qa` tool, no engine package, no skill, no words that point at it."""
+    from mcp.client import Client
+
+    from ai_browser.server import INSTRUCTIONS, build_server
+
+    class Engine:
+        async def close(self):
+            pass
+
+    async with Client(build_server(Engine)) as client:
+        assert "qa" not in {tool.name for tool in (await client.list_tools()).tools}
+    assert importlib.util.find_spec("ai_browser.qa") is None
+    assert not (SRC / "qa").exists() and not (SRC.parents[1] / "skills" / "website-qa").exists()
+    assert not (SRC / "pages" / "qa").exists() and not (SRC / "pages" / "qa2").exists()
+    readme = (SRC.parents[1] / "README.md").read_text(encoding="utf-8")
+    for text in (readme, INSTRUCTIONS):
+        assert "qa(" not in text and "Website QA" not in text and "website-qa" not in text
