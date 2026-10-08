@@ -42,13 +42,14 @@ def test_the_browser_level_list_is_short():
 
 
 def test_the_session_level_list_keeps_to_the_page():
-    for method in ("Runtime.evaluate", "DOM.setFileInputFiles", "Input.dispatchMouseEvent", "IO.read", "Log.enable",
+    for method in ("Runtime.evaluate", "DOM.setFileInputFiles", "Input.dispatchMouseEvent", "Log.enable",
                    "Page.navigate", "Page.captureScreenshot", "Page.screencastFrameAck", "Network.enable",
-                   "Network.loadNetworkResource", "Emulation.setFocusEmulationEnabled",
-                   "Emulation.setDeviceMetricsOverride", "Emulation.clearDeviceMetricsOverride"):
+                   "Emulation.setFocusEmulationEnabled", "Emulation.setDeviceMetricsOverride",
+                   "Emulation.clearDeviceMetricsOverride"):
         assert allowed(method, "session"), method
-    for method in ("Network.getAllCookies", "Network.getCookies", "Network.setCookie", "Network.setCookies",
-                   "Network.deleteCookies", "Network.clearBrowserCookies", "Network.clearBrowserCache",
+    for method in ("Network.loadNetworkResource", "IO.read", "IO.close", "Network.getAllCookies",
+                   "Network.getCookies", "Network.setCookie", "Network.setCookies", "Network.deleteCookies",
+                   "Network.clearBrowserCookies", "Network.clearBrowserCache",
                    "Network.setExtraHTTPHeaders", "Network.setUserAgentOverride", "Emulation.setUserAgentOverride",
                    "Emulation.setAutomationOverride", "Emulation.setLocaleOverride", "Emulation.setTimezoneOverride",
                    "Page.setDownloadBehavior", "Fetch.enable", "Autofill.trigger", "WebAuthn.enable",
@@ -342,7 +343,7 @@ BROWSER_REFUSED = ["Browser.close", "Browser.crash", "Browser.setDownloadBehavio
                    "SystemInfo.getInfo"]
 SESSION_REFUSED = ["Network.getAllCookies", "Network.getCookies", "Network.setUserAgentOverride",
                    "Emulation.setUserAgentOverride", "Emulation.setAutomationOverride", "Page.setDownloadBehavior",
-                   "Fetch.enable", "Autofill.trigger"]
+                   "Fetch.enable", "Autofill.trigger", "Network.loadNetworkResource", "IO.read", "IO.close"]
 
 
 @pytest.mark.parametrize("method", BROWSER_REFUSED + SESSION_REFUSED)
@@ -377,11 +378,9 @@ async def test_create_target_forces_background_and_checks_the_address(rig):
     assert [params["url"] for params in sent] == allowed_urls and all(params["background"] is True for params in sent)
     await a1.send("Target.createTarget", {"url": "about:blank", "browserContextId": "C1"})  # its own tabs' context
     _, session = await own_tab(a1)
-    for method, url in (("Page.navigate", "file:///etc/passwd"),
-                        ("Network.loadNetworkResource", f"http://127.0.0.1:{app_port}/setup")):
-        with pytest.raises(CDPError):
-            await a1.send(method, {"url": url, "frameId": "F", "options": {}}, session_id=session)
-        assert method not in rig.port.methods
+    with pytest.raises(CDPError):
+        await a1.send("Page.navigate", {"url": "file:///etc/passwd", "frameId": "F"}, session_id=session)
+    assert "Page.navigate" not in rig.port.methods
 
 
 async def test_close_target_only_own(rig):
