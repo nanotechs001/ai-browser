@@ -226,17 +226,21 @@ async def test_a_template_run_and_a_brain_started_task_never_auto_approve(fake_c
         await server.stop()
 
 
-@pytest.mark.parametrize("sandbox", [True, False])
-async def test_the_pages_hear_whether_auto_approve_may_run_commands_here(  # the review's I3
-        fake_claude, tmp_path, monkeypatch, sandbox):
+@pytest.mark.parametrize("platform, sandbox, commands", [("darwin", True, True), ("darwin", False, False),
+                                                         ("linux", False, False), ("win32", False, True)])
+async def test_the_pages_hear_whether_auto_approve_may_run_commands_here(  # the review's I3; Windows: 2026-10-08
+        fake_claude, tmp_path, monkeypatch, platform, sandbox, commands):
+    from types import SimpleNamespace
+
     from ai_browser.app import powers
 
+    monkeypatch.setattr(powers, "sys", SimpleNamespace(platform=platform))  # as powers sees it, nothing else
     monkeypatch.setattr(powers, "sandbox_on", lambda: sandbox)
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
         async with ui_socket(server, url) as ws:
             await ws.send(json.dumps({"type": "hello", "view": "mission"}))
             snapshot = (await until(ws, lambda message: message["type"] == "snapshot"))[-1]
-            assert snapshot["auto_commands"] is sandbox
+            assert snapshot["auto_commands"] is commands and snapshot["auto_sandbox"] is sandbox  # the words to say
     finally:
         await server.stop()

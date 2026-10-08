@@ -489,7 +489,7 @@ async def test_under_auto_approve_what_is_risky_or_reaches_a_site_still_shows_a_
 async def test_without_the_sandbox_auto_approve_runs_edits_only(fake_claude, tmp_path, project, monkeypatch):  # I3
     from ai_browser.app import powers
 
-    monkeypatch.setattr(powers, "sandbox_on", lambda: False)  # Windows, Linux: nothing holds a command in
+    monkeypatch.setattr(powers, "sandbox_on", lambda: False)  # Linux (or a Mac's sandbox off): nothing holds them in
     runner, log, script = fake_claude
     edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
     script.write_text(json.dumps([INIT, ask("Bash", {"command": "npm test"}), ask("Bash", {"command": "python x.py"}),
@@ -502,6 +502,122 @@ async def test_without_the_sandbox_auto_approve_runs_edits_only(fake_claude, tmp
     assert behaviors(log) == ["allow"] * 5  # the Edit ran without a card; ls is allowed as always (Decision 3)
     assert [event["id"] for event in events if event["type"] == "auto"] == []  # u1's line never came; ls isn't auto
     assert bridge._auto_ids == {"u1"}
+
+
+async def test_on_windows_auto_approve_runs_ordinary_commands_but_not_what_reaches_a_site(  # the user's choice,
+        fake_claude, tmp_path, project, monkeypatch):  # 2026-10-08: "Yes, same list as Mac"
+    from types import SimpleNamespace
+
+    from ai_browser.app import powers
+
+    monkeypatch.setattr(powers, "sys", SimpleNamespace(platform="win32"))  # Windows, as powers sees it: no sandbox
+    runner, log, script = fake_claude
+    (project / "run.sh").write_text("echo hi\n", encoding="utf-8")  # bash runs it from the folder, not the PATH
+    ordinary = [ask("Bash", {"command": command}, tool_id=f"u{index}")
+                for index, command in enumerate(("npm test", "python x.py", "mkdir build", "bash run.sh", "./run.sh",
+                                                 "cd src", "npm test"))]  # a script in the folder too (2026-10-08)
+    carded = ["cargo build", "npm install", "git push", "rm x", "cat %USERPROFILE%/secret.txt", "powershell -c x",
+              "cmd //c del x", "bash -c x", "bash ../evil.sh"]
+    script.write_text(json.dumps([INIT, *ordinary[:5], *[ask("Bash", {"command": command}, tool_id=f"c{index}")
+                                                         for index, command in enumerate(carded)],
+                                  ordinary[5], ordinary[6], ask("Bash", {"command": "cd /c/Users"}, tool_id="m"),
+                                  ask("Bash", {"command": "npm test"}, tool_id="late"), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"] * (len(carded) + 2), work=project, auto=True)
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == [*carded, "cd /c/Users", "npm test"]  # the shell left
+    assert all(request["card"]["sandbox"] == "" for request in shown)  # no sandbox to name on Windows
+    assert behaviors(log) == ["allow"] * (len(ordinary) + len(carded) + 2)
+    assert bridge._auto_ids == {f"u{index}" for index in range(len(ordinary))}
+
+
+
+async def test_auto_approve_runs_an_installed_skills_script_but_never_writes_into_it(  # Part 2 of the review of
+        fake_claude, tmp_path, project, monkeypatch, sandboxed):  # 2026-10-08: their skills' scripts too
+    scripts = a_skill(tmp_path, monkeypatch)  # the agent's skills, as the catalog finds them: never the user's own
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": f"python3 {scripts}/x.py src/app.py"}, tool_id="u1"),
+                                  ask("Bash", {"command": f"cp src/app.py {scripts}/x.py"}, tool_id="u2"),
+                                  ask("Bash", {"command": f"python3 {scripts}/x.py ../outside"}, tool_id="u3"),
+                                  RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"] * 2, work=project, auto=True)
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == [f"cp src/app.py {scripts}/x.py",
+                                                              f"python3 {scripts}/x.py ../outside"]
+    assert all(request["card"]["why"] for request in shown)  # each asked every time
+    assert bridge._auto_ids == {"u1"}
+
+
+
+def a_skill(tmp_path, monkeypatch):
+    """A personal skill with a script, where the catalog finds the agent's skills (never the user's own)."""
+    from ai_browser import skills
+
+    claude = tmp_path / "users" / ".claude"
+    scripts = claude / "skills" / "tidy" / "scripts"
+    scripts.mkdir(parents=True)
+    (claude / "skills" / "tidy" / "SKILL.md").write_text("---\nname: tidy\n---\n", encoding="utf-8")
+    (scripts / "x.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(skills, "user_folders", lambda: (claude, tmp_path / "users" / "Claude"))
+    return scripts
+
+
+def test_the_skills_folders_are_read_again_so_a_blocked_skill_asks_without_a_restart(  # the re-review's N2
+        tmp_path, project, monkeypatch, sandboxed):
+    from ai_browser import config
+    from ai_browser.app import bridge as bridge_module
+    from ai_browser.app import powers
+
+    scripts = a_skill(tmp_path, monkeypatch)
+    bridge, _ = bridge_for(tmp_path, ["unused"], work=project, auto=True)
+    command = {"command": f"python3 {scripts}/x.py"}
+
+    def runs():
+        folders = bridge.skill_folders()
+        return powers.auto_approves("Bash", command, powers.classify("Bash", command, project, skills=folders),
+                                    sandbox=True, skills=folders)
+
+    assert runs()
+    config.set_blocked(tmp_path / "home", "personal:tidy", True)  # Knowledge's Remove, while the agent works
+    assert runs()  # read a moment ago: kept for SKILLS_TTL seconds
+    monkeypatch.setattr(bridge_module, "SKILLS_TTL", 0)
+    assert not runs()
+
+
+
+async def test_when_the_skills_folders_cant_be_read_a_skills_script_shows_a_card(  # fail closed: no skill roots
+        fake_claude, tmp_path, project, monkeypatch, sandboxed):
+    from ai_browser.app import bridge as bridge_module
+
+    scripts = a_skill(tmp_path, monkeypatch)
+
+    def vanished(blocked=frozenset()):
+        raise FileNotFoundError("a synced skills folder went away between glob and stat")
+
+    monkeypatch.setattr(bridge_module, "skill_folders", vanished)
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": f"python3 {scripts}/x.py"}, tool_id="u1"),
+                                  ask("Bash", {"command": "npm test"}, tool_id="u2"), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"], work=project, auto=True)
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == [f"python3 {scripts}/x.py"]
+    assert bridge._auto_ids == {"u2"} and behaviors(log) == ["allow", "allow"]  # the rest works as before
+
+
+async def test_a_saved_rule_for_the_interpreter_never_runs_a_skills_script(  # the re-review's N4
+        fake_claude, tmp_path, project, monkeypatch):
+    from ai_browser.app import powers
+
+    scripts = a_skill(tmp_path, monkeypatch)
+    rules = powers.Rules(tmp_path / "rules")
+    rules.add(project, "Bash(python:*)")  # Always allow, saved for another python command
+    runner, log, script = fake_claude
+    script.write_text(json.dumps([INIT, ask("Bash", {"command": f"python {scripts}/x.py"}, tool_id="u1"),
+                                  ask("Bash", {"command": f"python {project}/src/app.py"}, tool_id="u2"), RESULT]),
+                      encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"], work=project, rules=rules)  # Auto-approve off
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == [f"python {scripts}/x.py"]  # the rule ran the other
+    assert behaviors(log) == ["allow", "allow"]
 
 
 async def test_a_request_without_its_tool_use_never_runs_by_auto_approve(  # the review's 4: the mark fails closed

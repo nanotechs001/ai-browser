@@ -22,7 +22,7 @@ from .chrome import ChromeError, _same_folder, browser_name, find_ws_url, own_br
 from .config import READ_LIMIT, SHELL_LIMIT, load_config, project_root
 from .grouping import Placer
 from .live import LiveView
-from .sandbox import SandboxInfo, Sandboxes
+from .sandbox import DockerError, SandboxInfo, Sandboxes
 from .shellguard import shell_problem
 from .skills import Catalog
 from .steps import parse_steps
@@ -30,6 +30,7 @@ from .tasklog import TaskLog, new_task_id
 from .workfs import PathError, WorkDir
 
 DESCRIPTION_LIMIT = 160
+NO_DOCKER_SHELL = "There's no shell without Docker. Use your own Bash; AI Browser asks the user as usual."
 CHROME_ALLOW_WAIT = 60  # seconds a call waits for the user's "Allow"; the question itself stays until they answer
 RECONNECTED = {"chrome": "(reconnected to your {name}: earlier tabs and element ids from this session are gone)\n"}
 BROWSER_KINDS = {"": "chrome", "own": "chrome", "chrome": "chrome", "brave": "chrome",
@@ -147,6 +148,7 @@ class Engine:
         self.live = None  # LiveView, set up on first start (live.py)
         self._lock = asyncio.Lock()
         self._shell_logs = 0
+        self._docker: bool | None = None  # whether Docker answers (sandbox.py's check): asked once, starts nothing
         self._link: AgentLink | None = None  # in AI Browser, an agent reports its tabs to the app
         self._adopted_start = False  # the user's tab this agent was started in (AIB_APP_ADOPT) is taken on once
         self._placer: Placer | None = None  # in the user's own browser: it opens our tabs (the app, or a window)
@@ -765,7 +767,28 @@ class Engine:
 
     # ---- shell and files --------------------------------------------------------------------------------
 
+    def _docker_running(self) -> bool:
+        """Whether Docker answers with the sandbox image there, asked once per session (Sandboxes.check: it starts
+        nothing). Without it, a skill's scripts run with the agent's own Bash (Part 2 of the review of 2026-10-08)."""
+        if self._docker is None:
+            try:
+                Sandboxes(self.home).check()
+                self._docker = True
+            except DockerError:
+                self._docker = False
+        return self._docker
+
     async def shell(self, command: str, timeout: int = 60) -> ToolResult:
+        def refuse() -> str | None:
+            problem = shell_problem(command, self.gate.skipped)
+            return self.gate.refusal("shell") or (f"⛔ {problem}" if problem else None)
+
+        async def told():  # no shell to start: what the shell refuses stays refused
+            return refuse() or NO_DOCKER_SHELL  # never the command back, as an instruction (the re-review's N5)
+
+        if not await asyncio.to_thread(self._docker_running):
+            return await self._run("shell", {"command": command, "timeout": timeout}, told)
+
         async def action(_browser):
             if self.info.chrome:  # the user's own Chrome: only the sandboxed shell, started on first use or if stopped
                 if self.sandboxes is None:
@@ -782,9 +805,6 @@ class Engine:
                           f"\n… [truncated: {len(output) - SHELL_LIMIT} more chars; full output saved to {path}]")
             status = f"timed out after {timeout}s" if result.timed_out else f"exit {result.code}"
             return f"{output.rstrip()}\n[{status}]"
-        def refuse() -> str | None:
-            problem = shell_problem(command, self.gate.skipped)
-            return self.gate.refusal("shell") or (f"⛔ {problem}" if problem else None)
         return await self._with_browser("shell", {"command": command, "timeout": timeout}, action, refuse)
 
     async def read_file(self, path: str) -> ToolResult:
@@ -821,8 +841,8 @@ class Engine:
         return await self._run("find_skills", {"query": query, "limit": limit}, work)
 
     async def load_skill(self, name: str) -> ToolResult:
-        async def work():
-            return self.catalog.load(name)
+        async def work():  # without Docker: its own folder, for the agent's own Bash
+            return self.catalog.load(name, host=not await asyncio.to_thread(self._docker_running))
         return await self._run("load_skill", {"name": name}, work)
 
     async def read_skill_file(self, name: str, path: str) -> ToolResult:

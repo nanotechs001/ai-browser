@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -26,6 +27,7 @@ class Skill:
     sandbox_dir: str
     has_scripts: bool
     mount: str = ""
+    root: Path | None = None  # its source's folder on this computer (${CLAUDE_PLUGIN_ROOT})
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,14 @@ class SkillSource:
     host_root: Path
     mount: str
     pattern: str  # "*/SKILL.md" or "skills/*/SKILL.md"
+
+
+@dataclass(frozen=True)
+class SkillFolders:
+    """Where an agent may run installed skills' scripts from (Part 2 of the review of 2026-10-08): the catalog's roots,
+    less the blocked skills' folders (Knowledge's Remove)."""
+    roots: tuple[str, ...] = ()
+    blocked: tuple[str, ...] = ()
 
 
 class SkillNotFound(KeyError):
@@ -100,6 +110,7 @@ class Catalog:
             sandbox_dir=f"{source.mount}/{rel}",
             has_scripts=(folder / "scripts").is_dir(),
             mount=source.mount,
+            root=source.host_root,
         )
 
     @classmethod
@@ -110,16 +121,8 @@ class Catalog:
 
     @classmethod
     def discover(cls, claude_home: Path, app_support: Path, project_skills: Path, blocked: set[str]) -> "Catalog":
-        sources = [SkillSource("personal", claude_home / "skills", "/skills/personal", "*/SKILL.md")]
-        sources += _plugin_sources(claude_home)
-        synced = sorted(
-            (app_support / "local-agent-mode-sessions" / "skills-plugin").glob("*/*/skills"),
-            key=lambda path: path.stat().st_mtime,
-        )
-        if synced:
-            sources.append(SkillSource("anthropic-skills", synced[-1], "/skills/claude-ai", "*/SKILL.md"))
-        sources.append(SkillSource("ai-browser", project_skills, "/skills/ai-browser", "*/SKILL.md"))
-        return cls(sources, blocked)
+        project = SkillSource("ai-browser", project_skills, "/skills/ai-browser", "*/SKILL.md")
+        return cls([*_sources(claude_home, app_support), project], blocked)
 
     def all(self) -> list[Skill]:
         return [skill for ref, skill in self._skills.items() if ref not in self.blocked]
@@ -158,12 +161,17 @@ class Catalog:
             raise AmbiguousSkill(f"{name!r} matches {refs}; use the full name")
         return matches[0]
 
-    def load(self, name: str) -> str:
+    def load(self, name: str, host: bool = False) -> str:
+        """A skill's instructions, its paths in the Docker sandbox; `host`: Docker isn't running, so they name its
+        folder on this computer, for the agent's own Bash (Part 2 of the review of 2026-10-08)."""
         skill = self.get(name)
         _, body = _frontmatter((skill.host_dir / "SKILL.md").read_text(encoding="utf-8-sig", errors="replace"))
-        body = body.replace("${CLAUDE_PLUGIN_ROOT}", skill.mount).replace("${CLAUDE_SKILL_DIR}", skill.sandbox_dir)
+        root, folder = ((skill.root or skill.host_dir).as_posix(), skill.host_dir.as_posix()) if host \
+            else (skill.mount, skill.sandbox_dir)
+        body = body.replace("${CLAUDE_PLUGIN_ROOT}", root).replace("${CLAUDE_SKILL_DIR}", folder)
         files = _list_files(skill.host_dir)
-        lines = [f"skill {skill.ref} · sandbox folder {skill.sandbox_dir} (read-only)"]
+        lines = [f"skill {skill.ref} · folder {folder} · Run its scripts with your own commands (Bash), from your "
+                 "task's folder." if host else f"skill {skill.ref} · sandbox folder {skill.sandbox_dir} (read-only)"]
         if skill.description:
             lines.append(f"description: {skill.description}")
         if files:
@@ -185,6 +193,41 @@ class Catalog:
 
     def mounts(self) -> list[tuple[Path, str]]:
         return [(source.host_root, source.mount) for source in self.sources]
+
+
+def _sources(claude_home: Path, app_support: Path) -> list[SkillSource]:
+    """The user's own skills: personal, plugins' and the ones synced from claude.ai."""
+    sources = [SkillSource("personal", claude_home / "skills", "/skills/personal", "*/SKILL.md")]
+    sources += _plugin_sources(claude_home)
+    synced = sorted(
+        (app_support / "local-agent-mode-sessions" / "skills-plugin").glob("*/*/skills"),
+        key=lambda path: path.stat().st_mtime,
+    )
+    if synced:
+        sources.append(SkillSource("anthropic-skills", synced[-1], "/skills/claude-ai", "*/SKILL.md"))
+    return sources
+
+
+def _too_wide(root: Path, claude_home: Path) -> bool:
+    """Whether a root is a whole disk, the home folder, or holds it or Claude Code's folder (a plugin's installPath of
+    "/" would make every program a skill's file: the re-review's N3)."""
+    real = Path(os.path.realpath(root))
+    held = [Path(os.path.realpath(folder)) for folder in (Path.home(), Path.home() / ".claude", claude_home)]
+    return real == Path(real.anchor) or any(real == folder or real in folder.parents for folder in held)
+
+
+def skill_folders(blocked: set[str] = frozenset()) -> SkillFolders:
+    """The folders the catalog reads the user's own skills from, those that are there and not too wide (what the
+    Docker sandbox mounts), and the folders of the skills in `blocked` (config's blocked_skills): an agent may run the
+    scripts of the others like its own folder's (Part 2 of the review of 2026-10-08)."""
+    claude_home, app_support = user_folders()
+    sources = [source for source in _sources(claude_home, app_support)
+               if source.host_root.is_dir() and not _too_wide(source.host_root, claude_home)]
+    hidden = ()
+    if blocked:  # only then the skills are read: blocked ones by their names
+        catalog = Catalog(sources, set(blocked))
+        hidden = tuple(str(skill.host_dir) for ref, skill in catalog._skills.items() if ref in catalog.blocked)
+    return SkillFolders(tuple(str(source.host_root) for source in sources), hidden)
 
 
 def _plugin_sources(claude_home: Path) -> list[SkillSource]:

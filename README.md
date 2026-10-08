@@ -8,11 +8,11 @@ Claude is the worker, so no LLM API keys are needed.
   with your logins. It works only in background tabs it opens itself and tabs you hand it; it never reads your other
   tabs. While the switch is on, any program on this computer can reach your Brave.
 - **Or a sandbox, apart from your logins:** the Docker sandbox runs Chromium inside Docker. It can't see your files,
-  your Brave, or your Claude login ([Which browser](#which-browser)). Shell commands and skill scripts always run in
-  Docker.
+  your Brave, or your Claude login ([Which browser](#which-browser)). Shell commands and skill scripts run in Docker.
+  When Docker isn't running, an agent runs a skill's scripts with its own commands, which ask first.
 - **Fast, compact page reading:** every page becomes a short numbered list (`e3 button "Publish" ⚠`). Claude acts by number, many steps per call, and gets back only what changed.
 - **Guarded actions:** before every click or keystroke, the target is re-checked to make sure it's still there, unchanged, enabled and not covered. Risky buttons (publish, delete, submit, pay…) need an explicit confirmation.
-- **All your Claude skills, on demand:** the 400+ installed skills are searchable. Nothing loads until it's needed, and skill scripts run inside the sandbox.
+- **All your Claude skills, on demand:** the 400+ installed skills are searchable. Nothing loads until it's needed, and skill scripts run inside the sandbox (without Docker, with the agent's own commands).
 
 Two parts, with designs and plans in `docs/superpowers/`:
 - **the engine** (tools, sandbox, your-own-browser mode);
@@ -220,7 +220,7 @@ How it works:
 - **Claude:** each agent is Claude Code on this computer (`claude -p`), signed in with one of your Claude accounts
   (AI accounts, below), with no API keys. Besides ai-browser's tools it has Claude Code's own, each asked first
   ([Agent powers](#agent-powers-commands-file-edits-the-web-sub-agents-and-to-do-lists)). Skill scripts run in the
-  Docker sandbox.
+  Docker sandbox, or, without Docker, with the agent's own commands.
 - **Background agents:** tasks from AI Home or Mission Control work in background tabs. They
   never take your focus, and they stay at full speed. **Watch** brings one to the front.
 - **Stop and Close:** **Stop** interrupts an agent and keeps its tabs. **Close** ends it and closes the tabs it
@@ -273,6 +273,10 @@ Web Fetch, sub-agents, and a to-do list.
   - `ls`, `cat`, `pwd`, `git status`, `git diff` and `git log`.
 - **Asked every time, never "Always":**
   - `sudo`, `rm`, `unlink`, `chmod`, `chown`, `dd` and `mkfs`;
+  - Windows' shells, launchers and admin programs: `powershell`, `cmd`, `start`, `wsl`, `reg`, `schtasks`, `icacls`,
+    `del` and `rd`, and the like;
+  - `bash` or `sh` in any other form (`bash -c`, `bash -s`, `bash` alone) than running a script file in the folder,
+    which asks without Always;
   - programs that run the command after them (`env`, `xargs`, `caffeinate`, `strace`, `flock`…), and code written on
     the command line (`python -c`, `node -e`, `deno eval`, a `sed` script that runs a command or writes a file);
   - uses that delete files or throw work away: `find -delete` or `-exec`, `git clean`, `git reset --hard`,
@@ -293,8 +297,16 @@ Web Fetch, sub-agents, and a to-do list.
   - on a Mac, where the sandbox holds commands in the folder, ordinary commands run without a card too: reading and
     listing (`ls`, `cat`, `grep`, `find`…), making files (`mkdir`, `touch`, `cp`, `mv`), everyday Git (`status`,
     `diff`, `add`, `commit`, a new branch), a package's own scripts (`npm test`, `npm run build`), and the project's
-    checks and builds (`make`, `pytest`, `cargo test`, `python script.py`…). Any other command asks;
-  - on Windows and Linux, commands still ask: only file edits run without a card. The switch and the drawer say so;
+    checks and builds (`make`, `pytest`, `cargo test`, `python script.py`…), and a script of the folder's own
+    (`bash script.sh`, `sh script.sh`, `./script.sh`, `scripts/build.sh`; its copy of a known program, like
+    `venv/bin/pip`, counts as that program), and a script of an installed skill
+    (`python ~/.claude/skills/<name>/scripts/run.py`), its arguments still inside the folder. Any other command asks;
+  - on Windows, the same ordinary commands run without a card, except a build that downloads what it lacks (`cargo`,
+    `go`, `dotnet`, `mvn`, `gradle`, `swift`, `uv run`, `bun`, `npx`, `./gradlew`), which asks there. Windows has no
+    sandbox: a script it
+    runs (`python script.py`, or a package's own, like `npm test`) can read your files and reach sites. A path with a
+    `%VARIABLE%` in it asks every time there. The switch and the drawer say so;
+  - on Linux, commands still ask: only file edits run without a card. The switch and the drawer say so;
   - still a card everywhere: everything asked every time (above), Web Search and Web Fetch, a command reaching a
     site, your own tools, and a `cd` that isn't into a folder inside. Once the shell has left the folder, commands
     ask again until the agent's Claude Code starts again;
@@ -314,7 +326,8 @@ Web Fetch, sub-agents, and a to-do list.
 - **Commands and the sandbox:** on a Mac, commands run in Claude Code's sandbox, so they can't write outside the
   task's folder. A command that needs more asks, every time, on a card of its own: reaching a site ("let a command
   reach a site") or running outside the sandbox. You still answer each command's card, unless **Auto-approve in its
-  folder** runs an ordinary one. On Windows, commands don't run in a sandbox; the cards are the guard.
+  folder** runs an ordinary one. On Windows, commands don't run in a sandbox: the cards and Auto-approve's list are the
+  guard.
 - **Workflows** still run in a scratch folder of their own.
 
 ### AI accounts (Settings → Accounts)
@@ -649,8 +662,8 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   - **Web:** **Web + Brave** (the default), **Brave only** (no Web Search or Web Fetch), or **No web**: no Web Search,
     Web Fetch, browser tools or skills shell (a skill's instructions still load, but its scripts don't run). Under
     **No web**, your own tools (Integrations) still run, and a command can still reach a site. On a Mac it asks you
-    first, with a card, every time; on Windows and Linux it asks with a card too, except a command you chose
-    **Always allow** for.
+    first, with a card, every time; on Windows and Linux the command's own card asks too, except a command you chose
+    **Always allow** for, or, on Windows, a script **Auto-approve in its folder** runs.
   - **Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**; the mic (in Ask AI it talks
     to the Brain; otherwise your words fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
     **Auto-approve in its folder** (see Agent powers) is off again for each new task.
@@ -775,7 +788,8 @@ What happens in your Brave:
 - **Downloads ask first:** a download would land in your Downloads folder, so download buttons and links are ⚠. A
   download that starts on its own is cancelled, and the agent asks you.
 - **Only web pages open there:** Claude can't open files on your computer (`file://`) or Brave's own pages.
-- **The sandbox's place:** shell and skill scripts still run in the Docker sandbox. The work folder is
+- **The sandbox's place:** shell and skill scripts still run in the Docker sandbox (without Docker, skill scripts run
+  with the agent's own commands). The work folder is
   `~/.ai-browser/sandboxes/chrome/work/<task>`.
 - **If Brave isn't reachable** (closed, or the switch is off), the agent says so and asks you. It never switches to
   the sandbox on its own.

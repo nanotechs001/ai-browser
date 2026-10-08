@@ -127,7 +127,8 @@ def test_instructions_make_the_users_browser_the_default():
     text = flat(INSTRUCTIONS)
     assert text.startswith("ai-browser drives a browser by numbered elements: by default the user's own Brave (or "
                            "Chrome), in background tabs it opens itself; sandbox_start() switches to a Docker sandbox. "
-                           "Shell and skill scripts always run in Docker.")
+                           "The shell and skill scripts run in Docker; when Docker isn't running, run a skill's "
+                           "scripts with your own Bash, as load_skill says.")
     assert ("Never type passwords: in the user's own browser, ask them to log in in that tab; in the sandbox, send "
             "them the live-view link from sandbox_status.") in text
     assert "AIB_BROWSER=app" not in text and "tabs switch u1" not in text and "In AI Browser" not in text

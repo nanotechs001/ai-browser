@@ -9,7 +9,7 @@
 import { askBox, askKey } from "./accountui.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
-import { AUTO_EDITS_ONLY, AUTO_LABEL, agentLabel, autoTitle, createChat, el } from "./chat.js";
+import { AUTO_EDITS_ONLY, AUTO_LABEL, AUTO_NO_SANDBOX, agentLabel, autoTitle, createChat, el } from "./chat.js";
 import { COLORS } from "./desk.js";
 import { icon } from "./icons.js";
 import { openLive } from "./nav.js";
@@ -23,7 +23,8 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
   const $ = (id) => document.getElementById(id);
   const send = (message) => link.send(message);
   const drawer = { id: null, parts: null, chat: null, brain: null, yourTabs: null, line: null };
-  let autoCommands = false; // whether Auto-approve may run commands here (the app's word: a Mac's sandbox)
+  let autoCommands = false; // whether Auto-approve may run commands here (the app's word: a Mac, Windows)
+  let autoSandbox = false; // and in Claude Code's sandbox (a Mac)
 
   function setText(node, text) {
     if (node.textContent !== text) node.textContent = text;
@@ -134,8 +135,9 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
     parts.autoInput.checked = agent.auto === true; // the app's word: what the bridge does now
     setText(parts.autoWords, `Auto-approving inside ${agent.folder || "its own scratch folder"}`);
     parts.autoWords.hidden = agent.auto !== true;
-    parts.auto.title = autoTitle(autoCommands);
-    parts.autoNote.hidden = agent.auto !== true || autoCommands;
+    parts.auto.title = autoTitle(autoCommands, autoSandbox);
+    setText(parts.autoNote, autoCommands ? AUTO_NO_SANDBOX : AUTO_EDITS_ONLY); // what this computer lacks
+    parts.autoNote.hidden = agent.auto !== true || (autoCommands && autoSandbox);
     renderPlan(parts.plan, agent.todos); // agent powers, Decision 9: the agent's plan, live
     renderSubagents(parts.subs, agent.subagents); // Decision 8: each sub-agent, its task and its current action
     parts.watch.disabled = !agent.working_tab;
@@ -221,6 +223,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf }) {
       if (message.type?.startsWith("brain_")) drawer.brain?.onMessage(message); // the inbox in the drawer
       if (message.type === "snapshot") {
         autoCommands = message.auto_commands === true;
+        autoSandbox = message.auto_sandbox === true;
         if (drawer.id) fill(agentOf(drawer.id));
       }
       drawer.line?.box.onMessage(message); // the chat's files, and whether its message went

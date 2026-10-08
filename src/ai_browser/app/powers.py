@@ -19,12 +19,14 @@ import json
 import os
 import re
 import shlex
+import shutil
 import sys
 import time
 from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from ..skills import _SKIP_DIRS
 from ..syncdir import write_atomic
 
 # Task 1's probe sets these (the plan's rulings R1 to R4): facts about Claude Code 2.1.263 on macOS, not choices.
@@ -60,6 +62,7 @@ _OPERATOR = re.compile(r"[;&|<>()]+")
 _PROGRAM = re.compile(r"(?:\./|/)?[A-Za-z0-9_][A-Za-z0-9_.+-]*(?:/[A-Za-z0-9_.+-]+)*")
 _WORD = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.@+:/-]*")  # a word a rule may hold: no option, quote or space
 _DRIVE = re.compile(r"[A-Za-z]:[\\/]")
+_CMD_VARIABLE = re.compile(r"%[^%\s]+%")  # %USERPROFILE%: cmd.exe, which runs npm's scripts on Windows, expands it
 _CLIMB = re.compile(r"(?:^|[\\/])\.\.(?:[\\/]|$)")
 _GLOB = re.compile(r"[*?\[{]")
 
@@ -70,10 +73,16 @@ LAUNCHERS = frozenset({  # they run another command, which no rule of theirs cou
     # the security review of auto-approve (C2): more that run the command after them
     "caffeinate", "arch", "busybox", "stdbuf", "setsid", "unshare", "nsenter", "chroot", "pkexec", "run0",
     "systemd-run", "strace", "ltrace", "dtruss", "gdb", "lldb", "valgrind", "flock", "hyperfine", "at", "batch",
-    "unbuffer", "entr", "watchexec", "firejail", "proxychains", "proxychains4", "torsocks"})
+    "unbuffer", "entr", "watchexec", "firejail", "proxychains", "proxychains4", "torsocks",
+    # Windows' (Auto-approve runs commands there too: the user's choice, 2026-10-08)
+    "start", "runas", "wsl", "winpty", "mintty", "conhost", "cygstart", "explorer", "wscript", "cscript", "mshta",
+    "rundll32", "regsvr32", "msiexec", "forfiles", "wmic"})
 RISKY = frozenset({  # Decision 4's, and programs whose saved rule would cover their dangerous uses too
     "rm", "rmdir", "chmod", "chown", "chgrp", "dd", "shred", "truncate", "diskutil", "fdisk", "newfs", "launchctl",
-    "crontab", "defaults", "unlink", "srm"})
+    "crontab", "defaults", "unlink", "srm",
+    # Windows': deleting, and changing the computer's settings, services, scheduled tasks and file permissions
+    "del", "erase", "rd", "robocopy", "cipher", "format", "diskpart", "attrib", "cacls", "icacls", "takeown", "reg",
+    "setx", "sc", "schtasks", "net", "netsh", "bcdedit"})
 # Everyday programs whose saved rule would also cover a use that deletes files or throws work away (fresh review F2):
 # those uses are asked every time, never Always (Decision 4), while the program's other uses still offer it.
 FIND_DELETES = frozenset({"-delete"})  # find removes what it finds
@@ -88,6 +97,7 @@ _SUFFIX = re.compile(r"\.(?:exe|cmd|bat|com)$", re.IGNORECASE)  # rm.exe is rm
 SUBCOMMANDS = frozenset({"git", "npm", "pnpm", "yarn", "bun", "uv", "pip", "pip3", "poetry", "cargo", "go", "docker",
                          "kubectl", "brew", "gh", "dotnet", "swift", "mvn", "gradle", "deno"})
 RUNNERS = frozenset({"run", "exec", "x", "dlx", "tool"})  # `npm run build`: the rule holds the third word too
+PACKAGE_RUNNERS = frozenset({"npx", "pnpx", "bunx", "uvx", "pipx"})  # they run the program named first
 HARMLESS = frozenset({"ls", "cat", "pwd"})  # Decision 3, with git's three below
 GIT_READS = frozenset({"status", "diff", "log"})
 GIT_UNSAFE = frozenset({"--output", "--ext-diff", "--textconv", "--open-files-in-pager", "--exec-path"})
@@ -111,6 +121,9 @@ WHY_MOVED = "The shell has left the task's folder: a path that isn't a full one 
 WHY_EDIT = "It changes a file outside the task's folder"
 WHY_GUARDED = "It changes Git's, Claude Code's or an editor's own settings or hooks in this folder"
 WHY_WEB = "That isn't a web address"
+WHY_SKILL = "It runs a script of an installed skill, outside the task's folder"
+WHY_SKILL_FILE = ("It runs a file in a skill's folder that isn't one of its scripts: a package, a hook, a hidden or "
+                  "linked file, or a skill you removed")
 
 
 def user_home() -> Path:
@@ -179,6 +192,8 @@ def inside(path, folder) -> bool:
     resolved, and however its name is spelled where the disk ignores case. Anything that isn't a path is outside."""
     if not isinstance(path, str) or not path or "\x00" in path:
         return False
+    if os.name != "nt" and _DRIVE.match(path):
+        return False  # a Windows path (C:/…): Windows reads it as a drive's; no folder here is on one
     target = Path(os.path.expanduser(path))
     if not target.is_absolute():
         target = Path(folder) / target
@@ -201,6 +216,8 @@ def _targets(word: str) -> list[str]:
 def _outside(word: str, folder) -> bool:
     if word.startswith("-") and not word.startswith("--") and "=" not in word and len(word) > OPTION_LIMIT:
         return True  # too long to check each tail: asked every time
+    if sys.platform == "win32" and _CMD_VARIABLE.search(word):
+        return True  # a folder cmd.exe would put in its place (npm test -- %USERPROFILE%)
     return any(part.lower().startswith("file:") or not inside(part, folder) for part in _targets(word))
 
 
@@ -217,6 +234,50 @@ def _name(word: str) -> str:
 def _bare(word: str) -> bool:
     """A program found on the PATH, not one the folder holds (./bin/ls could be anything the agent wrote)."""
     return "/" not in word and "\\" not in word
+
+
+def _own_program(word: str) -> bool:
+    """A program named by a path in the folder (./run.sh, scripts/build.sh), not a name on the PATH or a full path."""
+    return "/" in word and not word.startswith("/")
+
+
+SHELLS = ("bash", "sh")  # with a script file first, they run the folder's own script, like python x.py
+
+
+def _shell_script(words: list[str]) -> bool:
+    """bash or sh running a file: its first word after it isn't an option (-c, -s, -i, --norc, +x, -, --), so it
+    neither runs code given on the command line nor reads stdin (the ruling of 2026-10-08). Where the file is, the
+    caller checks."""
+    return words[0] in SHELLS and len(words) > 1 and not words[1].startswith(("-", "+"))
+
+
+SKILL_SKIPS = frozenset({*_SKIP_DIRS, "site-packages", "dist-packages"})  # a skill's packages and Git's, not its own
+
+
+def _skill_file(word: str, folder, skills) -> bool | None:
+    """Whether a word names one of an installed skill's own scripts, once symlinks and .. are resolved (Part 2 of the
+    review of 2026-10-08): True; None when it is in a skill's folder, as written or resolved, yet isn't one: under
+    .git, node_modules, a virtualenv, site-packages or any dot-folder, in a blocked skill, or linked from one to
+    elsewhere (the re-review's N1, N2); else False. `skills`: the catalog's roots, or a SkillFolders that also names
+    the blocked skills' folders. A relative word is read from the task's folder."""
+    roots, blocked = getattr(skills, "roots", skills), getattr(skills, "blocked", ())
+    if not roots or not isinstance(word, str) or not word or "\x00" in word or word.startswith(("-", "+")) \
+            or (os.name != "nt" and _DRIVE.match(word)):
+        return False
+    path = Path(os.path.expanduser(word))
+    path = path if path.is_absolute() else Path(folder) / path
+    real, seen = _real(path), os.path.normcase(os.path.abspath(path))
+    if any(_same(real, _real(hidden)) or _under(real, _real(hidden)) for hidden in blocked):
+        return None
+    written = False
+    for root in roots:
+        top = _real(root)
+        if _same(real, top) or _under(real, top):
+            parts = Path(os.path.relpath(real, top)).parts
+            return None if any(part.startswith(".") or part.casefold() in SKILL_SKIPS for part in parts) else True
+        written = written or any(seen.startswith(above.rstrip(os.sep) + os.sep)
+                                 for above in (os.path.normcase(os.path.abspath(root)), top))
+    return None if written else False
 
 
 def _git_runs_programs(folder) -> bool:
@@ -368,6 +429,16 @@ def _prefix(words: list[str]) -> tuple[list[str] | None, str]:
     program, rest = _name(words[0]), words[1:]
     if _inline(program, rest):
         return None, WHY_INLINE
+    if rest[:1] and rest[0] in RUNNERS and program in SUBCOMMANDS:  # uv run X …, npm exec X …
+        runs, after = rest[1:2], rest[2:]
+    else:  # npx X …
+        runs, after = (rest[:1], rest[1:]) if program in PACKAGE_RUNNERS else ([], [])
+    ran = _name(runs[0]) if runs else ""
+    if ran in LAUNCHERS or ran in RISKY or ran.startswith("mkfs"):
+        return None, WHY_LAUNCHER  # uv run bash, npm exec sh, npx bash: no rule may cover bash -c later
+    if ran and (_inline(ran, after) or (_INTERPRETER.fullmatch(ran) and after
+                                        and (after[0] in INLINE or after[0][:2] in ("-c", "-e")))):
+        return None, WHY_INLINE  # uv run python -c, npx node -e: no rule of the interpreter's may cover them
     if _INTERPRETER.fullmatch(program) and rest:
         if rest[0] in INLINE or rest[0][:2] in ("-c", "-e"):
             return None, WHY_INLINE
@@ -442,30 +513,47 @@ def _git_config_writes(args: list[str]) -> bool:
     return len([arg for arg in args if not arg.startswith("-")]) != 1
 
 
-def _bash(data: dict, folder, moved: bool) -> tuple[str, str]:
+def _bash(data: dict, folder, moved: bool, skills=()) -> tuple[str, str]:
     if data.get("dangerouslyDisableSandbox") is True:
         return "ask_always", WHY_SANDBOX
     words = words_of(data.get("command"))
     if words is None:
         return "ask_always", WHY_NOT_PLAIN
     program = _name(words[0])
-    if program in LAUNCHERS:
+    # A file's name without a slash: bash runs the folder's file, else the first one on the PATH (the review's C1):
+    # only one that is there, while the shell is still in the folder
+    script = _shell_script(words) and ("/" in words[1] or (not moved and os.path.isfile(Path(folder) / words[1])
+                                                          and shutil.which(words[1]) is None))
+    if program in LAUNCHERS and not script:
         return "ask_always", WHY_LAUNCHER
     if program in RISKY or program.startswith("mkfs"):
         return "ask_always", WHY_RISKY
     why = _destroys(program, words)
     if why:
         return "ask_always", why
-    if any(_outside(word, folder) for word in words[1:]):
+    # An installed skill's script, run as the program or by bash, sh, python, python3 or node with it first: its path
+    # isn't the folder's, but its arguments still are (Part 2 of the review of 2026-10-08)
+    runner = words[0] in SHELLS or AUTO_BASH.get(words[0]) is _SCRIPT
+    first = _skill_file(words[0], folder, skills) if "/" in words[0] else False
+    second = _skill_file(words[1], folder, skills) if runner and len(words) > 1 else False
+    if first is None or second is None:
+        return "ask_always", WHY_SKILL_FILE
+    skill = 0 if first else 1 if second else None
+    named = words[skill + 1:] if skill is not None else words if _own_program(words[0]) else words[1:]
+    if any(_outside(word, folder) for word in named):
         return "ask_always", WHY_OUTSIDE
     guarded = _guard(folder)
-    if any(guarded(target) for word in words[1:] for target in _targets(word)) \
+    if any(guarded(target) for word in named for target in _targets(word)) \
             or (program == "git" and words[1:2] == ["config"] and _git_config_writes(words[2:])):
         return "ask_always", WHY_GUARDED  # C1: what Git, Claude Code or an editor runs or loads later
     if not moved and _harmless(program, words, folder):
         return "allow", ""
+    if script:  # no rule covers what a script does (no Always); Auto-approve may run it
+        return "ask", WHY_SKILL if skill is not None else WHY_LAUNCHER
     prefix, why = _prefix(words)
-    return ("ask", "") if prefix else ("ask_always", why)
+    if not prefix:
+        return "ask_always", why
+    return "ask", WHY_SKILL if skill is not None else ""  # a skill's script: no Always either
 
 
 def _glob_root(pattern: str) -> str:
@@ -525,6 +613,11 @@ def _hooks_folder(folder) -> str | None:
     return _real(path if path.is_absolute() else Path(folder) / path)
 
 
+def _bare_parts(path) -> list[str]:
+    """A path's parts as Windows reads them: without trailing dots and spaces, in any case."""
+    return [part.rstrip(". ").casefold() for part in Path(path).parts]
+
+
 def _guard(folder):
     """A test of whether a path is a file of Git's, Claude Code's or an editor's own in the folder (.git, .claude,
     .husky, .vscode, .idea, .mcp.json, .pre-commit-config.yaml, the hooks folder): what they run or load later, so an
@@ -541,12 +634,16 @@ def _guard(folder):
             relative = os.path.relpath(real, root)
         except ValueError:  # another drive: outside, which is asked for already
             return False
-        parts = [part.casefold() for part in Path(relative).parts]  # .GIT is .git where case is ignored
+        # .GIT is .git where case is ignored, and Windows drops a name's trailing dots and spaces: .git. is .git (M1)
+        parts = [part.rstrip(". ").casefold() for part in Path(relative).parts]
         if any(part in GUARDED_FOLDERS for part in parts):
             return True
-        if Path(real).name.casefold() in GUARDED_FILES and _same(str(Path(real).parent), root):
+        if Path(real).name.rstrip(". ").casefold() in GUARDED_FILES and _same(str(Path(real).parent), root):
             return True
-        return hooks is not None and (_same(real, hooks) or _under(real, hooks))
+        if hooks is None:
+            return False
+        mine, theirs = _bare_parts(real), _bare_parts(hooks)  # tools/hooks./x is in tools/hooks (M1)
+        return mine[:len(theirs)] == theirs or _same(real, hooks) or _under(real, hooks)
 
     return guarded
 
@@ -567,13 +664,13 @@ def _host(url) -> str:
     return host if parts.scheme in ("http", "https") and re.fullmatch(r"[a-z0-9.-]{1,253}", host) else ""
 
 
-def _decide(tool: str, data, folder, moved: bool = False) -> tuple[str, str]:
-    """classify's answer, and why a card that asks every time does."""
+def decide(tool: str, data, folder, moved: bool = False, skills=()) -> tuple[str, str]:
+    """classify's answer, and why: a card that asks every time, or one that offers no Always."""
     data = data if isinstance(data, dict) else {}
     if tool in FREE or tool in SUBAGENTS:
         return "allow", ""
     if tool == "Bash":
-        return _bash(data, folder, moved)
+        return _bash(data, folder, moved, skills)
     if tool in READS:
         return _reads(tool, data, folder, moved)
     if tool in EDITS:
@@ -590,11 +687,11 @@ def _decide(tool: str, data, folder, moved: bool = False) -> tuple[str, str]:
     return "ask_always", ""
 
 
-def classify(tool: str, data, folder, moved: bool = False) -> str:
+def classify(tool: str, data, folder, moved: bool = False, skills=()) -> str:
     """"allow", "ask" or "ask_always" for one request (Decisions 3 and 4). `moved`: an allowed command may have taken
     the shell out of the folder, so no command is harmless for the rest of that Claude Code process (plan decision
     8)."""
-    return _decide(tool, data, folder, moved)[0]
+    return decide(tool, data, folder, moved, skills)[0]
 
 
 def rule_for(tool: str, data) -> str | None:
@@ -644,8 +741,9 @@ def moves_shell(command) -> bool:
 
 # ---- Auto-approve in its folder (the user's choice, 2026-10-07): a switch per task ----------------------------------
 # After the security review: it runs only what classify asks about (one plain command, inside the folder, nothing
-# asked every time) AND what AUTO_BASH lists; a gap costs a card, never a silent run. Commands run without a card only
-# where Claude Code's sandbox holds them (a Mac): elsewhere only edits and new files do.
+# asked every time) AND what AUTO_BASH lists; a gap costs a card, never a silent run. Commands run without a card where
+# Claude Code's sandbox holds them (a Mac), and on Windows, where nothing does (the user's choice, 2026-10-08: "same list
+# as Mac"), all but the uses that reach a site by themselves (AUTO_FETCHES). On Linux only edits and new files do.
 
 AUTO_TOOLS = frozenset({"Bash", "Edit", "Write"})  # what it may run without a card
 _ANY = object()  # any use classify lets through (its paths are inside the folder already)
@@ -679,7 +777,8 @@ AUTO_BASH: dict[str, object] = {
 AUTO_REFUSED: dict[str, tuple[str, ...]] = {
     "find": ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls"),
     "rg": ("--pre",), "sort": ("--compress-program",), "pytest": ("--basetemp",), "make": ("--eval", "-E"),
-    "go": ("-exec", "-toolexec", "-vettool"), "cargo": ("--config", "-Z"),
+    "go": ("-exec", "-toolexec", "-vettool"), "cargo": ("--config", "-Z"), "mypy": ("--install-types",),
+    "date": ("-s", "--set"),  # GNU date (Git Bash's) sets the computer's clock
     **dict.fromkeys(("npm", "pnpm", "yarn", "bun"), ("--script-shell", "--shell", "-c", "--call")),
     "git": (*sorted(GIT_UNSAFE), "-O"),
 }
@@ -689,6 +788,11 @@ AUTO_GIT: dict[str, tuple[str, ...]] = {  # git's everyday uses, and what turns 
     "init": ("--template", "--separate-git-dir"),  # a template folder fills .git/hooks
 }
 GIT_STASH = (None, "push", "list", "show")  # git stash alone pushes
+# Programs that download what a build or a run lacks (crates, modules, packages; Bun installs on import; the Gradle
+# and Maven wrappers fetch the tool itself; npx and its kin fetch the package they run). On a Mac the sandbox asks
+# for each site they reach; on Windows nothing would, so there they keep their card.
+AUTO_FETCHES = frozenset({"cargo", "go", "dotnet", "mvn", "gradle", "swift", "uv", "bun", "gradlew", "mvnw", "npx",
+                          "pnpx", "bunx", "pipx"})
 
 
 def _refused(word: str, options: tuple[str, ...]) -> bool:
@@ -707,9 +811,18 @@ def _refused(word: str, options: tuple[str, ...]) -> bool:
     return False
 
 
-def ordinary(words: list[str]) -> bool:
-    """Whether one plain command is an ordinary use in AUTO_BASH (C2)."""
+def ordinary(words: list[str], skills=()) -> bool:
+    """Whether one plain command is an ordinary use in AUTO_BASH (C2), or runs a script of the folder's own: bash or sh
+    with the file first, or the file as the program (the ruling of 2026-10-08). classify, which asked, has checked its
+    paths are inside the folder and none is Git's or Claude Code's. The folder's copy of a program known here (pip,
+    python3.12, git, gradlew) is judged as that program, so an install still asks."""
     program, rest = words[0], words[1:]
+    if program in SHELLS:
+        return _shell_script(words)
+    if _own_program(program) or (program.startswith("/") and _skill_file(program, "/", skills) is True):
+        name = _name(program)  # the folder's own program, or an installed skill's (`skills`: their roots)
+        known = name in AUTO_BASH or name in SUBCOMMANDS or name in AUTO_FETCHES or _INTERPRETER.fullmatch(name)
+        return ordinary([name, *rest]) if known else True
     use = AUTO_BASH.get(program)
     if use is None or any(_refused(arg, AUTO_REFUSED.get(program, ())) for arg in rest):
         return False
@@ -722,7 +835,8 @@ def ordinary(words: list[str]) -> bool:
     if not rest or rest[0] not in use:
         return False
     if program == "uv":
-        return len(rest) > 1 and rest[1] != "uv" and ordinary(rest[1:])
+        # not bash or sh: what they run by name, classify checked for the command's own first word only (C1)
+        return len(rest) > 1 and rest[1] not in ("uv", *SHELLS) and ordinary(rest[1:])
     if program != "git":
         return True
     sub, args = rest[0], rest[1:]
@@ -735,25 +849,28 @@ def ordinary(words: list[str]) -> bool:
 
 
 def auto_commands() -> bool:
-    """Whether Auto-approve in its folder may run commands on this computer: only where Claude Code's sandbox holds
-    them in the folder and away from sites (R1: a Mac). Elsewhere it runs edits and new files only (the review, I3)."""
-    return sandbox_on() and SANDBOX_NETWORK
+    """Whether Auto-approve in its folder may run commands on this computer: where Claude Code's sandbox holds them in
+    the folder and away from sites (R1: a Mac), and on Windows, without a sandbox (the user's choice, 2026-10-08).
+    Elsewhere it runs edits and new files only (the review, I3)."""
+    return (sandbox_on() and SANDBOX_NETWORK) or sys.platform == "win32"
 
 
-def auto_approves(tool: str, data, decision: str, sandbox: bool = False, away: bool = False) -> bool:
+def auto_approves(tool: str, data, decision: str, sandbox: bool = False, away: bool = False, skills=()) -> bool:
     """Whether Auto-approve in its folder runs this request without a card: an "ask" (never "ask_always") of Edit or
-    Write, so an edit or a new file inside the task's folder; and where the sandbox holds commands (`sandbox`), an "ask"
-    of Bash that AUTO_BASH lists, unless the shell has left the folder since Claude Code started (`away`). Everything
-    else keeps its card: what is asked every time, Web Search and Web Fetch, a sandboxed command's reach for a site,
-    the user's own tools, and every command AUTO_BASH doesn't list."""
+    Write, so an edit or a new file inside the task's folder; and an "ask" of Bash that AUTO_BASH lists, where the
+    sandbox holds commands (`sandbox`), or on Windows unless it downloads what it lacks (AUTO_FETCHES), and in both
+    only while the shell hasn't left the folder since Claude Code started (`away`). Everything else keeps its card:
+    what is asked every time, Web Search and Web Fetch, a sandboxed command's reach for a site, the user's own tools,
+    and every command AUTO_BASH doesn't list."""
     if decision != "ask" or tool not in AUTO_TOOLS:
         return False
     if tool != "Bash":
         return True
-    if not (sandbox and SANDBOX_NETWORK) or away:
+    held = sandbox and SANDBOX_NETWORK  # a Mac: the sandbox asks for each site a command reaches
+    if away or not (held or sys.platform == "win32"):
         return False
     words = words_of(data.get("command") if isinstance(data, dict) else None)
-    return words is not None and ordinary(words)
+    return words is not None and ordinary(words, skills) and (held or _name(words[0]) not in AUTO_FETCHES)
 
 
 # ---- the card: what a request will do, as plain text (Decision 2), and each action's badge (Decision 10) -------------
@@ -854,15 +971,16 @@ def _lines(shown: dict, old: str | None, new: str) -> None:
     shown["hidden"] = len(rows) - len(shown["lines"])
 
 
-def card(tool: str, data, folder, moved: bool = False, sandbox: bool = False) -> dict:
+def card(tool: str, data, folder, moved: bool = False, sandbox: bool = False, skills=()) -> dict:
     """What a card shows for one request, as plain text (Decision 2): the command and its folder, a clipped diff or
     the new file, the path, the site or the query; whether Always allow is offered, and if not, why. `sandbox`: the
     command will run in Claude Code's sandbox (R1)."""
     data = data if isinstance(data, dict) else {}
-    decision, why = _decide(tool, data, folder, moved)
+    decision, why = decide(tool, data, folder, moved, skills)
     shown = {"tool": tool, "badge": badge(tool), "title": TITLES.get(tool, "use a tool"), "text": "",
              "folder": _clip(str(folder)), "site": "", "lines": [], "hidden": 0, "size": None, "binary": False,
-             "why": why, "always": decision == "ask" and rule_for(tool, data) is not None, "sandbox": ""}
+             "why": why, "always": decision == "ask" and not why and rule_for(tool, data) is not None,
+             "sandbox": ""}
     if tool == "Bash":
         shown["text"] = _said(data.get("command"))
         if data.get("dangerouslyDisableSandbox") is True:

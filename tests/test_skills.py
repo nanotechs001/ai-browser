@@ -152,6 +152,54 @@ def test_mounts(env):
     assert (env["project"], "/skills/ai-browser") in mounts
 
 
+
+def test_skill_folders_are_the_folders_the_catalog_reads(env, monkeypatch):  # Part 2 of the review of 2026-10-08
+    from ai_browser import skills
+
+    monkeypatch.setattr(skills, "user_folders", lambda: (env["claude"], env["app"]))  # never the user's own
+    folders = skills.skill_folders()
+    roots = {Path(root) for root in folders.roots}
+    assert {env["claude"] / "skills", env["ecc"], env["sp"], env["new"]} <= roots and folders.blocked == ()
+    assert not {env["claude"] / "plugins/cache/x/off/1.0", env["app"] / "local-agent-mode-sessions/skills-plugin/a/old/skills"} & roots
+
+
+
+def test_a_blocked_skills_folder_is_named_so_its_scripts_ask(env, monkeypatch):  # the re-review's N2
+    from ai_browser import skills
+
+    monkeypatch.setattr(skills, "user_folders", lambda: (env["claude"], env["app"]))
+    folders = skills.skill_folders({"ecc:api-design", "personal:seo"})
+    assert set(folders.blocked) == {str(env["ecc"] / "skills" / "api-design"), str(env["claude"] / "skills" / "seo")}
+    assert str(env["ecc"]) in folders.roots  # the plugin's other skills still run
+
+
+def test_a_root_that_is_the_disk_the_home_folder_or_holds_them_is_dropped(env, tmp_path, monkeypatch):  # N3
+    from ai_browser import skills
+
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))  # in this process only: ~ is a throwaway
+    monkeypatch.setenv("USERPROFILE", str(home))
+    installed = json.loads((env["claude"] / "plugins/installed_plugins.json").read_text(encoding="utf-8"))
+    for key, path in (("disk@x", Path(home.anchor)), ("home@x", home), ("above@x", home.parent),
+                      ("claude@x", home / ".claude")):
+        installed["plugins"][key] = [{"installPath": str(path)}]
+    (env["claude"] / "plugins/installed_plugins.json").write_text(json.dumps(installed), encoding="utf-8")
+    monkeypatch.setattr(skills, "user_folders", lambda: (env["claude"], env["app"]))
+    roots = {Path(root) for root in skills.skill_folders().roots}
+    assert not {Path(home.anchor), home, home.parent, home / ".claude"} & roots
+    assert env["ecc"] in roots  # the good ones stay
+
+
+def test_load_without_docker_names_the_skills_own_folder(env):  # Part 2: its scripts run with the agent's own Bash
+    text = catalog(env).load("ecc:api-design", host=True)
+    folder = (env["ecc"] / "skills" / "api-design").as_posix()
+    assert folder in text.splitlines()[0] and "/skills/plugins" not in text
+    assert "Run its scripts with your own commands (Bash), from your task's folder." in text
+    assert f"Run {env['ecc'].as_posix()}/skills/api-design/scripts/run.py" in text
+    assert "files: scripts/run.py" in text and "${CLAUDE_PLUGIN_ROOT}" not in text
+
+
 def test_summary_groups_by_namespace(env):
     summary = catalog(env).summary()
     assert "9 skills" in summary

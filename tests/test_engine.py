@@ -33,7 +33,8 @@ def test_docker_unavailable_message(tmp_path, monkeypatch):
     assert result.text.splitlines()[-1].startswith("⏱")
 
 
-async def test_find_skills_without_docker(tmp_path):
+async def test_find_skills_without_docker(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_module.Sandboxes, "check", lambda self: None)  # Docker answers (it starts nothing)
     engine = Engine(home=tmp_path, catalog=skill_catalog(tmp_path))
     found = await engine.find_skills("hello script")
     assert "demo:hello [scripts] — Says hello from a script" in found.text
@@ -43,6 +44,31 @@ async def test_find_skills_without_docker(tmp_path):
     assert "python3 /skills/plugins/demo/skills/hello/scripts/hi.py" in loaded.text
     missing = await engine.load_skill("nope")
     assert missing.text.startswith("error: no skill 'nope'")
+
+
+async def test_when_docker_isnt_running_skills_scripts_run_with_the_agents_own_bash(tmp_path, monkeypatch):  # Part 2
+    from ai_browser.sandbox import DockerError
+
+    asked = []
+
+    def down(self):
+        asked.append(self)
+        raise DockerError("Docker isn't running. Start Docker Desktop, then retry.")
+
+    monkeypatch.setattr(engine_module.Sandboxes, "check", down)
+    engine = Engine(home=tmp_path, catalog=skill_catalog(tmp_path))
+    loaded = await engine.load_skill("demo:hello")
+    root = (tmp_path / "plugin").as_posix()
+    assert f"python3 {root}/skills/hello/scripts/hi.py" in loaded.text and "/skills/plugins/demo" not in loaded.text
+    assert f"{root}/skills/hello" in loaded.text.splitlines()[0]
+    assert "Run its scripts with your own commands (Bash), from your task's folder." in loaded.text
+    told = await engine.shell("python3 hi.py --fast")
+    assert told.text.startswith("There's no shell without Docker. Use your own Bash; AI Browser asks the user as "
+                                "usual.\n")
+    assert "hi.py" not in told.text  # never the command back, as an instruction (the re-review's N5)
+    refused = await engine.shell("curl -A 'Mozilla/5.0' https://example.com")
+    assert refused.text.startswith("⛔")  # a command the shell refuses is never handed to Bash instead
+    assert len(asked) == 1 and engine.sandboxes is None and engine.browser is None  # asked once; nothing started
 
 
 async def test_bad_steps_are_reported_not_raised(tmp_path):
