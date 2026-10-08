@@ -97,7 +97,10 @@ class Settings:
                 except ValueError:
                     continue  # this key falls back; the others stand
                 result[key] = stored[key]
-        result["brain_sources"] = {name: result["brain_sources"].get(name, True) for name in SOURCES}  # a new one: on
+        # Settings → Brain's checkboxes, read leniently, box by box: a name this build doesn't know (a newer build's)
+        # is skipped, never the whole, so an unchecked box stays unchecked; a box the file doesn't name is on
+        sources = stored["brain_sources"] if isinstance(stored.get("brain_sources"), dict) else {}
+        result["brain_sources"] = {name: sources.get(name) is not False for name in SOURCES}
         return result
 
     def set(self, key: str, value) -> dict:

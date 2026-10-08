@@ -48,6 +48,7 @@ class InboxReader:
         self.on = False
         self._task: asyncio.Task | None = None
         self._turn = 0  # changed by every set_on: a read that began before it keeps nothing
+        self._sources = brain.sources_changed  # Settings → Brain's checkboxes, as of the last round
         self._tabs: dict[str, _Tab] = {}  # target -> what it gave already
         self._said: dict[str, tuple[bool, str]] = {}  # site -> its line, as last said
         self._jobs: set[asyncio.Task] = set()  # threads being opened, reply boxes being filled
@@ -101,6 +102,11 @@ class InboxReader:
         self.brain.set_reading(self.state())
         if self.state() != "on":
             return  # off, or Brave isn't connected: nothing is read, and nothing asks Brave anything
+        if self._sources != self.brain.sources_changed:
+            # a box in Settings → Brain changed: every tab hands its rows over again, as after set_on, so what an
+            # uncheck dropped unsorted comes back (the Brain skips what it has seen or has waiting)
+            self._sources = self.brain.sources_changed
+            self._tabs.clear()
         tabs = self.brave.brain_tabs()
         for target in [target for target in self._tabs if target not in {tab["target"] for tab in tabs}]:
             del self._tabs[target]  # closed, gone to another site, or not the user's any more

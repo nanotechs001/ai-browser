@@ -172,6 +172,7 @@ class BrainService:
         # or "waiting" (Brave isn't connected). A Brain on its own, before the app says, takes what it is given: "on".
         self.reading = "on"
         self.sources = dict.fromkeys(SOURCES, True)  # what it listens to: Settings → Brain's checkboxes (set_sources)
+        self.sources_changed = 0  # counts set_sources' changes: the reader then hands its tabs' rows over again
         self._queues: dict[str, list[Item]] = {}  # per site: items waiting to be sorted
         self._pending: set[str] = set()  # ids queued or being sorted
         self._batches: dict[str, asyncio.Task] = {}
@@ -431,6 +432,14 @@ class BrainService:
             item.state = state
         self._show(item)
 
+    def _unheard(self, item: Item, state: str | None = None) -> bool:
+        """True, with its note saying so, while the item's source is unchecked in Settings → Brain: nothing of it
+        reaches Claude, and nothing is done in its tab."""
+        if self.listens(source_of(item.site)):
+            return False
+        self._note(item, NOT_LISTENING.format(name=SOURCE_NAMES[source_of(item.site)]), state)
+        return True
+
     async def draft(self, item_id: str, guidance: str = "") -> None:
         item = self.store.get(str(item_id))
         if item is None or item.state in ("drafting", "filling"):
@@ -439,8 +448,7 @@ class BrainService:
             await self._draft(item, guidance)
 
     async def _draft(self, item: Item, guidance: str) -> None:
-        if not self.listens(source_of(item.site)):  # its thread would reach Claude: not while it is unchecked
-            self._note(item, NOT_LISTENING.format(name=SOURCE_NAMES[source_of(item.site)]))
+        if self._unheard(item):  # its thread would reach Claude: not while it is unchecked
             return
         if not item.url:
             self._note(item, "This message has no link to open")
@@ -463,6 +471,8 @@ class BrainService:
         item = self.store.get(item.id)
         if item is None:
             return  # marked Done meanwhile
+        if self._unheard(item, settled):  # unchecked while the thread opened: its text never reaches Claude (from
+            return  # here to the ask below nothing awaits, so this is the check right before it)
         if error or not text.strip():
             self._note(item, f"Couldn't read the thread: {error or 'it was empty'}", settled)
             return
@@ -491,6 +501,8 @@ class BrainService:
         if item is None or item.state != "draft_ready" or version != item.draft_version \
                 or not isinstance(text, str) or not text.strip():
             return  # a second click, another page's click, or an older draft: nothing to do
+        if self._unheard(item):  # unchecked: nothing is done in its tab
+            return
         request = self._request()
         self._fills[request] = (item.id, item.draft_version)
         item.draft = text
@@ -606,8 +618,7 @@ class BrainService:
         item, text = self.store.get(str(item_id)), _clip(text, 2000)
         if item is None or not text:
             return
-        if not self.listens(source_of(item.site)):  # the message would reach Claude: not while it is unchecked
-            self._note(item, NOT_LISTENING.format(name=SOURCE_NAMES[source_of(item.site)]))
+        if self._unheard(item):  # the message would reach Claude: not while it is unchecked
             return
         card = self.tells.proposal(item.id)
         plain = is_yes(text) or is_no(text)
@@ -1115,9 +1126,13 @@ class BrainService:
 
     def set_sources(self, sources: dict) -> None:
         """Settings → Brain's checkboxes. A source unchecked is dropped at once: what waits to be sorted from it goes,
-        unsorted and unseen, and from now on nothing of it reaches Claude."""
-        self.sources = {name: sources.get(name) is not False for name in SOURCES} if isinstance(sources, dict) \
+        unsorted and unseen, and from now on nothing of it reaches Claude. Each change is counted: the reader then
+        forgets what its tabs handed over, so what an uncheck dropped comes back once its box is checked again."""
+        sources = {name: sources.get(name) is not False for name in SOURCES} if isinstance(sources, dict) \
             else dict.fromkeys(SOURCES, True)
+        if sources != self.sources:
+            self.sources_changed += 1
+        self.sources = sources
         for site, queue in self._queues.items():
             if not self.listens(source_of(site)):
                 self._pending.difference_update(item.id for item in queue)
