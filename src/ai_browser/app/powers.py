@@ -60,6 +60,7 @@ _OPERATOR = re.compile(r"[;&|<>()]+")
 _PROGRAM = re.compile(r"(?:\./|/)?[A-Za-z0-9_][A-Za-z0-9_.+-]*(?:/[A-Za-z0-9_.+-]+)*")
 _WORD = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.@+:/-]*")  # a word a rule may hold: no option, quote or space
 _DRIVE = re.compile(r"[A-Za-z]:[\\/]")
+_CMD_VARIABLE = re.compile(r"%[^%\s]+%")  # %USERPROFILE%: cmd.exe, which runs npm's scripts on Windows, expands it
 _CLIMB = re.compile(r"(?:^|[\\/])\.\.(?:[\\/]|$)")
 _GLOB = re.compile(r"[*?\[{]")
 
@@ -70,10 +71,16 @@ LAUNCHERS = frozenset({  # they run another command, which no rule of theirs cou
     # the security review of auto-approve (C2): more that run the command after them
     "caffeinate", "arch", "busybox", "stdbuf", "setsid", "unshare", "nsenter", "chroot", "pkexec", "run0",
     "systemd-run", "strace", "ltrace", "dtruss", "gdb", "lldb", "valgrind", "flock", "hyperfine", "at", "batch",
-    "unbuffer", "entr", "watchexec", "firejail", "proxychains", "proxychains4", "torsocks"})
+    "unbuffer", "entr", "watchexec", "firejail", "proxychains", "proxychains4", "torsocks",
+    # Windows' (Auto-approve runs commands there too: the user's choice, 2026-10-08)
+    "start", "runas", "wsl", "winpty", "mintty", "conhost", "cygstart", "explorer", "wscript", "cscript", "mshta",
+    "rundll32", "regsvr32", "msiexec", "forfiles", "wmic"})
 RISKY = frozenset({  # Decision 4's, and programs whose saved rule would cover their dangerous uses too
     "rm", "rmdir", "chmod", "chown", "chgrp", "dd", "shred", "truncate", "diskutil", "fdisk", "newfs", "launchctl",
-    "crontab", "defaults", "unlink", "srm"})
+    "crontab", "defaults", "unlink", "srm",
+    # Windows': deleting, and changing the computer's settings, services, scheduled tasks and file permissions
+    "del", "erase", "rd", "robocopy", "cipher", "format", "diskpart", "attrib", "cacls", "icacls", "takeown", "reg",
+    "setx", "sc", "schtasks", "net", "netsh", "bcdedit"})
 # Everyday programs whose saved rule would also cover a use that deletes files or throws work away (fresh review F2):
 # those uses are asked every time, never Always (Decision 4), while the program's other uses still offer it.
 FIND_DELETES = frozenset({"-delete"})  # find removes what it finds
@@ -179,6 +186,8 @@ def inside(path, folder) -> bool:
     resolved, and however its name is spelled where the disk ignores case. Anything that isn't a path is outside."""
     if not isinstance(path, str) or not path or "\x00" in path:
         return False
+    if os.name != "nt" and _DRIVE.match(path):
+        return False  # a Windows path (C:/…): Windows reads it as a drive's; no folder here is on one
     target = Path(os.path.expanduser(path))
     if not target.is_absolute():
         target = Path(folder) / target
@@ -201,6 +210,8 @@ def _targets(word: str) -> list[str]:
 def _outside(word: str, folder) -> bool:
     if word.startswith("-") and not word.startswith("--") and "=" not in word and len(word) > OPTION_LIMIT:
         return True  # too long to check each tail: asked every time
+    if sys.platform == "win32" and _CMD_VARIABLE.search(word):
+        return True  # a folder cmd.exe would put in its place (npm test -- %USERPROFILE%)
     return any(part.lower().startswith("file:") or not inside(part, folder) for part in _targets(word))
 
 
@@ -644,8 +655,9 @@ def moves_shell(command) -> bool:
 
 # ---- Auto-approve in its folder (the user's choice, 2026-10-07): a switch per task ----------------------------------
 # After the security review: it runs only what classify asks about (one plain command, inside the folder, nothing
-# asked every time) AND what AUTO_BASH lists; a gap costs a card, never a silent run. Commands run without a card only
-# where Claude Code's sandbox holds them (a Mac): elsewhere only edits and new files do.
+# asked every time) AND what AUTO_BASH lists; a gap costs a card, never a silent run. Commands run without a card where
+# Claude Code's sandbox holds them (a Mac), and on Windows, where nothing does (the user's choice, 2026-10-08: "same list
+# as Mac"), all but the uses that reach a site by themselves (AUTO_FETCHES). On Linux only edits and new files do.
 
 AUTO_TOOLS = frozenset({"Bash", "Edit", "Write"})  # what it may run without a card
 _ANY = object()  # any use classify lets through (its paths are inside the folder already)
@@ -679,7 +691,8 @@ AUTO_BASH: dict[str, object] = {
 AUTO_REFUSED: dict[str, tuple[str, ...]] = {
     "find": ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls"),
     "rg": ("--pre",), "sort": ("--compress-program",), "pytest": ("--basetemp",), "make": ("--eval", "-E"),
-    "go": ("-exec", "-toolexec", "-vettool"), "cargo": ("--config", "-Z"),
+    "go": ("-exec", "-toolexec", "-vettool"), "cargo": ("--config", "-Z"), "mypy": ("--install-types",),
+    "date": ("-s", "--set"),  # GNU date (Git Bash's) sets the computer's clock
     **dict.fromkeys(("npm", "pnpm", "yarn", "bun"), ("--script-shell", "--shell", "-c", "--call")),
     "git": (*sorted(GIT_UNSAFE), "-O"),
 }
@@ -689,6 +702,9 @@ AUTO_GIT: dict[str, tuple[str, ...]] = {  # git's everyday uses, and what turns 
     "init": ("--template", "--separate-git-dir"),  # a template folder fills .git/hooks
 }
 GIT_STASH = (None, "push", "list", "show")  # git stash alone pushes
+# AUTO_BASH's programs that download what a build or a run lacks (crates, modules, packages; Bun installs on import).
+# On a Mac the sandbox asks for each site they reach; on Windows nothing would, so there they keep their card.
+AUTO_FETCHES = frozenset({"cargo", "go", "dotnet", "mvn", "gradle", "swift", "uv", "bun"})
 
 
 def _refused(word: str, options: tuple[str, ...]) -> bool:
@@ -735,25 +751,28 @@ def ordinary(words: list[str]) -> bool:
 
 
 def auto_commands() -> bool:
-    """Whether Auto-approve in its folder may run commands on this computer: only where Claude Code's sandbox holds
-    them in the folder and away from sites (R1: a Mac). Elsewhere it runs edits and new files only (the review, I3)."""
-    return sandbox_on() and SANDBOX_NETWORK
+    """Whether Auto-approve in its folder may run commands on this computer: where Claude Code's sandbox holds them in
+    the folder and away from sites (R1: a Mac), and on Windows, without a sandbox (the user's choice, 2026-10-08).
+    Elsewhere it runs edits and new files only (the review, I3)."""
+    return (sandbox_on() and SANDBOX_NETWORK) or sys.platform == "win32"
 
 
 def auto_approves(tool: str, data, decision: str, sandbox: bool = False, away: bool = False) -> bool:
     """Whether Auto-approve in its folder runs this request without a card: an "ask" (never "ask_always") of Edit or
-    Write, so an edit or a new file inside the task's folder; and where the sandbox holds commands (`sandbox`), an "ask"
-    of Bash that AUTO_BASH lists, unless the shell has left the folder since Claude Code started (`away`). Everything
-    else keeps its card: what is asked every time, Web Search and Web Fetch, a sandboxed command's reach for a site,
-    the user's own tools, and every command AUTO_BASH doesn't list."""
+    Write, so an edit or a new file inside the task's folder; and an "ask" of Bash that AUTO_BASH lists, where the
+    sandbox holds commands (`sandbox`), or on Windows unless it downloads what it lacks (AUTO_FETCHES), and in both
+    only while the shell hasn't left the folder since Claude Code started (`away`). Everything else keeps its card:
+    what is asked every time, Web Search and Web Fetch, a sandboxed command's reach for a site, the user's own tools,
+    and every command AUTO_BASH doesn't list."""
     if decision != "ask" or tool not in AUTO_TOOLS:
         return False
     if tool != "Bash":
         return True
-    if not (sandbox and SANDBOX_NETWORK) or away:
+    held = sandbox and SANDBOX_NETWORK  # a Mac: the sandbox asks for each site a command reaches
+    if away or not (held or sys.platform == "win32"):
         return False
     words = words_of(data.get("command") if isinstance(data, dict) else None)
-    return words is not None and ordinary(words)
+    return words is not None and ordinary(words) and (held or words[0] not in AUTO_FETCHES)
 
 
 # ---- the card: what a request will do, as plain text (Decision 2), and each action's badge (Decision 10) -------------

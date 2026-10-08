@@ -302,7 +302,7 @@ NOT_ORDINARY = ["npm install", "npm exec vite", "npm publish", "git push", "git 
                 "pytest --basete=src", "rg --pre=./x hi", "sort --compress-program=./x src/app.py",
                 "find src -fprint out", "find src -execdir ls", "cd", "cd -", "pushd src", "popd", "cd src extra",
                 "gradlew test", "sqlite3 x.db 'select 1'", "mvn install", "cargo install ripgrep",
-                "go get example.com/x", "unknown-tool src"]
+                "go get example.com/x", "unknown-tool src", "mypy --install-types src", "mypy --install src", "date -s 2020-01-01", "date --set=2020-01-01"]
 
 
 @pytest.mark.parametrize("command", ORDINARY)
@@ -338,6 +338,106 @@ def test_auto_approve_takes_only_the_asks_of_edits_writes_and_ordinary_commands(
             assert not auto(tool, data, project, sandbox=sandbox), (tool, data, sandbox)
     assert auto_approves("Bash", {"command": "npm test"}, "ask", sandbox=True)
     assert not auto_approves("Bash", {"command": "npm test"}, "ask", sandbox=True, away=True)  # the shell moved
+
+
+# Auto-approve on Windows (the user's choice, 2026-10-08: "Yes, same list as Mac"). No sandbox holds a command there,
+# so the Mac's ordinary uses run without a card except those that reach a site by themselves; what asks every time
+# still does, and so does a path outside the folder in each of Windows' spellings. Run on this Mac as Windows.
+def as_platform(monkeypatch, platform):
+    """powers as it runs on `platform` (sys.platform; no sandbox but on a Mac): nothing else on this Mac changes."""
+    from types import SimpleNamespace
+
+    from ai_browser.app import powers
+
+    monkeypatch.setattr(powers, "sys", SimpleNamespace(platform=platform))
+
+
+@pytest.fixture
+def windows(monkeypatch):
+    as_platform(monkeypatch, "win32")
+
+
+FETCHES = ["cargo test", "go vet ./...", "dotnet build", "mvn test", "uv run pytest", "uv run python src/app.py",
+           "bun test", "cargo build", "cargo check", "go build ./...", "go test ./...", "go run main.go",
+           "gradle build", "swift build", "dotnet test", "bun run build"]  # a build or run that downloads what it lacks
+WINDOWS_ASKS_ALWAYS = [  # hostile, each asked every time on Windows, never auto-approved
+    # deleting, and Windows' own deleters (in Git Bash only through cmd, but asked anyway)
+    "cmd //c del /s /q C:\\", "cmd //c del /s /q C:/", "cmd.exe //c rd /s /q src", "CMD.EXE //c dir",
+    "del src/app.py", "erase src/app.py", "rd src", "rmdir src", "rm -rf src", "rm src/app.py", "robocopy src out",
+    "cipher src", "format", "diskpart", "attrib src",
+    # PowerShell, launchers and admin
+    "powershell -c 'Remove-Item -Recurse src'", "powershell.exe -Command Remove-Item src", "pwsh -c 'rm src'",
+    "PowerShell.EXE -c x", "start notes.md", "runas x", "wsl rm -r src", "wsl.exe ls", "winpty rm -r src", "mintty",
+    "wscript x.vbs", "cscript x.vbs", "mshta x.hta", "rundll32 x.dll", "regsvr32 x.dll", "msiexec x.msi",
+    "explorer src", "forfiles", "wmic process", "reg delete HKCU", "reg.exe add HKCU", "schtasks", "icacls src",
+    "takeown src", "setx PATH x", "sc stop spooler", "sc.exe config x", "net stop x", "netsh advfirewall", "bcdedit",
+    "sudo ls",
+    # force-push
+    "git push --force", "git push -f origin main", "git push origin +main",
+    # scripts and paths outside the folder: C:\…, C:/…, Git Bash's /c/…, UNC, %VARIABLE%, $HOME, ~, ..
+    "bash script.sh", "bash /c/Users/x/evil.sh", "sh run.sh", "python ../x.py", "python /c/Users/x/evil.py",
+    "node C:/Users/x/evil.js", "python3 c:/x.py", "cat C:\\Users\\x\\secret.txt", "cat \\\\server\\share\\secret.txt",
+    "cat //server/share/secret.txt", "cat $HOME/secret.txt", "cat ~/secret.txt", "cat %USERPROFILE%/secret.txt",
+    "cp src/app.py %APPDATA%/x.py", "npm test -- %USERPROFILE%", "cat --file=%HOMEPATH%", "ls /c/Users/x",
+    "cd /c/Users", "cd ..", "cd C:/", "mkdir C:/Users/x/new", "cp src/app.py ../outside/x.py",
+    # Git's, Claude Code's or an editor's own settings in the folder
+    "cp payload .git/hooks/pre-commit", "touch .claude/settings.json", "git config core.hooksPath hooks"]
+WINDOWS_CARD = [  # a card on Windows: they reach a site, or aren't on the Mac's list
+    *FETCHES, "git push", "git push origin main", "git pull", "git fetch", "git clone https://example.com/x.git",
+    "git ls-remote", "git submodule update --init", "npm install", "npm i", "npm ci", "npm add left-pad",
+    "npm update", "pnpm install", "pnpm add x", "yarn", "yarn install", "yarn add x", "bun install", "bun add x",
+    "pip install x", "pip3 install x", "uv pip install x", "uv sync", "uv add x", "uv lock", "poetry install",
+    "poetry add x", "cargo install x", "cargo fetch", "cargo update", "go get example.com/x", "go mod download",
+    "curl https://example.com", "wget https://example.com", "npx vite", "mypy --install-types src", "./run.sh",
+    "./run.bat", "py src/app.py", "python.exe src/app.py"]
+
+
+@pytest.mark.parametrize("command", [command for command in ORDINARY if command not in FETCHES])
+def test_on_windows_auto_approve_runs_the_macs_ordinary_uses(project, windows, command):  # the user's choice
+    from ai_browser.app.powers import auto_commands
+
+    assert auto_commands() is True
+    assert decide(command, project) == "ask", command
+    assert auto("Bash", {"command": command}, project, sandbox=False)
+
+
+@pytest.mark.parametrize("command", FETCHES)
+def test_on_windows_a_build_that_downloads_what_it_lacks_keeps_its_card(project, monkeypatch, command):
+    as_platform(monkeypatch, "win32")
+    assert not auto("Bash", {"command": command}, project, sandbox=False)
+    as_platform(monkeypatch, "darwin")  # on a Mac it runs, and the sandbox asks for the site it reaches
+    assert auto("Bash", {"command": command}, project, sandbox=True)
+
+
+@pytest.mark.parametrize("command", WINDOWS_ASKS_ALWAYS)
+def test_on_windows_what_is_risky_or_outside_asks_every_time(project, windows, command):  # the user's choice
+    assert decide(command, project) == "ask_always", command  # never a card's Always allow either
+    assert not auto("Bash", {"command": command}, project, sandbox=False)
+
+
+@pytest.mark.parametrize("command", WINDOWS_CARD)
+def test_on_windows_what_reaches_a_site_or_isnt_on_the_list_keeps_its_card(project, windows, command):
+    assert not auto("Bash", {"command": command}, project, sandbox=False)
+
+
+def test_on_windows_auto_approve_stops_once_the_shell_has_left_the_folder(project, windows):  # plan decision 8
+    from ai_browser.app.powers import auto_approves
+
+    assert auto_approves("Bash", {"command": "npm test"}, "ask")
+    assert not auto_approves("Bash", {"command": "npm test"}, "ask", away=True)
+    assert not auto_approves("Bash", {"command": "cd src"}, "ask", away=True)
+    assert auto_approves("Edit", {"file_path": str(project / "src" / "app.py")}, "ask", away=True)  # edits: as before
+
+
+def test_auto_approve_runs_commands_on_a_mac_and_on_windows_only(monkeypatch):  # Linux: edits only, as before
+    from ai_browser.app import powers
+
+    for platform, sandbox, commands in (("darwin", True, True), ("darwin", False, False), ("win32", False, True),
+                                        ("linux", False, False)):
+        as_platform(monkeypatch, platform)
+        monkeypatch.setattr(powers, "sandbox_on", lambda sandbox=sandbox: sandbox)
+        assert powers.auto_commands() is commands, platform
+        assert powers.auto_approves("Bash", {"command": "npm test"}, "ask", sandbox=sandbox) is commands, platform
 
 
 def test_after_the_shell_moved_a_search_without_a_full_path_asks(project):  # the review's 8 (it was so before)

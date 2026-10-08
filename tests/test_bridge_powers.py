@@ -489,7 +489,7 @@ async def test_under_auto_approve_what_is_risky_or_reaches_a_site_still_shows_a_
 async def test_without_the_sandbox_auto_approve_runs_edits_only(fake_claude, tmp_path, project, monkeypatch):  # I3
     from ai_browser.app import powers
 
-    monkeypatch.setattr(powers, "sandbox_on", lambda: False)  # Windows, Linux: nothing holds a command in
+    monkeypatch.setattr(powers, "sandbox_on", lambda: False)  # Linux (or a Mac's sandbox off): nothing holds them in
     runner, log, script = fake_claude
     edit = {"file_path": str(project / "src" / "app.py"), "old_string": "hi", "new_string": "bye"}
     script.write_text(json.dumps([INIT, ask("Bash", {"command": "npm test"}), ask("Bash", {"command": "python x.py"}),
@@ -502,6 +502,30 @@ async def test_without_the_sandbox_auto_approve_runs_edits_only(fake_claude, tmp
     assert behaviors(log) == ["allow"] * 5  # the Edit ran without a card; ls is allowed as always (Decision 3)
     assert [event["id"] for event in events if event["type"] == "auto"] == []  # u1's line never came; ls isn't auto
     assert bridge._auto_ids == {"u1"}
+
+
+async def test_on_windows_auto_approve_runs_ordinary_commands_but_not_what_reaches_a_site(  # the user's choice,
+        fake_claude, tmp_path, project, monkeypatch):  # 2026-10-08: "Yes, same list as Mac"
+    from types import SimpleNamespace
+
+    from ai_browser.app import powers
+
+    monkeypatch.setattr(powers, "sys", SimpleNamespace(platform="win32"))  # Windows, as powers sees it: no sandbox
+    runner, log, script = fake_claude
+    ordinary = [ask("Bash", {"command": command}, tool_id=f"u{index}")
+                for index, command in enumerate(("npm test", "python x.py", "mkdir build", "cd src", "npm test"))]
+    carded = ["cargo build", "npm install", "git push", "rm x", "cat %USERPROFILE%/secret.txt", "powershell -c x",
+              "cmd //c del x"]
+    script.write_text(json.dumps([INIT, *ordinary[:3], *[ask("Bash", {"command": command}, tool_id=f"c{index}")
+                                                         for index, command in enumerate(carded)],
+                                  ordinary[3], ordinary[4], ask("Bash", {"command": "cd /c/Users"}, tool_id="m"),
+                                  ask("Bash", {"command": "npm test"}, tool_id="late"), RESULT]), encoding="utf-8")
+    bridge, shown = bridge_for(tmp_path, runner, ["once"] * (len(carded) + 2), work=project, auto=True)
+    await run(bridge)
+    assert [request["card"]["text"] for request in shown] == [*carded, "cd /c/Users", "npm test"]  # the shell left
+    assert all(request["card"]["sandbox"] == "" for request in shown)  # no sandbox to name on Windows
+    assert behaviors(log) == ["allow"] * (len(ordinary) + len(carded) + 2)
+    assert bridge._auto_ids == {"u0", "u1", "u2", "u3", "u4"}
 
 
 async def test_a_request_without_its_tool_use_never_runs_by_auto_approve(  # the review's 4: the mark fails closed
