@@ -22,7 +22,8 @@ const EXPIRED = "This has expired: ask again";
 const OPEN = new Set(["counting", "waiting"]); // a hand-off still open: Send now (Send, Start) and Cancel
 const FROM = { you: "From your words", agent: "From an agent's result", gmail: "From an email in Gmail",
                slack: "From a Slack message", asana: "From an Asana task", pages: "From a part of a page you watch" };
-const SHOWN_AFTER = 5000; // ms a slot shows a hand-off that is done (its note), before it empties
+const SHOWN_AFTER = 5000; // ms a slot shows a hand-off that is done (its note), in its place, before it goes
+const PRESS_GAP = 500; // ms a card drawn in a slot right after a Send (Start) there waits: a double click sends one
 
 function digits(id) { // "a12" is 12: this file imports nothing, so it works the number out itself
   const found = String(id || "").replace(/\D/g, "");
@@ -44,8 +45,8 @@ function el(tag, className, text) {
 
 // A hand-off's card (the brain-delegation spec, 5): "Giving 2 · Research competitors:", the instruction word for word,
 // where it came from, and Send now and Cancel while it counts down (the seconds left), Send and Cancel while it waits,
-// or Start and Cancel for a NEW agent the Brain suggests; once done, what happened. One click each: the app runs a card
-// once. Every word is set as text.
+// or Start and Cancel for a NEW agent the Brain suggests; once done, what happened. Send (Start) is one click: the app
+// runs a card once. Cancel is never disabled, so a lost click can be tried again. Every word is set as text.
 export function handoffCard(handoff, send) {
   const card = el("div", "handoff card");
   card.dataset.id = String(handoff.id || "");
@@ -68,18 +69,24 @@ export function handoffCard(handoff, send) {
     for (const [button, type] of [[go, "handoff_send"], [cancel, "handoff_cancel"]]) {
       button.type = "button";
       button.addEventListener("click", () => {
-        if (!button.disabled && send({ type, id: handoff.id })) go.disabled = cancel.disabled = true;
+        if (!button.disabled && send({ type, id: handoff.id })) go.disabled = true;
       });
     }
     const buttons = el("div", "row");
     buttons.append(go, cancel);
     card.append(buttons);
   }
-  if (handoff.state === "counting") { // the seconds left, as the app counts them
-    const ends = Date.now() + (Number(handoff.seconds) || 0) * 1000;
+  if (handoff.state === "counting") { // the seconds left, as the app counts them (it rounds them: half a second less)
+    line.setAttribute("role", "timer");
+    line.setAttribute("aria-live", "off"); // a screen reader isn't told each second
+    const ends = Date.now() + Math.max(0, (Number(handoff.seconds) || 0) - 0.5) * 1000;
+    let shown = null;
     const tick = () => {
       const left = Math.max(0, Math.ceil((ends - Date.now()) / 1000));
-      line.textContent = `Sends in ${left} s, unless you cancel`;
+      if (left !== shown) { // written only when the number changes
+        shown = left;
+        line.textContent = `Sends in ${left} s, unless you cancel`;
+      }
       if (left > 0 && card.dataset.state === "counting") setTimeout(tick, 250);
     };
     tick();
@@ -91,24 +98,54 @@ export function handoffCard(handoff, send) {
   return card;
 }
 
-// The Brain's hand-offs, in a slot of their own (under Mission Control's view switch, in the floating chat): every one
-// counting down, newest first, so none counts down unseen; else the newest waiting for Send. Each stays until it is
-// done, and the newest done shows what happened for a moment while nothing else is open. The Brain's inbox lists them
-// all.
+// The Brain's hand-offs, in a slot of their own (under Mission Control's view switch, in AI Home, in the floating
+// chat): every one counting down, the soonest to send on top, so none counts down unseen; else the newest waiting for
+// Send. A card stays in its place until it is done, then shows what happened there for a moment; a new one goes
+// below. The Brain's inbox lists them all.
 export function mountHandoffSlot(slot, send) {
   const handoffs = new Map(); // id -> the hand-off, oldest first
+  let pressed = 0; // when Send (Start) was last pressed here
+  function press(message) {
+    const sent = send(message);
+    if (sent && message.type === "handoff_send") pressed = Date.now();
+    return sent;
+  }
+  function draw(handoff) { // a card drawn right after a Send here waits a moment: a double click never sends it
+    const card = handoffCard(handoff, press);
+    const go = card.querySelector(".handoff-go");
+    const wait = pressed + PRESS_GAP - Date.now();
+    if (go && wait > 0) {
+      go.disabled = true;
+      setTimeout(() => { go.disabled = false; }, wait);
+    }
+    return card;
+  }
   function render() {
-    const all = [...handoffs.values()].reverse(); // newest first
-    const counting = all.filter((one) => one.state === "counting");
-    const shown = counting.length ? counting : [all.find((one) => one.state === "waiting") || all[0]].filter(Boolean);
+    const all = [...handoffs.values()];
+    const waiting = all.some((one) => one.state === "counting") ? null
+      : all.findLast((one) => one.state === "waiting");
+    const shown = all.filter((one) => one.state === "counting" || one === waiting || !OPEN.has(one.state));
+    const ids = new Set(shown.map((one) => one.id));
+    for (const card of [...slot.children]) {
+      if (!ids.has(card.dataset.id)) {
+        card.dataset.state = "replaced"; // its countdown stops
+        card.remove();
+      }
+    }
     const drawn = new Map([...slot.children].map((card) => [card.dataset.id, card]));
-    const cards = shown.map((one) => { // a card as it is stays (its countdown runs on); a changed one is drawn again
+    for (const one of shown) { // a card as it is stays (its countdown runs on); a changed one is drawn in its place
       const current = drawn.get(one.id);
-      return current?.dataset.state === one.state ? current : handoffCard(one, send);
-    });
-    for (const card of slot.children) if (!cards.includes(card)) card.dataset.state = "replaced"; // its countdown stops
-    slot.replaceChildren(...cards);
-    slot.hidden = !cards.length;
+      if (current?.dataset.state === one.state) continue;
+      const card = draw(one);
+      if (!current) {
+        slot.append(card);
+        continue;
+      }
+      if (!OPEN.has(one.state)) card.style.minHeight = `${current.offsetHeight}px`; // done: nothing below it moves
+      current.dataset.state = "replaced";
+      current.replaceWith(card);
+    }
+    slot.hidden = !shown.length;
   }
   function keep(handoff) {
     if (!handoff?.id) return;
@@ -414,6 +451,7 @@ export function mountBrain(root, link, { compact = false, openAgent = null, open
         order.push(item.id);
       }
       settings(message);
+      for (const node of handoffNodes.values()) node.dataset.state = "replaced"; // their countdowns stop
       handoffs.replaceChildren();
       handoffNodes.clear();
       for (const handoff of message.handoffs || []) showHandoff(handoff);

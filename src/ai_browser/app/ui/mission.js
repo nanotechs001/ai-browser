@@ -122,6 +122,8 @@ parts.push(spaces, {
   },
 });
 parts.push(mountHandoffSlot($("handoff"), send)); // the Brain's hand-offs, by the globe (its inbox lists them all)
+new ResizeObserver(() => $("centre").style.setProperty("--composer", `${$("composer").offsetHeight}px`))
+  .observe($("composer")); // the hand-offs never cover the composer
 parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
                                                 visibleTemplate: templateInWorkspace }));
 
@@ -362,9 +364,10 @@ function handle(message) {
       brainItems.delete(message.id);
       renderBrain();
       break;
-    case "brain_handoff": { // a new one: a word from the Brain (names only, never the instruction)
-      const handoff = message.handoff;
-      if (!handoff?.id || spoken.has(handoff.id) || !["counting", "waiting"].includes(handoff.state)) break;
+    case "brain_handoff": { // a new one: a word from the Brain (names only, never the instruction); the user's own
+      const handoff = message.handoff; // words aren't, as the talk said it already
+      if (!handoff?.id || spoken.has(handoff.id) || !["counting", "waiting"].includes(handoff.state)
+          || handoff.source === "you") break;
       spoken.add(handoff.id);
       const who = `${Number.isInteger(handoff.number) ? `${handoff.number} · ` : ""}${handoff.name || "an agent"}`;
       if (handoff.kind === "start") voice.say("I suggest a new agent: press Start if you want it");

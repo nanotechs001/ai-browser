@@ -181,6 +181,32 @@ async def test_settings_brain_checks_what_the_brain_listens_to_and_keeps_it(stac
 
 SLOT = "document.querySelector('#handoff .handoff')"
 IN_SLOT = "[...document.querySelectorAll('#handoff .handoff')]"
+BUBBLE = "document.getElementById('bubble')"
+
+
+def in_slot(state="", handoff_id=""):
+    """The first card in the page's slot in `state`, or the card of `handoff_id`."""
+    which = f'[data-id="{handoff_id}"]' if handoff_id else f'[data-state="{state}"]'
+    return f"document.querySelector('#handoff .handoff{which}')"
+
+
+def hits(node):
+    """True when a click in the middle of `node` lands on it: it is on the screen and nothing covers it."""
+    return (f"(() => {{ const node = {node}; if (!node) return false; const box = node.getBoundingClientRect();"
+            " return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === node; })()")
+
+
+def colour(token):
+    """The colour a theme token draws, as getComputedStyle says colours."""
+    return (f"(() => {{ const probe = document.createElement('i'); probe.style.color = 'var({token})';"
+            " document.body.append(probe); const drawn = getComputedStyle(probe).color; probe.remove(); return drawn;"
+            " })()")
+
+
+async def size(js, width, height):
+    await js.cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height,
+                                                              "deviceScaleFactor": 1, "mobile": False},
+                      session_id=js.session)
 
 
 async def working_agent(stack, name="Find Acme's prices"):
@@ -195,8 +221,8 @@ async def working_agent(stack, name="Find Acme's prices"):
     return next(row for row in agents.snapshot()["agents"] if row["id"] == "a1")
 
 
-def sent_by_the_brain(stack):
-    return [event["text"] for event in stack["server"].agents.events_of("a1")
+def sent_by_the_brain(stack, agent="a1"):
+    return [event["text"] for event in stack["server"].agents.events_of(agent)
             if event.get("type") in ("queued", "user") and str(event.get("text", "")).startswith("From the Brain:")]
 
 
@@ -213,29 +239,75 @@ async def test_a_countdown_card_shows_by_the_globe_and_cancel_stops_it(stack):
     assert await js(f"[...{SLOT}.querySelectorAll('button')].map(button => button.textContent)") == [
         "Send now", "Cancel"]
     assert await js("document.querySelectorAll('img[src=x]').length === 0 && document.title !== 'pwned'")
+    assert await js(f"{BUBBLE}.hidden")  # the user's own words: the talk says it, the globe doesn't again
+    assert await js(f"getComputedStyle({SLOT}).borderTopColor") == await js(colour("--accent"))  # open: it stands out
+    line = f"{SLOT}.querySelector('.handoff-line')"
+    assert await js(f"{line}.getAttribute('role') === 'timer' && {line}.getAttribute('aria-live') === 'off'")
+    await js(f"window.ticks = 0; new MutationObserver(records => {{ window.ticks += records.length; }})"
+             f".observe({line}, {{childList: true, characterData: true, subtree: true}}); true")
+    await asyncio.sleep(1.3)
+    assert await js("window.ticks") <= 2  # written only when the number changes: a screen reader isn't told 4 a second
     await js(f"{SLOT}.querySelector('.handoff-cancel').click(); true")
     assert await until(js, f"{SLOT}?.querySelector('.handoff-line').textContent === 'Cancelled: nothing was sent'")
+    assert await js(f"getComputedStyle({SLOT}).borderTopColor") == await js(colour("--line"))
     await stack["brain"].countdown.tick()
     assert handoff.state == "cancelled" and sent_by_the_brain(stack) == []
     stack["brain"].countdown = Clock()
     stack["brain"].give(row, "Compare the logos", "agent")  # an agent's result waits for Send (2026-10-08)
-    assert await until(js, f"{SLOT}?.dataset.state === 'waiting'")
-    assert await js(f"{SLOT}.querySelector('.handoff-from').textContent") == "From an agent's result"
-    assert await js(f"{SLOT}.querySelector('.handoff-line').textContent") == "Waiting for your Send"  # no countdown
-    assert await js(f"[...{SLOT}.querySelectorAll('button')].map(button => button.textContent)") == ["Send", "Cancel"]
+    waiting = in_slot("waiting")
+    assert await until(js, f"{waiting} !== null")
+    assert await js(f"{waiting}.querySelector('.handoff-from').textContent") == "From an agent's result"
+    assert await js(f"{waiting}.querySelector('.handoff-line').textContent") == "Waiting for your Send"  # no countdown
+    assert await js(f"[...{waiting}.querySelectorAll('button')].map(button => button.textContent)") == [
+        "Send", "Cancel"]
+    assert await until(js, f"{BUBBLE}.textContent.startsWith('I have a task for 1 · Prices')")  # names only
     stack["brain"].give(row, "Reply to Maria with the prices", "gmail")  # the newest waiting one shows
-    assert await until(js, f"{SLOT}?.querySelector('.handoff-words').textContent === 'Reply to Maria with the prices'")
-    stack["brain"].give(row, "Check the logos too", "you")  # one counting down shows first
-    assert await until(js, f"{SLOT}?.querySelector('.handoff-words').textContent === 'Check the logos too'")
-    stack["brain"].give(row, "Check the fonts too", "you")  # and every one counting down shows: none counts unseen
-    words = f"{IN_SLOT}.map(card => card.querySelector('.handoff-words').textContent)"
-    assert await until(js, f"JSON.stringify({words}) === '[\"Check the fonts too\",\"Check the logos too\"]'")
-    assert await js(f"{IN_SLOT}.every(card => card.dataset.state === 'counting'"
-                    " && card.querySelector('.handoff-line').textContent.startsWith('Sends in 1'))")
+    assert await until(js, f"{waiting}?.querySelector('.handoff-words').textContent"
+                           " === 'Reply to Maria with the prices'")
+    logos = stack["brain"].give(row, "Check the logos too", "you")  # one counting down shows instead
+    assert await until(js, f"{in_slot('counting')}?.querySelector('.handoff-words').textContent"
+                           " === 'Check the logos too'")
+    fonts = stack["brain"].give(row, "Check the fonts too", "you")  # and every one counting down: none counts unseen
+    words = f"[...document.querySelectorAll('#handoff .handoff[data-state=\"counting\"]')]" \
+            ".map(card => card.querySelector('.handoff-words').textContent)"
+    assert await until(js, f"JSON.stringify({words})"  # the soonest to send first
+                           " === '[\"Check the logos too\",\"Check the fonts too\"]'")
+    assert await js(f"{IN_SLOT}.filter(card => card.dataset.state === 'counting')"
+                    ".every(card => card.querySelector('.handoff-line').textContent.startsWith('Sends in 1'))")
+    after = in_slot(handoff_id=fonts.id)
+    await js(f"{after}.marked = true; true")
+    top = await js(f"{after}.getBoundingClientRect().top")
+    await js(f"{in_slot(handoff_id=logos.id)}.querySelector('.handoff-cancel').click(); true")
+    assert await until(js, f"{in_slot(handoff_id=logos.id)}?.querySelector('.handoff-line').textContent"
+                           " === 'Cancelled: nothing was sent'")  # what happened shows, in its place
+    assert await js(f"{after}.marked === true && {after}.dataset.state === 'counting'")  # the other one stays put
+    assert abs(await js(f"{after}.getBoundingClientRect().top") - top) <= 1
+    await size(js, 1000, 800)  # narrow: the drawer comes over the centre
     await js("document.getElementById('brain').click(); true")  # the Brain's inbox lists them all, newest first
     states = "[...document.querySelectorAll('#drawer .brain-handoffs .handoff')].map(card => card.dataset.state)"
     assert await until(js, f"JSON.stringify({states})"
-                           " === '[\"counting\",\"counting\",\"waiting\",\"waiting\",\"cancelled\"]'")
+                           " === '[\"counting\",\"cancelled\",\"waiting\",\"waiting\",\"cancelled\"]'")
+    assert await js(hits(f"{after}.querySelector('.handoff-cancel')"))  # the countdown stays over the drawer
+    assert await js(f"(() => {{ const box = {after}.getBoundingClientRect(); return {after}.contains("
+                    "document.elementFromPoint(box.right - 12, box.top + box.height / 2)); })()")  # all of it
+
+
+@CHROME
+async def test_long_words_and_several_countdowns_keep_cancel_and_the_composer_in_reach(stack):
+    row = await working_agent(stack)
+    js = await open_with(stack, size=(1440, 800))
+    words = "Compare every plan. " * 100  # 2000 characters: the most a hand-off holds
+    ids = [stack["brain"].give(row, f"{number} {words}", "you").id for number in range(3)]
+    assert await until(js, f"{IN_SLOT}.length === 3")
+    first, last = in_slot(handoff_id=ids[0]), in_slot(handoff_id=ids[2])
+    assert await js(f"{IN_SLOT}.map(card => card.dataset.id).join()") == ",".join(ids)  # the soonest to send on top
+    assert await js(hits(f"{first}.querySelector('.handoff-cancel')"))
+    assert await js(hits("document.getElementById('task')"))  # the composer isn't covered
+    slot = "document.getElementById('handoff')"
+    assert await js(f"{slot}.scrollHeight > {slot}.clientHeight")  # the rest scrolls, in the slot
+    await js(f"{slot}.scrollTop = {slot}.scrollHeight; true")
+    assert await js(hits(f"{last}.querySelector('.handoff-cancel')"))
+    assert await js(hits("document.getElementById('task')"))
 
 
 @CHROME
@@ -251,7 +323,32 @@ async def test_send_now_sends_the_words_shown_and_the_chat_says_from_the_brain(s
              " document.getElementById('current-chat').click(); true")
     assert await until(js, "[...document.querySelectorAll('#drawer .msg.user')]"
                            ".some(node => node.textContent === 'From the Brain: Compare the annual plans')")
-    assert await until(js, f"document.getElementById('handoff').hidden === true", 10)  # gone from the globe after
+    assert await until(js, "document.getElementById('handoff').hidden === true", 10)  # gone from the globe after
+    stack["brain"].suggest("Research Globex's prices", "gmail")  # a NEW agent: only ever the user's Start
+    start = in_slot("waiting")
+    assert await until(js, f"{start} !== null")
+    assert await js(f"{start}.querySelector('.handoff-head').textContent") == "Start a NEW agent with this task:"
+    assert await js(f"{start}.querySelector('.handoff-words').textContent") == "Research Globex's prices"
+    assert await js(f"{start}.querySelector('.handoff-line').textContent") == "Waiting for your Start"
+    assert await js(f"[...{start}.querySelectorAll('button')].map(button => button.textContent)") == [
+        "Start", "Cancel"]
+    await js(f"{start}.querySelector('.handoff-go').click(); true")
+    assert await until(js, f"{in_slot('started')} !== null")
+    assert "a2" in stack["server"].agents.agents
+    first = stack["brain"].give(row, "Reply to Ana with the prices", "gmail")
+    second = stack["brain"].give(row, "Reply to Bo with the prices", "gmail")
+    assert await until(js, f"{in_slot(handoff_id=second.id)}?.dataset.state === 'waiting'"
+                           f" && {in_slot(handoff_id=first.id)} === null")  # the newest waiting one
+    assert await until(js, f"{in_slot(handoff_id=second.id)}.querySelector('.handoff-go').disabled === false")
+    await js(f"window.drawn = null; new MutationObserver(() => {{ const card = {in_slot(handoff_id=first.id)};"
+             " if (card && window.drawn === null) window.drawn = [card.querySelector('.handoff-go').disabled,"
+             " card.querySelector('.handoff-cancel').disabled]; })"
+             ".observe(document.getElementById('handoff'), {childList: true}); true")
+    await js(f"{in_slot(handoff_id=second.id)}.querySelector('.handoff-go').click(); true")
+    assert await until(js, f"{in_slot(handoff_id=first.id)}?.dataset.state === 'waiting'")  # the next one shows
+    assert await js("JSON.stringify(window.drawn)") == "[true,false]"  # its Send waits a moment: a double click is one
+    assert await until(js, f"{in_slot(handoff_id=first.id)}.querySelector('.handoff-go').disabled === false")
+    assert sent_by_the_brain(stack)[1:] == ["From the Brain: Reply to Bo with the prices"]
 
 
 @CHROME
@@ -266,9 +363,16 @@ async def test_an_emails_handoff_waits_for_send_in_ai_home(home):
     assert await js(f"[...{card}.querySelectorAll('button')].map(button => button.textContent)") == ["Send", "Cancel"]
     await stack["brain"].countdown.tick()
     assert sent_by_the_brain(stack) == []  # it waits, however long
-    await js(f"{card}.querySelector('.handoff-go').click(); true")
+    click = (f"(() => {{ const card = {card}; card.querySelector('.handoff-go').click();"
+             " return [card.querySelector('.handoff-go').disabled, card.querySelector('.handoff-cancel').disabled];"
+             " })()")
+    assert await js(click) == [True, False]  # Send is one click; Cancel stays, should its click be lost
     assert await until(js, f"{card}?.dataset.state === 'sent'")
     assert sent_by_the_brain(stack) == ["From the Brain: Reply to Maria with the new prices"]
+    stack["brain"].countdown = Clock()
+    stack["brain"].give(row, "Compare the annual plans", "you")  # AI Home shows a countdown wherever it is scrolled
+    await js("window.scrollTo(0, document.body.scrollHeight); true")
+    assert await until(js, hits(f"{in_slot('counting')}?.querySelector('.handoff-cancel')"))
 
 
 @CHROME
@@ -276,9 +380,10 @@ async def test_the_floating_chats_words_count_down_on_its_own_card(stack):
     from test_chat_page import open_chat
     from test_talk import talk_script
 
-    await working_agent(stack, name="Fix the footer")
+    row = await working_agent(stack, name="Fix the footer")
     talk_script(stack, {"say": "OK.", "action": "message_agent", "agent": "a1"})
     chat, _ = await open_chat(stack)
+    await size(chat, 380, 560)  # the floating chat's window, at its first size (policy.js's CHAT_SIZE)
     await chat("document.getElementById('talk-text').value = 'tell agent 1 to check the header too';"
                " document.getElementById('talk-form').requestSubmit(); true")
     card = "document.querySelector('#handoff .handoff')"
@@ -288,6 +393,13 @@ async def test_the_floating_chats_words_count_down_on_its_own_card(stack):
             "stop it.")
     log = "[...document.querySelectorAll('#talk-log li')].map(li => li.textContent)"
     assert await until(chat, f"{log}.includes({json.dumps(said)})")
+    stack["brain"].give(row, "Check the footer links too. " * 70, "you")  # two at once, one of them long
+    assert await until(chat, f"{IN_SLOT}.length === 2")
+    assert await chat(hits("document.getElementById('talk-text')"))  # the ask box stays in sight
+    await chat("for (const words of ['You: a', 'Brain: b', 'You: c', 'Brain: d']) {"
+               " const line = document.createElement('li'); line.textContent = words;"
+               " document.getElementById('talk-log').append(line); } true")  # the six lines the talk keeps
+    assert await chat(hits("document.getElementById('talk-text')"))  # however long the talk
     await chat(f"{card}.querySelector('.handoff-cancel').click(); true")
     assert await until(chat, f"{card}?.querySelector('.handoff-line').textContent === 'Cancelled: nothing was sent'")
     assert sent_by_the_brain(stack) == []

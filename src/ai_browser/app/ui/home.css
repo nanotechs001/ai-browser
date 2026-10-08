@@ -62,6 +62,10 @@ details summary { cursor: pointer; border: 1px solid var(--line); border-radius:
 .skill .desc { color: var(--muted); margin-top: 2px; }
 .skill .uses { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
 .skill .uses button, .skill .uses select { font-size: 12px; padding: 1px 8px; }
+/* The Brain's hand-offs (brainui.js): in sight however far the page is scrolled, over the chat too */
+.handoff-slot { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 11;
+                width: min(440px, calc(100% - 32px)); max-height: calc(100vh - 24px); box-shadow: var(--shadow);
+                border-radius: 10px; }
 .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 100%); background: var(--card);
           border-left: 1px solid var(--line); display: flex; flex-direction: column; z-index: 10; }
 .drawer header { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }

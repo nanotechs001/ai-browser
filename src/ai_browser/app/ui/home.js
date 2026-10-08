@@ -2,7 +2,7 @@
 // pictures pasted into them and files dropped on them, as Mission Control's boxes do (paste.js, uploads.js). Everything
 // from Claude, pages or skills is set as text; thumbnails are JPEG data the app made from Chrome screenshots.
 import { askBox, askError, askKey, brainCard, fillPicker, pickDefault } from "./accountui.js";
-import { mountBrain } from "./brainui.js";
+import { mountBrain, mountHandoffSlot } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { connect } from "./link.js";
 import { agentLabel, agentTip, createChat, el } from "./chat.js";
@@ -53,6 +53,7 @@ guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 window.addEventListener("focus", () => link.send({ type: "accounts" }));
 const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id),
                                              openSettings: () => openTab("/settings") });
+const handoffs = mountHandoffSlot($("handoff"), (message) => link.send(message)); // a countdown, wherever it scrolls
 let watchSites = []; // the Brain's watch list: a message workflow's sites
 let switchedOn = []; // the MCP servers switched on: what a workflow may use
 const tools = mountTools($("tools"), link);
@@ -499,7 +500,7 @@ function finishRequest() {
 }
 
 function handle(message) {
-  for (const part of [brain, tools, workflows, train, folders, uploads, chatBox]) part.onMessage(message);
+  for (const part of [brain, handoffs, tools, workflows, train, folders, uploads, chatBox]) part.onMessage(message);
   if (message.type === "brain_snapshot" || message.type === "brain_state") {
     watchSites = message.watch_list || [];
     workflows.options();
