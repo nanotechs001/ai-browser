@@ -76,7 +76,8 @@ PING_EVERY = 20  # seconds: a message now and then keeps a page's socket alive
 THUMB_EVERY = 2  # seconds between two thumbnails of one agent's tab
 TEXT_LIMIT = 20_000  # characters of a task or a message
 BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "style",
-                  "tell_confirm", "tell_dismiss"}
+                  "tell_confirm", "tell_dismiss", "handoff_send", "handoff_cancel"}
+HANDOFF_VIEWS = frozenset({"home", "mission", "chat"})  # the pages that show the Brain's hand-off cards
 TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"}
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
 SKILL_MESSAGES = {"skill_draft", "skill_save"}
@@ -161,6 +162,8 @@ MESSAGE_RULES: dict[str, Rule] = {
     "listen_chunk": APP_ONLY, "listen_end": APP_ONLY, "listen_cancel": APP_ONLY,
     "brain_ask": APP_ONLY, "brain_confirm": APP_ONLY, "brain_dismiss": APP_ONLY,
     "tell_confirm": APP_ONLY, "tell_dismiss": APP_ONLY,  # brain-delegation: a card runs only from our own pages
+    # the Brain's hand-offs (2026-10-08): Send now, Send, Start and Cancel on a card, the user's click on our pages
+    "handoff_send": APP_ONLY, "handoff_cancel": APP_ONLY,
     "check_continue": APP_ONLY, "check_skip": APP_ONLY, "check_show": APP_ONLY,
     "brave_connect": APP_ONLY, "hand_tab": APP_ONLY, "take_back": APP_ONLY,
     "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in AI Home's list of connected clients
@@ -413,6 +416,8 @@ class AppServer:
         agents.mint_token = self.tokens.mint
         if brain is not None:
             brain.set_sources(self.settings.get()["brain_sources"])  # Settings → Brain's checkboxes
+            brain.auto_hand = lambda: self.settings.get()["auto_hand"]  # Settings → Brain's hand-off switch
+            brain.visible = self._shows_handoffs
         if tabs is not None:
             self.attach_tabs(tabs)
 
@@ -505,6 +510,8 @@ class AppServer:
             self.inbox.set_on(self.settings.get()["read_tabs"])
         if key == "brain_sources" and self.brain is not None:  # Settings → Brain's checkboxes: at once
             self.brain.set_sources(self.settings.get()["brain_sources"])
+        if key == "auto_hand" and self.brain is not None and not self.settings.get()["auto_hand"]:
+            self.brain.hold_countdowns()  # off: every hand-off waits for Send, a counting one too
         if key == "read_tabs" and not self.settings.get()["read_tabs"]:
             for pick in list(self._picks):  # a pick under way ends too, and keeps nothing
                 pick.cancel()
@@ -1283,11 +1290,16 @@ class AppServer:
         """What the Brain asks of the app: its new notes, notified by AI Browser's own app in fixed words; or a
         thread to open and a reply box to fill, in the user's tabs. False when nothing took it: the Brain says why."""
         kind = message.get("type")
-        if kind == "notify":
+        if kind in ("notify", "handoff"):
             return self._notify_desktop(message)
         if kind in ("open_thread", "fill_reply") and self.inbox is not None:
             return self.inbox.handle(message)  # in the user's tabs, only while reading is on
         return False
+
+    def _shows_handoffs(self) -> bool:
+        """Whether a page that shows the Brain's hand-off cards is open (AI Home, Mission Control, the floating chat):
+        only then may a hand-off count down. Nothing is sent while nobody can see it."""
+        return any(view in HANDOFF_VIEWS for view in self._views.values())
 
     def _brain_closed(self) -> str:
         """Why the Brain's outbox took a thread or a reply box nowhere, for the item's note."""
@@ -1407,8 +1419,12 @@ class AppServer:
         elif kind == "send":
             await self._send(ws, queue, agent_id, message)
         elif kind == "stop":
+            if self.brain is not None:
+                self.brain.agent_stopped(agent_id)  # its hand-offs' countdowns stop too
             await agents.stop(agent_id)
         elif kind == "close":
+            if self.brain is not None:
+                self.brain.agent_stopped(agent_id)
             self._job(agents.close(agent_id))  # it may wait for the agent's turn to end
         elif kind == "model" and message.get("model") in MODELS:
             agents.set_model(agent_id, message["model"])
@@ -1490,6 +1506,10 @@ class AppServer:
             brain.remove_watch(message["site"])
         elif kind == "style":
             brain.set_style(_text(message.get("text")))
+        elif kind == "handoff_send":  # Send now, Send or Start on a hand-off's card: once
+            self._job(brain.send_handoff(item_id))
+        elif kind == "handoff_cancel":
+            brain.cancel_handoff(item_id)
 
     # ---- talking to the Brain: push-to-talk turns and the talk (AI Browser's own pages only) ----------------------
 

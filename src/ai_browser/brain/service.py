@@ -11,9 +11,13 @@ import asyncio
 import contextlib
 import json
 import re
+import time
 from collections.abc import Callable, Sequence
 
 from ..settings import SOURCES
+from .handoffs import (CANCELLED, COUNTDOWN, FROM_BRAIN, HELD, INSTRUCTION_LIMIT, KEPT, NOT_WORKING, OPEN, SENT_TO,
+                       STOPPED, WORKING, Handoff, counts_down, row_state)
+from .handoffs import SOURCES as HANDOFF_SOURCES
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
 from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HAND_OVER_ANY_SAY, HAND_OVER_SAY, HIDDEN,
@@ -183,6 +187,15 @@ class BrainService:
         self.tells = Talks()  # the inbox's cards and "which agent?" questions, one talk per item (never saved)
         self._asking: dict[str, asyncio.Task] = {}  # talk id -> the answer being worked out now
         self._talk_jobs: set[asyncio.Task] = set()  # drafts started by a talk's Draft it (or a yes to one)
+        # Hand-offs (handoffs.py): this run's, oldest first. A countdown runs only while the app says Settings →
+        # Brain's switch is on (auto_hand) and a page can show the card (visible); a Brain on its own counts down none
+        self.handoffs: dict[str, Handoff] = {}
+        self._countdowns: dict[str, asyncio.Task] = {}
+        self._handoff_seq = 0
+        self.auto_hand: Callable[[], bool] = lambda: True
+        self.visible: Callable[[], bool] = lambda: False
+        self.countdown = asyncio.sleep  # how a countdown waits (tests give it their own clock)
+        self.clock = time.monotonic
 
     # ---- lifecycle ----------------------------------------------------------------------------------------
 
@@ -194,11 +207,13 @@ class BrainService:
             self._follower = asyncio.ensure_future(self._follow())
 
     async def stop(self) -> None:
-        tasks = [*self._batches.values(), *self._talk_jobs, *([self._follower] if self._follower else [])]
+        tasks = [*self._batches.values(), *self._talk_jobs, *self._countdowns.values(),  # quitting sends nothing
+                 *([self._follower] if self._follower else [])]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._batches.clear()
+        self._countdowns.clear()
         if self._feed is not None:
             self.agents.unsubscribe(self._feed)
         self._feed = self._follower = None
@@ -234,7 +249,8 @@ class BrainService:
 
     def snapshot(self) -> dict:
         self.store.expire()
-        return {"items": [self._item_public(item) for item in self.store.items()], **self._settings()}
+        return {"items": [self._item_public(item) for item in self.store.items()], **self._settings(),
+                "handoffs": [handoff.public(self.clock()) for handoff in self.handoffs.values()]}
 
     def _settings(self) -> dict:
         return {"others": self.store.others, "watch_list": [entry.public() for entry in self.store.watch()],
@@ -971,6 +987,114 @@ class BrainService:
     def dismiss(self, talk: str, proposal: str) -> None:
         """Cancel on the card, or a plain no."""
         self.talks.take(talk, proposal)
+
+    # ---- hand-offs: a task for a working agent, or a NEW agent suggested (handoffs.py) ----------------------------
+
+    def give(self, row: dict, instruction: str, source: str, item: str = "") -> Handoff | None:
+        """A hand-off of `instruction` to the agent of `row`, from `source` (the caller says which: never Claude, a
+        message or a page). It counts down only as counts_down allows; anything else waits for Send. None for an agent
+        that isn't working, an empty instruction or an unknown source."""
+        instruction = _clip(instruction, INSTRUCTION_LIMIT)
+        state = row_state(row) if isinstance(row, dict) else ""
+        if source not in HANDOFF_SOURCES or not instruction or state not in WORKING:
+            return None
+        counting = counts_down(source, self.auto_hand(), self.visible(), state)
+        handoff = self._new_handoff("give", source, instruction, item, agent=str(row["id"]), number=number_of(row),
+                                    name=_clip(row.get("name"), 160), state="counting" if counting else "waiting")
+        if counting:
+            handoff.ends = self.clock() + COUNTDOWN
+            self._countdowns[handoff.id] = asyncio.ensure_future(self._count(handoff.id))
+        self._show_handoff(handoff, notify=True)
+        return handoff
+
+    def suggest(self, instruction: str, source: str, item: str = "") -> Handoff | None:
+        """A NEW agent the Brain suggests, with the exact task it would get: it starts only on the user's Start."""
+        instruction = _clip(instruction, INSTRUCTION_LIMIT)
+        if source not in HANDOFF_SOURCES or not instruction:
+            return None
+        handoff = self._new_handoff("start", source, instruction, item)
+        self._show_handoff(handoff, notify=True)
+        return handoff
+
+    def _new_handoff(self, kind: str, source: str, instruction: str, item: str, **fields) -> Handoff:
+        self._handoff_seq += 1
+        handoff = Handoff(id=f"h{self._handoff_seq}", kind=kind, source=source, instruction=instruction, item=item,
+                          **fields)
+        self.handoffs[handoff.id] = handoff
+        while len(self.handoffs) > KEPT:  # the oldest that are done go first; an open one always stays
+            done = next((key for key, one in self.handoffs.items() if one.state not in OPEN), None)
+            if done is None:
+                break
+            del self.handoffs[done]
+        return handoff
+
+    def _show_handoff(self, handoff: Handoff, notify: bool = False) -> None:
+        self.broadcast({"type": "brain_handoff", "handoff": handoff.public(self.clock())})
+        if notify:  # AI Browser's own app says it too, in fixed words (desktop/notes.py)
+            self.outbox({"type": "handoff", "kind": handoff.kind, "counting": handoff.state == "counting"})
+
+    async def _count(self, handoff_id: str) -> None:
+        await self.countdown(COUNTDOWN)
+        if not (self.auto_hand() and self.visible()):  # switched off, or no page shows it now: it waits for Send
+            self.hold_countdowns()
+            return
+        await self.send_handoff(handoff_id)
+
+    async def send_handoff(self, handoff_id: str) -> None:
+        """Send now, Send, or the end of the countdown: the instruction goes to its agent once, exactly as the card
+        shows it after FROM_BRAIN, and only while that agent still works. Start on a suggestion starts the new agent
+        with its task. A second click, or a click on a card that is done, does nothing."""
+        handoff = self.handoffs.get(str(handoff_id))
+        if handoff is None or handoff.state not in OPEN or self.agents is None:
+            return
+        countdown = self._countdowns.pop(handoff.id, None)
+        if countdown is not None and countdown is not asyncio.current_task():
+            countdown.cancel()
+        handoff.state = "sending"  # closed first: a click and the countdown's end can't both send
+        if handoff.kind == "start":
+            agent = await self.agents.create(handoff.instruction, model=self.agent_model)
+            handoff.agent, handoff.number, handoff.name = agent.id, number_of({"id": agent.id}), \
+                _clip(getattr(agent, "name", ""), 160)
+            handoff.state, handoff.note = "started", STARTED_SAY.format(label=label(
+                {"id": agent.id, "name": handoff.name}))
+        else:
+            row = next((row for row in self._rows() if row["id"] == handoff.agent), None)
+            if row is not None and row_state(row) not in WORKING:
+                handoff.state, handoff.note = "not_sent", NOT_WORKING.format(label=label(row))
+            else:  # the same send as a card's: a closed agent or a bot check sends nothing, and says why
+                answer = await self._send(handoff, f"{FROM_BRAIN} {handoff.instruction}")
+                sent = bool(answer.get("sent"))
+                handoff.state = "sent" if sent else "not_sent"
+                handoff.note = SENT_TO.format(number=handoff.number) if sent else answer["say"]
+        self._show_handoff(handoff)
+
+    def cancel_handoff(self, handoff_id: str, note: str = CANCELLED) -> None:
+        """Cancel on a card: a countdown stops, and nothing is sent or started."""
+        handoff = self.handoffs.get(str(handoff_id))
+        if handoff is None or handoff.state not in OPEN:
+            return
+        countdown = self._countdowns.pop(handoff.id, None)
+        if countdown is not None:
+            countdown.cancel()
+        handoff.state, handoff.note = "cancelled", note
+        self._show_handoff(handoff)
+
+    def agent_stopped(self, agent_id: str) -> None:
+        """Stop or Close on an agent: every hand-off still open for it is cancelled."""
+        for handoff in list(self.handoffs.values()):
+            if handoff.kind == "give" and handoff.agent == str(agent_id) and handoff.state in OPEN:
+                self.cancel_handoff(handoff.id, STOPPED.format(number=handoff.number))
+
+    def hold_countdowns(self) -> None:
+        """Settings → Brain's switch went off, or no page can show a card: every countdown stops, and its hand-off
+        waits for Send."""
+        for handoff_id in list(self._countdowns):
+            countdown = self._countdowns.pop(handoff_id)
+            if countdown is not asyncio.current_task():
+                countdown.cancel()
+            handoff = self.handoffs[handoff_id]
+            handoff.state, handoff.note = "waiting", HELD
+            self._show_handoff(handoff)
 
     # ---- the user's commands ------------------------------------------------------------------------------
 

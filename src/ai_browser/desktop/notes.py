@@ -29,4 +29,13 @@ def note_for(message: dict) -> dict | None:
         count = count if isinstance(count, int) and not isinstance(count, bool) and 0 < count < 1000 else 1
         title = "The Brain has a new note" if count == 1 else f"The Brain has {count} new notes"
         return {"kind": "brain", "agent": "", "title": title, "body": "Open AI Home to see what needs you."}
+    if kind == "handoff":  # the Brain's hand-off: never its instruction, nor the agent's name
+        if message.get("kind") == "start":
+            return {"kind": "brain", "agent": "", "title": "The Brain suggests a new agent",
+                    "body": "Start or cancel it in AI Browser."}
+        if message.get("counting") is True:
+            return {"kind": "brain", "agent": "", "title": "The Brain is giving an agent a task",
+                    "body": "It sends in 15 seconds: cancel it in AI Browser."}
+        return {"kind": "brain", "agent": "", "title": "The Brain has a task for an agent",
+                "body": "Send or cancel it in AI Browser."}
     return None
