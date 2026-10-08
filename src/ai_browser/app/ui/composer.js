@@ -162,7 +162,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     workspacePicked = true;
   });
   $("start-key").textContent = MAC ? "⌘ ↵" : "Ctrl ↵";
-  $("task-auto-switch").title = autoTitle(false); // until the app says this computer's sandbox holds commands
+  $("task-auto-switch").title = autoTitle(false, false); // until the app says this computer runs commands
   setMode("build");
 
   return {
@@ -184,7 +184,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
       uploads.onMessage(message);
       switch (message.type) {
         case "snapshot":
-          $("task-auto-switch").title = autoTitle(message.auto_commands === true);
+          $("task-auto-switch").title = autoTitle(message.auto_commands === true, message.auto_sandbox === true);
           rows = message.accounts || [];
           fillPicker($("task-account"), rows);
           workspaces = message.workspaces || [];

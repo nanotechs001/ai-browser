@@ -276,6 +276,8 @@ Web Fetch, sub-agents, and a to-do list.
   - `ls`, `cat`, `pwd`, `git status`, `git diff` and `git log`.
 - **Asked every time, never "Always":**
   - `sudo`, `rm`, `unlink`, `chmod`, `chown`, `dd` and `mkfs`;
+  - Windows' shells, launchers and admin programs: `powershell`, `cmd`, `start`, `wsl`, `reg`, `schtasks`, `icacls`,
+    `del` and `rd`, and the like;
   - programs that run the command after them (`env`, `xargs`, `caffeinate`, `strace`, `flock`…), and code written on
     the command line (`python -c`, `node -e`, `deno eval`, a `sed` script that runs a command or writes a file);
   - uses that delete files or throw work away: `find -delete` or `-exec`, `git clean`, `git reset --hard`,
@@ -297,7 +299,11 @@ Web Fetch, sub-agents, and a to-do list.
     listing (`ls`, `cat`, `grep`, `find`…), making files (`mkdir`, `touch`, `cp`, `mv`), everyday Git (`status`,
     `diff`, `add`, `commit`, a new branch), a package's own scripts (`npm test`, `npm run build`), and the project's
     checks and builds (`make`, `pytest`, `cargo test`, `python script.py`…). Any other command asks;
-  - on Windows and Linux, commands still ask: only file edits run without a card. The switch and the drawer say so;
+  - on Windows, the same ordinary commands run without a card, except a build that downloads what it lacks (`cargo`,
+    `go`, `dotnet`, `mvn`, `gradle`, `swift`, `uv run`, `bun`), which asks there. Windows has no sandbox: a script it
+    runs (`python script.py`, or a package's own, like `npm test`) can read your files and reach sites. A path with a
+    `%VARIABLE%` in it asks every time there. The switch and the drawer say so;
+  - on Linux, commands still ask: only file edits run without a card. The switch and the drawer say so;
   - still a card everywhere: everything asked every time (above), Web Search and Web Fetch, a command reaching a
     site, your own tools, and a `cd` that isn't into a folder inside. Once the shell has left the folder, commands
     ask again until the agent's Claude Code starts again;
@@ -317,7 +323,8 @@ Web Fetch, sub-agents, and a to-do list.
 - **Commands and the sandbox:** on a Mac, commands run in Claude Code's sandbox, so they can't write outside the
   task's folder. A command that needs more asks, every time, on a card of its own: reaching a site ("let a command
   reach a site") or running outside the sandbox. You still answer each command's card, unless **Auto-approve in its
-  folder** runs an ordinary one. On Windows, commands don't run in a sandbox; the cards are the guard.
+  folder** runs an ordinary one. On Windows, commands don't run in a sandbox: the cards and Auto-approve's list are the
+  guard.
 - **Workflows** still run in a scratch folder of their own.
 
 ### AI accounts (Settings → Accounts)
@@ -652,8 +659,8 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   - **Web:** **Web + Brave** (the default), **Brave only** (no Web Search or Web Fetch), or **No web**: no Web Search,
     Web Fetch, browser tools or skills shell (a skill's instructions still load, but its scripts don't run). Under
     **No web**, your own tools (Integrations) still run, and a command can still reach a site. On a Mac it asks you
-    first, with a card, every time; on Windows and Linux it asks with a card too, except a command you chose
-    **Always allow** for.
+    first, with a card, every time; on Windows and Linux the command's own card asks too, except a command you chose
+    **Always allow** for, or, on Windows, a script **Auto-approve in its folder** runs.
   - **Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**; the mic (in Ask AI it talks
     to the Brain; otherwise your words fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
     **Auto-approve in its folder** (see Agent powers) is off again for each new task.

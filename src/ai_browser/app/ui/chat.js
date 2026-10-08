@@ -3,20 +3,28 @@
 "use strict";
 
 // Auto-approve in its folder (the user's choice, 2026-10-07): the switch's words, and the mark of what ran without a
-// card. The composer's and the drawer's switch say the same. Commands run without a card only where Claude Code's
-// sandbox holds them (the app's `auto_commands`: a Mac); elsewhere only file edits do.
+// card. The composer's and the drawer's switch say the same. Ordinary commands run without a card where the app says
+// so (`auto_commands`): on a Mac, in Claude Code's sandbox (`auto_sandbox`); on Windows, without one (the user's
+// choice, 2026-10-08). Elsewhere only file edits do.
 export const AUTO_LABEL = "Auto-approve in its folder";
 export const AUTO_EDITS_ONLY = "On this computer, commands still ask: only file edits run without a card";
+export const AUTO_NO_SANDBOX = "On Windows there's no sandbox: a script it runs can read your files and reach sites";
 const AUTO_JUDGED = "What still asks is judged from what a command names, not from what a script it runs does.";
 const AUTO_MARK = "Ran without a card: Auto-approve in its folder";
 
-export function autoTitle(commands) { // the switch's title, for this computer
-  return commands
+export function autoTitle(commands, sandbox) { // the switch's title, for this computer
+  if (!commands) {
+    return `${AUTO_EDITS_ONLY}. Edits and new files inside the task's folder run without one; anything outside it, `
+      + `and Git's, Claude Code's or an editor's own settings, still ask. ${AUTO_JUDGED}`;
+  }
+  return sandbox
     ? "Edits, new files and ordinary commands (reading, building, testing, everyday Git) inside the task's folder run "
-      + "without a card. Deleting, sudo, anything outside the folder, force-push and reaching a site still ask. "
-      + AUTO_JUDGED
-    : `${AUTO_EDITS_ONLY}. Edits and new files inside the task's folder run without one; anything outside it, and `
-      + `Git's, Claude Code's or an editor's own settings, still ask. ${AUTO_JUDGED}`;
+      + "without a card, the commands in Claude Code's sandbox. Deleting, sudo, anything outside the folder, "
+      + `force-push and reaching a site still ask. ${AUTO_JUDGED}`
+    : "Edits, new files, ordinary commands and scripts (reading, building, testing, everyday Git) inside the task's "
+      + `folder run without a card. ${AUTO_NO_SANDBOX}. Deleting, admin, anything outside its folder, force-push and `
+      + "reaching a site (installing, git push or pull, a build that downloads, like cargo or go) still ask. "
+      + AUTO_JUDGED;
 }
 
 export function el(tag, className, text) {

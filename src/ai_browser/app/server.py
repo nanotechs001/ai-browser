@@ -1874,7 +1874,8 @@ class AppServer:
                 "sessions": self._session_list(), "browser_clients": self._browser_clients(),
                 "settings": self._settings_payload(), "accounts": self._account_rows(),
                 "brain_limit": self.brain_limit, "workspaces": self.workspaces.list(),
-                "auto_commands": powers.auto_commands()}  # Auto-approve may run commands here (a Mac's sandbox)
+                "auto_commands": powers.auto_commands(),  # Auto-approve may run commands here (a Mac, Windows)
+                "auto_sandbox": powers.sandbox_on()}  # and in Claude Code's sandbox (a Mac): the switch's words
 
     # ---- AI accounts: Settings → Accounts, the pickers and Continue on (AI Browser's own pages only) -------------
 

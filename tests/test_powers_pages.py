@@ -421,27 +421,40 @@ async def test_an_auto_approved_action_line_carries_its_mark(stack, monkeypatch)
 EDITS_ONLY = "On this computer, commands still ask: only file edits run without a card"
 
 
+NO_SANDBOX = "On Windows there's no sandbox: a script it runs can read your files and reach sites"
+
+
 @CHROME
-@pytest.mark.parametrize("sandbox", [True, False])
-async def test_the_switch_says_what_runs_without_a_card_on_this_computer(stack, monkeypatch, sandbox):  # I3
+@pytest.mark.parametrize("computer", ["mac", "linux", "windows"])
+async def test_the_switch_says_what_runs_without_a_card_on_this_computer(stack, monkeypatch, computer):  # I3
+    from types import SimpleNamespace
+
     from ai_browser.app import powers
     from test_mission import WORKING, open_drawer, open_mission, station
 
-    monkeypatch.setattr(powers, "sandbox_on", lambda: sandbox)
+    monkeypatch.setattr(powers, "sys", SimpleNamespace(platform={"mac": "darwin", "windows": "win32"}.get(computer,
+                                                                                                         "linux")))
+    monkeypatch.setattr(powers, "sandbox_on", lambda: computer == "mac")
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("keep working", auto=True)
     mission = await open_mission(stack)
     title = "document.getElementById('task-auto-switch').title"
-    assert await until(mission, f"{title}.length > 0")
+    assert await until(mission, f"{title}.length > 0 && !{title}.startsWith('{EDITS_ONLY}')"
+                       if computer != "linux" else f"{title}.length > 0")
     words = await mission(title)
     assert "judged from what a command names, not from what a script it runs does" in words
-    assert words.startswith(EDITS_ONLY) is (not sandbox) and ("ordinary commands" in words) is sandbox
+    assert words.startswith(EDITS_ONLY) is (computer == "linux")
+    assert ("ordinary commands" in words) is (computer != "linux")
+    assert ("in Claude Code's sandbox" in words) is (computer == "mac")  # the user's choice, 2026-10-08: say which
+    assert (NO_SANDBOX in words and "reaching a site" in words and "Deleting, admin" in words) is (computer == "windows")
     assert await until(mission, f"{station('a1')} != null")
     await mission(open_drawer("a1"))
     note = "document.querySelector('#drawer-body .auto-note')"
     assert await until(mission, f"{note} != null && "
                                 "document.querySelector('#drawer-body .auto-words').hidden === false")
-    assert await mission(f"{note}.hidden") is sandbox and await mission(f"{note}.textContent") == EDITS_ONLY
+    assert await mission(f"{note}.hidden") is (computer == "mac")
+    if computer != "mac":
+        assert await mission(f"{note}.textContent") == (NO_SANDBOX if computer == "windows" else EDITS_ONLY)
     assert await mission("document.querySelector('#drawer-body .auto-toggle').title") == words
 
 
@@ -454,7 +467,14 @@ def test_the_readme_explains_auto_approve():  # the user's choice, 2026-10-07: w
                    "a small **auto** mark beside its badge", '"Auto-approving inside <folder>"',
                    "on a Mac, where the sandbox holds commands in the folder, ordinary commands run without a card too",
                    "Any other command asks",
-                   "on Windows and Linux, commands still ask: only file edits run without a card",
+                   "on Linux, commands still ask: only file edits run without a card",
+                   # Windows (the user's choice, 2026-10-08: "Yes, same list as Mac")
+                   "on Windows, the same ordinary commands run without a card, except a build that downloads what it "
+                   "lacks", "Windows has no sandbox: a script it runs (`python script.py`, or a package's own, like "
+                   "`npm test`) can read your files and reach sites",
+                   "`powershell`, `cmd`, `start`, `wsl`, `reg`, `schtasks`, `icacls`, `del` and `rd`",
+                   "or, on Windows, a script **Auto-approve in its folder** runs",
+                   "On Windows, commands don't run in a sandbox: the cards and Auto-approve's list are the guard",
                    "Web Search and Web Fetch, a command reaching a site, your own tools",
                    "a `cd` that isn't into a folder inside", "Once the shell has left the folder, commands ask again",
                    "judged from what a command names, not from what a script it runs does",
@@ -465,5 +485,6 @@ def test_the_readme_explains_auto_approve():  # the user's choice, 2026-10-07: w
                    "`caffeinate`, `strace`, `flock`", "`deno eval`", "`git rm -f` or `-r`", "`rsync --delete`",
                    "`.husky`, `.vscode` or `.idea` settings, its Git hooks folder"):
         assert phrase in readme, phrase
-    for gone in ("a command whose job is reaching a site asks", "or one **Auto-approve in its folder** runs"):
+    for gone in ("a command whose job is reaching a site asks", "or one **Auto-approve in its folder** runs",
+                 "on Windows and Linux, commands still ask", "on Windows and Linux it asks with a card too"):
         assert gone not in readme, gone
