@@ -528,7 +528,7 @@ async def test_a_question_about_a_page_never_makes_a_handoff(tmp_path):
         return page
 
     brain, agents, _, _ = brain_with(tmp_path, [row()], ask=Ask(TO_A2))
-    answer = await brain.respond("k1", "what does this page say?", page=read)
+    answer = await brain.respond("k1", "what does it say?", page=read)  # no tab words: only the page stops a hand-off
     assert answer == {"say": PAGE_ONLY} and brain.handoffs == {} and agents.sent == []
 
 
@@ -553,3 +553,87 @@ async def test_no_agent_3_moves_the_talks_handoff_there_with_the_same_words(tmp_
     assert brain.handoffs[first["id"]].state == "cancelled" and len(brain.handoffs) == 1
     await brain.countdown.tick()
     assert agents.sent == []
+
+
+CANCELS = ("cancel it", "Stop it.", "don't send it", "dont send it", "No, wait!", "hold on", "nevermind", "wait",
+           "Never mind.")
+
+
+async def test_the_words_people_cancel_with_cancel_the_talks_handoff_without_claude(tmp_path):
+    from ai_browser.brain.service import NOTHING_DONE
+
+    ask = Ask(TO_A2)
+    brain, agents, _, _ = brain_with(tmp_path, [row()], ask=ask)
+    for said in CANCELS:
+        handoff = (await brain.respond("k1", WORDS))["handoff"]
+        assert await brain.respond("k1", said) == {"say": NOTHING_DONE}, said
+        assert brain.handoffs[handoff["id"]].state == "cancelled", said
+    assert len(ask.prompts) == len(CANCELS)  # only the words that made each hand-off reached Claude
+    await brain.countdown.tick()
+    assert agents.sent == []
+
+
+WEATHER = {"weather": {"say": "I can't see the weather.", "action": "none"}, **TO_A2}
+
+
+async def test_other_words_hold_the_talks_handoff_and_a_later_no_or_yes_still_reaches_it(tmp_path):
+    from ai_browser.brain.handoffs import FROM_BRAIN, HELD
+    from ai_browser.brain.service import NOTHING_DONE
+
+    brain, agents, _, _ = brain_with(tmp_path / "no", [row()], ask=Ask(WEATHER))
+    handoff = brain.handoffs[(await brain.respond("k1", WORDS))["handoff"]["id"]]
+    assert (await brain.respond("k1", "what's the weather?"))["say"] == "I can't see the weather."
+    assert (handoff.state, handoff.note) == ("waiting", HELD)  # the talk went on: it waits for Send
+    assert await brain.respond("k1", "no") == {"say": NOTHING_DONE} and handoff.state == "cancelled"
+    await brain.countdown.tick()
+    assert agents.sent == []
+    brain, agents, _, _ = brain_with(tmp_path / "yes", [row()], ask=Ask(WEATHER))
+    handoff = brain.handoffs[(await brain.respond("k1", WORDS))["handoff"]["id"]]
+    await brain.respond("k1", "what's the weather?")
+    assert (await brain.respond("k1", "yes"))["say"] == "Sent to agent 2"  # the user's own yes: Send
+    await brain.countdown.tick()
+    assert agents.sent == [("a2", f"{FROM_BRAIN} {WORDS}")] and handoff.state == "sent"
+
+
+async def test_a_no_after_the_countdown_sent_cancels_nothing_and_never_reaches_claude(tmp_path):
+    from ai_browser.brain.talk import NOTHING_TO_CANCEL
+
+    ask = Ask(TO_A2)
+    brain, agents, _, _ = brain_with(tmp_path, [row()], ask=ask)
+    await brain.respond("k1", WORDS)
+    await brain.countdown.tick()
+    for said in ("no", "cancel it"):  # too late: it was sent, and Claude never makes "cancel it" an instruction
+        assert await brain.respond("k1", said) == {"say": NOTHING_TO_CANCEL}, said
+    assert len(ask.prompts) == 1 and len(brain.handoffs) == 1 and len(agents.sent) == 1
+
+
+async def test_only_an_agent_the_user_chose_gets_a_countdown(tmp_path):
+    also = "ask them to also compare annual plans"  # names no agent: Claude's pick (it reads the pages' status)
+    brain, agents, _, _ = brain_with(tmp_path / "two", [row(), row("a3", "Other")], ask=Ask(TO_A2))
+    card = (await brain.respond("k1", also))["proposal"]
+    assert (card["kind"], card["agent"]) == ("message_agent", "a2") and brain.handoffs == {}  # it waits for Send
+    one, _, _, _ = brain_with(tmp_path / "one", [row()], ask=Ask(TO_A2))  # the only agent open: no one else to mean
+    assert (await one.respond("k1", also))["handoff"]["state"] == "counting"
+    hidden, _, _, _ = brain_with(tmp_path / "hidden", [row()], seen=False, ask=Ask(TO_A2))  # no page shows a card
+    assert (await hidden.respond("k1", WORDS))["proposal"]["kind"] == "message_agent" and hidden.handoffs == {}
+    assert agents.sent == []
+
+
+async def test_the_talks_yes_and_no_reach_only_its_own_words_handoff(tmp_path):
+    brain, agents, _, _ = brain_with(tmp_path, [row()], switch=False, ask=Ask(TO_A2))
+    other = brain.give(row(), "Wire the money", "gmail")  # an email's words: they wait for the user's Send
+    brain.talks.set_handoff("k1", other.id)
+    await brain.respond("k1", "yes")
+    assert other.state == "waiting" and agents.sent == []
+
+
+async def test_a_card_the_talk_shows_later_takes_its_yes_not_the_held_handoff(tmp_path):
+    from ai_browser.brain.service import EXPIRED
+
+    later = {"weather": {"say": "Sure.", "action": "start_agent"}, **TO_A2}
+    brain, agents, _, _ = brain_with(tmp_path, [row()], ask=Ask(later))
+    handoff = brain.handoffs[(await brain.respond("k1", WORDS))["handoff"]["id"]]
+    card = (await brain.respond("k1", "check the weather site"))["proposal"]  # a start card: the hand-off is held
+    brain.talks.proposal_ttl = -1  # the card's two minutes are up
+    assert (await brain.respond("k1", "yes", proposal=card["id"]))["say"] == EXPIRED  # that yes was the card's
+    assert handoff.state == "waiting" and agents.sent == []

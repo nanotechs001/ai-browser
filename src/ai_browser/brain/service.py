@@ -24,9 +24,9 @@ from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, GIVING_SAY, HAND_OVER_AN
                    NO_AGENT_SAY, NO_SUCH_SAY, NOTHING_OPEN, NOTHING_OPEN_WAITING, NOTHING_TO_CANCEL, PRESSED,
                    QUEUED_LINE_SAY, QUEUED_PERMISSION_SAY, QUEUED_WORKING_SAY, RELAY, SECRET_ANSWER, SEND_SAY, SENT_SAY,
                    START_SAY, STARTED_SAY, TELL_NO_AGENT, TELL_SEND, TELL_START, TELL_WHICH, WHICH_SAY,
-                   Pick, Talks, agent_choices, check_say, choices, explicit_pick, is_no, is_send_yes, is_yes, label,
-                   number_of, parse_answer, reference_pick, resolve_agent, resolve_among, secret_like, shown_rows,
-                   state_summary, tab_hint, talk_prompt, target_state)
+                   Pick, Talks, agent_choices, check_say, choices, explicit_pick, is_cancel, is_no, is_send_yes, is_yes,
+                   label, number_of, parse_answer, reference_pick, resolve_agent, resolve_among, secret_like,
+                   shown_rows, state_summary, tab_hint, talk_prompt, target_state)
 from .talk import PAGE_ANSWERED, PAGE_ONLY, PAGE_SAY_LIMIT  # the floating chat's questions about a page
 
 KINDS = {"needs_reply", "new", "skip"}
@@ -770,8 +770,9 @@ class BrainService:
 
     async def _respond(self, talk: str, text: str, proposal_id: str | None, task: str | None,
                        model: str | None, page=None) -> dict:
-        """In this order: the open card, a bare yes or no, a secret, a pending "which agent?" question, then
-        Claude."""
+        """In this order: the open card, the talk's own hand-off (a yes sends it now, a no or "cancel it" cancels it,
+        "no, agent 3" moves it there; any other words hold its countdown), a bare yes or no, a secret, a pending "which
+        agent?" question, then Claude."""
         if not text:
             return {"say": ""}
         card = self.talks.proposal(talk)
@@ -787,12 +788,14 @@ class BrainService:
             if sending and (pick := reference_pick(text, rows)) is not None:  # "no, agent 3": the card moves there
                 words = task.strip() if isinstance(task, str) and task.strip() else card.task  # with its words
                 self.talks.drop(talk)
-                reply = self._answer_pick(talk, pick, words, rows)
+                reply = self._answer_pick(talk, pick, words, rows, chosen=True)
                 self.talks.add(talk, text, reply["say"])
                 return reply
         handoff = self.handoffs.get(self.talks.handoff(talk) or "")  # this talk's words, counting down or held
-        if handoff is not None and handoff.state in OPEN and (is_yes(text) or is_send_yes(text) or is_no(text)):
-            if is_no(text):  # "no", "cancel", "stop": nothing is sent
+        if handoff is not None and not (handoff.source == "you" and handoff.kind == "give" and handoff.state in OPEN):
+            handoff = None  # only the user's own words to a working agent, while still open
+        if handoff is not None and (is_send_yes(text) or is_cancel(text)):
+            if is_cancel(text):  # "no", "cancel it", "no, wait": nothing is sent
                 self.cancel_handoff(handoff.id)
                 reply = {"say": NOTHING_DONE}
             else:  # "yes", "send it": now, without waiting
@@ -800,24 +803,25 @@ class BrainService:
                 reply = {"say": handoff.note}
             self.talks.add(talk, text, reply["say"])
             return reply
-        if handoff is not None and handoff.state in OPEN and (pick := reference_pick(text, rows)) is not None:
+        if handoff is not None and (pick := reference_pick(text, rows)) is not None:
             self.cancel_handoff(handoff.id)  # "no, agent 3": it moves there with its words, as a send card does
             self.talks.set_handoff(talk, None)
-            reply = self._answer_pick(talk, pick, handoff.instruction, rows)
+            reply = self._answer_pick(talk, pick, handoff.instruction, rows, chosen=True)
             self.talks.add(talk, text, reply["say"])
             return reply
         stale = bool(proposal_id) and (card is None or card.id != proposal_id)  # its card is gone: expired, or replaced
         self.talks.drop(talk)  # any other words close the card: they are a new question
-        self.talks.set_handoff(talk, None)  # and a yes or no no longer speaks to its hand-off
+        if handoff is not None and handoff.state == "counting":  # and hold the talk's countdown: it waits for Send
+            self.hold_handoff(handoff.id)  # (the talk keeps it: a later no still cancels it, a yes sends it)
         asking = self.talks.asking(talk)
-        if is_yes(text) or is_no(text) or (stale and is_send_yes(text)):  # a yes or no with no card to run: never
+        if is_yes(text) or is_cancel(text) or (stale and is_send_yes(text)):  # a yes or no with no card to run: never
             reply = self._bare(talk, text, proposal_id, asking, rows)  # Claude, and never a card
         elif secret_like(text):  # never sent to Claude, and not kept in the talk either
             self.talks.clear_asking(talk)
             self.talks.add(talk, HIDDEN, SECRET_ANSWER)
             return {"say": SECRET_ANSWER, "hidden": True}
         elif asking is not None and (pick := resolve_among(text, rows, asking.candidates)).outcome != "none":
-            reply = self._answer_pick(talk, pick, asking.words, rows)  # the first words, with no Claude call
+            reply = self._answer_pick(talk, pick, asking.words, rows, chosen=True)  # the first words, no Claude call
         else:
             reply = await self._ask_claude(talk, text, rows, asking, page)
             if "error" in reply:
@@ -830,7 +834,7 @@ class BrainService:
 
     def _bare(self, talk: str, text: str, proposal_id: str | None, asking, rows: list[dict]) -> dict:
         """A plain yes or no that matched no open card (Decision 7): a fixed line, never Claude, never a card."""
-        if is_no(text):
+        if is_cancel(text):
             if asking is None and not proposal_id:  # nothing was open: "OK, I won't" would sound like a Stop
                 return {"say": NOTHING_TO_CANCEL}
             self.talks.clear_asking(talk)
@@ -887,7 +891,7 @@ class BrainService:
             pick = resolve_agent(text, rows, parsed.agent, self.talks.last_agent(talk))
             if pick.outcome == "none":  # no agent open: the card can only start a NEW one, and it says so
                 return {"say": NO_AGENT_SAY, "proposal": self._start_card(talk, text)}
-            return self._answer_pick(talk, pick, text, rows)
+            return self._answer_pick(talk, pick, text, rows, chosen=explicit_pick(text, rows) is not None)
         if parsed.action == "draft_reply":
             item = self.store.get(parsed.item)
             if item is None:
@@ -928,15 +932,16 @@ class BrainService:
                                   tab_hint=tab_hint(words))
         return card.public(self.talks.expires_in(card))
 
-    def _answer_pick(self, talk: str, pick: Pick, words: str, rows: list[dict]) -> dict:
-        """The agent the words picked (Decision 4), for a send card holding `words`."""
+    def _answer_pick(self, talk: str, pick: Pick, words: str, rows: list[dict], chosen: bool = False) -> dict:
+        """The agent the words picked (Decision 4), for a send card holding `words`. `chosen`: the user named it (a
+        number or colour, or the answer to "which agent?"), not Claude; the only agent open counts as chosen too."""
         if pick.outcome == "missing":  # a number or colour that names no open agent: no card
             if self.talks.asking(talk) is None:  # the next number or colour picks, with these words (a question stays)
                 self.talks.ask_which(talk, words, tuple(row["id"] for row in rows))
             return {"say": NO_SUCH_SAY.format(said=pick.said, choices=choices(rows))}
         if pick.outcome == "ask":
             return self._which(talk, words, [row for row in rows if row["id"] in pick.ids])
-        return self._send_card(talk, self._row(rows, pick.ids[0]), words)
+        return self._send_card(talk, self._row(rows, pick.ids[0]), words, chosen or len(rows) == 1)
 
     def _which(self, talk: str, words: str, rows: list[dict]) -> dict:
         """Ask which agent, keeping the words that asked for the send (Decision 5)."""
@@ -948,13 +953,14 @@ class BrainService:
     def _row(rows: list[dict], agent_id: str) -> dict:
         return next(row for row in rows if row["id"] == agent_id)
 
-    def _send_card(self, talk: str, row: dict, words: str) -> dict:
+    def _send_card(self, talk: str, row: dict, words: str, chosen: bool = False) -> dict:
         """A send card for `row`, holding the user's words. An agent at a bot check gets none (Decision 8): the voice
-        never stands in for Continue."""
+        never stands in for Continue. The words count down instead only for an agent the user chose: Claude's pick
+        reads the pages' status, and page text must never steer where words go by themselves."""
         self.talks.clear_asking(talk)
         if isinstance(row.get("check"), dict):
             return {"say": check_say(row)}
-        if counts_down("you", self.auto_hand(), self.visible(), row_state(row)) and not tab_hint(words):
+        if chosen and counts_down("you", self.auto_hand(), self.visible(), row_state(row)) and not tab_hint(words):
             handoff = self.give(row, words, "you")  # the user's own words: sent after the countdown, unless cancelled
             if handoff is not None:
                 self.talks.set_last(talk, row["id"])
@@ -1130,12 +1136,18 @@ class BrainService:
         """Settings → Brain's switch went off, or no page can show a card: every countdown stops, and its hand-off
         waits for Send."""
         for handoff_id in list(self._countdowns):
-            countdown = self._countdowns.pop(handoff_id)
-            if countdown is not asyncio.current_task():
-                countdown.cancel()
-            handoff = self.handoffs[handoff_id]
-            handoff.state, handoff.note = "waiting", HELD
-            self._show_handoff(handoff)
+            self.hold_handoff(handoff_id)
+
+    def hold_handoff(self, handoff_id: str) -> None:
+        """One countdown stops (the talk went on to other words), and its hand-off waits for Send."""
+        countdown = self._countdowns.pop(handoff_id, None)
+        if countdown is None:
+            return
+        if countdown is not asyncio.current_task():
+            countdown.cancel()
+        handoff = self.handoffs[handoff_id]
+        handoff.state, handoff.note = "waiting", HELD
+        self._show_handoff(handoff)
 
     # ---- the user's commands ------------------------------------------------------------------------------
 
