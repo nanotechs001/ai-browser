@@ -15,7 +15,7 @@ open."""
 
 from __future__ import annotations
 
-import re
+import unicodedata
 from dataclasses import dataclass
 
 COUNTDOWN = 15  # seconds a hand-off from the user's own words waits for Cancel
@@ -35,14 +35,17 @@ NOT_WORKING = "Not sent: {label} isn't working any more"
 HELD = "Waiting for your Send"
 NOT_SENT = "Couldn't send it: try again from the agent's chat"  # a send failed: never the error's own text
 NOT_STARTED = "Couldn't start it: try again from Build a Mission"
-# Direction and zero-width marks: they could make the card read otherwise than what is sent
-MARKS = re.compile("[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+TAGS = ("\U000e0000", "\U000e007f")  # the tag block: words no card shows (Cf, and its unassigned rest)
 
 
 def clean(instruction) -> str:
-    """An instruction as its card shows it and its agent gets it: without direction or zero-width marks. Line breaks
-    stay."""
-    return MARKS.sub("", instruction) if isinstance(instruction, str) else ""
+    """An instruction as its card shows it and its agent gets it, so the card shows all the agent gets: no format
+    character (Cf: direction and zero-width marks, tags that can spell hidden words) and no control character but line
+    breaks and tabs."""
+    if not isinstance(instruction, str):
+        return ""
+    return "".join(char for char in instruction if char in "\n\t" or (
+        unicodedata.category(char) not in ("Cf", "Cc") and not TAGS[0] <= char <= TAGS[1]))
 
 
 def row_state(row: dict) -> str:

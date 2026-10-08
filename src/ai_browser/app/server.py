@@ -78,6 +78,7 @@ TEXT_LIMIT = 20_000  # characters of a task or a message
 BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "style",
                   "tell_confirm", "tell_dismiss", "handoff_send", "handoff_cancel"}
 HANDOFF_VIEWS = frozenset({"home", "mission", "chat"})  # the pages that show the Brain's hand-off cards
+HOLD_AFTER = 0.3  # seconds without a page that can show a card before every countdown holds (a tab switch is quicker)
 TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"}
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
 SKILL_MESSAGES = {"skill_draft", "skill_save"}
@@ -378,6 +379,7 @@ class AppServer:
         self._roles: dict[WebSocket, str] = {}  # "app", stored when a socket is accepted
         self._views: dict[WebSocket, str] = {}  # which page said hello on a socket: "home", "mission", "chat"…
         self._shown: set[WebSocket] = set()  # the sockets whose page says it can be seen (link.js: hello, visibility)
+        self._holding: asyncio.TimerHandle | None = None  # the hold that waits HOLD_AFTER for another page in front
         self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (AI Home…)
         self.window_seen = False  # the window's first socket has come in
         if brain is not None:
@@ -1306,13 +1308,20 @@ class AppServer:
         return any(self._views.get(ws) in HANDOFF_VIEWS for ws in self._shown)
 
     def _seen(self, ws: WebSocket, shown: bool) -> None:
-        """A page says whether it can be seen. When none that shows hand-off cards can, every countdown holds."""
+        """A page says whether it can be seen. When none that shows hand-off cards can for HOLD_AFTER seconds, every
+        countdown holds. Only that sweep waits, for a tab switch whose pages the app hears in either order: what a
+        page says counts at once, and a countdown's end sends nothing unless a page can show its card then."""
         if shown:
             self._shown.add(ws)
         else:
             self._shown.discard(ws)
+        if self.brain is not None and not self._shows_handoffs() and self._holding is None:
+            self._holding = asyncio.get_running_loop().call_later(HOLD_AFTER, self._hold_unseen)
+
+    def _hold_unseen(self) -> None:
+        self._holding = None
         if self.brain is not None and not self._shows_handoffs():
-            self.brain.hold_countdowns()
+            self.brain.hold_countdowns()  # still no page can show a card: every countdown waits for Send
 
     def _brain_closed(self) -> str:
         """Why the Brain's outbox took a thread or a reply box nowhere, for the item's note."""

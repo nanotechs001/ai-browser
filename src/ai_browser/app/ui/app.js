@@ -83,7 +83,10 @@ function show(key, hash = "") {
     if (on) one.button.setAttribute("aria-current", "page");
     else one.button.removeAttribute("aria-current");
     one.view?.classList.toggle("active", on);
-    one.frame?.contentWindow?.postMessage({ type: "shown", on }, location.origin); // our pages pause while hidden
+  }
+  // Our pages pause while hidden. The one in front hears it first: a hand-off's card is never unseen in between.
+  for (const one of [tab, ...[...tabs.values()].filter((other) => other !== tab)]) {
+    one.frame?.contentWindow?.postMessage({ type: "shown", on: one === tab }, location.origin);
   }
   renderTitle();
   tab.frame.contentWindow?.focus(); // keys go to the page shown (Mission Control's Space to talk, Escape, arrows)
