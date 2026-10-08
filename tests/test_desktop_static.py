@@ -59,6 +59,13 @@ def test_every_window_is_locked_down():
         assert needed in main, needed
 
 
+def test_a_hidden_window_says_it_is_hidden():
+    """No background throttling switch anywhere: with it off, a hidden window's pages would still say they can be seen
+    (Page Visibility), and the Brain's hand-offs count down only while a page can show the card (link.js)."""
+    for name in APP_FILES:
+        assert "backgroundthrottling" not in text(name).lower(), name
+
+
 def test_the_bridge_holds_named_actions_only():
     preload, main = text("preload.js"), text("main.js")
     assert preload.count("exposeInMainWorld(") == 1

@@ -2,10 +2,10 @@
 // pictures pasted into them and files dropped on them, as Mission Control's boxes do (paste.js, uploads.js). Everything
 // from Claude, pages or skills is set as text; thumbnails are JPEG data the app made from Chrome screenshots.
 import { askBox, askError, askKey, brainCard, fillPicker, pickDefault } from "./accountui.js";
-import { mountBrain } from "./brainui.js";
+import { mountBrain, mountHandoffSlot } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { connect } from "./link.js";
-import { agentLabel, createChat, el } from "./chat.js";
+import { agentLabel, agentTip, createChat, el } from "./chat.js";
 import { permissionCard } from "./permission.js";
 import { folderName, planProgress, subagentCount } from "./plan.js";
 import { mountTabList } from "./tablist.js";
@@ -53,6 +53,7 @@ guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 window.addEventListener("focus", () => link.send({ type: "accounts" }));
 const brain = mountBrain($("brain"), link, { compact: true, openAgent: (id) => openChat(id),
                                              openSettings: () => openTab("/settings") });
+const handoffs = mountHandoffSlot($("handoff"), (message) => link.send(message)); // a countdown, wherever it scrolls
 let watchSites = []; // the Brain's watch list: a message workflow's sites
 let switchedOn = []; // the MCP servers switched on: what a workflow may use
 const tools = mountTools($("tools"), link);
@@ -103,6 +104,15 @@ function focusOn(message) { // a notification's click: AI Home's tab, and the ag
   target.classList.add("focus");
   setTimeout(() => target.classList.remove("focus"), 2000);
 }
+
+function openSection() { // Mission Control's Calendar opens AI Home at its templates: that section, open, in view
+  if (location.hash !== "#workflows-section") return;
+  $("workflows-section").open = true;
+  $("workflows-section").scrollIntoView({ block: "start" });
+}
+
+addEventListener("hashchange", openSection);
+openSection();
 
 function flash(text) {
   $("hint").textContent = text;
@@ -181,6 +191,7 @@ function fillAgentRow(row, agent) {
   row.style.borderLeftColor = color;
   parts.dot.style.background = color;
   setText(parts.name, agentLabel(agent));
+  if (parts.name.title !== agentTip(agent)) parts.name.title = agentTip(agent); // the whole name, then what it works on
   const paused = Boolean(agent.limit) && agent.state === "failed"; // at a usage limit: paused, not failed
   setText(parts.state, paused ? "paused" : STATES[agent.state] || agent.state);
   parts.state.className = `chip ${paused ? "waiting" : agent.state}`;
@@ -489,7 +500,7 @@ function finishRequest() {
 }
 
 function handle(message) {
-  for (const part of [brain, tools, workflows, train, folders, uploads, chatBox]) part.onMessage(message);
+  for (const part of [brain, handoffs, tools, workflows, train, folders, uploads, chatBox]) part.onMessage(message);
   if (message.type === "brain_snapshot" || message.type === "brain_state") {
     watchSites = message.watch_list || [];
     workflows.options();

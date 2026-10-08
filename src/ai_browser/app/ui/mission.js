@@ -3,13 +3,14 @@
 // the menu's pages and the composer), and the right column (side.js) for the agent picked. On the same line
 // to the app as AI Home (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
 import { askError } from "./accountui.js";
+import { mountHandoffSlot } from "./brainui.js";
 import { mountCalendar } from "./calendar.js";
 import { el } from "./chat.js";
 import { mountComposer } from "./composer.js";
 import { mountDrawer } from "./drawer.js";
 import { icon } from "./icons.js";
 import { connect } from "./link.js";
-import { mountIntegrations, mountKnowledge, mountTemplates } from "./library.js";
+import { mountIntegrations, mountKnowledge } from "./library.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
 import { mountHistory, mountList, mountMissions } from "./pages.js";
 import { createScene } from "./scene.js";
@@ -21,7 +22,7 @@ import { createVoice } from "./voice.js";
 import { fillMove, mountWorkspaces } from "./workspaces.js";
 
 const $ = (id) => document.getElementById(id);
-const PAGES = ["dashboard", "missions", "templates", "knowledge", "integrations", "history"];
+const PAGES = ["dashboard", "missions", "knowledge", "integrations", "history"];
 const VIEWS = ["flow", "list", "calendar"];
 const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
 const agents = new Map(); // id -> the agent, as the app describes it
@@ -46,6 +47,7 @@ let browser = null; // where agents browse: {kind, name, state}
 let accountRows = []; // Settings → Accounts as the app lists them: names and "signed in", never an email
 let tabHidden = false; // the tab menu shows another tab (app.js tells its frames)
 let paused = false;
+const spoken = new Set(); // the hand-offs the Brain has spoken of: each once
 
 for (const node of document.querySelectorAll("[data-icon]")) {
   node.prepend(icon(node.dataset.icon));
@@ -62,7 +64,7 @@ function inWorkspace(agent) { // the menu's workspace filter: every agent while 
   return !workspace || agent?.workspace === workspace;
 }
 
-function templateInWorkspace(slug) { // the same filter for a template: Templates and the Calendar use this one
+function templateInWorkspace(slug) { // the same filter for a template: the Calendar uses it
   return !workspace || workspaceOfTemplate(slug) === workspace;
 }
 
@@ -98,19 +100,14 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                              browserOf: () => ({ tabs, scope: tabScope, browser }) });
 const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
 const list = mountList($("view-list"), { onOpen: select });
-const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI, Build a Mission, Use a Template
+const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI and Build a Mission
 parts.push(composer);
 const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible: inWorkspace,
                                                      decorate: (row, agent) => moveFor(row, { agent: agent.id },
                                                                                        agent.workspace) });
 const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
 parts.push(missions, history);
-const templates = mountTemplates($("page-templates"), link, {
-  inWorkspace: templateInWorkspace,
-  decorate: (row, slug) => moveFor(row.querySelector(".row") || row, { template: slug }, workspaceOfTemplate(slug)),
-});
-parts.push(templates, mountKnowledge($("page-knowledge"), link, { tabs: () => tabs,
-                                                                   model: () => $("task-model").value }),
+parts.push(mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value }),
            mountIntegrations($("page-integrations"), link));
 
 const spaces = mountWorkspaces($("workspaces"), { send, onFilter: setWorkspace });
@@ -119,26 +116,29 @@ parts.push(spaces, {
   onMessage(message) {
     if (message.type === "snapshot" || message.type === "workspaces") {
       workspaceRows = message.workspaces || [];
-      templates.refresh();
       renderAll();
     }
     if (message.type === "snapshot" || message.type === "accounts") usage.render(message.accounts || []);
   },
 });
+parts.push(mountHandoffSlot($("handoff"), send)); // the Brain's hand-offs, by the globe (its inbox lists them all)
+// the hand-offs never cover the composer, nor Ask AI's history above it
+const reserved = new ResizeObserver(() => $("centre").style.setProperty("--composer",
+  `${$("composer").offsetHeight + $("talk").offsetHeight}px`));
+reserved.observe($("composer"));
+reserved.observe($("talk"));
 parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
                                                 visibleTemplate: templateInWorkspace }));
 
-function openTemplate(slug) { // a template in the Calendar: Templates, at that template
-  showPage("templates");
-  document.querySelector(`#page-templates .workflow[data-slug="${CSS.escape(slug)}"]`)
-    ?.scrollIntoView({ block: "center" });
+function openTemplate() { // a template in the Calendar: AI Home, at its templates (Run, Edit, New are AI Home's)
+  openTab("/home#workflows-section");
 }
 
 function workspaceOfTemplate(slug) {
   return workspaceRows.find((row) => (row.templates || []).includes(slug))?.id || null;
 }
 
-function moveFor(container, target, current) { // Workspace ▾: moves an agent or a template (a filter, no right)
+function moveFor(container, target, current) { // Workspace ▾: moves an agent (a filter, no right)
   let select = container.querySelector(":scope > select.move");
   if (!select) {
     select = el("select", "move");
@@ -150,12 +150,11 @@ function moveFor(container, target, current) { // Workspace ▾: moves an agent 
   fillMove(select, workspaceRows, current);
 }
 
-function setWorkspace(id) { // the menu's filter: the Dashboard, My Missions and Templates show only this one's
+function setWorkspace(id) { // the menu's filter: the Dashboard, My Missions and the Calendar show only this one's
   workspace = id;
   spaces.setActive(id);
   scene.setFilter(inWorkspace);
   composer.workspaceChanged();
-  templates.refresh();
   renderAll();
 }
 
@@ -172,6 +171,7 @@ talk = mountTalk({
   openBrain: () => drawer.openBrain(),
   model: () => $("task-model").value, // the model last picked here or in AI Home
   fill: (words) => composer.fill(words), // the mic outside Ask AI fills the box
+  keep: 200, // Ask AI's history: this run's talk with the Brain, scrolled on hover (composer.css)
 });
 
 function setText(node, text) {
@@ -312,6 +312,7 @@ function showPage(name) {
     else button.removeAttribute("aria-current");
   }
   $("composer").hidden = page !== "dashboard" && page !== "missions";
+  $("talk-log").scrollTop = $("talk-log").scrollHeight; // a hidden log loses its place: newest in view again
   if (page === "dashboard" && view === "flow") scene.refit();
   for (const part of parts) part.shown?.(page, view);
 }
@@ -366,6 +367,17 @@ function handle(message) {
       brainItems.delete(message.id);
       renderBrain();
       break;
+    case "brain_handoff": { // a new one: a word from the Brain (names only, never the instruction); the user's own
+      const handoff = message.handoff; // words aren't, as the talk said it already
+      if (!handoff?.id || spoken.has(handoff.id) || !["counting", "waiting"].includes(handoff.state)
+          || handoff.source === "you") break;
+      spoken.add(handoff.id);
+      const who = `${Number.isInteger(handoff.number) ? `${handoff.number} · ` : ""}${handoff.name || "an agent"}`;
+      if (handoff.kind === "start") voice.say("I suggest a new agent: press Start if you want it");
+      else if (handoff.state === "counting") voice.say(brief(`Giving ${who} a task. Cancel within 15 seconds`));
+      else voice.say(brief(`I have a task for ${who}: press Send if you want it`));
+      break;
+    }
     case "brain_activity":
       Object.assign(brainState, { busy: Boolean(message.busy), what: String(message.what || "") });
       renderBrain();
@@ -386,7 +398,9 @@ function handle(message) {
       if (drawer.id) link.send({ type: "events", id: drawer.id });
       eventsFor = null; // and the right column asks for its agent's actions again
       renderAll();
-      for (const kind of ["accounts", "thumbs", "brain", "hearing", "permission_rules"]) link.send({ type: kind });
+      for (const kind of ["accounts", "thumbs", "brain", "hearing", "permission_rules", "workflows"]) { // workflows:
+        link.send({ type: kind }); // the Calendar's scheduled templates, and each workspace's count of them
+      }
       break;
     }
     case "agent_event":

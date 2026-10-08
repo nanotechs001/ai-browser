@@ -84,6 +84,23 @@
       agents browse, and the parts of pages you picked to watch. What a page says is treated as data, never as
       instructions. AI Browser never sends anything: a reply goes into the reply box only when you click Use draft.</p>
     <p id="reading-state" class="muted" role="status"></p>
+    <fieldset id="brain-sources" class="brain-sources">
+      <legend>What the Brain listens to</legend>
+      <label class="check"><input type="checkbox" data-source="agents"> Agents' chats and results</label>
+      <label class="check"><input type="checkbox" data-source="gmail"> Gmail</label>
+      <label class="check"><input type="checkbox" data-source="slack"> Slack</label>
+      <label class="check"><input type="checkbox" data-source="asana"> Asana</label>
+      <label class="check"><input type="checkbox" data-source="pages"> Watched page parts</label>
+      <label class="check"><input type="checkbox" data-source="chat"> The floating chat</label>
+      <p class="muted">What you uncheck is never sent to the Brain. Gmail, Slack, Asana and watched page parts are read
+        only while the switch above is on.</p>
+    </fieldset>
+    <label class="check"><input id="auto-hand" type="checkbox"> Hand tasks to working agents by itself (15 s to
+      cancel)</label>
+    <p class="muted">The Brain shows each hand-off with its exact words, and sends it after 15 seconds unless you press
+      Cancel: only from your own words, and only to an agent that is working. What comes from an agent's result,
+      an email, Slack, Asana or a watched page always waits for your Send, and a new agent for your Start. Off: every
+      hand-off waits for your Send.</p>
     <div id="brain-sites" class="brain-sites"></div>
     <h3>Parts of pages you watch</h3>
     <div id="brain-watched" class="brain-sites"></div>

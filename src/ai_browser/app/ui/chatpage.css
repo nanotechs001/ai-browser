@@ -47,7 +47,7 @@ select { border: 1px solid var(--line); background: var(--card); border-radius: 
                       padding: 6px 8px; background: var(--bg); }
 .talk-card progress { width: 100%; }
 .talk-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap; }
-.talk-form { display: flex; gap: 6px; margin-top: auto; }
+.talk-form { display: flex; gap: 6px; margin-top: auto; position: sticky; bottom: 0; background: var(--bg); }
 .talk-form input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
                    background: var(--card); }
 .mic { display: inline-grid; place-items: center; width: 32px; padding: 0; flex: none; }
@@ -110,3 +110,5 @@ select { border: 1px solid var(--line); background: var(--card); border-radius: 
 .folder-ask p { margin: 0; }
 .folder-ask .folder-path { font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
 #task-folder { max-width: 180px; }
+.handoff-slot { margin: 4px 10px; flex: none; max-height: 40vh; }  /* the Brain's hand-offs (brainui.js): the talk
+                                                                     keeps the rest */

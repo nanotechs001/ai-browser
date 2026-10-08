@@ -1,7 +1,8 @@
 // Settings → Brain: the switch that lets AI Browser read the user's Gmail, Slack and Asana tabs (off until they turn
-// it on), how reading goes for each site, the parts of pages they watch, and Pick the part to watch. The picker runs
-// in one of the user's open tabs in Brave, only on their click here, and only while the switch is on. Every name, title
-// and sample is set as text.
+// it on), what the Brain listens to (a checkbox per source, each on until the user unchecks it), whether it hands tasks
+// to working agents by itself (15 s to cancel), how reading goes for each site, the parts of pages they watch, and
+// Pick the part to watch. The picker runs in one of the user's open tabs in Brave, only on their click here, and only
+// while the switch is on. Every name, title and sample is set as text.
 "use strict";
 
 const SITES = new Set(["gmail", "slack", "asana"]);
@@ -24,14 +25,24 @@ function host(url) {
 }
 
 export function mountBrainSettings(parts, send) {
-  // parts: {toggle, state, sites, watched, pickTab, pickStart, pickNote}
+  // parts: {toggle, sources, autoHand, state, sites, watched, pickTab, pickStart, pickNote}
   let on = false;
+  let sources = {}; // the saved checkboxes: a refused change puts them back
+  let autoHand = true;
   let reading = "off";
   let tabs = [];
   let picking = false;
 
   parts.toggle.addEventListener("change", () => {
     send({ type: "settings_set", key: "read_tabs", value: parts.toggle.checked, request: "read_tabs" });
+  });
+  parts.sources.addEventListener("change", () => { // every checkbox, as it now reads
+    const value = Object.fromEntries([...parts.sources.querySelectorAll("input[data-source]")]
+      .map((box) => [box.dataset.source, box.checked]));
+    send({ type: "settings_set", key: "brain_sources", value, request: "brain_sources" });
+  });
+  parts.autoHand.addEventListener("change", () => {
+    send({ type: "settings_set", key: "auto_hand", value: parts.autoHand.checked, request: "auto_hand" });
   });
   parts.pickStart.addEventListener("click", () => {
     const target = parts.pickTab.value;
@@ -82,10 +93,20 @@ export function mountBrainSettings(parts, send) {
     if (!parts.watched.children.length) parts.watched.append(el("p", "muted", "No parts of pages yet."));
   }
 
-  function settings(values) { // the app's settings: read_tabs
+  function showChoices() {
+    for (const box of parts.sources.querySelectorAll("input[data-source]")) {
+      box.checked = sources[box.dataset.source] !== false;
+    }
+    parts.autoHand.checked = autoHand;
+  }
+
+  function settings(values) { // the app's settings: read_tabs, brain_sources and auto_hand
     if (!values) return;
     on = values.read_tabs === true;
     parts.toggle.checked = on;
+    sources = values.brain_sources || {};
+    autoHand = values.auto_hand !== false;
+    showChoices();
     renderPick();
   }
 
@@ -113,6 +134,9 @@ export function mountBrainSettings(parts, send) {
     } else if (message.type === "error" && message.request === "read_tabs") {
       parts.state.textContent = message.text || "";
       parts.toggle.checked = on; // the saved value stays
+    } else if (message.type === "error" && ["brain_sources", "auto_hand"].includes(message.request)) {
+      parts.state.textContent = message.text || "";
+      showChoices(); // the saved values stay
     }
   }
 

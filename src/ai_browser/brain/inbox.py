@@ -16,6 +16,7 @@ import time
 
 from ..app.bravelink import NOT_CONNECTED, PlaceError
 from ..app.inworld import WorldError
+from .service import source_of
 from .store import built_in
 
 READ_EVERY = 4.0  # seconds between two rounds of reads
@@ -47,6 +48,7 @@ class InboxReader:
         self.on = False
         self._task: asyncio.Task | None = None
         self._turn = 0  # changed by every set_on: a read that began before it keeps nothing
+        self._sources = brain.sources_changed  # Settings → Brain's checkboxes, as of the last round
         self._tabs: dict[str, _Tab] = {}  # target -> what it gave already
         self._said: dict[str, tuple[bool, str]] = {}  # site -> its line, as last said
         self._jobs: set[asyncio.Task] = set()  # threads being opened, reply boxes being filled
@@ -100,6 +102,11 @@ class InboxReader:
         self.brain.set_reading(self.state())
         if self.state() != "on":
             return  # off, or Brave isn't connected: nothing is read, and nothing asks Brave anything
+        if self._sources != self.brain.sources_changed:
+            # a box in Settings → Brain changed: every tab hands its rows over again, as after set_on, so what an
+            # uncheck dropped unsorted comes back (the Brain skips what it has seen or has waiting)
+            self._sources = self.brain.sources_changed
+            self._tabs.clear()
         tabs = self.brave.brain_tabs()
         for target in [target for target in self._tabs if target not in {tab["target"] for tab in tabs}]:
             del self._tabs[target]  # closed, gone to another site, or not the user's any more
@@ -120,8 +127,10 @@ class InboxReader:
                 self._say(site, best[0], best[1])
 
     def _sites(self) -> list[str]:
-        """The sites the Brain reads: the three, and the picked parts that are on."""
-        return [entry.site for entry in self.brain.store.watch() if entry.enabled]
+        """The sites the Brain reads: the three, and the picked parts that are on, each while its checkbox in
+        Settings → Brain is."""
+        return [entry.site for entry in self.brain.store.watch()
+                if entry.enabled and self.brain.listens(source_of(entry.site))]
 
     def _say(self, site: str, ok: bool, note: str) -> None:
         if self._said.get(site) != (ok, note):
@@ -146,8 +155,8 @@ class InboxReader:
         read this time."""
         site, target = tab["site"], tab["target"]
         entry = self.brain.store.entry(site)
-        if entry is None or not entry.enabled:
-            return None
+        if entry is None or not entry.enabled or not self.brain.listens(source_of(site)):
+            return None  # unchecked in Settings → Brain: not read at all
         memory = self._tabs.get(target)
         if memory is None or memory.site != site:
             memory = self._tabs[target] = _Tab(site)

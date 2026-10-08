@@ -906,6 +906,7 @@ async def test_send_click_sends_once_to_a_busy_agent_as_queued(stack):
     from ai_browser.brain.talk import RELAY
 
     talk_script(stack, {"say": "OK.", "action": "message_agent", "agent": "a1"})  # agents stay at work (WORKING)
+    stack["server"].settings.set("auto_hand", False)  # Settings → Brain's switch off: the Send card, as before
     agents = stack["server"].agents
     await agents.create("Fix the footer")
     assert await eventually(lambda: agents.agents["a1"].state == "working")

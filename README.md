@@ -411,7 +411,8 @@ Press the shortcut again, Esc or ✕ to hide it. It needs AI Browser's own app (
   characters, never its scripts), and the Brain answers from them. Page text is data: about a page, the Brain only
   answers, and proposes nothing.
 - **Talk to the Brain:** type, or hold the mic button. "Tell agent 2 to check the footer" makes a card: press **Send**
-  or **Start**, or say yes. The open agents show by number; a click opens one in AI Home.
+  or **Start**, or say yes. While agent 2 is working, the card counts down 15 seconds and then sends, unless you press
+  **Cancel**; the Brain's other hand-offs show here too. The open agents show by number; a click opens one in AI Home.
 - **New task** starts an agent with the model and the account you pick. It replaces typing `ai` in Brave's address
   bar. **Start it in this page** hands this tab over to it as it starts. A picture pasted into its box, or a file
   dropped on it, goes with the task, as in Mission Control (at most 10 files, 20 MB each). The Brain's box takes text
@@ -432,6 +433,12 @@ one connection to Brave. Turning it off stops reading at once, and a read under 
 section says when reading is off, or waiting for Brave.
 
 **Settings → Brain** shows:
+- **What the Brain listens to:** a checkbox each for **Agents' chats and results**, **Gmail**, **Slack**, **Asana**,
+  **Watched page parts** and **The floating chat**, all on until you uncheck one. What you uncheck is never sent to
+  the Brain: an unchecked site or watched part isn't read at all, agents' answers and current actions stay out of what
+  the Brain reads, and the floating chat's questions aren't asked. Gmail, Slack, Asana and watched parts are still read
+  only while **Read my Gmail, Slack and Asana tabs** is on.
+- **Hand tasks to working agents by itself (15 s to cancel):** on until you turn it off (see **Hand-offs** below).
 - **The sites:** Gmail, Slack and Asana, each with how reading goes ("no open tab", "reader needs an update").
 - **Parts of pages you watch:** each with **Turn off** and **Remove**. To add one, pick one of your open tabs and
   click **Pick the part to watch**: that tab comes to the front in Brave, an outline follows your mouse, a click picks
@@ -459,6 +466,22 @@ section says when reading is off, or waiting for Brave.
 - **Done.**
 
 AI Browser's own app shows a notification when new items need you ("The Brain has 7 new notes"), never their text.
+
+**Hand-offs:** the Brain may give an agent that is already working (working, waiting in line, or needing you) a task,
+on a card. It shows where the task came from, "Giving **2 · Research competitors**:", the exact words it will send, and
+**Send now** and **Cancel** (with the seconds left while it counts down). Several cards at once all show.
+- From **your own words** (Ask AI, the floating chat), it sends after **15 seconds** unless you press **Cancel**, and
+  only when you named the agent (or only one agent is open). Saying "no", "cancel it", "stop", "wait" or "never mind"
+  cancels it; saying anything else pauses it, and it then waits for your **Send**. It counts down only while an AI
+  Browser window that shows the card is on screen (AI Home, Mission Control or the floating chat): a hidden window, or
+  another tab in front, makes it wait for your **Send**. Stop on that agent cancels it. Turning off **Hand tasks to
+  working agents by itself** makes every hand-off wait for your **Send**, and nothing is sent once AI Browser quits.
+- From **an agent's result, an email, a Slack or Asana message, or a watched page part**, it never counts down: it
+  waits for your **Send**, since the instruction may carry someone else's words.
+- A **new agent** is only ever a suggestion, with its exact task and **Start**.
+- The card shows in the Brain's inbox (AI Home, and the globe's drawer in Mission Control), under Mission Control's
+  view switch and in the floating chat, and AI Browser's own app notifies you, never with the instruction. The agent's
+  chat shows "From the Brain: …", and the Brain's inbox keeps this run's cards.
 
 How it works:
 - **Reading:** the readers run in an isolated world of each tab: the page's own scripts can't see or change them, and
@@ -553,7 +576,6 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   pages:
   - **Dashboard:** the office, with **Flow · List · Calendar**;
   - **My Missions:** every agent as a row, filtered by All · Working · Needs you · Done;
-  - **Templates:** your workflows (Run, Edit, New template);
   - **Knowledge:** your skills and what each one teaches, and Train. **Remove** hides a skill from AI Browser's agents
     and never deletes its files (it is listed under `blocked_skills` in `~/.ai-browser/config.json`); **Bring back**
     undoes it. **Remove** applies to the agents you start next: agents that are running keep the skills they started
@@ -562,10 +584,10 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   - **History:** this run's finished agents, with the result, the time, the account and the files changed, and a
     search. **Open** shows the whole chat.
 - **Workspaces:** named groups of agents and templates, kept in `~/.ai-browser/workspaces.json`. Click one to see only
-  its agents and templates (click again for all); **⋯** renames or deletes it. Deleting removes the grouping only: its
-  agents keep running. An agent stays in its workspace for this run (agent numbers start again after a restart). With a
-  workspace picked and none of its missions in the room, the office says "No missions in this workspace". The Calendar
-  follows the picked workspace too.
+  its agents, and its templates in the Calendar (click again for all); **⋯** renames or deletes it. Deleting removes the
+  grouping only: its agents keep running. An agent stays in its workspace for this run (agent numbers start again after
+  a restart). With a workspace picked and none of its missions in the room, the office says "No missions in this
+  workspace". The Calendar follows the picked workspace too.
 - **The Usage card:** each account's current session and weekly limits, as Claude Code reports them with each request;
   the last reading is kept, with its time (in `~/.ai-browser/usage.json`, so it shows after a restart).
   - For each signed-in account (at most three, Default first): **Current session** and **Weekly**, each a bar with how
@@ -594,13 +616,14 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   - Drag to turn, scroll to zoom, double-click to reset. Keys: ← → turn, ↑ ↓ tilt, + − zoom, 0 resets. On a narrow
     window, where the page scrolls, scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom.
 - **List** shows the room's agents as rows. **Calendar** shows a month, or a week, with your scheduled templates' next
-  runs and this run's finished agents. A scheduled run that has passed isn't shown.
+  runs and this run's finished agents. A scheduled run that has passed isn't shown. A click on a template opens AI
+  Home at its templates (**Workflows**: Run, Edit, New).
 - **The right column**, for the agent you click (or the one at work):
   - **Mission Progress:** "3 / 5 steps complete", the bar, and your agents as Completed, In Progress and Pending;
-  - **Current Task:** its step and timer, its checklist (its to-do list, or its latest actions without one), and
-    **Stop**, **Chat**, **Hand over** and **Watch**. **Watch** brings its tab to the front without opening its drawer
-    (it is greyed out while the agent has no tab). **Answer** shows when a card waits; clicking a desk that needs you
-    opens its card too;
+  - **Current Task:** its name and what it works on, its step and timer, its checklist (its to-do list, or its latest
+    actions without one), and **Stop**, **Chat**, **Hand over** and **Watch**. **Watch** brings its tab to the front
+    without opening its drawer (it is greyed out while the agent has no tab). **Answer** shows when a card waits;
+    clicking a desk that needs you opens its card too;
   - **Chat** opens the agent's drawer: its state, **Watch**, **Stop**, **Close**, its permission card (**Allow once**,
     **Always allow**, **Deny**), **Your tabs** and its chat. When agents work in your Brave, **Give to this agent**
     under **Your tabs** hands it one of your own tabs, as AI Home's **Hand over** does. Its message box takes files as
@@ -609,12 +632,18 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     them, so a refused message keeps your words and files for another try;
   - **Recent Activity:** started, a step done, needs you, finished. **See all** opens History.
 - **The composer:** **Ask AI** (the Brain answers and proposes; nothing runs until you press Start or Send, or say
-  yes), **Build a Mission** (a new agent) and **Use a Template** (a workflow, with your words added). Under the box:
+  yes, except your words for a working agent you named, after a 15-second countdown you can cancel) and **Build a
+  Mission** (a new agent). Templates are AI Home's (**Workflows**). **Build a Mission** has two optional fields above
+  the box, **Name** (at most 60 characters) and **What it works on** (one line, at most 160): the name shows on its
+  desk and wherever the agent is listed, the description under its name in Current Task and its drawer and as a
+  tooltip elsewhere, and neither is sent to the agent (your task is its instruction). **Ask AI** keeps this run's talk
+  above the box, the newest at the bottom: a short strip, older lines fading out above it. Point at it (or tab into
+  it) and it grows, turns solid and scrolls, and the wheel scrolls your talk, not the office. Under the box:
   - **Attach:** at most 10 files, 20 MB each. They are copied into the agent's folder under `attachments/`, never over
     a file that is there (a duplicate becomes "name (2).ext"), and the task names them. Pictures reach the agent through
     Claude Code's own Read. Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it, and it is
     attached the same way. Pasted text stays text. Cells copied from a spreadsheet paste as text, without the picture
-    of them that comes along. **Ask AI** and **Use a Template** take no files: a picture pasted there says "Pictures
+    of them that comes along. **Ask AI** takes no files: a picture pasted there says "Pictures
     go with Build a Mission or an agent's chat". AI Home's **New task** and an agent's chat there take pictures and
     files the same way, and so does the floating chat's **New task**. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
     that folder has been replaced by a link, the task refuses to start and says which folder. After a reconnect, every
@@ -648,14 +677,16 @@ turn stops by itself at 30 seconds. **Ask AI**, in the composer, does the same, 
   service is used, not even as a fallback.
 - **Your words go to Claude**, like typed text: the Brain answers about your agents and your inbox in one or two
   sentences, in its bubble and the talk panel, and aloud when Voice is on.
-- **It only proposes.** Asked for work, it offers one card: **start a NEW agent** with your own words, **send your
-  words to an agent that's already open** (say its number, "agent 2", its colour, "the blue one", a word of its name,
-  or "it"), or **draft a reply** to an inbox item. Nothing happens until you press **Start**, **Send** or **Draft
-  it**, or say "yes"; a "yes" with no card open does nothing. A message to a busy agent waits until it finishes what
-  it's doing now; one waiting at a bot check isn't sent, and its card's Continue stays yours. Voice never approves or
-  sends a draft, answers a permission card or a bot check, confirms a ⚠ action, marks items Done,
-  changes a setting, or hands over or takes back a tab: those stay clicks. Words that sound like a password or a code
-  are never sent: log in yourself, in the site's own tab.
+- **It only proposes, with one exception.** Asked for work, it offers one card: **start a NEW agent** with your own
+  words, **send your words to an agent that's already open** (say its number, "agent 2", its colour, "the blue one", a
+  word of its name, or "it"), or **draft a reply** to an inbox item. Nothing happens until you press **Start**, **Send**
+  or **Draft it**, or say "yes"; a "yes" with no card open does nothing. The exception: your words for a working agent
+  you named (or the only one open) go to it after a 15-second countdown on a hand-off card, unless you press **Cancel**
+  or say "no" (see **Hand-offs** under The Brain). A message to a busy agent waits until it finishes what it's doing
+  now; one waiting at a bot check isn't sent, and its card's Continue stays yours. Voice never approves or sends a
+  draft, answers a permission card or a bot check, confirms a ⚠ action, marks items Done, changes a setting, or hands
+  over or takes back a tab: those stay clicks. Words that sound like a password or a code are never sent: log in
+  yourself, in the site's own tab.
 - **Setup, once:**
   1. In this folder, run `uv sync --extra voice`, then restart `ai-browser app`. It installs faster-whisper and the
      Python packages it needs, from PyPI. Sync with `uv sync --extra voice` (or `--all-extras`) from then on: a plain

@@ -36,7 +36,7 @@ from .. import browsers, debugstart, platforms
 from ..accounts import Accounts
 from ..brain import sites
 from ..brain.inbox import InboxReader
-from ..brain.service import BrainService
+from ..brain.service import BrainService, source_of
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.store import built_in
 from ..brain.talk import PAGE_TEXT_LIMIT
@@ -76,7 +76,9 @@ PING_EVERY = 20  # seconds: a message now and then keeps a page's socket alive
 THUMB_EVERY = 2  # seconds between two thumbnails of one agent's tab
 TEXT_LIMIT = 20_000  # characters of a task or a message
 BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "style",
-                  "tell_confirm", "tell_dismiss"}
+                  "tell_confirm", "tell_dismiss", "handoff_send", "handoff_cancel"}
+HANDOFF_VIEWS = frozenset({"home", "mission", "chat"})  # the pages that show the Brain's hand-off cards
+HOLD_AFTER = 0.3  # seconds without a page that can show a card before every countdown holds (a tab switch is quicker)
 TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"}
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
 SKILL_MESSAGES = {"skill_draft", "skill_save"}
@@ -104,8 +106,11 @@ CODE_TTL = 60  # seconds a one-time start code is good for
 PICK_WAIT = 120.0  # seconds a pick may take: the user points and clicks in Brave
 PICK_OFF = "Turn on Read my Gmail, Slack and Asana tabs first"
 PICK_TAB = "Pick one of your open tabs in Brave"
-# watcher_note: AI Home's Got it; read_tabs: Settings → Brain's switch
-SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs", "agents_profile")
+# watcher_note: AI Home's Got it; read_tabs, brain_sources and auto_hand: Settings → Brain's switch, checkboxes and
+# hand-off switch
+SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs", "agents_profile",
+                "brain_sources", "auto_hand")
+CHAT_OFF = "The Brain isn't listening to the floating chat: check it in Settings → Brain"
 NOTES_KEPT = 50  # the app's notifications whose click is still answered
 PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
 APP_SILENT = "AI Browser's app didn't answer: try again"
@@ -145,6 +150,7 @@ APP_ONLY = Rule()
 # copy says the same.
 MESSAGE_RULES: dict[str, Rule] = {
     "hello": APP_ONLY,
+    "visibility": APP_ONLY,  # the Brain's hand-offs (2026-10-08): a page shown or hidden (link.js)
     # the Brain's inbox, in AI Home, Mission Control and Settings
     "brain": APP_ONLY, "draft": APP_ONLY, "approve": APP_ONLY, "hand": APP_ONLY, "done": APP_ONLY,
     "tell": APP_ONLY, "watch_set": APP_ONLY, "watch_remove": APP_ONLY, "style": APP_ONLY,
@@ -158,6 +164,8 @@ MESSAGE_RULES: dict[str, Rule] = {
     "listen_chunk": APP_ONLY, "listen_end": APP_ONLY, "listen_cancel": APP_ONLY,
     "brain_ask": APP_ONLY, "brain_confirm": APP_ONLY, "brain_dismiss": APP_ONLY,
     "tell_confirm": APP_ONLY, "tell_dismiss": APP_ONLY,  # brain-delegation: a card runs only from our own pages
+    # the Brain's hand-offs (2026-10-08): Send now, Send, Start and Cancel on a card, the user's click on our pages
+    "handoff_send": APP_ONLY, "handoff_cancel": APP_ONLY,
     "check_continue": APP_ONLY, "check_skip": APP_ONLY, "check_show": APP_ONLY,
     "brave_connect": APP_ONLY, "hand_tab": APP_ONLY, "take_back": APP_ONLY,
     "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in AI Home's list of connected clients
@@ -369,6 +377,9 @@ class AppServer:
         if brain is not None:
             brain.workflows, brain.runner = workflows, runner
         self._roles: dict[WebSocket, str] = {}  # "app", stored when a socket is accepted
+        self._views: dict[WebSocket, str] = {}  # which page said hello on a socket: "home", "mission", "chat"…
+        self._shown: set[WebSocket] = set()  # the sockets whose page says it can be seen (link.js: hello, visibility)
+        self._holding: asyncio.TimerHandle | None = None  # the hold that waits HOLD_AFTER for another page in front
         self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (AI Home…)
         self.window_seen = False  # the window's first socket has come in
         if brain is not None:
@@ -407,6 +418,10 @@ class AppServer:
         agents.let_go = self._let_go  # a handed tab taken back, or let go when its agent closes
         agents.on_turn = lambda agent: self.connect_brave("turn", agent.id)  # right after the user's task
         agents.mint_token = self.tokens.mint
+        if brain is not None:
+            brain.set_sources(self.settings.get()["brain_sources"])  # Settings → Brain's checkboxes
+            brain.auto_hand = lambda: self.settings.get()["auto_hand"]  # Settings → Brain's hand-off switch
+            brain.visible = self._shows_handoffs
         if tabs is not None:
             self.attach_tabs(tabs)
 
@@ -497,6 +512,10 @@ class AppServer:
             self.brave.set_place(self.settings.get()["agents_profile"])
         if key == "read_tabs" and self.inbox is not None:  # Settings → Brain: reading starts or stops at once
             self.inbox.set_on(self.settings.get()["read_tabs"])
+        if key == "brain_sources" and self.brain is not None:  # Settings → Brain's checkboxes: at once
+            self.brain.set_sources(self.settings.get()["brain_sources"])
+        if key == "auto_hand" and self.brain is not None and not self.settings.get()["auto_hand"]:
+            self.brain.hold_countdowns()  # off: every hand-off waits for Send, a counting one too
         if key == "read_tabs" and not self.settings.get()["read_tabs"]:
             for pick in list(self._picks):  # a pick under way ends too, and keeps nothing
                 pick.cancel()
@@ -1050,10 +1069,12 @@ class AppServer:
         """Which site the Brain reads at this address, for BraveLink's gate: one of the three, or a part of a page the
         user picked to watch (switched on), by the address it was picked on. None for any other."""
         site = sites.inbox_site(url)
-        if site is not None or self.brain is None:
-            return site
-        return next((entry.site for entry in self.brain.store.watch() if not built_in(entry.site) and entry.enabled
-                     and entry.selector and sites.matches(entry.url_match, url)), None)
+        if site is None and self.brain is not None:
+            site = next((entry.site for entry in self.brain.store.watch() if not built_in(entry.site)
+                         and entry.enabled and entry.selector and sites.matches(entry.url_match, url)), None)
+        if site is not None and self.brain is not None and not self.brain.listens(source_of(site)):
+            return None  # unchecked in Settings → Brain: no reader runs there
+        return site
 
     async def _watch_pick(self, queue: asyncio.Queue, message: dict) -> None:
         """Pick the part to watch, on the user's click in Settings → Brain: the tab they chose comes forward in Brave,
@@ -1256,6 +1277,8 @@ class AppServer:
     def _unsubscribe(self, ws: WebSocket) -> None:
         self._sockets.pop(ws, None)
         self._roles.pop(ws, None)
+        self._views.pop(ws, None)
+        self._seen(ws, False)  # a closed page can't show a hand-off's card
         self._windows.discard(ws)
         self.uploads.drop_all(ws)  # a closed page's files go with it
         if self.hearing is not None:
@@ -1272,11 +1295,33 @@ class AppServer:
         """What the Brain asks of the app: its new notes, notified by AI Browser's own app in fixed words; or a
         thread to open and a reply box to fill, in the user's tabs. False when nothing took it: the Brain says why."""
         kind = message.get("type")
-        if kind == "notify":
+        if kind in ("notify", "handoff"):
             return self._notify_desktop(message)
         if kind in ("open_thread", "fill_reply") and self.inbox is not None:
             return self.inbox.handle(message)  # in the user's tabs, only while reading is on
         return False
+
+    def _shows_handoffs(self) -> bool:
+        """Whether a page that shows the Brain's hand-off cards (AI Home, Mission Control, the floating chat) can be
+        seen: it is open and says it isn't hidden (the desktop app only hides its window on close). Only then may a
+        hand-off count down. Nothing is sent while nobody can see it."""
+        return any(self._views.get(ws) in HANDOFF_VIEWS for ws in self._shown)
+
+    def _seen(self, ws: WebSocket, shown: bool) -> None:
+        """A page says whether it can be seen. When none that shows hand-off cards can for HOLD_AFTER seconds, every
+        countdown holds. Only that sweep waits, for a tab switch whose pages the app hears in either order: what a
+        page says counts at once, and a countdown's end sends nothing unless a page can show its card then."""
+        if shown:
+            self._shown.add(ws)
+        else:
+            self._shown.discard(ws)
+        if self.brain is not None and not self._shows_handoffs() and self._holding is None:
+            self._holding = asyncio.get_running_loop().call_later(HOLD_AFTER, self._hold_unseen)
+
+    def _hold_unseen(self) -> None:
+        self._holding = None
+        if self.brain is not None and not self._shows_handoffs():
+            self.brain.hold_countdowns()  # still no page can show a card: every countdown waits for Send
 
     def _brain_closed(self) -> str:
         """Why the Brain's outbox took a thread or a reply box nowhere, for the item's note."""
@@ -1338,7 +1383,7 @@ class AppServer:
         elif kind in HEARING_MESSAGES:  # only AI Browser's own pages talk or listen (MESSAGE_RULES)
             self._hearing_command(ws, queue, kind, message)
         elif kind in TALK_MESSAGES:
-            self._talk_command(queue, kind, message)
+            self._talk_command(queue, kind, message, chat=self._views.get(ws) == "chat")
         elif kind in ACCOUNT_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             await self._account_command(queue, kind, message)
         elif kind in POWERS_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
@@ -1350,9 +1395,13 @@ class AppServer:
         elif kind in WORKSPACE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._workspace_command(queue, kind, message)
         elif kind == "hello":
+            self._views[ws] = message.get("view") if isinstance(message.get("view"), str) else ""
+            self._seen(ws, message.get("visible") is True)
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
                 self._sockets[ws] = queue
+        elif kind == "visibility":  # the page was shown or hidden (link.js)
+            self._seen(ws, message.get("visible") is True)
         elif kind == "settings_set":
             self._settings_set(queue, message)
         elif kind == "open_url":
@@ -1384,7 +1433,8 @@ class AppServer:
                 files = self.uploads.take(ws, listed)  # each attached file whole, or nothing starts
                 agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
                                             folder=folder, workspace=self._workspace_of(message), files=files,
-                                            web=web, auto=message.get("auto") is True)  # the composer's switch
+                                            web=web, auto=message.get("auto") is True,  # the composer's switch
+                                            name=message.get("name"), description=message.get("description"))
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
@@ -1395,8 +1445,12 @@ class AppServer:
         elif kind == "send":
             await self._send(ws, queue, agent_id, message)
         elif kind == "stop":
+            if self.brain is not None:
+                self.brain.agent_stopped(agent_id)  # its hand-offs' countdowns stop too
             await agents.stop(agent_id)
         elif kind == "close":
+            if self.brain is not None:
+                self.brain.agent_stopped(agent_id)
             self._job(agents.close(agent_id))  # it may wait for the agent's turn to end
         elif kind == "model" and message.get("model") in MODELS:
             agents.set_model(agent_id, message["model"])
@@ -1478,6 +1532,10 @@ class AppServer:
             brain.remove_watch(message["site"])
         elif kind == "style":
             brain.set_style(_text(message.get("text")))
+        elif kind == "handoff_send":  # Send now, Send or Start on a hand-off's card: once
+            self._job(brain.send_handoff(item_id))
+        elif kind == "handoff_cancel":
+            brain.cancel_handoff(item_id)
 
     # ---- talking to the Brain: push-to-talk turns and the talk (AI Browser's own pages only) ----------------------
 
@@ -1511,7 +1569,7 @@ class AppServer:
         text, error = await self.hearing.finish(ws, turn)
         queue.put_nowait({"type": "heard", "turn": turn[:40], **({"error": error} if error else {"text": text})})
 
-    def _talk_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+    def _talk_command(self, queue: asyncio.Queue, kind: str, message: dict, chat: bool = False) -> None:
         talk = message.get("talk")
         if not isinstance(talk, str) or not _TALK_ID.match(talk):
             return
@@ -1524,7 +1582,9 @@ class AppServer:
         proposal = message.get("proposal") if isinstance(message.get("proposal"), str) else None
         task = _text(message.get("task")) or None  # the card's box, as the user left it
         model = message.get("model") if message.get("model") in MODELS else None
-        if kind == "brain_ask":
+        if kind == "brain_ask" and chat and not self.brain.listens("chat"):  # Settings → Brain: The floating chat
+            queue.put_nowait({"type": "brain_answer", "talk": talk, "request": request, "say": "", "error": CHAT_OFF})
+        elif kind == "brain_ask":
             text = message.get("text").strip()[:2000] if isinstance(message.get("text"), str) else ""
             page = message.get("page") if isinstance(message.get("page"), str) and message.get("page") else None
             site = message.get("site") if isinstance(message.get("site"), str) else ""  # the site the user marked

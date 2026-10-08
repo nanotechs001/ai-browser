@@ -33,6 +33,9 @@ class FakeAgents:
         self.agents[agent.id] = agent
         return agent
 
+    def snapshot(self):  # the sort asks which agents are working (a message may be work for one): none here
+        return {"agents": []}
+
     def subscribe(self):
         return asyncio.Queue()
 

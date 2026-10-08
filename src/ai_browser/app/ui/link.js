@@ -14,6 +14,20 @@ export function connect({ view, onMessage = () => {}, onState = () => {} }) {
   let retries = 0;
   let refused = false;
   const waiters = [];
+  // Whether this page can be seen: the window shows it and, inside the window's tab menu (app.js), its tab is the one
+  // in front. A page in the tab menu's frame counts as hidden until the tab menu says otherwise, which it does as the
+  // page loads and on every switch. The Brain's hand-off counts down only while a page can show its card.
+  const framed = window.parent !== window;
+  let inFront = !framed;
+  let told = null; // what the app last heard
+  const seen = () => !document.hidden && inFront;
+
+  function report() { // only a change, and only on an open line: a hello says it anew
+    const now = seen();
+    if (now === told || !socket || socket.readyState !== WebSocket.OPEN) return;
+    told = now;
+    socket.send(JSON.stringify({ type: "visibility", visible: now }));
+  }
 
   function retry() {
     if (!refused) setTimeout(open, Math.min(5000, 250 * 2 ** retries++));
@@ -32,7 +46,8 @@ export function connect({ view, onMessage = () => {}, onState = () => {} }) {
     ws.onopen = () => {
       retries = 0;
       socket = ws;
-      ws.send(JSON.stringify({ type: "hello", view }));
+      told = seen();
+      ws.send(JSON.stringify({ type: "hello", view, visible: told }));
       onState("connected");
       for (const resolve of waiters.splice(0)) resolve();
     };
@@ -58,6 +73,13 @@ export function connect({ view, onMessage = () => {}, onState = () => {} }) {
   }
 
   open();
+  document.addEventListener("visibilitychange", report);
+  addEventListener("message", (event) => { // the tab menu, and nothing else, says whether this page's tab is in front
+    if (!framed || event.source !== window.parent || event.origin !== location.origin) return;
+    if (event.data?.type !== "shown") return;
+    inFront = event.data.on === true;
+    report();
+  });
   return {
     send(message) {
       if (!socket || socket.readyState !== WebSocket.OPEN) return false;

@@ -4,7 +4,7 @@
 // Every word is set as text, with its whole as a tooltip where it may be clipped.
 "use strict";
 
-import { el } from "./chat.js";
+import { agentLabel, el } from "./chat.js";
 import { createAvatar } from "./chibi.js";
 import { BADGE_ICONS, icon } from "./icons.js";
 import { activityOf, ago, checklistOf, groupsOf, progressOf } from "./progress.js";
@@ -74,6 +74,16 @@ export function mountSide({ send, openDrawer, openHistory }) {
     const step = stepOf(agent);
     const state = stateOf(agent);
     avatar($("current-avatar"), agent);
+    const label = agentLabel(agent);
+    // with a to-do list the step is the list's: a name the user gave gets a line of its own (else the step is it)
+    const nameLine = agent.named === true && step.title !== label;
+    setClip($("current-name"), nameLine ? label : "");
+    $("current-name").hidden = !nameLine;
+    const about = $("current-about"); // What it works on: under the name, wherever the name is
+    setClip(about, String(agent.description || ""));
+    about.hidden = !agent.description;
+    const under = nameLine ? $("current-name") : $("current-step").parentElement;
+    if (under.nextElementSibling !== about) under.after(about);
     setClip($("current-step"), step.title);
     setClip($("current-line"), step.line);
     setText($("current-timer"), timerOf(agent));

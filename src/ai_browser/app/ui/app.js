@@ -60,6 +60,9 @@ function load(tab, hash = "") { // the tab's frame, made the first time it is sh
   if (tab.live) frame.setAttribute("sandbox", "allow-scripts"); // another origin's page: no way out of its frame
   if (tab.key === "/mission") frame.allow = "microphone"; // talking to the Brain
   if (tab.key === "/home") frame.addEventListener("load", () => watchCount(frame));
+  frame.addEventListener("load", () => { // the page that loaded hears whether its tab is in front: show()'s word
+    frame.contentWindow?.postMessage({ type: "shown", on: active === tab.key }, location.origin); // went to about:blank
+  });
   frame.src = tab.src + hash;
   view.append(frame);
   $("views").append(view);
@@ -80,7 +83,10 @@ function show(key, hash = "") {
     if (on) one.button.setAttribute("aria-current", "page");
     else one.button.removeAttribute("aria-current");
     one.view?.classList.toggle("active", on);
-    one.frame?.contentWindow?.postMessage({ type: "shown", on }, location.origin); // our pages pause while hidden
+  }
+  // Our pages pause while hidden. The one in front hears it first: a hand-off's card is never unseen in between.
+  for (const one of [tab, ...[...tabs.values()].filter((other) => other !== tab)]) {
+    one.frame?.contentWindow?.postMessage({ type: "shown", on: one === tab }, location.origin);
   }
   renderTitle();
   tab.frame.contentWindow?.focus(); // keys go to the page shown (Mission Control's Space to talk, Escape, arrows)
