@@ -915,7 +915,8 @@ needs Node.js.
 **Tests on Windows (GitHub):** the private repo's Actions tab has the workflow **tests** (and **Build Windows app**,
 the [Windows test build](#windows-test-build-ai-browserexe-built-by-github)). It runs only when you
 click **Run workflow**, never on a push. Pick `windows` (the default), `macos` or `both`; tick **voice** to also
-install the voice extra (no model is downloaded). It uses your Actions minutes only then: Windows and macOS minutes
+install the voice extra (no model is downloaded); **pytest_args** (empty: every test) runs only some, for example
+`tests/test_office.py -k spark`. It uses your Actions minutes only then: Windows and macOS minutes
 cost more than Linux ones, macOS the most. The test report is kept for 7 days, inside the private repo. Tests that
 need macOS or Linux (the DevTools pipe) show as skipped, with that reason.
 
