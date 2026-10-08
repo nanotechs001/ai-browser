@@ -28,17 +28,21 @@ async def test_a_mission_keeps_its_name_and_description(fake_claude, tmp_path):
         rows = {row["id"]: row for row in manager.snapshot()["agents"]}
         assert (rows["a1"]["name"], rows["a1"]["description"]) == (NAME, ABOUT)
         await wait_for(lambda: all(agent.state == "your_turn" for agent in manager.agents.values()))
-        sent = " ".join(told(log))
-        assert "Open example.com and list its prices" in sent  # the task is the instruction
-        assert NAME not in sent and ABOUT not in sent  # the name and description never reach its Claude
+        assert "Open example.com and list its prices" in " ".join(told(log))  # the task is the instruction
+        everything = log.read_text(encoding="utf-8")  # its argv, system text and every line it was sent
+        assert NAME not in everything and ABOUT not in everything  # the name and description never reach its Claude
     finally:
         await manager.close_all()
 
 
 @pytest.mark.parametrize(("given", "kept"), [
     ("  Research   competitors ", "Research competitors"),  # whitespace squeezed
-    ("Re\u0007search‮ competitors‏", "Research competitors"),  # control and direction characters dropped
-    ("", ""), (None, ""), (42, ""), ("‮​", ""),  # none: the task's words name it
+    ("Re\u0007search\u202e competitors\u200f", "Research competitors"),  # control and direction characters dropped
+    ("Re\u061csearch\u2060 comp\u2064etitors\u200b", "Research competitors"),  # and the invisible marks
+    ("Pricing pages\nof\trivals", "Pricing pages of rivals"),  # line breaks and tabs are spaces, not nothing
+    ("Pricing pages\r\nof rivals", "Pricing pages of rivals"),
+    ("a\x0bb\x0cc\x1cd\x85e", "a b c d e"),  # nor are the other control spaces
+    ("", ""), (None, ""), (42, ""), ("\u202e\u200b", ""),  # none: the task's words name it
 ])
 async def test_names_and_descriptions_are_one_clean_line(fake_claude, tmp_path, given, kept):
     from ai_browser.app.agents import AgentManager
@@ -71,6 +75,21 @@ async def test_words_past_their_limits_start_nothing(fake_claude, tmp_path):
         await manager.close_all()
 
 
+async def test_limits_count_the_cleaned_words(fake_claude, tmp_path):
+    from ai_browser.app.agents import AgentManager
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    manager = AgentManager(tmp_path / "home", claude=runner)
+    try:
+        marks = await manager.create("x", name="n" * 60 + "\u202e" * 5, description="d" * 160 + "\u200b" * 5)
+        assert (marks.name, marks.description) == ("n" * 60, "d" * 160)  # dropped marks don't count
+        spaced = await manager.create("x", name="n" * 29 + "  " + "n" * 30, description="d" * 79 + "\t\n" + "d" * 80)
+        assert (len(spaced.name), len(spaced.description)) == (60, 160)  # squeezed spaces count once
+    finally:
+        await manager.close_all()
+
+
 async def test_new_task_takes_the_name_and_what_it_works_on(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
@@ -86,6 +105,10 @@ async def test_new_task_takes_the_name_and_what_it_works_on(fake_claude, tmp_pat
                                       "request": "m2"}))
             refused = await until(ws, lambda m: m["type"] == "error" and m.get("request") == "m2")
             assert refused[-1]["text"] == "A mission's name is at most 60 characters"
+            await ws.send(json.dumps({"type": "new_task", "text": "List the prices", "description": "d" * 161,
+                                      "request": "m3"}))
+            refused = await until(ws, lambda m: m["type"] == "error" and m.get("request") == "m3")
+            assert refused[-1]["text"] == "What it works on is at most 160 characters"
             assert list(server.agents.agents) == ["a1"]
     finally:
         await server.stop()

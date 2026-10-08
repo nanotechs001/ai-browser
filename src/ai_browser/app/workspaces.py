@@ -20,7 +20,7 @@ NAME_LIMIT = 40
 MOST = 50
 _ID = re.compile(r"w[0-9a-f]{8}")
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")  # a workflow's slug (brain/workflows.py)
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩﻿]")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 NO_NAME = "Give the workspace a name"
 TOO_LONG = f"A workspace's name is at most {NAME_LIMIT} characters"
 TAKEN = "There is a workspace named {name} already"
@@ -30,9 +30,12 @@ UNREADABLE = "Couldn't read your workspaces file: {path} ({why}). Fix it or remo
 
 
 def one_line(text) -> str:
-    """The user's words as one line of text: control characters and direction marks dropped, whitespace squeezed; ""
-    for anything that isn't text. A workspace's name, and a mission's name and description (app/agents.py)."""
-    return " ".join(_CONTROL.sub("", text).split()) if isinstance(text, str) else ""
+    """The user's words as one line of text: control characters and direction marks dropped (a tab or line break
+    counts as a space, not as nothing), whitespace squeezed; "" for anything that isn't text. A workspace's name, and
+    a mission's name and description (app/agents.py)."""
+    if not isinstance(text, str):
+        return ""
+    return " ".join(_CONTROL.sub(lambda mark: " " if mark.group().isspace() else "", text).split())
 
 
 def clean_name(name) -> str:

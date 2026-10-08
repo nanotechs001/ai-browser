@@ -167,7 +167,8 @@ def _count(value) -> int:
 
 
 def _agent(row: dict) -> dict:
-    """An agent as Claude may see it: its number, name, colour, state and counts. Tab titles and addresses stay out."""
+    """An agent as Claude may see it: its number, name, what it works on (`about`: the user's description, quoted as
+    data), colour, state and counts. Tab titles and addresses stay out."""
     adopted = row.get("adopted") if isinstance(row.get("adopted"), list) else []
     entry = {"id": _clip(row.get("id")), "number": number_of(row), "name": _clip(row.get("name")),
              "about": _clip(row.get("description")), "color": _clip(row.get("color")),
