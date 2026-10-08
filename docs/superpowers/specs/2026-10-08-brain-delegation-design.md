@@ -56,7 +56,8 @@ Their choices:
   a new agent is a **suggestion** card with the exact instruction and **Start**, as today.
 - **Untrusted sources always wait:** when what led to the hand-off came from an email, Slack or Asana message, or a
   watched page part, the card has no countdown: it waits for **Send** (the instruction may carry someone else's words).
-  Only the user's own words (Ask AI, the floating chat) and agents' own results may start a countdown.
+  Only the user's own words (Ask AI, the floating chat) may start a countdown; an agent's result waits for **Send**
+  too (agents read web pages; the user's choice, 2026-10-08).
 - **The user stays in charge:** Settings → Brain → **"Hand tasks to working agents by itself (15 s to cancel)"**, on by
   default; off means every hand-off waits for Send. Stop on an agent cancels any countdown for it. Closing the app
   cancels all countdowns (nothing is sent while nobody can see it).
@@ -67,7 +68,7 @@ Their choices:
 
 ## Safety rules that change, and those that stay
 - **Changes (the user's choice):** the Brain may send an instruction to a working agent without a click, after a visible
-  15-second countdown the user can cancel, and only when the trigger was the user's own words or an agent's result.
+  15-second countdown the user can cancel, and only when the trigger was the user's own words.
 - **Stays:** inbox and page text is data; text from emails, Slack, Asana or watched pages never reaches an agent without
   the user's Send; the Brain never starts a new agent by itself; hand-over of tabs and taking them back stay clicks;
   pages set text with `textContent`; every new page message is app-only in `MESSAGE_RULES` with its copy in
