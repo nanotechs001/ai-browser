@@ -99,9 +99,9 @@ export function handoffCard(handoff, send) {
 }
 
 // The Brain's hand-offs, in a slot of their own (under Mission Control's view switch, in AI Home, in the floating
-// chat): every one counting down, the soonest to send on top, so none counts down unseen; else the newest waiting for
-// Send. A card stays in its place until it is done, then shows what happened there for a moment; a new one goes
-// below. The Brain's inbox lists them all.
+// chat): every one counting down, the soonest to send on top, so none counts down unseen, and the user's own words a
+// countdown of theirs held; else the newest waiting for Send. A card stays in its place until it is done, then shows
+// what happened there for a moment; a new one goes below. The Brain's inbox lists them all.
 export function mountHandoffSlot(slot, send) {
   const handoffs = new Map(); // id -> the hand-off, oldest first
   let pressed = 0; // when Send (Start) was last pressed here
@@ -124,7 +124,8 @@ export function mountHandoffSlot(slot, send) {
     const all = [...handoffs.values()];
     const waiting = all.some((one) => one.state === "counting") ? null
       : all.findLast((one) => one.state === "waiting");
-    const shown = all.filter((one) => one.state === "counting" || one === waiting || !OPEN.has(one.state));
+    const shown = all.filter((one) => one.state === "counting" || one === waiting || !OPEN.has(one.state)
+      || (one.state === "waiting" && one.source === "you")); // the user's own words, held: never hidden by another
     const ids = new Set(shown.map((one) => one.id));
     for (const card of [...slot.children]) {
       if (!ids.has(card.dataset.id)) {

@@ -897,25 +897,67 @@ async def test_the_words_people_cancel_with_cancel_the_talks_handoff_without_cla
 
 
 WEATHER = {"weather": {"say": "I can't see the weather.", "action": "none"}, **TO_A2}
+BOB = {"from Bob": {"say": "Bob wrote about the launch. Want a draft for Bob?", "action": "none"}, **TO_A2}
+HELD_LINE = "Your words for 2 · Research competitors wait for your Send."  # names only, never the instruction
 
 
-async def test_other_words_hold_the_talks_handoff_and_a_later_no_or_yes_still_reaches_it(tmp_path):
+async def test_other_words_hold_the_talks_handoff_a_no_still_cancels_it_and_a_yes_only_until_claude_answers(tmp_path):
     from ai_browser.brain.handoffs import FROM_BRAIN, HELD
     from ai_browser.brain.service import NOTHING_DONE
+    from ai_browser.brain.talk import NOTHING_OPEN, SECRET_ANSWER
 
     brain, agents, _, _ = brain_with(tmp_path / "no", [row()], ask=Ask(WEATHER))
     handoff = brain.handoffs[(await brain.respond("k1", WORDS))["handoff"]["id"]]
-    assert (await brain.respond("k1", "what's the weather?"))["say"] == "I can't see the weather."
-    assert (handoff.state, handoff.note) == ("waiting", HELD)  # the talk went on: it waits for Send
-    assert await brain.respond("k1", "no") == {"say": NOTHING_DONE} and handoff.state == "cancelled"
+    assert (await brain.respond("k1", "what's the weather?"))["say"] == f"I can't see the weather. {HELD_LINE}"
+    assert (handoff.state, handoff.note) == ("waiting", HELD)  # the talk went on: it waits for Send, and says so
+    assert await brain.respond("k1", "no") == {"say": NOTHING_DONE} and handoff.state == "cancelled"  # after Claude
     await brain.countdown.tick()
     assert agents.sent == []
+    brain, agents, _, _ = brain_with(tmp_path / "bob", [row()], ask=Ask(BOB))
+    handoff = brain.handoffs[(await brain.respond("k1", WORDS))["handoff"]["id"]]
+    await brain.respond("k1", "anything new from Bob?")  # held; Claude asks a question of its own
+    assert await brain.respond("k1", "yes") == {"say": NOTHING_OPEN}  # that yes was for Claude's question
+    await brain.respond("k1", "no, agent 2")  # nor is "no, agent 2" (which would count down again)
+    assert (handoff.state, handoff.note) == ("waiting", HELD) and len(brain.handoffs) == 1
+    await brain.countdown.tick()
+    assert agents.sent == []  # it waits for the card's Send
     brain, agents, _, _ = brain_with(tmp_path / "yes", [row()], ask=Ask(WEATHER))
     handoff = brain.handoffs[(await brain.respond("k1", WORDS))["handoff"]["id"]]
-    await brain.respond("k1", "what's the weather?")
-    assert (await brain.respond("k1", "yes"))["say"] == "Sent to agent 2"  # the user's own yes: Send
+    assert (await brain.respond("k1", "my password is hunter2"))["say"] == f"{SECRET_ANSWER} {HELD_LINE}"  # no Claude
+    assert (await brain.respond("k1", "yes"))["say"] == "Sent to agent 2"  # nothing answered since: the yes is its Send
     await brain.countdown.tick()
     assert agents.sent == [("a2", f"{FROM_BRAIN} {WORDS}")] and handoff.state == "sent"
+
+
+SHORTER = {"shorter title": {"say": "Sure.", "action": "message_agent", "agent": "a3"}, **TO_A2}
+
+
+async def test_a_second_instruction_in_a_countdown_holds_the_first_and_the_talk_says_so(tmp_path):
+    from ai_browser.brain.handoffs import FROM_BRAIN, HELD
+    from ai_browser.brain.talk import GIVING_SAY
+
+    brain, agents, _, _ = brain_with(tmp_path, [row(), row("a3", "Other")], ask=Ask(SHORTER))
+    first = brain.handoffs[(await brain.respond("k1", WORDS))["handoff"]["id"]]
+    second = await brain.respond("k1", "and tell agent 3 to use a shorter title")  # within the 15 seconds
+    assert second["say"] == f"{GIVING_SAY.format(label='3 · Other', seconds=15)} {HELD_LINE}"
+    assert (first.state, first.note) == ("waiting", HELD) and second["handoff"]["state"] == "counting"
+    await brain.countdown.tick()
+    assert agents.sent == [("a3", f"{FROM_BRAIN} and tell agent 3 to use a shorter title")]  # the first waits
+
+
+async def test_an_agent_that_finished_while_claude_answered_gets_the_send_card(tmp_path):
+    ask = Ask(TO_A2)
+    brain, agents, _, _ = brain_with(tmp_path, [row()], ask=ask)
+
+    async def finishing(prompt, **options):  # agent 2 finishes its turn while Claude answers
+        agents.rows[:] = [row(state="your_turn")]
+        return await ask(prompt, **options)
+
+    brain.ask = finishing
+    answer = await brain.respond("k1", WORDS)
+    assert "handoff" not in answer and brain.handoffs == {}  # no countdown that ends "isn't working any more"
+    assert (answer["proposal"]["kind"], answer["proposal"]["agent"]) == ("message_agent", "a2")  # today's Send card
+    assert agents.sent == []
 
 
 async def test_a_no_after_the_countdown_sent_cancels_nothing_and_never_reaches_claude(tmp_path):
