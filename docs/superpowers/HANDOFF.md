@@ -88,21 +88,13 @@ capability for faster navigation and all feature of the claude app". Four projec
      sandbox browser is dropped; branch `no-docker` (3f8aa7c) stays unmerged as the record.
    - **The user's goal now:** every agent works in their own Brave and runs scripts/commands on its own; any browser
      testing uses their actual browser.
-2c. **SAVE POINT (2026-10-08, stopped by the user: "let's stop that for now … let's just build the windows after we
-   finish all updates").** Nothing is running. Resume in this order:
-   1. **Finish the Windows fixes (branch `win-fixes`, pushed, f33498e, 16 commits on main a601e35's parent 8d5fb44).**
-      - Done: Windows-portable tests (paths, home folder, files in use, slower timings), the tests workflow's
-        `pytest_args` input, and six product fixes: a loading bot-check box's frame matched by its src; bash runs a
-        script by name only when no PATH folder holds that name; the app ends at once when its window closes on
-        Windows; the composer's pickers keep their height with any system font; a drive path (C:/…) is never a rule's
-        word; the fake claude's log takes whole lines on Windows.
-      - Results: local whole suite 2697 passed, 10 skipped; full Windows run 37772042776: 2687 passed, 1 failed
-        (`tests/test_office.py::test_the_room_pauses_while_its_tab_is_hidden`), 52m49s — close to the job's 75-minute
-        limit (raise `timeout-minutes` to 120 in tests.yml and tests/test_portable.py's pin when touching it).
-      - Left: that one test on the Windows runner (a runner limit or a real pause bug — read its traceback in the run's
-        log first), a quick review of the six product fixes (`git log main..win-fixes`), merge `main` into it, then
-        merge to `main` and push. Do this BEFORE the saved-agents build: it touches test files that build also edits.
-   2. **Build saved agents and Mission Control without AI Home** (the user approved: "Right after the Windows fixes").
+2c. **SAVE POINT (2026-10-08, the user: "start the building of windows now no need for test then create save point …
+   we will stop the windows for now until we finish all changes").** Nothing is running.
+   - **The user's Windows build:** "Build Windows app" run 37778480630 from main 75809de (no test suite, as asked):
+     AI-Browser-windows.zip (182 MB) on https://github.com/nanotechs001/ai-browser/actions/runs/37778480630 (kept 14
+     days). It has everything merged on 2026-10-08, not the `win-fixes` branch.
+   - **Windows work is paused until all changes are done.** Resume in this order:
+   1. **Build saved agents and Mission Control without AI Home** (the next change).
       Spec `docs/superpowers/specs/2026-10-08-saved-agents-design.md`, plan `docs/superpowers/plans/2026-10-08-saved-agents.md`
       (21 tasks, two lanes, merge points M1–M3 in its "Lanes and order"; base 8d5fb44; 583 quotes checked — the
       builders find each place by its quoted text, so drift from later main commits is handled the same way).
@@ -111,11 +103,21 @@ capability for faster navigation and all feature of the claude app". Four projec
       - How: subagent-driven, as the brain-delegation batch was (worktrees `../Ai_Browser-wt/agents-a` and `agents-b`
         from main; `sdd-workspace`; copy and adjust implementer/reviewer/re-reviewer rules from
         `../Ai_Browser-wt/brain-b/.superpowers/sdd/2026-10-08-brain-delegation/`; a ledger per lane; opus reviewers for
-        the tasks the plan marks security-sensitive; a final whole-branch review, one fix wave, the whole suite).
+        the tasks the plan marks security-sensitive; a final whole-branch review, one fix wave, the whole suite on the
+        Mac; no Windows runs until step 3).
       - Never set HOME for a test run (a throwaway Chrome then asks macOS for a keychain: the user got many dialogs).
-   3. **Only after all updates: the Windows build.** Run the "tests" workflow on `windows` (with the 120-minute
-      limit) and the "Build Windows app" workflow (`windows-app.yml`), and give the user the AI-Browser-windows.zip.
-      The user's previous exe is from dc6e82b (2026-10-07).
+   2. **Any further changes the user asks for**, the same way.
+   3. **Then Windows, once all changes are in:**
+      - **Branch `win-fixes`** (pushed, f33498e, 16 commits on 8d5fb44): Windows-portable tests, the tests workflow's
+        `pytest_args` input, and six product fixes (a loading bot-check box's frame matched by its src; bash runs a
+        script by name only when no PATH folder holds that name; the app ends at once when its window closes on Windows;
+        the composer's pickers keep their height with any system font; a drive path is never a rule's word; the fake
+        claude's log takes whole lines on Windows). Local suite 2697 passed; full Windows run 37772042776: 2687 passed,
+        1 failed (`tests/test_office.py::test_the_room_pauses_while_its_tab_is_hidden`), 52m49s.
+      - To finish it: merge `main` into it (expect conflicts in test files the saved-agents build also edits — keep
+        both), fix that one test, raise `timeout-minutes` to 120 in tests.yml (and tests/test_portable.py's pin), review
+        the six product fixes, run the "tests" workflow on `windows`, merge to `main`, then run "Build Windows app" and
+        give the user the new zip.
    - **Hand checks waiting for the user:** the brain-delegation batch's (named missions, a countdown hand-off and
      Cancel/"no", another question pausing it, Settings → Brain's boxes and switch); Windows Auto-approve running
      commands and a skill's scripts on the laptop.
