@@ -36,7 +36,7 @@ from .. import browsers, debugstart, platforms
 from ..accounts import Accounts
 from ..brain import sites
 from ..brain.inbox import InboxReader
-from ..brain.service import BrainService
+from ..brain.service import BrainService, source_of
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.store import built_in
 from ..brain.talk import PAGE_TEXT_LIMIT
@@ -104,8 +104,11 @@ CODE_TTL = 60  # seconds a one-time start code is good for
 PICK_WAIT = 120.0  # seconds a pick may take: the user points and clicks in Brave
 PICK_OFF = "Turn on Read my Gmail, Slack and Asana tabs first"
 PICK_TAB = "Pick one of your open tabs in Brave"
-# watcher_note: AI Home's Got it; read_tabs: Settings → Brain's switch
-SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs", "agents_profile")
+# watcher_note: AI Home's Got it; read_tabs, brain_sources and auto_hand: Settings → Brain's switch, checkboxes and
+# hand-off switch
+SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs", "agents_profile",
+                "brain_sources", "auto_hand")
+CHAT_OFF = "The Brain isn't listening to the floating chat: check it in Settings → Brain"
 NOTES_KEPT = 50  # the app's notifications whose click is still answered
 PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
 APP_SILENT = "AI Browser's app didn't answer: try again"
@@ -369,6 +372,7 @@ class AppServer:
         if brain is not None:
             brain.workflows, brain.runner = workflows, runner
         self._roles: dict[WebSocket, str] = {}  # "app", stored when a socket is accepted
+        self._views: dict[WebSocket, str] = {}  # which page said hello on a socket: "home", "mission", "chat"…
         self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (AI Home…)
         self.window_seen = False  # the window's first socket has come in
         if brain is not None:
@@ -407,6 +411,8 @@ class AppServer:
         agents.let_go = self._let_go  # a handed tab taken back, or let go when its agent closes
         agents.on_turn = lambda agent: self.connect_brave("turn", agent.id)  # right after the user's task
         agents.mint_token = self.tokens.mint
+        if brain is not None:
+            brain.set_sources(self.settings.get()["brain_sources"])  # Settings → Brain's checkboxes
         if tabs is not None:
             self.attach_tabs(tabs)
 
@@ -497,6 +503,8 @@ class AppServer:
             self.brave.set_place(self.settings.get()["agents_profile"])
         if key == "read_tabs" and self.inbox is not None:  # Settings → Brain: reading starts or stops at once
             self.inbox.set_on(self.settings.get()["read_tabs"])
+        if key == "brain_sources" and self.brain is not None:  # Settings → Brain's checkboxes: at once
+            self.brain.set_sources(self.settings.get()["brain_sources"])
         if key == "read_tabs" and not self.settings.get()["read_tabs"]:
             for pick in list(self._picks):  # a pick under way ends too, and keeps nothing
                 pick.cancel()
@@ -1050,10 +1058,12 @@ class AppServer:
         """Which site the Brain reads at this address, for BraveLink's gate: one of the three, or a part of a page the
         user picked to watch (switched on), by the address it was picked on. None for any other."""
         site = sites.inbox_site(url)
-        if site is not None or self.brain is None:
-            return site
-        return next((entry.site for entry in self.brain.store.watch() if not built_in(entry.site) and entry.enabled
-                     and entry.selector and sites.matches(entry.url_match, url)), None)
+        if site is None and self.brain is not None:
+            site = next((entry.site for entry in self.brain.store.watch() if not built_in(entry.site)
+                         and entry.enabled and entry.selector and sites.matches(entry.url_match, url)), None)
+        if site is not None and self.brain is not None and not self.brain.listens(source_of(site)):
+            return None  # unchecked in Settings → Brain: no reader runs there
+        return site
 
     async def _watch_pick(self, queue: asyncio.Queue, message: dict) -> None:
         """Pick the part to watch, on the user's click in Settings → Brain: the tab they chose comes forward in Brave,
@@ -1256,6 +1266,7 @@ class AppServer:
     def _unsubscribe(self, ws: WebSocket) -> None:
         self._sockets.pop(ws, None)
         self._roles.pop(ws, None)
+        self._views.pop(ws, None)
         self._windows.discard(ws)
         self.uploads.drop_all(ws)  # a closed page's files go with it
         if self.hearing is not None:
@@ -1338,7 +1349,7 @@ class AppServer:
         elif kind in HEARING_MESSAGES:  # only AI Browser's own pages talk or listen (MESSAGE_RULES)
             self._hearing_command(ws, queue, kind, message)
         elif kind in TALK_MESSAGES:
-            self._talk_command(queue, kind, message)
+            self._talk_command(queue, kind, message, chat=self._views.get(ws) == "chat")
         elif kind in ACCOUNT_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             await self._account_command(queue, kind, message)
         elif kind in POWERS_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
@@ -1350,6 +1361,7 @@ class AppServer:
         elif kind in WORKSPACE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._workspace_command(queue, kind, message)
         elif kind == "hello":
+            self._views[ws] = message.get("view") if isinstance(message.get("view"), str) else ""
             if ws not in self._sockets:  # the snapshot, then every broadcast (no await between the two)
                 queue.put_nowait(self._snapshot())
                 self._sockets[ws] = queue
@@ -1511,7 +1523,7 @@ class AppServer:
         text, error = await self.hearing.finish(ws, turn)
         queue.put_nowait({"type": "heard", "turn": turn[:40], **({"error": error} if error else {"text": text})})
 
-    def _talk_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+    def _talk_command(self, queue: asyncio.Queue, kind: str, message: dict, chat: bool = False) -> None:
         talk = message.get("talk")
         if not isinstance(talk, str) or not _TALK_ID.match(talk):
             return
@@ -1524,7 +1536,9 @@ class AppServer:
         proposal = message.get("proposal") if isinstance(message.get("proposal"), str) else None
         task = _text(message.get("task")) or None  # the card's box, as the user left it
         model = message.get("model") if message.get("model") in MODELS else None
-        if kind == "brain_ask":
+        if kind == "brain_ask" and chat and not self.brain.listens("chat"):  # Settings → Brain: The floating chat
+            queue.put_nowait({"type": "brain_answer", "talk": talk, "request": request, "say": "", "error": CHAT_OFF})
+        elif kind == "brain_ask":
             text = message.get("text").strip()[:2000] if isinstance(message.get("text"), str) else ""
             page = message.get("page") if isinstance(message.get("page"), str) and message.get("page") else None
             site = message.get("site") if isinstance(message.get("site"), str) else ""  # the site the user marked

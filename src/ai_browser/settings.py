@@ -4,7 +4,8 @@ One reader and one writer touch the file: read_settings and write_setting (wave 
 missing, unreadable, broken or half-written file reads as {} and never raises, so the app always starts. A write is
 atomic, mode 0600, and keeps every key it doesn't set, so a file written by a newer build survives an older one.
 Settings(home) is the typed view on top: the window's browser, the model, Voice, the app's shortcut, reading the
-user's tabs, where agents browse and the old extension's note, each value checked."""
+user's tabs, what the Brain listens to and whether it hands tasks to working agents by itself, where agents browse and
+the old extension's note, each value checked."""
 
 from __future__ import annotations
 
@@ -19,8 +20,12 @@ from .syncdir import write_atomic
 
 FILE = "settings.json"
 MODELS = ("opus", "sonnet", "haiku")
+# Settings → Brain's checkboxes: what the Brain listens to. Agents' chats and results, the three inbox sites, the parts
+# of pages the user watches, and the floating chat
+SOURCES = ("agents", "gmail", "slack", "asana", "pages", "chat")
 DEFAULTS = {"window_browser": "auto", "model": None, "voice": False, "shortcut": DEFAULT_SHORTCUT,
-            "read_tabs": False, "agents_profile": None, "watcher_note": True}
+            "read_tabs": False, "agents_profile": None, "watcher_note": True,
+            "brain_sources": dict.fromkeys(SOURCES, True), "auto_hand": True}
 
 
 def _path(home) -> Path:
@@ -70,9 +75,13 @@ class Settings:
         elif key == "shortcut":
             if value is not None and value not in SHORTCUTS:
                 raise ValueError(SHORTCUT_ERROR)
-        elif key in ("read_tabs", "watcher_note"):  # Settings → Brain's switch; AI Home's note about the old extension
+        elif key in ("read_tabs", "watcher_note", "auto_hand"):  # Settings → Brain's switches; AI Home's note
             if not isinstance(value, bool):
                 raise ValueError("That setting is on or off")
+        elif key == "brain_sources":  # Settings → Brain's checkboxes: {source: on or off}, any of SOURCES
+            if not isinstance(value, dict) or not all(name in SOURCES and isinstance(on, bool)
+                                                      for name, on in value.items()):
+                raise ValueError("Pick what the Brain listens to")
         elif key == "agents_profile":  # Settings → Where agents browse: a profile's folder, or the one used last
             if value is not None and not plain_folder(value):
                 raise ValueError("Pick one of the profiles listed")
@@ -88,6 +97,7 @@ class Settings:
                 except ValueError:
                     continue  # this key falls back; the others stand
                 result[key] = stored[key]
+        result["brain_sources"] = {name: result["brain_sources"].get(name, True) for name in SOURCES}  # a new one: on
         return result
 
     def set(self, key: str, value) -> dict:

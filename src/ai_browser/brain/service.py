@@ -13,6 +13,7 @@ import json
 import re
 from collections.abc import Callable, Sequence
 
+from ..settings import SOURCES
 from .oneshot import OneShot, ask_claude
 from .store import BrainStore, Item, WatchEntry, built_in
 from .talk import (AGENT_MODELS, CLOSED_SAY, DRAFT_SAY, HAND_OVER_ANY_SAY, HAND_OVER_SAY, HIDDEN,
@@ -93,6 +94,14 @@ FINISHED = {"your_turn", "stopped", "failed"}
 TALK_TIMEOUT = 60  # seconds for one answer to the user's words
 NOTHING_DONE = "OK, I won't."
 EXPIRED = "This has expired: ask again"  # the card's own words when its time runs out (talk.js)
+SOURCE_NAMES = {"agents": "Agents' chats and results", "gmail": "Gmail", "slack": "Slack", "asana": "Asana",
+                "pages": "Watched page parts", "chat": "The floating chat"}  # Settings → Brain's checkboxes
+NOT_LISTENING = "{name} is unchecked in Settings → Brain: the Brain doesn't read it"
+
+
+def source_of(site: str) -> str:
+    """Which of Settings → Brain's checkboxes covers a site: its own for the three, "pages" for a picked part."""
+    return site if built_in(site) else "pages"
 
 
 def _clip(value, limit: int) -> str:
@@ -158,6 +167,7 @@ class BrainService:
         # How reading the user's tabs stands, as the app tells it (set_reading): "on", "off" (Settings → Brain's switch)
         # or "waiting" (Brave isn't connected). A Brain on its own, before the app says, takes what it is given: "on".
         self.reading = "on"
+        self.sources = dict.fromkeys(SOURCES, True)  # what it listens to: Settings → Brain's checkboxes (set_sources)
         self._queues: dict[str, list[Item]] = {}  # per site: items waiting to be sorted
         self._pending: set[str] = set()  # ids queued or being sorted
         self._batches: dict[str, asyncio.Task] = {}
@@ -228,7 +238,7 @@ class BrainService:
 
     def _settings(self) -> dict:
         return {"others": self.store.others, "watch_list": [entry.public() for entry in self.store.watch()],
-                "reading": self.reading, "style": self.store.style,
+                "reading": self.reading, "style": self.store.style, "sources": dict(self.sources),
                 "activity": self._working[-1] if self._working else ""}
 
     @contextlib.contextmanager
@@ -267,8 +277,9 @@ class BrainService:
         """New items from a site's reader: queued, then sorted in a batch. A baseline (what an added site already
         showed when watching started) is only remembered."""
         entry = self.store.entry(site) if isinstance(site, str) else None
-        if self.reading == "off" or entry is None or not entry.enabled or not isinstance(raw_items, list):
-            return  # reading is off: nothing a read found is kept
+        if self.reading == "off" or entry is None or not entry.enabled or not isinstance(raw_items, list) \
+                or not self.listens(source_of(site)):
+            return  # reading is off, or the Brain isn't listening to this site: nothing a read found is kept
         fresh = []
         for raw in raw_items:
             item = self._item(site, raw)
@@ -336,8 +347,8 @@ class BrainService:
 
     async def _sort(self, site: str, batch: list[Item]) -> None:
         entry = self.store.entry(site)
-        if self.reading == "off" or entry is None or not entry.enabled:
-            return  # reading turned off, or the site switched off, while waiting: nothing reaches Claude
+        if self.reading == "off" or entry is None or not entry.enabled or not self.listens(source_of(site)):
+            return  # reading turned off, or the site switched off or unchecked, while waiting: nothing reaches Claude
         workflows = self._message_workflows(site)
         try:
             with self._busy(f"Sorting {len(batch)} new message{'' if len(batch) == 1 else 's'} from {entry.label}"):
@@ -345,8 +356,8 @@ class BrainService:
                                         cwd=self.store.folder / "calls")
         except Exception as exc:  # the items are listed as new below
             answer = OneShot(error=f"{type(exc).__name__}: {exc}")
-        if self.reading == "off":
-            return  # reading turned off while Claude sorted: nothing of this batch is kept, notified or started
+        if self.reading == "off" or not self.listens(source_of(site)):
+            return  # reading turned off (or the site unchecked) while Claude sorted: nothing of this batch is kept
         verdicts = {} if answer.error else _verdicts(answer.text, {item.id for item in batch},
                                                      frozenset(workflow.slug for workflow in workflows))
         kept, skipped = [], 0
@@ -412,6 +423,9 @@ class BrainService:
             await self._draft(item, guidance)
 
     async def _draft(self, item: Item, guidance: str) -> None:
+        if not self.listens(source_of(item.site)):  # its thread would reach Claude: not while it is unchecked
+            self._note(item, NOT_LISTENING.format(name=SOURCE_NAMES[source_of(item.site)]))
+            return
         if not item.url:
             self._note(item, "This message has no link to open")
             return
@@ -575,6 +589,9 @@ class BrainService:
         The user's words are what is passed on, so a message can never write an agent's instructions."""
         item, text = self.store.get(str(item_id)), _clip(text, 2000)
         if item is None or not text:
+            return
+        if not self.listens(source_of(item.site)):  # the message would reach Claude: not while it is unchecked
+            self._note(item, NOT_LISTENING.format(name=SOURCE_NAMES[source_of(item.site)]))
             return
         card = self.tells.proposal(item.id)
         plain = is_yes(text) or is_no(text)
@@ -793,8 +810,9 @@ class BrainService:
                 return {"say": "", "error": str(error or "Couldn't read that page")}
         ids = {row["id"] for row in rows}
         last = self.talks.last_agent(talk)
-        items = [item.public() for item in self.store.items()]
-        state = state_summary(rows, items, self.store.others, self._working[-1] if self._working else "",
+        items = [item.public() for item in self.store.items() if self.listens(source_of(item.site))]
+        seen = rows if self.listens("agents") else [{**row, "status": "", "last_action": ""} for row in rows]
+        state = state_summary(seen, items, self.store.others, self._working[-1] if self._working else "",
                               last_agent=last if last in ids else None,
                               asking=asking.candidates if asking is not None else None)
         with self._busy("Reading the page you asked about" if about is not None else "Thinking about what you said"):
@@ -970,6 +988,21 @@ class BrainService:
                 self._pending.difference_update(item.id for item in queue)
             self._queues.clear()
         self._watch_changed()
+
+    def set_sources(self, sources: dict) -> None:
+        """Settings → Brain's checkboxes. A source unchecked is dropped at once: what waits to be sorted from it goes,
+        unsorted and unseen, and from now on nothing of it reaches Claude."""
+        self.sources = {name: sources.get(name) is not False for name in SOURCES} if isinstance(sources, dict) \
+            else dict.fromkeys(SOURCES, True)
+        for site, queue in self._queues.items():
+            if not self.listens(source_of(site)):
+                self._pending.difference_update(item.id for item in queue)
+                queue.clear()
+        self._state()
+
+    def listens(self, source: str) -> bool:
+        """Whether the Brain listens to this source now (Settings → Brain)."""
+        return self.sources.get(source, False)
 
     def set_style(self, text: str) -> None:
         self.store.set_style(_clip(text, 2000))

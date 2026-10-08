@@ -1523,7 +1523,7 @@ async def test_a_socket_with_no_role_gets_no_rights_and_nothing_but_pings(fake_c
 
 
 async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude, tmp_path):
-    from ai_browser.settings import read_settings
+    from ai_browser.settings import SOURCES, read_settings
 
     server, url = await started(fake_claude, tmp_path, EVENTS)
     server.window_info = {"using": "chrome", "name": "Google Chrome", "note": "",
@@ -1536,6 +1536,7 @@ async def test_settings_are_saved_by_the_app_and_reach_every_window(fake_claude,
             assert snapshot["settings"] == {"model": None, "voice": False, "window_browser": "auto",
                                             "shortcut": "Alt+Space", "read_tabs": False, "agents_profile": None,
                                             "watcher_note": True, "old_watcher": False, "profiles": [],
+                                            "brain_sources": dict.fromkeys(SOURCES, True), "auto_hand": True,
                                             "window": server.window_info,
                                             "desktop": server._desktop_payload()}
             await recv(two)

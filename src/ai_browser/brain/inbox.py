@@ -16,6 +16,7 @@ import time
 
 from ..app.bravelink import NOT_CONNECTED, PlaceError
 from ..app.inworld import WorldError
+from .service import source_of
 from .store import built_in
 
 READ_EVERY = 4.0  # seconds between two rounds of reads
@@ -120,8 +121,10 @@ class InboxReader:
                 self._say(site, best[0], best[1])
 
     def _sites(self) -> list[str]:
-        """The sites the Brain reads: the three, and the picked parts that are on."""
-        return [entry.site for entry in self.brain.store.watch() if entry.enabled]
+        """The sites the Brain reads: the three, and the picked parts that are on, each while its checkbox in
+        Settings → Brain is."""
+        return [entry.site for entry in self.brain.store.watch()
+                if entry.enabled and self.brain.listens(source_of(entry.site))]
 
     def _say(self, site: str, ok: bool, note: str) -> None:
         if self._said.get(site) != (ok, note):
@@ -146,8 +149,8 @@ class InboxReader:
         read this time."""
         site, target = tab["site"], tab["target"]
         entry = self.brain.store.entry(site)
-        if entry is None or not entry.enabled:
-            return None
+        if entry is None or not entry.enabled or not self.brain.listens(source_of(site)):
+            return None  # unchecked in Settings → Brain: not read at all
         memory = self._tabs.get(target)
         if memory is None or memory.site != site:
             memory = self._tabs[target] = _Tab(site)
