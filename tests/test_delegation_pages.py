@@ -2,6 +2,7 @@
 Brain's checkboxes and switch (4) and the Brain's hand-off cards (5). Against a real app server (agents on the fake
 claude) in a throwaway headless Chrome. Every word stays text."""
 
+import asyncio
 import json
 
 import pytest
@@ -134,3 +135,42 @@ async def test_the_floating_chat_keeps_six_lines(stack):
         assert await until(js, f"{LOG}.lastElementChild.classList.contains('brain')", 15)
     assert await js(f"{LOG}.children.length") == 6
     assert await js(f"{LOG}.firstElementChild.textContent") == "You: question 1"
+
+
+# ---- Settings → Brain: what the Brain listens to, and the hand-off switch (spec 4 and 5) -------------------------
+
+SOURCES = "[...document.querySelectorAll('#brain-sources input[data-source]')]"
+
+
+@CHROME
+async def test_settings_brain_checks_what_the_brain_listens_to_and_keeps_it(stack):
+    from test_home import open_settings
+
+    server = stack["server"]
+    settings = await open_settings(stack)
+    assert await until(settings, f"{SOURCES}.length === 6")
+    boxes = f"{SOURCES}.map(box => [box.dataset.source, box.checked, box.parentElement.textContent.trim()])"
+    assert await settings(boxes) == [["agents", True, "Agents' chats and results"], ["gmail", True, "Gmail"],
+                                ["slack", True, "Slack"], ["asana", True, "Asana"],
+                                ["pages", True, "Watched page parts"], ["chat", True, "The floating chat"]]
+    assert await settings("document.getElementById('auto-hand').checked") is True  # on by default
+    assert await settings("document.getElementById('read-tabs').checked") is False  # today's switch: as it was
+    await settings("document.querySelector('#brain-sources input[data-source=\"gmail\"]').click();"
+                   "document.querySelector('#brain-sources input[data-source=\"chat\"]').click(); true")
+    for _ in range(50):
+        if server.settings.get()["brain_sources"]["chat"] is False:
+            break
+        await asyncio.sleep(0.1)
+    assert server.settings.get()["brain_sources"] == {"agents": True, "gmail": False, "slack": True, "asana": True,
+                                                      "pages": True, "chat": False}
+    assert server.brain.listens("gmail") is False and server.brain.listens("slack") is True  # at once
+    await settings("document.getElementById('auto-hand').click(); true")
+    for _ in range(50):
+        if server.settings.get()["auto_hand"] is False:
+            break
+        await asyncio.sleep(0.1)
+    assert server.settings.get()["auto_hand"] is False
+    again = await open_settings(stack)  # kept: a page opened later reads them back
+    assert await until(again, f"{SOURCES}.length === 6 && {SOURCES}.filter(box => !box.checked)"
+                              ".map(box => box.dataset.source).join() === 'gmail,chat'")
+    assert await again("document.getElementById('auto-hand').checked") is False

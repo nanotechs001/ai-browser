@@ -154,7 +154,8 @@ const place = mountPlaceSettings({ choices: $("place-choices"), state: $("place-
 const permissions = mountPermissions({ list: $("permissions"), note: $("permissions-note") },
                                      (message) => link.send(message));
 const brain = mountBrainSettings({ // Settings → Brain (native app part b)
-  toggle: $("read-tabs"), state: $("reading-state"), sites: $("brain-sites"), watched: $("brain-watched"),
+  toggle: $("read-tabs"), sources: $("brain-sources"), autoHand: $("auto-hand"), state: $("reading-state"),
+  sites: $("brain-sites"), watched: $("brain-watched"),
   pickTab: $("pick-tab"), pickStart: $("pick-start"), pickNote: $("pick-note"),
 }, (message) => link.send(message));
 const link = connect({ view: "settings", onMessage: handle, onState: setStatus });

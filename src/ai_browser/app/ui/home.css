@@ -107,6 +107,8 @@ details.section h3 { font-size: 13px; margin: 10px 0 2px; }
 .field { display: flex; flex-direction: column; gap: 2px; }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
 .check { display: flex; gap: 4px; align-items: center; }
+.brain-sources { border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; padding: 6px 12px 8px; }
+.brain-sources legend { padding: 0 4px; font-weight: 600; }
 .workflow, .tool-server, .skill-editor { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .workflow .row input { flex: 1; min-width: 120px; width: auto; }
 .tool-server .top-line { display: flex; gap: 8px; align-items: center; }
