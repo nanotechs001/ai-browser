@@ -75,7 +75,10 @@ changes that needs to override if necessary"
   ("Skipped 09:00: the last run is still going").
 - The run's desk, Current Task, My Missions, History and the drawer show the saved agent's name and what it works on
   (the named-missions places).
-- Auto-approve stays a per-run switch the user clicks; a saved agent never turns it on (as templates never do).
+- **Auto-approve in its folder** is one of a saved agent's settings (the user's choice, 2026-10-08: "Yes, as its
+  setting"): ticked by the user in the agent's settings, every run of it — scheduled ones too — starts with
+  Auto-approve on, with the same always-ask list (deleting, sudo/admin, outside its folder, force-push, reaching a
+  site, guarded paths). The Brain, templates and pages can never turn it on; a one-off run keeps its per-run switch.
 
 ### 3. What the agent knows when it starts
 - **Instruction:** added to the agent's system prompt after AI Browser's own (`BRAVE_PROMPT`), under a fixed line:
@@ -134,7 +137,7 @@ Everything only AI Home has today moves first; then AI Home is removed.
 - **New:** a saved agent's instruction reaches its system prompt — it is the user's own words, written only in the
   agent's settings by a click on Save in AI Browser's own page.
 - **Stays:** pages, messages, the Brain and templates never write an agent's instruction or settings; page text is
-  data; auto-approve only by the user's click per run; a run's tabs open only in the profile the user chose; never
+  data; auto-approve only by the user's click (per run, or in a saved agent's settings); a run's tabs open only in the profile the user chose; never
   open, close or change the user's Brave profiles or settings; downloads need the user's OK; every new page message
   is app-only in `MESSAGE_RULES` with its copy in `tests/test_watcher_rules.py`; tests never touch the user's real
   browsers, `~/.ai-browser`, `~/.claude`, `~/Downloads` or port 8792; never run the real `claude`.
@@ -151,7 +154,7 @@ Everything only AI Home has today moves first; then AI Home is removed.
 ## Testing
 - Saved agents: the file (fields, limits, cleaning, 0600), save and delete over the socket (app-only), refusal words.
 - Running: Agent ▾ applies every setting; one run per agent (a second task becomes a message; a due schedule is
-  skipped); auto-approve never on from a saved agent.
+  skipped); a saved agent's Auto-approve applies to its runs (scheduled too) and only the user's Save sets it.
 - What it knows: the instruction in the system prompt (fake claude records argv); Load at start in the first message
   with its cap; Can use enforced by `find_skills`, `load_skill`, `read_skill_file`.
 - Profile: a run's tabs open in its profile's context (fake Brave with two contexts); a profile not learned gives the
@@ -163,3 +166,12 @@ Everything only AI Home has today moves first; then AI Home is removed.
 ## Out of scope
 - An agent with its own sandbox browser; importing `~/.claude/agents/` files; agents talking to each other beyond the
   Brain's hand-offs; a per-agent usage budget.
+
+## The user's answers after the design (2026-10-08)
+- "my main goal is for each agent to access my browser and work in it and they also able to run script or bash
+  command on their own. Any testing that needs browser will be used on my actual browser."
+- No-Docker shrinks to one piece (without Docker, skill scripts run through the agent's own commands); the local
+  sandbox browser is dropped. Website QA is removed (the user has a skill for it). Both land before this batch.
+- On Windows, Auto-approve runs the same ordinary commands and scripts in the agent's folder as on a Mac (the
+  always-ask list stays) — a separate small change that lands before this batch.
+- A saved agent may keep Auto-approve as its setting (section 2).
