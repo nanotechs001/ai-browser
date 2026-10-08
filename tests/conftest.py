@@ -297,6 +297,15 @@ def fake_python() -> str:
     return sys._base_executable if sys.platform == "win32" else sys.executable
 
 
+@pytest.fixture
+def patient_thumbnails(monkeypatch):
+    """A real Chrome's thumbnail may take seconds where it draws without a GPU (GitHub's Windows runner: 2 to 16 s, run
+    37744222977); the product's 3 s is for a page in the user's own browser too busy to draw just now."""
+    from ai_browser.app import tabs
+
+    monkeypatch.setattr(tabs, "THUMB_TIMEOUT", 30)
+
+
 async def let_its_folder_go(bridge) -> None:
     """Before a test renames or deletes the folder an agent works in: on Windows, a folder a running program works in
     can't be renamed or deleted (Windows refuses: the file is in use), so its Claude Code process ends first, as it

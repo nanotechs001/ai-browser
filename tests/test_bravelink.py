@@ -392,7 +392,7 @@ async def test_a_tab_let_go_in_another_profile_leaves_the_list_for_the_count(tmp
 
 
 @CHROME
-async def test_brave_link_in_a_throwaway_chrome(throwaway_chrome):
+async def test_brave_link_in_a_throwaway_chrome(throwaway_chrome, patient_thumbnails):
     from ai_browser import testpages
     from ai_browser.app.bravelink import BraveLink
 

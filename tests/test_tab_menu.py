@@ -420,7 +420,11 @@ async def test_the_close_tab_key_in_a_live_view_never_reaches_the_browser(shell)
         windows = stack["server"].window_count
         corner = (f"(() => {{ const box = {view('live:a1')}.querySelector('iframe').getBoundingClientRect();"
                   " return [box.x + 40, box.y + 12]; })()")
-        await mouse_click(js, await js(corner))  # into the live view's page, beside its picture: its own focus
+        for _ in range(20):  # into the live view's page, beside its picture: its own focus. A frame of another
+            await mouse_click(js, await js(corner))  # process takes clicks once drawn: later on a slow computer
+            if await in_frame(js, "live:a1", "document.hasFocus()"):
+                break
+            await asyncio.sleep(0.25)
         await in_frame(js, "live:a1", KEPT)
         await close_key(js)
         await asyncio.sleep(0.5)

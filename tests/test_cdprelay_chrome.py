@@ -152,7 +152,8 @@ async def test_a_new_engine_or_a_dropped_socket_keeps_one_upstream(relayed, thro
 
 
 @CHROME
-async def test_live_view_and_thumbnails_through_the_relay(relayed, throwaway_chrome, tmp_path, monkeypatch):
+async def test_live_view_and_thumbnails_through_the_relay(relayed, throwaway_chrome, tmp_path, monkeypatch,
+                                                         patient_thumbnails):
     server, brave, base, own = relayed
     add_agent(server.agents, "a1")
     engine = agent_engine(server, throwaway_chrome, tmp_path, monkeypatch, "a1")

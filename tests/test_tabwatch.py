@@ -43,7 +43,7 @@ def test_the_rows_leave_out_the_apps_origin_and_new_tab_pages():
 
 
 @CHROME
-async def test_the_tab_list_follows_chrome_and_leaves_out_the_apps_pages(pages):
+async def test_the_tab_list_follows_chrome_and_leaves_out_the_apps_pages(pages, patient_thumbnails):
     from ai_browser.app.tabs import TabWatch
     from ai_browser.cdp import CDP
 
