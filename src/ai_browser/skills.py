@@ -246,16 +246,19 @@ def skill_folders(blocked: set[str] = frozenset(), allowed: set[str] | None = No
     """The folders the catalog reads the user's own skills from, those that are there and not too wide (what the
     Docker sandbox mounts), and the folders of the skills in `blocked` (config's blocked_skills) or outside `allowed`
     (a saved agent's Can use, usable_skills; None: every skill): an agent may run the scripts of the others like its
-    own folder's (Part 2 of the review of 2026-10-08)."""
+    own folder's (Part 2 of the review of 2026-10-08). For a narrowed run the roots are only its allowed skills'
+    folders (only Auto-approve reads them; the Docker sandbox mounts come from Catalog.mounts)."""
     claude_home, app_support = user_folders()
     sources = [source for source in _sources(claude_home, app_support)
                if source.host_root.is_dir() and not _too_wide(source.host_root, claude_home)]
-    hidden = ()
+    roots, hidden = tuple(str(source.host_root) for source in sources), ()
     if blocked or allowed is not None:  # only then the skills are read: blocked ones by their names
         catalog = Catalog(sources, set(blocked))
         hidden = tuple(str(skill.host_dir) for ref, skill in catalog._skills.items()
                        if ref in catalog.blocked or (allowed is not None and ref not in allowed))
-    return SkillFolders(tuple(str(source.host_root) for source in sources), hidden)
+        if allowed is not None:  # a narrowed run trusts only its own skills' folders, never a whole root: a folder
+            roots = tuple(str(skill.host_dir) for skill in catalog.all() if skill.ref in allowed)  # the catalog
+    return SkillFolders(roots, hidden)  # skipped (a shadowed name, no SKILL.md) is never one of them
 
 
 def _plugin_sources(claude_home: Path) -> list[SkillSource]:

@@ -456,3 +456,33 @@ def test_a_narrowed_runs_bash_treats_skills_outside_can_use_like_blocked_ones(tm
     assert str(secrets) in narrowed and str(tidy) in narrowed and str(prices) not in narrowed
     assert hidden({}) == {str(tidy)}  # every skill: as before, only the blocked one
     assert hidden({"AIB_APP_SKILLS": "not json"}) == {str(prices), str(secrets), str(tidy)}  # broken: none of them
+
+
+def test_a_narrowed_run_auto_approves_only_the_scripts_of_skills_it_may_use(tmp_path, monkeypatch):
+    import json
+
+    from ai_browser import skills
+    from ai_browser.app import powers
+    from ai_browser.app.bridge import ClaudeBridge
+    from test_skills import make_skill
+
+    claude, project = tmp_path / ".claude", tmp_path / "project"
+    project.mkdir()
+    found = {name: make_skill(claude / "skills", name, scripts=True) for name in ("prices", "secrets")}
+    found["copy"] = make_skill(claude / "skills", "copy", name="secrets", scripts=True)  # shadowed: never catalogued
+    found["loose"] = claude / "skills" / "loose" / "scripts"  # no SKILL.md: never catalogued
+    found["loose"].mkdir(parents=True)
+    (found["loose"] / "run.py").write_text("print('hi')", encoding="utf-8")
+    monkeypatch.setattr(skills, "user_folders", lambda: (claude, tmp_path / "app"))  # never the user's own
+
+    def auto(env, name):
+        folders = ClaudeBridge(tmp_path / "home", env=env).skill_folders()
+        script = found[name] / "run.py" if name == "loose" else found[name] / "scripts" / "run.py"
+        command = {"command": f"python3 {script}"}
+        return powers.auto_approves("Bash", command, powers.classify("Bash", command, project, skills=folders),
+                                    sandbox=True, skills=folders)
+
+    every, prices, none = {}, {"AIB_APP_SKILLS": json.dumps(["personal:prices"])}, {"AIB_APP_SKILLS": "not json"}
+    assert all(auto(every, name) for name in found)  # every skill: as before, every folder under a root runs
+    assert auto(prices, "prices") and not any(auto(prices, name) for name in ("secrets", "copy", "loose"))
+    assert not any(auto(none, name) for name in found)  # broken: no skill folder is trusted
