@@ -167,7 +167,7 @@ class SavedAgents:
         slug = fields.get("slug")
         saved = check(fields, "")
         if slug:
-            if not self.path_of(slug).is_file():
+            if self.get(slug) is None:  # unreadable counts as missing: never written over
                 raise ValueError(NOT_AN_AGENT)
         else:
             base = re.sub(r"[^a-z0-9]+", "-", saved.name.lower()).strip("-")[:40].strip("-") or "agent"
