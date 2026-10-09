@@ -72,7 +72,8 @@ async def test_the_icon_only_menu_still_names_each_button(stack):  # the final r
         tree = await cdp.send("Accessibility.getPartialAXTree", {"nodeId": node, "fetchRelatives": False},
                               session_id=session)
         names.append(tree["nodes"][0].get("name", {}).get("value", ""))
-    assert names == ["New Mission", "Dashboard", "My Missions", "Knowledge", "Integrations", "Tabs", "History"]
+    assert names == ["New Mission", "Dashboard", "My Missions", "Agents", "Knowledge", "Integrations", "Tabs",
+                     "History"]
     assert await js("[...document.querySelectorAll('#new-mission, .page-link')].map(node => node.title)") == names
 
 
@@ -86,7 +87,7 @@ async def test_the_menu_counts_and_opens_its_pages(stack):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await agents.create("keep working")
     assert await until(js, "document.getElementById('counts').textContent === '1 active task · 1 completed'")
-    for name in ("missions", "knowledge", "integrations", "tabs", "history", "dashboard"):
+    for name in ("missions", "agents", "knowledge", "integrations", "tabs", "history", "dashboard"):
         await js(f"{page_link(name)}.click(); true")
         shown = await js("[...document.querySelectorAll('.centre > .page')].filter(node => !node.hidden)"
                          ".map(node => node.id)")
@@ -1431,8 +1432,8 @@ async def test_the_calendar_shows_scheduled_templates_and_finished_agents(stack)
     assert await until(js, "document.getElementById('drawer-title').textContent === '1 · Fix the footer'")
     await js("document.getElementById('drawer-close').click();"
              "document.querySelector('#view-calendar .entry.template').click(); true")
-    assert await until(js, "location.pathname === '/home'"
-                           " && document.getElementById('workflows-section')?.open === true")  # AI Home's templates
+    assert await until(js, "!document.getElementById('page-agents').hidden && document.querySelector("
+                           "'#page-agents .workflow[data-slug=\"morning-report\"]') !== null")  # Tasks for any agent
 
 
 CALENDAR_FUNCTIONS = """import('/calendar.js').then(({ monthGrid, weekDays, everyWords, calendarItems }) => {
