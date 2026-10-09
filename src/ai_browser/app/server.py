@@ -63,7 +63,7 @@ from . import attachments
 from . import pagematch
 from . import powers
 from .agents import CLOSED, Agent, AgentManager
-from .bravelink import NOT_CONNECTED, PlaceError
+from .bravelink import NOT_CONNECTED, NOT_OPEN, PlaceError
 from .inworld import WorldError
 from .savedagents import BAD_ACCOUNT, BAD_PROFILE, NOT_AN_AGENT, SavedAgents
 from .workspaces import GONE as WORKSPACE_GONE
@@ -136,6 +136,8 @@ SAVED_FIELDS = ("slug", "name", "description", "instruction", "profile", "web", 
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
+NOT_LEARNED = ("Agent {number} browses in Brave's {name} profile. Open a window of that profile once; AI Browser learns "
+               "it in about 30 seconds.")  # the user's words on the run (Claude hears bravelink's NOT_OPEN)
 EMPTY_MESSAGE = "Write a message, or attach a file"
 YOU = {"kind": "you"}
 
@@ -419,6 +421,7 @@ class AppServer:
         self._feed = agents.subscribe()
         self._fanout: asyncio.Task | None = None
         self._thumbs: dict[str, dict] = {}  # agent id -> {"last": monotonic time, "task", "again", "jpeg"}
+        self._told_profile: set[str] = set()  # runs told their profile isn't learned yet (once each)
         self._jobs: set[asyncio.Task] = set()
         self._server: _QuietServer | None = None
         self._task: asyncio.Task | None = None
@@ -976,13 +979,26 @@ class AppServer:
             return Response(status_code=404)
         if self.brave is None:
             return JSONResponse({"error": NOT_CONNECTED})
+        agent = self.agents.agents.get(owner_id)
+        profile = agent.profile if agent is not None else None  # a saved agent's own Brave profile, else Settings'
         try:
-            target = await self.brave.open_ai_tab(owner_id)
+            target = await self.brave.open_ai_tab(owner_id, profile=profile)
         except PlaceError as exc:
+            if profile is not None and str(exc) == NOT_OPEN:
+                self._not_learned(agent)
             return JSONResponse({"error": str(exc)})
         self._record_tab(owner_id, target)
         self._own(target, owner)
         return JSONResponse({"target": target})
+
+    def _not_learned(self, agent: Agent) -> None:
+        """A run's profile isn't learned yet: its chat says so once, in fixed words that name the profile. Nothing
+        opens a Brave window by itself."""
+        if agent.id in self._told_profile:
+            return
+        self._told_profile.add(agent.id)
+        name = next((row["name"] for row in self._profiles() if row["folder"] == agent.profile), agent.profile)
+        self.agents.note(agent.id, NOT_LEARNED.format(number=agent.number, name=name))
 
     async def _agent_status(self, request: Request) -> Response:
         agent_id = request.query_params.get("agent", "")
@@ -1058,6 +1074,7 @@ class AppServer:
         relay.port = self.port or 0  # 0 until the server listens (the relay's own default)
         relay.handed = self._handed_to
         relay.may_open = lambda identity: bool(SESSION_ID.match(identity)) or self.agents.working(identity)
+        relay.placed_only = self._placed_only  # a run with a Brave profile of its own: the app opens its tabs
         self.agents.own_tabs = relay.own_targets
         relay.on_grant(lambda identity, target: self._own(target, self._owner_of(identity)))
         relay.on_change(self._clients_changed)
@@ -1131,6 +1148,10 @@ class AppServer:
             answer(error=error)
         else:
             answer(site=site, sample=_text(result.get("sample"))[:300])
+
+    def _placed_only(self, identity: str) -> bool:
+        agent = self.agents.agents.get(identity)
+        return agent is not None and agent.profile is not None
 
     def _handed_to(self, identity: str) -> set[str]:
         """The tabs the user handed this agent now (Hand over, or a task started in a tab): read live."""
@@ -1887,7 +1908,11 @@ class AppServer:
     # ---- saved agents: the Agents page lists, saves and deletes them (AI Browser's own pages only) -------------------
 
     def _saved_snapshot(self) -> dict:
-        return {"type": "saved_agents", "agents": [saved.public() for saved in self.saved.all()]}
+        """The saved agents, and Brave's profiles for their settings: each "ready" once AI Browser has learned it on
+        this connection (else the page says "open it once")."""
+        place = self.brave.place if self.brave is not None else None
+        return {"type": "saved_agents", "agents": [saved.public() for saved in self.saved.all()],
+                "profiles": [{**row, "ready": place.ready(row["folder"])} for row in self._profiles()]}
 
     def _saved_check(self, fields: dict) -> None:
         """What only the app can judge, before the file is written: a profile Brave lists, an account Settings lists,

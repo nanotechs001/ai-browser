@@ -177,14 +177,14 @@ class BraveLink:
             with contextlib.suppress(Exception):
                 callback(tabs)
 
-    def agents_context(self) -> tuple[str | None, str]:
-        """(context, source) of the profile where agents browse: the one chosen in Settings, once Brave has shown it
-        on this connection ("chosen"), else none ("not_open"); with none chosen, the one Brave used last
-        ("last_used"), or none yet ("none")."""
+    def agents_context(self, profile: str | None = None) -> tuple[str | None, str]:
+        """(context, source) of the profile where agents browse: a saved agent's own `profile`, else the one chosen in
+        Settings, once Brave has shown it on this connection ("chosen"), else none ("not_open"); with none chosen,
+        the one Brave used last ("last_used"), or none yet ("none")."""
         watch = self._watch
         if watch is None:
             return None, "none"
-        return self.place.context(watch.default_context)
+        return self.place.context(watch.default_context, profile)
 
     def _shown(self, page: dict, context: str | None) -> bool:
         owner = self._owners.get(page["target"], YOU)
@@ -289,15 +289,16 @@ class BraveLink:
             await asyncio.sleep(0.1)
         return target
 
-    async def open_ai_tab(self, identity: str) -> str:
+    async def open_ai_tab(self, identity: str, profile: str | None = None) -> str:
         """A new blank tab for an agent or a Claude Code session (POST /agent-tab): opened by the app's own client in
-        the profile where agents browse (read just before, and checked where the tab landed), in a window of its own
-        (never one of the user's windows), and theirs at once (Relay.assign), before any other client can see it.
-        PlaceError says why not, in words that name no profile: they reach Claude."""
+        the profile where agents browse, or a saved agent's own `profile` (read just before, and checked where the
+        tab landed), in a window of its own (never one of the user's windows), and theirs at once (Relay.assign),
+        before any other client can see it. PlaceError says why not, in words that name no profile: they reach
+        Claude."""
         watch = self._watch
         if watch is None or watch.closed:
             raise PlaceError(NOT_CONNECTED)
-        context, source = self.agents_context()
+        context, source = self.agents_context(profile)
         if context is None:
             raise PlaceError(NOT_OPEN if source == "not_open" else NOT_CONNECTED)
         expected = await self._expected(watch, context, source)

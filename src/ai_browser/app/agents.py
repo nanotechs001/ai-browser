@@ -244,13 +244,14 @@ class Agent:
     description: str = ""  # Build a Mission's What it works on: the user's one line, shown under its name
     named: bool = False  # the user gave it a name (False: its task's first words name it); the pages can't tell
     saved: str = ""  # the saved agent this is a run of (its slug), or "" for a one-off run
+    profile: str | None = None  # its saved agent's Brave profile (a folder); None: Settings' choice
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
                                          "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
                                          "result", "files", "workspace", "web", "auto", "description", "named",
-                                         "saved")
+                                         "saved", "profile")
 
     @property
     def number(self) -> int:
@@ -376,7 +377,8 @@ class AgentManager:
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
         agent = Agent(agent_id, given or _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge,
                       account=chosen, task=text, folder=work, trusted=trusted, workspace=workspace, web=web, auto=auto,
-                      description=about, named=bool(given), saved=saved_agent.slug if saved_agent else "")
+                      description=about, named=bool(given), saved=saved_agent.slug if saved_agent else "",
+                      profile=saved_agent.profile if saved_agent else None)
         if work is not None:
             with contextlib.suppress(OSError):  # a read-only home: the folder isn't listed as recent, nothing more
                 self.rules.note_used(work)
@@ -412,6 +414,12 @@ class AgentManager:
                                   web=saved.web, auto=saved.auto, name=saved.name, description=saved.description,
                                   saved_agent=saved)
         return agent, True
+
+    def note(self, agent_id: str, text: str) -> None:
+        """A line of the app's own in an agent's chat, for the user: never sent to its Claude."""
+        agent = self.agents.get(agent_id)
+        if agent is not None:
+            self._record(agent, {"type": "note", "text": text})
 
     def forget_saved(self, slug: str) -> None:
         """A saved agent was deleted: its runs go on, as one-off runs."""
