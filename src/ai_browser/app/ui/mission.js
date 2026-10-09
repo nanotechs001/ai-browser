@@ -523,6 +523,7 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("keydown", (event) => { // Command-K (Ctrl+K elsewhere): a new mission, from anywhere
   const command = MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (!command || event.altKey || event.shiftKey || String(event.key).toLowerCase() !== "k") return;
+  if (document.querySelector("dialog:modal")) return; // a question is open (confirm.js): the page behind waits
   event.preventDefault();
   newMission();
 }, true);

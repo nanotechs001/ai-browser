@@ -9,6 +9,7 @@
 import { agentLabel, el } from "./chat.js";
 import { confirmAction } from "./confirm.js";
 import { mountFolderPicker } from "./folderpick.js";
+import { stateOf } from "./step.js";
 import { pageHead } from "./pages.js";
 import { mountWorkflows } from "./workflows.js";
 
@@ -292,11 +293,13 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
     const count = `${own.length} task${own.length === 1 ? "" : "s"}`;
     const lines = [`Its settings, its instruction and its ${count} are deleted${own.length ? `: ${own.map((task) =>
       task.name).join(", ")}` : ""}.`, "Its runs and their files stay."];
-    const run = [...agents().values()].find((one) => one.saved === row.slug && GOING.includes(one.state));
+    const run = [...agents().values()].find((one) => one.saved === row.slug && GOING.includes(stateOf(one)));
     if (run) lines.push(`${agentLabel(run)} is working: it keeps going, as a one-off run.`);
     if (!await confirmAction({ title: `Delete ${row.name}?`, lines, yes: "Delete" })) return;
     saves += 1;
-    send({ type: "saved_agent_delete", slug: row.slug, request: `sd-${saves}` });
+    if (!send({ type: "saved_agent_delete", slug: row.slug, request: `sd-${saves}` })) {
+      note.textContent = "Not connected: is `ai-browser app` running?";
+    }
   });
   close.addEventListener("click", shut);
   newAgent.addEventListener("click", () => showAgent(""));

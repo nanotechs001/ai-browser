@@ -11,7 +11,7 @@ from ai_browser.chrome import chrome_binary
 from test_app_server import wait_for
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
 from test_mission import open_drawer, open_mission, open_with
-from test_talk import ENTER, ESCAPE, tap
+from test_talk import ENTER, ESCAPE, mouse, tap
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 PANEL = "document.getElementById('agent-panel')"
@@ -245,6 +245,18 @@ async def test_close_asks_only_while_the_run_still_works(stack):
     assert await until(js, f"{DIALOG}?.open === true")
     assert await words_of_the_question(js) == ["End agent 1 while it works?", "Its tabs close; your own tabs stay."]
     await js(f"{DIALOG}.querySelector('.keep').click(); true")
+    assert await until(js, f"{DIALOG} === null") and "a1" in server.agents.agents
+    await js(f"{close}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    await tap(stack, js, ESCAPE)  # Escape keeps, and does nothing to the page behind
+    assert await until(js, f"{DIALOG} === null")
+    assert await js("!document.getElementById('drawer').hidden") and "a1" in server.agents.agents
+    await js(f"{close}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    for kind in ("mousePressed", "mouseReleased"):  # a stray click on its words: Keep keeps the focus
+        await mouse(stack, js, "dialog.confirm p", kind)
+    assert await js(f"document.activeElement === {DIALOG}.querySelector('.keep')")
+    await tap(stack, js, ENTER, "\r")  # so Enter still keeps
     assert await until(js, f"{DIALOG} === null") and "a1" in server.agents.agents
     await js(f"{close}.click(); true")
     assert await until(js, f"{DIALOG}?.open === true")
