@@ -10,7 +10,7 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from test_app_server import wait_for
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
-from test_mission import open_mission
+from test_mission import open_mission, open_with
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 PANEL = "document.getElementById('agent-panel')"
@@ -185,3 +185,15 @@ async def test_build_a_mission_runs_a_saved_agent_with_its_own_settings(stack):
     assert list(server.agents.agents) == [run.id]
     await js(f"{pick}.value = ''; {pick}.dispatchEvent(new Event('change')); true")
     assert await js(f"{own}.every(id => !document.getElementById(id).hidden)")  # New agent: the pickers again
+
+
+@CHROME
+async def test_a_long_agent_name_does_not_widen_the_agent_picker_or_add_a_row(stack):
+    stack["server"].saved.save({**AGENT, "name": "W" * 60})  # a select is as wide as its widest option, unless capped
+    js = await open_with(stack, size=(1280, 760))
+    pick = "document.getElementById('task-agent')"
+    assert await until(js, f"{pick}.options.length === 2")
+    rows = ("new Set([...document.querySelectorAll('#pickers > *')].filter(el => el.offsetParent)"
+            ".map(el => el.offsetTop)).size")
+    assert await js(rows) <= 3  # the three rows the Mission's room is sized for
+    assert await js(f"{pick}.offsetWidth") <= 150
