@@ -590,11 +590,14 @@ NAMES_UNDER_CARDS = """(() => {
 
 
 @CHROME
-@pytest.mark.parametrize(("count", "size", "most"), [
-    (5, (1280, 760), 0), (6, (1280, 760), 0), (5, (1440, 960), 0), (6, (1440, 960), 0), (12, (1280, 760), 0.5),
-    (16, (1280, 760), 0.5), (20, (1280, 760), 0.5), (20, (1024, 700), 0.5)])
-async def test_no_step_card_hides_the_name_of_a_desk_behind_it(stack, count, size, most):  # review: rings 1 and 2
+@pytest.mark.parametrize(("count", "size", "most", "saved"), [
+    (5, (1280, 760), 0, False), (6, (1280, 760), 0, False), (5, (1440, 960), 0, False), (6, (1440, 960), 0, False),
+    (12, (1280, 760), 0.5, False), (16, (1280, 760), 0.5, False), (20, (1280, 760), 0.5, False),
+    (20, (1024, 700), 0.5, False), (20, (1024, 700), 0.5, True)])
+async def test_no_step_card_hides_the_name_of_a_desk_behind_it(stack, count, size, most, saved):  # rings 1 and 2
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
+    if saved:  # Agent ▾ shows (on New agent): the composer keeps its height, so the room does too
+        stack["server"].saved.save({"name": "Research", "instruction": "Answer in French."})
     stack["server"].agents.max_working = count  # all of them at work at once, none waiting in line
     for number in range(count):
         await stack["server"].agents.create(f"Task number {number}")
@@ -611,6 +614,28 @@ async def test_no_step_card_hides_the_name_of_a_desk_behind_it(stack, count, siz
     desks = await js(ARTS)  # and the desks themselves: none over another, all in the window
     assert overlapping(desks) == []
     assert all(desk[0] >= 0 and desk[2] <= size[0] and desk[1] >= 0 and desk[3] <= size[1] for desk in desks), desks
+
+
+COMPOSER = """(() => { const agent = document.getElementById('task-agent');
+  return [document.getElementById('composer').offsetHeight, agent.offsetParent !== null,
+          agent.parentElement.classList.contains('modes')]; })()"""
+
+
+@CHROME
+async def test_agent_pick_sits_in_the_modes_row_and_the_composer_keeps_its_height(stack):  # final review, ruling 1
+    js = await open_with(stack, size=(1024, 700))
+    height, shown, _ = await js(COMPOSER)
+    assert shown is False  # no saved agent: no Agent ▾
+    stack["server"].saved.save({"name": "Research", "instruction": "Answer in French."})
+    for size in ((1024, 700), (860, 700)):
+        js = await open_with(stack, size=size)
+        assert await until(js, "document.getElementById('task-agent').options.length === 2")
+        mine, shown, in_modes = await js(COMPOSER)
+        assert shown and in_modes, size  # beside Name, never folded into ⋯ Options
+        if size[0] == 1024:
+            assert mine == height  # the pickers don't wrap to another row
+    await js("document.getElementById('mode-ask').click()")
+    assert await until(js, "document.getElementById('task-agent').offsetParent === null")  # Ask AI: hidden
 
 
 @CHROME

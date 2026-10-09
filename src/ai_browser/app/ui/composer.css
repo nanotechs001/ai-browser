@@ -12,8 +12,9 @@
                 color: var(--text-2); cursor: pointer; }
 .auto-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2);
                cursor: pointer; white-space: nowrap; }  /* Auto-approve in its folder, beside Folder */
-/* Build a Mission's Name and What it works on: in the modes' row, above the box, so the office keeps its height */
-.mission-words { display: flex; gap: 8px; flex: 1 1 260px; min-width: 0; margin: 0 4px; }
+/* Build a Mission's Agent ▾, Name and What it works on: in the modes' row, above the box, so the office keeps its
+   height (one row at 1024); Agent ▾ stays there on a narrow window too, never folded into ⋯ Options */
+.mission-words { display: flex; gap: 8px; flex: 1 1 200px; min-width: 0; margin: 0 4px; }
 .mission-words input { flex: 2 1 0; min-width: 0; width: 100%; padding: 6px 10px; }
 .mission-words #task-name { flex: 1 1 0; }
 .box { border-radius: 12px; background: var(--field); border: 1px solid var(--line-strong); padding: 10px 12px; }
@@ -33,7 +34,7 @@
 .controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .pickers { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
 .pickers select { max-width: 190px; }
-#task-agent { width: 120px; text-overflow: ellipsis; } /* never as wide as its longest saved name */
+#task-agent { width: 120px; margin: 0 0 0 4px; text-overflow: ellipsis; } /* never as wide as its longest name */
 .icon-button { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }
 .options { display: none; }
 .mic { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }

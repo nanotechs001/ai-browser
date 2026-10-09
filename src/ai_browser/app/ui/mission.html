@@ -79,6 +79,9 @@
                   aria-selected="false">Ask AI</button>
           <button id="mode-build" type="button" role="tab" data-mode="build" data-icon="missions"
                   aria-selected="true">Build a Mission</button>
+          <select id="task-agent" aria-label="Agent"
+                  title="A new agent, or one of your saved agents: then its own settings apply"><option
+            value="">New agent</option></select>
           <div id="mission-words" class="mission-words">
             <input id="task-name" type="text" maxlength="60" autocomplete="off" placeholder="Name this agent"
                    aria-label="Name this agent">
@@ -100,9 +103,6 @@
             <button id="options" class="icon-button options" type="button" data-icon="more" aria-expanded="false"
                     aria-controls="pickers" aria-label="Options"></button>
             <div id="pickers" class="pickers">
-              <select id="task-agent" aria-label="Agent"
-                      title="A new agent, or one of your saved agents: then its own settings apply"><option
-                value="">New agent</option></select>
               <select id="task-model" aria-label="Model">
                 <option value="opus">Opus · most capable</option>
                 <option value="sonnet">Sonnet · balanced</option>
