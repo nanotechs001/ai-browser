@@ -17,7 +17,7 @@
     "option", "gridcell", "treeitem", "draggable"]);
   const SKIP_TEXT = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
 
-  const ids = new WeakMap();
+  let ids = new WeakMap();
   const nodes = new Map();
   const sigs = new Map();
   let next = 1;
@@ -544,6 +544,7 @@
 
     observe(opts) {
       at = opts.at || null;
+      if (opts.renumber) { ids = new WeakMap(); nodes.clear(); sigs.clear(); next = 1; } // the engine found a clash
       next = Math.max(next, opts.next || 1); // the page and its frames number their rows from one count
       riskyRe = opts.risky ? new RegExp(opts.risky, "i") : null;
       downloadsRisky = !!opts.downloads;

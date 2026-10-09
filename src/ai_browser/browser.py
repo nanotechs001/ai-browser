@@ -884,7 +884,8 @@ class Browser:
                 except (BrowserError, CDPError, TimeoutError):
                     # its reader may have numbered rows before the result was dropped: keep those numbers taken
                     with contextlib.suppress(BrowserError, CDPError, TimeoutError):
-                        tab.next = max(tab.next, await asyncio.wait_for(self._reader_in(frame, "nextId()"), 1))
+                        tab.next = max(tab.next, await asyncio.wait_for(self._reader_in(frame, "nextId()"),
+                                                                     max(deadline - loop.time(), 0.1)))
                     continue
                 if read is not None and frame.session != frame.host:
                     roots.append(read)
@@ -955,10 +956,19 @@ class Browser:
         if not opts.get("find") and not (right > 0 and bottom > 0 and here["x"] < page["w"] and here["y"] < page["h"]):
             line["readable"] = True  # nothing of it in view: left for when it shows, or for a find
             return None
-        part = await self._reader_in(frame, "observe(" + json.dumps({
-            **opts, "at": {**here, "w": page["w"], "h": page["h"], "label": line["label"]}, "next": tab.next,
-            "maxRows": max(0, opts["maxRows"] - len(page["rows"])),
-            "textLimit": max(0, opts["textLimit"] - len(page["text"]) - 1)}) + ")")
+        call = {**opts, "at": {**here, "w": page["w"], "h": page["h"], "label": line["label"]},
+                "maxRows": max(0, opts["maxRows"] - len(page["rows"])),
+                "textLimit": max(0, opts["textLimit"] - len(page["text"]) - 1)}
+        part = await self._reader_in(frame, "observe(" + json.dumps({**call, "next": tab.next}) + ")")
+        taken = {item["id"] for item in page["rows"]}
+        if any(item["id"] in taken or tab.inside.get(item["id"], frame) is not frame for item in part["rows"]):
+            # an earlier read of this frame was dropped after it numbered rows (its counter never learned): its
+            # numbers clash with ones given since. It numbers again, once, from the page's count.
+            tab.next = max(tab.next, part.get("next") or 1)
+            for key in [key for key, owner in tab.inside.items() if owner is frame]:
+                del tab.inside[key]
+            part = await self._reader_in(frame, "observe(" + json.dumps({**call, "next": tab.next,
+                                                                         "renumber": True}) + ")")
         line["readable"] = True
         tab.next = max(tab.next, part.get("next") or 1)
         for row in part["rows"]:

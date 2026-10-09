@@ -273,7 +273,8 @@ async def test_frames_share_one_limit_and_one_time(builder, monkeypatch):
 
 
 @CHROME
-async def test_a_dropped_frame_read_never_makes_two_rows_share_a_number(builder, monkeypatch):
+@pytest.mark.parametrize("counter_fails", [False, True])
+async def test_a_dropped_frame_read_never_makes_two_rows_share_a_number(builder, monkeypatch, counter_fails):
     from ai_browser.browser import BrowserError, Frame
 
     browser, page = builder
@@ -283,6 +284,8 @@ async def test_a_dropped_frame_read_never_makes_two_rows_share_a_number(builder,
     drop = [True]
 
     async def dropping(where, call, *args, **kwargs):
+        if counter_fails and call == "nextId()":
+            raise BrowserError("the frame is busy")  # its counter is never learned
         result = await reader_in(where, call, *args, **kwargs)
         if drop[0] and isinstance(where, Frame) and where.url.endswith("/frames/canvas.html") \
                 and call.startswith("observe("):
