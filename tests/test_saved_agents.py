@@ -273,3 +273,94 @@ def test_every_line_break_kind_becomes_a_line_break():
     from ai_browser.app.savedagents import clean_instruction
 
     assert clean_instruction("a\u2029b") == "a\nb" and clean_instruction("c\rd") == "c\nd"
+
+
+# ---- Load at start: the skills' own text in the run's first message (Task 5) -----------------------------------------
+
+def skill_catalog(tmp_path):
+    from ai_browser.skills import Catalog, SkillSource
+    from test_skills import make_skill
+
+    root = tmp_path / "skills"
+    make_skill(root, "prices", desc="Read price pages", body="Open every pricing page. Run ${CLAUDE_SKILL_DIR}/x.py")
+    make_skill(root, "tables", desc="Keep tables", body="One row per plan.")
+    make_skill(root, "big", desc="A long one", body="b" * 60_001)
+    return Catalog([SkillSource("personal", root, "/skills/personal", "*/SKILL.md")], set())
+
+
+def test_load_at_start_fits_its_cap_and_names_the_rest():
+    from ai_browser.app.agents import PRELOAD_LINE, preload
+
+    class Skills:  # a catalog: load() as load_skill gives it
+        def load(self, ref, host=False):
+            if ref == "personal:gone":
+                raise KeyError(ref)
+            return f"skill {ref}\n\n" + "x" * 30
+
+    block, loaded, later, gone = preload(Skills(), ["personal:a", "personal:gone", "personal:b", "personal:a"], 90)
+    assert PRELOAD_LINE == "Skills the user loaded for you:"
+    assert block == f"{PRELOAD_LINE}\n\nskill personal:a\n\n{'x' * 30}"  # each once, as long as they fit
+    assert (loaded, later, gone) == (["personal:a"], ["personal:b"], ["personal:gone"])
+    assert preload(Skills(), [], 90) == ("", [], [], [])
+
+
+async def test_load_at_start_goes_before_the_task_and_never_into_the_chat(fake_claude, tmp_path):
+    import json
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.savedagents import SavedAgents
+    from test_app_server import told, wait_for
+    from test_bridge import EVENTS
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    catalog = skill_catalog(tmp_path)
+    saved = SavedAgents(tmp_path / "home").save({**AGENT, "can_use": [], "load_at_start": [
+        "personal:prices", "personal:gone", "personal:big", "personal:tables"]})
+    manager = AgentManager(tmp_path / "home", claude=runner)
+    manager.catalog = lambda: catalog
+    try:
+        run = await manager.create("List the prices", skills=saved.load, saved_agent=saved)
+        await wait_for(lambda: run.state == "your_turn")
+        first = told(fake_claude[1])[0]
+        assert first.startswith("Load and use these skills with load_skill: personal:big\n"  # past the cap
+                                "Skills the user loaded for you:\n\nskill personal:prices · sandbox folder "
+                                "/skills/personal/prices (read-only)\ndescription: Read price pages")
+        assert "Run /skills/personal/prices/x.py" in first  # paths as load_skill gives them
+        assert "One row per plan." in first and first.endswith("\n\nList the prices") and "b" * 1000 not in first
+        events = manager.events_of(run.id)
+        assert [event["text"] for event in events if event["type"] == "user"] == ["List the prices"]  # the chat
+        assert {"type": "note", "text": "Not loaded, no longer installed: personal:gone"} in events
+        assert run.loaded_skills == ["personal:prices", "personal:tables"]
+        await manager.send(run.id, "and the yearly ones")
+        await wait_for(lambda: len(told(fake_claude[1])) == 2 and run.state == "your_turn")
+        assert told(fake_claude[1])[1] == "and the yearly ones"  # only the first message carries them
+    finally:
+        await manager.close_all()
+
+
+async def test_load_at_start_names_the_skills_own_folder_when_docker_doesnt_answer(fake_claude, tmp_path,
+                                                                                  monkeypatch):
+    import json
+
+    import ai_browser.app.agents as agents_module
+    from ai_browser.app.agents import AgentManager
+    from test_app_server import told, wait_for
+    from test_bridge import EVENTS
+
+    monkeypatch.setattr(agents_module, "docker_answers", lambda home: False)  # as load_skill: its own folder, then
+    runner, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    catalog = skill_catalog(tmp_path)
+    manager = AgentManager(tmp_path / "home", claude=runner)
+    manager.catalog = lambda: catalog
+    try:
+        run = await manager.create("List the prices", skills=["personal:prices"])
+        await wait_for(lambda: run.state == "your_turn")
+        first = told(fake_claude[1])[0]
+        folder = catalog.get("personal:prices").host_dir.as_posix()
+        assert first.startswith(f"Skills the user loaded for you:\n\nskill personal:prices · folder {folder} · Run its "
+                                "scripts with your own commands (Bash), from your task's folder.")
+        assert f"Run {folder}/x.py" in first and "/skills/personal" not in first
+    finally:
+        await manager.close_all()

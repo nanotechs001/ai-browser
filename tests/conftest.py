@@ -159,6 +159,15 @@ def _never_the_users_app_port(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _docker_answers_load_at_start(monkeypatch):
+    """Load at start asks whether Docker answers, as load_skill does (app/agents.py's docker_answers): in tests it does,
+    unless a test says otherwise. No test asks the real Docker for it."""
+    import ai_browser.app.agents as agents
+
+    monkeypatch.setattr(agents, "docker_answers", lambda home: True, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_setup_outside_the_test(monkeypatch, tmp_path_factory):
     """No test reads or writes the user's own ~/.ai-browser (AIB_HOME is a throwaway unless a test sets its own), no
     test downloads Electron, and no doctor --setup waits for a typed answer or binds 8792 to see if it is free. The

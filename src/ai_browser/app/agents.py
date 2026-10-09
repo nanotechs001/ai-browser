@@ -21,6 +21,7 @@ from typing import ClassVar
 
 from ..accounts import DEFAULT, DEFAULT_NAME, GONE, NOT_SIGNED_IN, clean_env, default_folder
 from ..checks import KINDS
+from ..sandbox import DockerError, Sandboxes
 from ..skills import USABLE_ENV
 from . import attachments
 from . import move as moving
@@ -61,6 +62,9 @@ FILES_KEPT = 50  # files an agent changed, the newest, for History
 RESULT_LIMIT = 200  # characters of its last answer's first line, for History
 WORDS_LIMIT = 20_000  # characters of an answer kept while it streams in
 EDITS = ("Edit", "Write")  # the tools whose path is a file the agent changed
+PRELOAD_LIMIT = 60_000  # characters of skills' text a run's first message carries (Load at start)
+PRELOAD_LINE = "Skills the user loaded for you:"
+NOT_INSTALLED = "Not loaded, no longer installed: {names}"  # a note on the run, never the agent's
 _SCHEME = re.compile(r"\bhttps?://(?:www\.)?", re.IGNORECASE)
 _FILLER = {"and", "or", "then", "to", "the", "a", "an", "of", "in", "on", "with", "for", "from"}
 _AGENT_ID = re.compile(r"a([0-9]{1,9})")  # the ids the server and the relay accept: ^a[0-9]{1,9}$
@@ -97,6 +101,37 @@ def mission_words(value, limit: int, too_long: str) -> str:
     if len(text) > limit:
         raise ValueError(too_long)
     return text
+
+
+def docker_answers(home: Path) -> bool:
+    """Whether Docker answers with the sandbox image (Sandboxes.check: it starts nothing), as load_skill asks. Without
+    it, a loaded skill names its folder on this computer, for the agent's own commands."""
+    try:
+        Sandboxes(home).check()
+    except DockerError:
+        return False
+    return True
+
+
+def preload(catalog, refs, limit: int = PRELOAD_LIMIT,
+            host: bool = False) -> tuple[str, list[str], list[str], list[str]]:
+    """Load at start (the saved-agents spec, 3): (the block for a run's first message, the refs in it, the refs past
+    `limit` characters, which the agent is asked to load with load_skill as before, the refs no longer installed). Each
+    skill's text is what load_skill gives, so its paths are rewritten the same way (`host`: Docker doesn't answer)."""
+    parts, loaded, later, gone, size = [], [], [], [], 0
+    for ref in dict.fromkeys(refs):
+        try:
+            text = catalog.load(ref, host=host)
+        except (KeyError, OSError, ValueError):  # SkillNotFound and AmbiguousSkill are KeyErrors
+            gone.append(ref)
+            continue
+        if size + len(text) > limit:
+            later.append(ref)
+            continue
+        parts.append(text)
+        loaded.append(ref)
+        size += len(text)
+    return (f"{PRELOAD_LINE}\n\n" + "\n\n".join(parts) if parts else ""), loaded, later, gone
 
 
 def _own_scratch(scratch: Path) -> None:
@@ -248,8 +283,10 @@ class AgentManager:
         self.tools = None  # the user's MCP servers (ToolsConfig), set by the app: agents ask before using them
         self.accounts = accounts  # AI accounts (Accounts); None: every agent runs on Default, as before
         self.rules = powers.Rules(self.home)  # agent powers: the user's rules and trusted folders, per folder
+        self._docker: bool | None = None  # whether Docker answers (Load at start's paths), asked once
         self.on_limit: Callable[[str], None] | None = None  # set by the app: an account hit its usage limit
         self.on_usage: Callable[[str], None] | None = None  # set by the app: an account reported how much is used
+        self.catalog: Callable[[], object] | None = None  # set by the app: the skills a run's first message loads
         self._asks: dict[str, asyncio.Future] = {}  # agent id -> its tool request waiting for the user
         self.agents: dict[str, Agent] = {}
         self._line: deque[str] = deque()  # agents waiting for a free slot, first come first served
@@ -726,6 +763,8 @@ class AgentManager:
                     self._record(agent, {"type": "note", "text": FRESH_NOTE})
                 else:
                     self._record(agent, {"type": "user", "text": text})
+                if skills and self.catalog is not None:  # Load at start: the skills' text goes first, never to the chat
+                    text, skills = self._preload(agent, text, skills, await self._skills_on_host())
                 resuming, started = agent.handover is not None, False  # the first turn after a move that copied
                 agent.words = ""  # a turn Stop, a limit or an error cut short left its words: they aren't this turn's
                 async for event in agent.bridge.send(text, tab.get("url", ""), tab.get("title", ""), skills,
@@ -746,6 +785,28 @@ class AgentManager:
                 agent.state = "your_turn"
                 self._changed(agent)
             self._pump()
+
+    async def _skills_on_host(self) -> bool:
+        """Whether Load at start names the skills' folders on this computer: Docker doesn't answer, as load_skill
+        decides."""
+        if self._docker is None:
+            self._docker = await asyncio.to_thread(docker_answers, self.home)
+        return not self._docker
+
+    def _preload(self, agent: Agent, text: str, skills: list[str], host: bool = False) -> tuple[str, list[str]]:
+        """A run's first message with its skills' own text before the task (preload); the skills past the cap are
+        left to load_skill, and one no longer installed is skipped with a note on the run."""
+        try:
+            block, loaded, later, gone = preload(self.catalog(), skills, PRELOAD_LIMIT, host)
+        except Exception:  # the skills couldn't be read: the agent loads them itself, as before
+            return text, skills
+        if gone:
+            self._record(agent, {"type": "note", "text": NOT_INSTALLED.format(names=", ".join(gone))})
+        if loaded:
+            agent.bridge.loaded_skills.update(loaded)
+            agent.loaded_skills = sorted(agent.bridge.loaded_skills)
+            self._changed(agent)
+        return (f"{block}\n\n{text}" if block else text), later
 
     def _on_event(self, agent: Agent, event: dict) -> None:
         kind = event.get("type")

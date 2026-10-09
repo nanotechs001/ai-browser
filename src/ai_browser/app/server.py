@@ -426,6 +426,7 @@ class AppServer:
         agents.let_go = self._let_go  # a handed tab taken back, or let go when its agent closes
         agents.on_turn = lambda agent: self.connect_brave("turn", agent.id)  # right after the user's task
         agents.mint_token = self.tokens.mint
+        agents.catalog = self._skill_catalog  # Load at start: a run's first message carries its skills' text
         if brain is not None:
             brain.set_sources(self.settings.get()["brain_sources"])  # Settings → Brain's checkboxes
             brain.auto_hand = lambda: self.settings.get()["auto_hand"]  # Settings → Brain's hand-off switch
@@ -2056,10 +2057,13 @@ class AppServer:
 
     # ---- skills -----------------------------------------------------------------------------------------------
 
-    def _skills(self) -> list:
+    def _skill_catalog(self) -> Catalog:
         if self._catalog is None:  # the same skills the agents' engines see
             self._catalog = Catalog.of_user(project_root() / "skills", set(load_config(self.home).blocked_skills))
-        return self._catalog.all()
+        return self._catalog
+
+    def _skills(self) -> list:
+        return self._skill_catalog().all()
 
     def _skills_summary(self) -> dict:
         by_source: dict[str, int] = {}

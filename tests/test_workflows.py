@@ -261,7 +261,9 @@ async def test_run_by_hand_over_the_socket(fake_claude, tmp_path):
             assert created["request"] == "r1"
             await until(ws, lambda m: m["type"] == "agent" and m["agent"]["state"] == "your_turn")
         content = user_messages(log)[0]["message"]["content"]
-        assert content.startswith("Load and use these skills with load_skill: elementor-pages")
+        assert "elementor-pages" not in content  # not installed here: Load at start skips it, with a note on the run
+        assert {"type": "note", "text": "Not loaded, no longer installed: elementor-pages"} in server.agents.events_of(
+            created["id"])
         assert "Open the site, fix the footer" in content and content.rstrip().endswith("The user adds: the header")
     finally:
         await server.stop()
