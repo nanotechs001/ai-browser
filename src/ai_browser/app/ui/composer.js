@@ -1,6 +1,7 @@
 // Mission Control's composer (the new look, Decision 9): Ask AI (the Brain: it answers and proposes, and nothing runs
-// without the user's Start, Send or a plain yes) and Build a Mission (start an agent). Templates are AI Home's own
-// (Run, Edit, New): Mission Control has none since the brain-delegation spec. Under the box: Attach (uploads.js),
+// without the user's Start, Send or a plain yes) and Build a Mission (start an agent). Agent ▾ picks a new agent (Name
+// and What it works on) or a saved one: then its own settings apply, and while its run works the task goes to that
+// run (the saved-agents spec, 2). Templates are the Agents page's. Under the box: Attach (uploads.js),
 // Web ▾, Model ▾, Account ▾, Folder ▾ (agent powers' picker), Auto-approve in its folder (a switch, off again for each
 // new task), Skills (loaded at start; Knowledge's Use in new mission ticks one) and Workspace ▾, the mic, and the main
 // button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter
@@ -35,6 +36,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   let workspacePicked = false; // the user chose one here: the menu's filter no longer sets it
   let handing = null; // one of the user's tabs the next Start begins in (the Tabs page's Hand over → New agent…)
   let skillRows = []; // the skills, as Knowledge lists them
+  let savedAgents = []; // the saved agents, for Agent ▾
   const picked = new Set(); // Skills: the refs the next run loads at start
   const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") }, send);
   const uploads = mountUploads({ list: $("attached"), send, note });
@@ -54,11 +56,12 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     $("start-label").textContent = MODES[mode].label;
     $("task").placeholder = MODES[mode].placeholder;
     const build = mode === "build";
-    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "task-skills", "attach",
-                      "mission-words"]) {
-      $(id).hidden = !build;
+    const own = build && $("task-agent").value === ""; // a new agent: the pickers are its settings
+    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "task-skills", "mission-words"]) {
+      $(id).hidden = !own;
     }
-    $("task-account").hidden = !build || rows.length < 2;
+    $("attach").hidden = $("task-agent").hidden = !build;
+    $("task-account").hidden = !own || rows.length < 2;
     $("task-workspace").hidden = mode === "ask";
     $("attached").hidden = !build || uploads.count() === 0;
   }
@@ -133,6 +136,18 @@ export function mountComposer({ link, workspaceOf = () => null }) {
       note("Write what the agent should do");
       return;
     }
+    const agent = $("task-agent").value;
+    if (agent) { // a saved agent: its own settings, Auto-approve too; while its run works, a message to it
+      const why = uploads.why();
+      if (why) {
+        note(why);
+        return;
+      }
+      const files = uploads.ids();
+      begin({ type: "new_task", agent, text, ...(files.length ? { attachments: files } : {}), ...workspace(),
+              ...(handing ? { adopt: handing.target } : {}) });
+      return;
+    }
     const why = folders.ready() || uploads.why();
     if (why) {
       note(why);
@@ -155,6 +170,17 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     const node = el("option", "", label);
     node.value = value;
     return node;
+  }
+
+  function fillAgents() { // Agent ▾: New agent, then each saved agent by name (kept while it is still there)
+    const select = $("task-agent");
+    const signature = JSON.stringify(savedAgents.map((row) => [row.slug, row.name]));
+    if (select.dataset.rows === signature) return;
+    const kept = select.value;
+    select.replaceChildren(option("", "New agent"), ...savedAgents.map((row) => option(row.slug, row.name)));
+    select.value = savedAgents.some((row) => row.slug === kept) ? kept : "";
+    select.dataset.rows = signature;
+    setMode(mode);
   }
 
   function fillWorkspaces() {
@@ -199,6 +225,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     workspacePicked = true;
   });
   $("handing-clear").addEventListener("click", () => setHanding(null));
+  $("task-agent").addEventListener("change", () => setMode(mode));
   $("skills-find").addEventListener("input", renderSkills);
   $("start-key").textContent = MAC ? "⌘ ↵" : "Ctrl ↵";
   $("task-auto-switch").title = autoTitle(false, false); // until the app says this computer runs commands
@@ -255,6 +282,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
         case "skills":
           skillRows = message.skills || [];
           renderSkills();
+          break;
+        case "saved_agents":
+          savedAgents = Array.isArray(message.agents) ? message.agents : [];
+          fillAgents();
           break;
         case "created":
           if (pending && message.request === pending) {

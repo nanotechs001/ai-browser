@@ -100,25 +100,28 @@
             <button id="options" class="icon-button options" type="button" data-icon="more" aria-expanded="false"
                     aria-controls="pickers" aria-label="Options"></button>
             <div id="pickers" class="pickers">
-              <select id="task-web" aria-label="Web" title="The agent's web tools">
-                <option value="web">Web + Brave</option>
-                <option value="brave">Brave only</option>
-                <option value="none">No web</option>
-              </select>
+              <select id="task-agent" aria-label="Agent"
+                      title="A new agent, or one of your saved agents: then its own settings apply"><option
+                value="">New agent</option></select>
               <select id="task-model" aria-label="Model">
                 <option value="opus">Opus · most capable</option>
                 <option value="sonnet">Sonnet · balanced</option>
                 <option value="haiku">Haiku · fastest</option>
               </select>
+              <select id="task-web" aria-label="Web" title="The agent's web tools">
+                <option value="web">Web + Brave</option>
+                <option value="brave">Brave only</option>
+                <option value="none">No web</option>
+              </select>
               <select id="task-account" aria-label="Account" hidden></select>
               <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
-              <label id="task-auto-switch" class="auto-switch"><input id="task-auto"
-                type="checkbox"> Auto-approve in its folder</label>
               <details id="task-skills" class="skills-menu"><summary>Skills <span id="skills-count"
                 class="muted"></span></summary>
                 <div class="skills-pick"><input id="skills-find" type="search" autocomplete="off"
                   placeholder="Find a skill" aria-label="Find a skill"><div id="skills-pick"></div>
                   <p class="muted">Loaded at start: their text goes in the agent's first message.</p></div></details>
+              <label id="task-auto-switch" class="auto-switch"><input id="task-auto"
+                type="checkbox"> Auto-approve in its folder</label>
               <select id="task-workspace" aria-label="Workspace"></select>
             </div>
             <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"

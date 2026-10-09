@@ -135,3 +135,30 @@ async def test_an_agents_tasks_run_as_it_and_runs_as_moves_one_there(stack):
     await js(f"{pick}.value = 'research'; document.querySelector('#page-agents .any-tasks .save').click(); true")
     await wait_for(lambda: stack["workflows"].get("footer").runs_as == "research")
     assert await until(js, f"{any_task} === null")
+
+
+# ---- Build a Mission's Agent ▾: a saved agent's settings apply, one run at a time (Task 16) -------------------------
+
+@CHROME
+async def test_build_a_mission_runs_a_saved_agent_with_its_own_settings(stack):
+    server = stack["server"]
+    server.saved.save({**AGENT, "auto_approve": True})
+    stack["script"].write_text(json.dumps([{"sleep": 30}]), encoding="utf-8")  # its run stays at work
+    js = await open_mission(stack)
+    pick = "document.getElementById('task-agent')"
+    assert await until(js, f"[...{pick}.options].map(option => option.textContent).join('|') === 'New agent|Research'")
+    await js(f"{pick}.value = 'research'; {pick}.dispatchEvent(new Event('change')); true")
+    own = "['mission-words', 'task-web', 'task-model', 'task-folder', 'task-auto-switch', 'task-skills']"
+    assert await js(f"{own}.every(id => document.getElementById(id).hidden)")  # its settings, not the pickers'
+    await js("document.getElementById('task').value = 'List the prices'; document.getElementById('start').click(); true")
+    await wait_for(lambda: server.agents.run_of("research") is not None)
+    run = server.agents.run_of("research")
+    assert (run.name, run.description, run.model, run.web, run.auto) == (
+        "Research", AGENT["description"], "opus", "brave", True)
+    assert await until(js, "!document.getElementById('start').disabled && document.getElementById('task').value === ''")
+    await js("document.getElementById('task').value = 'And the yearly ones';"
+             "document.getElementById('start').click(); true")
+    await wait_for(lambda: run.queued == 1)  # its run works: the task is a message to it
+    assert list(server.agents.agents) == [run.id]
+    await js(f"{pick}.value = ''; {pick}.dispatchEvent(new Event('change')); true")
+    assert await js(f"{own}.every(id => !document.getElementById(id).hidden)")  # New agent: the pickers again
