@@ -412,8 +412,8 @@ class AgentManager:
         extra = [ref for ref in skills if not saved.use or ref in saved.use]
         agent = await self.create(text, list(dict.fromkeys([*saved.load, *extra])), saved.model, adopt, tab, servers,
                                   account=saved.account, folder=saved.folder, workspace=workspace, files=files,
-                                  web=saved.web, auto=saved.auto if auto is None else auto, name=saved.name, description=saved.description,
-                                  saved_agent=saved)
+                                  web=saved.web, auto=saved.auto if auto is None else auto, name=saved.name,
+                                  description=saved.description, saved_agent=saved)
         return agent, True
 
     def note(self, agent_id: str, text: str) -> None:

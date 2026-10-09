@@ -504,8 +504,8 @@ async def test_a_task_runs_as_its_agent_with_its_settings_and_waits_while_it_wor
 
 
 async def test_a_run_started_from_a_message_never_starts_with_auto_approve(fake_claude, tmp_path):
-    """An inbox item's text starts a run of an Auto-approve agent (a run: auto template, or the item's Run): Auto-approve
-    is off, with a note saying why. A run by hand keeps the agent's setting (a scheduled one too, the test above)."""
+    """An inbox item's text starts a run of an Auto-approve agent (a run: auto template, or the item's Run):
+    Auto-approve is off, with a note saying why. A run by hand keeps the agent's setting (a scheduled one too, the test above)."""
     import json
 
     from ai_browser.app.agents import AgentManager
