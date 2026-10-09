@@ -10,12 +10,14 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from test_app_server import wait_for
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
-from test_mission import open_mission
+from test_mission import open_drawer, open_mission, open_with
+from test_talk import ENTER, ESCAPE, mouse, tap
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 PANEL = "document.getElementById('agent-panel')"
 TICK = ("(ref, box) => document.getElementById('agent-panel').querySelector("
         "`.agent-skill[data-ref='${ref}'] .${box}`).click()")  # a skill's Can use or Load at start
+DIALOG = "document.querySelector('dialog.confirm')"
 AGENT = {"name": "Research", "description": "Pricing pages of the three biggest rivals",
          "instruction": "Answer in French.", "web": "brave", "model": "opus"}
 
@@ -185,3 +187,144 @@ async def test_build_a_mission_runs_a_saved_agent_with_its_own_settings(stack):
     assert list(server.agents.agents) == [run.id]
     await js(f"{pick}.value = ''; {pick}.dispatchEvent(new Event('change')); true")
     assert await js(f"{own}.every(id => !document.getElementById(id).hidden)")  # New agent: the pickers again
+
+
+# ---- Delete agent and Close ask first, in the page (Task 17) ---------------------------------------------------------
+
+async def words_of_the_question(js):
+    return await js(f"[...{DIALOG}.querySelectorAll('h2, p')].map(node => node.textContent)")
+
+
+@CHROME
+async def test_delete_agent_asks_first_and_keep_or_escape_keeps(stack):
+    server = stack["server"]
+    saved = server.saved.save(AGENT)
+    for name in ("Morning prices", "Weekly prices"):
+        stack["workflows"].save({"name": name, "instructions": "x", "runs_as": saved.slug})
+    stack["script"].write_text(json.dumps([{"sleep": 30}]), encoding="utf-8")  # its run stays at work
+    run, _ = await server.agents.run_as(saved, "List the prices")
+    js = await open_agents(stack)
+    assert await until(js, f"{card(saved.slug)} !== null")
+    await js(f"{card(saved.slug)}.click(); true")
+    remove = f"{PANEL}.querySelector('.delete-agent')"
+    assert await until(js, f"!{PANEL}.hidden && !{remove}.hidden")
+    await js(f"{remove}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    assert await words_of_the_question(js) == [
+        "Delete Research?", "Its settings, its instruction and its 2 tasks are deleted: Morning prices, Weekly prices.",
+        "Its runs and their files stay.", "1 · Research is working: it keeps going, as a one-off run."]
+    assert await js(f"document.activeElement === {DIALOG}.querySelector('.keep')")  # Keep is the default
+    await tap(stack, js, ENTER, "\r")  # Enter, on Keep: kept
+    assert await until(js, f"{DIALOG} === null")
+    await js(f"{remove}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    await tap(stack, js, ESCAPE)  # Escape: kept
+    assert await until(js, f"{DIALOG} === null")
+    assert server.saved.get(saved.slug) is not None and len(stack["workflows"].all()) == 2
+    await js(f"{remove}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    await js(f"{DIALOG}.querySelector('.go').click(); true")  # Delete
+    await wait_for(lambda: server.saved.get(saved.slug) is None)
+    assert stack["workflows"].all() == [] and run.saved == "" and run.state == "working"  # it goes on, one-off
+    assert await until(js, f"{PANEL}.hidden && {card(saved.slug)} === null")
+
+
+@CHROME
+async def test_close_asks_only_while_the_run_still_works(stack):
+    from test_bridge import EVENTS
+
+    server = stack["server"]
+    stack["script"].write_text(json.dumps([{"sleep": 30}]), encoding="utf-8")
+    await server.agents.create("Keep working")
+    js = await open_mission(stack)
+    assert await until(js, "document.querySelector('.station[data-id=\"a1\"]') !== null")
+    await js(open_drawer("a1"))
+    close = "document.querySelector('#drawer-body .close')"
+    assert await until(js, f"{close} !== null")
+    await js(f"{close}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    assert await words_of_the_question(js) == ["End agent 1 while it works?", "Its tabs close; your own tabs stay."]
+    await js(f"{DIALOG}.querySelector('.keep').click(); true")
+    assert await until(js, f"{DIALOG} === null") and "a1" in server.agents.agents
+    await js(f"{close}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    await tap(stack, js, ESCAPE)  # Escape keeps, and does nothing to the page behind
+    assert await until(js, f"{DIALOG} === null")
+    assert await js("!document.getElementById('drawer').hidden") and "a1" in server.agents.agents
+    await js(f"{close}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    for kind in ("mousePressed", "mouseReleased"):  # a stray click on its words: Keep keeps the focus
+        await mouse(stack, js, "dialog.confirm p", kind)
+    assert await js(f"document.activeElement === {DIALOG}.querySelector('.keep')")
+    await tap(stack, js, ENTER, "\r")  # so Enter still keeps
+    assert await until(js, f"{DIALOG} === null") and "a1" in server.agents.agents
+    await js(f"{close}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    x, y = await js("(() => { const r = document.querySelector('dialog.confirm p').getBoundingClientRect();"
+                    " return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+    for kind in ("mousePressed", "mouseReleased"):  # a right-click on its words (no click event): Keep keeps the focus
+        await stack["cdp"].send("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y, "button": "right",
+                                                             "clickCount": 1}, session_id=js.session)
+    assert await js(f"document.activeElement === {DIALOG}.querySelector('.keep')"), "right-click moved the focus off Keep"
+    await tap(stack, js, ESCAPE)  # so Escape still keeps, and the drawer stays
+    assert await until(js, f"{DIALOG} === null")
+    assert await js("!document.getElementById('drawer').hidden") and "a1" in server.agents.agents
+    await js(f"{close}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
+    await js(f"{DIALOG}.querySelector('.go').click(); true")
+    await wait_for(lambda: "a1" not in server.agents.agents)
+    stack["script"].write_text(json.dumps(EVENTS), encoding="utf-8")  # done at once
+    finished = await server.agents.create("Done at once")
+    await wait_for(lambda: finished.state == "your_turn")
+    assert await until(js, "document.querySelector('.station[data-id=\"a2\"]') !== null")
+    await js(open_drawer("a2"))
+    assert await until(js, f"{close} !== null")
+    await js(f"{close}.click(); true")  # a finished run closes at once
+    await wait_for(lambda: "a2" not in server.agents.agents)
+    assert await js(f"{DIALOG} === null")
+
+
+# ---- Save as agent: a one-off run's settings, for a new saved agent (Task 18) ----------------------------------------
+
+@CHROME
+async def test_save_as_agent_fills_a_new_agents_settings_from_the_run(stack):
+    server = stack["server"]
+    agent = await server.agents.create("List the prices", model="haiku", web="brave", name="Prices",
+                                       description="Rivals' plans")
+    await wait_for(lambda: agent.state == "your_turn")
+    agent.loaded_skills = ["personal:prices"]
+    server.agents._changed(agent)
+    js = await open_mission(stack)
+    assert await until(js, "document.querySelector('.station[data-id=\"a1\"]') !== null")
+    await js(open_drawer("a1"))
+    button = "document.querySelector('#drawer-body .save-as-agent')"
+    assert await until(js, f"{button} !== null && !{button}.hidden")
+    await js(f"{button}.click(); true")
+    assert await until(js, f"!document.getElementById('page-agents').hidden && !{PANEL}.hidden"
+                           f" && {in_panel('agent-name')}.value === 'Prices'")
+    assert await js(f"[{in_panel('agent-about')}.value, {in_panel('agent-model')}.value, {in_panel('agent-web')}.value,"
+                    f" {in_panel('agent-instruction')}.value]") == ["Rivals' plans", "haiku", "brave", ""]
+    assert await js(f"{PANEL}.querySelector('.agent-panel-title').textContent") == "New agent"  # nothing saved yet
+    assert server.saved.all() == []
+    await js(f"{PANEL}.querySelector('.save-agent').click(); true")
+    await wait_for(lambda: server.saved.get("prices") is not None)
+    saved = server.saved.get("prices")
+    assert (saved.description, saved.model, saved.web, saved.load, saved.use, saved.instruction) == (
+        "Rivals' plans", "haiku", "brave", ["personal:prices"], [], "")  # the skills it loaded, at start
+    run, _ = await server.agents.run_as(saved, "Again")
+    await js(f"{PANEL}.querySelector('header button').click(); true")
+    await js(open_drawer(run.id))
+    assert await until(js, f"document.getElementById('drawer-title').textContent.endsWith('Prices')"
+                           f" && {button}.hidden")  # a saved agent's run is one already
+
+
+@CHROME
+async def test_a_long_agent_name_does_not_widen_the_agent_picker_or_add_a_row(stack):
+    stack["server"].saved.save({**AGENT, "name": "W" * 60})  # a select is as wide as its widest option, unless capped
+    js = await open_with(stack, size=(1280, 760))
+    pick = "document.getElementById('task-agent')"
+    assert await until(js, f"{pick}.options.length === 2")
+    rows = ("new Set([...document.querySelectorAll('#pickers > *')].filter(el => el.offsetParent)"
+            ".map(el => el.offsetTop)).size")
+    assert await js(rows) <= 3  # the three rows the Mission's room is sized for
+    assert await js(f"{pick}.offsetWidth") <= 150

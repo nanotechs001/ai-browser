@@ -104,6 +104,15 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                              saveSkill: (id, name) => { // Save as skill: Knowledge's Train drafts it from that chat
                                showPage("knowledge");
                                knowledge.fromAgent(id, name);
+                             },
+                             saveAgent: (agent) => { // Save as agent: a new agent's settings, filled from this run
+                               drawer.close();
+                               showPage("agents");
+                               agentsPage.showAgent("", {
+                                 name: agent.name, description: agent.description || "", model: agent.model,
+                                 web: agent.web || "web", account: agent.account?.id || null,
+                                 folder: agent.folder || null, use: [], load: agent.loaded_skills || [],
+                               });
                              } });
 const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
 const list = mountList($("view-list"), { onOpen: select });
@@ -514,6 +523,7 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("keydown", (event) => { // Command-K (Ctrl+K elsewhere): a new mission, from anywhere
   const command = MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (!command || event.altKey || event.shiftKey || String(event.key).toLowerCase() !== "k") return;
+  if (document.querySelector("dialog:modal")) return; // a question is open (confirm.js): the page behind waits
   event.preventDefault();
   newMission();
 }, true);

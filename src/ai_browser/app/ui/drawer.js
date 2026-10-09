@@ -1,6 +1,6 @@
 // Mission Control's drawer (moved here by the new look; what it shows is unchanged): an agent's state, its account and
 // its move, its folder and Auto-approve in its folder (a switch, on or off while it works), Watch, Stop, Close, Save
-// as skill, its time, cost and the skills it loaded, its ask at a usage limit, its permission or bot-check card, its
+// as skill, Save as agent (a one-off run), its time, cost and the skills it loaded, its ask at a usage limit, its permission or bot-check card, its
 // plan and sub-agents, Your tabs and its chat; or the Brain's inbox, with the Brain's card at a usage limit. The
 // chat's box takes files as Build a Mission does (the user's look, 2026-10-07): pasted, dropped or attached, at most
 // 10, 20 MB each (uploads.js), sent with the message and placed in the agent's folder by the app; the chips go only
@@ -10,6 +10,7 @@
 import { askBox, askKey, brainCard } from "./accountui.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
+import { confirmAction } from "./confirm.js";
 import { AUTO_EDITS_ONLY, AUTO_LABEL, AUTO_NO_SANDBOX, agentLabel, autoTitle, createChat, el } from "./chat.js";
 import { COLORS } from "./desk.js";
 import { icon } from "./icons.js";
@@ -20,8 +21,9 @@ import { STATES, stateOf } from "./step.js";
 import { mountYourTabs } from "./tablist.js";
 import { mountMessageBox } from "./uploads.js";
 
-// saveSkill(id, name): Save as skill (Knowledge's Train drafts a skill from this agent's chat)
-export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = () => {} }) {
+// saveSkill(id, name): Save as skill (Knowledge's Train drafts a skill from this agent's chat); saveAgent(agent): Save
+// as agent (a new saved agent's settings, filled from this one-off run)
+export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = () => {}, saveAgent = () => {} }) {
   const $ = (id) => document.getElementById(id);
   const send = (message) => link.send(message);
   const drawer = { id: null, parts: null, chat: null, brain: null, yourTabs: null, line: null, limit: null };
@@ -157,6 +159,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
     renderPlan(parts.plan, agent.todos); // agent powers, Decision 9: the agent's plan, live
     renderSubagents(parts.subs, agent.subagents); // Decision 8: each sub-agent, its task and its current action
     parts.watch.disabled = !agent.working_tab;
+    parts.saveAgent.hidden = Boolean(agent.saved); // a saved agent's run is one already
     parts.stop.hidden = !(agent.state === "working" || agent.state === "waiting" || agent.check);
     const check = agent.check; // a bot check waiting for the user: its card
     if (check && parts.checkCard?.dataset.since !== String(check.since)) {
@@ -207,11 +210,23 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
     });
     parts.watch.title = "Bring this agent's tab to the front";
     parts.stop = button("stop", "Stop", () => link.send({ type: "stop", id }));
-    parts.close = button("close ghost", "Close", () => link.send({ type: "close", id }));
+    parts.close = button("close ghost", "Close", async () => { // a run still working: asked first, Keep by default
+      const current = agentOf(id);
+      if (current && ["working", "waiting", "needs_you"].includes(stateOf(current)) && !await confirmAction({
+        title: `End agent ${current.number} while it works?`, lines: ["Its tabs close; your own tabs stay."],
+        yes: "Close" })) return;
+      link.send({ type: "close", id });
+    });
     parts.close.title = "End this agent and close the tabs it opened (your own tabs stay open)";
     parts.skill = button("save-skill ghost", "Save as skill", () => saveSkill(id, agentLabel(agentOf(id) || {})));
     parts.skill.title = "The Brain drafts a skill from this chat, for you to read and save";
-    parts.buttons.append(parts.state, parts.account, parts.watch, parts.stop, parts.close, parts.skill);
+    parts.saveAgent = button("save-as-agent ghost", "Save as agent", () => {
+      const current = agentOf(id);
+      if (current) saveAgent(current);
+    });
+    parts.saveAgent.title = "Set up an agent like this one, to run again: its settings open for you to Save";
+    parts.buttons.append(parts.state, parts.account, parts.watch, parts.stop, parts.close, parts.skill,
+                         parts.saveAgent);
     if (drawer.line?.id !== id) { // another agent: the last one's box goes; the same one keeps its words and files
       dropLine();
       drawer.line = chatLine(id);

@@ -60,7 +60,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "task-skills", "mission-words"]) {
       $(id).hidden = !own;
     }
-    $("attach").hidden = $("task-agent").hidden = !build;
+    $("attach").hidden = !build;
+    // Agent ▾ only once there is a saved agent to pick: alone, "New agent" is no choice, and its row of pickers would
+    // shrink the room (at 1024 wide the pickers take two rows without it, three with it)
+    $("task-agent").hidden = !build || savedAgents.length === 0;
     $("task-account").hidden = !own || rows.length < 2;
     $("task-workspace").hidden = mode === "ask";
     $("attached").hidden = !build || uploads.count() === 0;

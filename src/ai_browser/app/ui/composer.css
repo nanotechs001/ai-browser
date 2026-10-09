@@ -33,6 +33,7 @@
 .controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .pickers { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
 .pickers select { max-width: 190px; }
+#task-agent { width: 120px; text-overflow: ellipsis; } /* never as wide as its longest saved name */
 .icon-button { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }
 .options { display: none; }
 .mic { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }

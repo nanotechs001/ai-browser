@@ -3,11 +3,13 @@
 // agent (the templates that run as a new agent, workflows.js). A card opens the agent's settings in a panel over the
 // page: Name, What it works on, Instruction, Browser profile, Web, Model, Account, Folder, Auto-approve in its folder,
 // Skills (Can use, Load at start) and its Tasks. Only Save writes an agent (saved_agent_save, app-only); the app's
-// refusal words show under it. Every word is set as text.
+// refusal words show under it. Delete agent asks first, in the page (confirm.js). Every word is set as text.
 "use strict";
 
-import { el } from "./chat.js";
+import { agentLabel, el } from "./chat.js";
+import { confirmAction } from "./confirm.js";
 import { mountFolderPicker } from "./folderpick.js";
+import { stateOf } from "./step.js";
 import { pageHead } from "./pages.js";
 import { mountWorkflows } from "./workflows.js";
 
@@ -118,8 +120,10 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
   save.type = "button";
   const note = el("p", "muted agent-note");
   note.setAttribute("role", "status");
+  const remove = el("button", "danger delete-agent", "Delete agent");
+  remove.type = "button";
   const buttons = el("div", "row agent-buttons");
-  buttons.append(save);
+  buttons.append(save, remove);
   body.append(field("Name", name), field("What it works on", about),
               field("Instruction", instruction, "Its standing instruction: it goes into the agent's system prompt."),
               field("Browser profile", profile), field("Web", web), field("Model", model), accountField,
@@ -208,6 +212,7 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
     const row = saved.find((one) => one.slug === slug) || { ...EMPTY, ...(from || {}) };
     editing = row.slug;
     title.textContent = row.slug ? row.name : "New agent";
+    remove.hidden = !row.slug; // a new agent has nothing to delete yet
     name.value = row.name;
     about.value = row.description;
     instruction.value = row.instruction;
@@ -280,6 +285,21 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
                         account: account.value || null, folder: folders.value(), auto_approve: auto.checked,
                         can_use: [...use], load_at_start: [...load] });
     note.textContent = sent ? "Saving…" : "Not connected: is `ai-browser app` running?";
+  });
+  remove.addEventListener("click", async () => { // Delete agent: asked first, Keep by default
+    const row = saved.find((one) => one.slug === editing);
+    if (!row) return;
+    const own = (snapshot.workflows || []).filter((task) => task.runs_as === row.slug);
+    const count = `${own.length} task${own.length === 1 ? "" : "s"}`;
+    const lines = [`Its settings, its instruction and its ${count} are deleted${own.length ? `: ${own.map((task) =>
+      task.name).join(", ")}` : ""}.`, "Its runs and their files stay."];
+    const run = [...agents().values()].find((one) => one.saved === row.slug && GOING.includes(stateOf(one)));
+    if (run) lines.push(`${agentLabel(run)} is working: it keeps going, as a one-off run.`);
+    if (!await confirmAction({ title: `Delete ${row.name}?`, lines, yes: "Delete" })) return;
+    saves += 1;
+    if (!send({ type: "saved_agent_delete", slug: row.slug, request: `sd-${saves}` })) {
+      note.textContent = "Not connected: is `ai-browser app` running?";
+    }
   });
   close.addEventListener("click", shut);
   newAgent.addEventListener("click", () => showAgent(""));
@@ -363,6 +383,8 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
           if (pending && message.request === pending) {
             pending = null;
             note.textContent = String(message.text || ""); // the app's refusal words
+          } else if (String(message.request || "").startsWith("sd-") && !panel.hidden) {
+            note.textContent = String(message.text || ""); // a Delete the app refused
           }
           break;
       }
