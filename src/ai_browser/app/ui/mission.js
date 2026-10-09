@@ -215,6 +215,14 @@ function applySettings(settings) { // the model picked last, here or in AI Home:
 
 function renderCounts() { // "1 active task · 3 completed", and who needs the user or failed (plan decision 19)
   const states = [...agents.values()].map(stateOf);
+  const atWork = [...agents.values()].filter((agent) => agent.state === "working").length;
+  setText(document.querySelector("title"), atWork ? `(${atWork}) Mission Control` : "Mission Control"); // the window's
+  try { // and the app's badge (there is no toolbar badge)
+    if (atWork) navigator.setAppBadge?.(atWork)?.catch(() => {});
+    else navigator.clearAppBadge?.()?.catch(() => {});
+  } catch {
+    // not an installed app: the title says it
+  }
   if (!states.length) {
     setText($("counts"), "No agents yet");
     return;
@@ -312,6 +320,12 @@ function select(id) { // a desk, a row or an activity: the right column shows it
   scene.select(id);
   renderSide();
   if (agents.has(id) && stateOf(agents.get(id)) === "needs_you") drawer.open(id); // a card waits: one click away
+}
+
+function focusOn(message) { // a notification's click, or the floating chat's Open: that agent's drawer, or the Brain's
+  if (window.parent !== window) openTab("/mission"); // inside the tab menu: Mission Control's tab in front
+  if (message.brain) drawer.openBrain();
+  else if (agents.has(String(message.agent || ""))) openDrawer(String(message.agent));
 }
 
 function openDrawer(id, options = {}) { // Chat, Hand over, Answer, an activity or a page's Open: the agent's drawer
@@ -422,6 +436,9 @@ function handle(message) {
       }
       break;
     }
+    case "focus":
+      focusOn(message);
+      break;
     case "agent_event":
       side.event(message.id, message.event);
       break;

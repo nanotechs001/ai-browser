@@ -94,9 +94,10 @@ async def test_brave_not_running_or_not_connected_is_said_and_nothing_connects(s
     assert await js(f"{bar('picker')}.hidden") is True and await js(f"{bar('title')}.textContent") == ""
     brave.set_state("ready")  # Brave runs, but isn't connected to AI Browser
     await look_again(js, SEEN)
-    not_connected = "Brave isn't connected to AI Browser: connect it in AI Home."
+    not_connected = "Brave isn't connected to AI Browser: connect it at the top of Mission Control."
     assert await until(js, f"{bar('says')}.textContent === {json.dumps(not_connected)}")
-    await js(f"{bar('home')}.click(); true")  # Open AI Home: AI Browser's window comes forward, where Connect is
+    assert await js(f"{bar('mission')}.textContent") == "Open Mission Control"
+    await js(f"{bar('mission')}.click(); true")  # AI Browser's window comes forward, where Connect is
     assert await eventually(lambda: {"type": "show"} in desktop.sent)
     brave.set_state("asking")
     await look_again(js, SEEN)
@@ -194,14 +195,14 @@ async def test_a_hidden_chat_looks_at_nothing_and_asks_about_no_page(stack):  # 
 
 
 @CHROME
-async def test_escape_hides_the_chat_and_our_own_links_bring_ai_home_forward(stack):
+async def test_escape_hides_the_chat_and_our_own_links_bring_mission_control_forward(stack):
     desktop = FakeDesktop()
     stack["server"].attach_desktop(desktop)
     js, _ = await open_chat(stack)
     await js("document.getElementById('talk-text').blur();"
              "document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true")
     assert await until(js, "window.aibCalls.some((call) => call[0] === 'chat' && call[1] === 'hide')")
-    await js("const link = document.createElement('a'); link.href = '/home'; link.textContent = 'AI Home';"
+    await js("const link = document.createElement('a'); link.href = '/mission'; link.textContent = 'Mission Control';"
              "document.body.append(link); link.click(); true")
     assert await eventually(lambda: {"type": "show"} in desktop.sent)
     assert await js("location.pathname") == "/chat"  # the chat's window never leaves its page

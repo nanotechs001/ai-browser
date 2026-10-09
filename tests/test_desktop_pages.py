@@ -2,7 +2,7 @@
 fixture):
 - Settings → AI Browser app: the app's state, the shortcut, the setup command, and what went wrong;
 - AI Home's offer of the setup;
-- a notification's click landing on AI Home's row;
+- a notification's click opening the agent's drawer in Mission Control, or the Brain's inbox;
 - the microphone's steps naming AI Browser.
 The app is a fake (tests/fake_desktop.py). Every text is set as text."""
 
@@ -118,18 +118,19 @@ async def test_ai_home_offers_nothing_while_the_app_runs(home, monkeypatch):
 
 
 @CHROME
-async def test_a_notifications_click_lands_on_the_agents_row_or_the_brain(home):
-    js, stack = home
+async def test_a_notifications_click_opens_the_agents_drawer_or_the_brains_inbox(stack):
+    from test_mission import open_mission
+
     server = stack["server"]
     add_agent(server.agents, "a1")
-    server._send_all({"type": "agent", "agent": server.agents.agents["a1"].public()})
-    row = "document.querySelector('#agents .agent[data-id=\"a1\"]')"
-    assert await until(js, f"{row} !== null")
+    js = await open_mission(stack)
+    title = "document.getElementById('drawer-title').textContent"
+    assert await until(js, "document.querySelector('.station[data-id=\"a1\"]') !== null")
     server._send_all({"type": "focus", "agent": "a1"})
-    assert await until(js, f"{row}.classList.contains('focus')")
+    assert await until(js, f"!document.getElementById('drawer').hidden && {title} === '1 · Fix the footer'")
     server._send_all({"type": "focus", "brain": True})
-    assert await until(js, "document.getElementById('brain').classList.contains('focus')")
-    assert await js("location.pathname") == "/home"  # AI Home by itself (here): no tab menu to ask, it stays put
+    assert await until(js, f"{title} === 'The Brain' && document.querySelector('#drawer-body .drawer-brain') !== null")
+    assert await js("location.pathname") == "/mission"  # Mission Control by itself (here): no tab menu to ask
 
 
 @CHROME

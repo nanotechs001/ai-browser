@@ -147,14 +147,14 @@ async def test_the_active_tab_is_marked_and_the_others_are_hidden(shell):
 
 
 @CHROME
-async def test_the_title_follows_the_tab_and_keeps_ai_homes_count(shell):
+async def test_the_title_follows_the_tab_and_keeps_mission_controls_count(shell):
     js, stack = shell
     assert await until(js, "document.title === 'AI Home · AI Browser'")
     await pick(js, "/mission")
     assert await until(js, "document.title === 'Mission Control · AI Browser'")
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     agent = await stack["server"].agents.create("keep working")
-    assert await until(js, "document.title === '(1) Mission Control · AI Browser'")  # AI Home counts, hidden
+    assert await until(js, "document.title === '(1) Mission Control · AI Browser'")  # Mission Control counts
     await pick(js, "/settings")
     assert await until(js, "document.title === '(1) Settings · AI Browser'")
     await pick(js, "/home")

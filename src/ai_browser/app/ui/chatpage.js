@@ -58,7 +58,8 @@ function stateOf(agent) {
   return agent.permission || agent.check ? "needs you" : STATES[agent.state] || "";
 }
 
-// The open agents by number, so the user can name one to the Brain ("tell agent 2…"); a click opens it in AI Home.
+// The open agents by number, so the user can name one to the Brain ("tell agent 2…"); a click opens it in Mission
+// Control.
 function renderAgents() {
   const list = $("agents");
   const rows = ordered();
@@ -147,7 +148,7 @@ function start() {
   pendingTimer = setTimeout(finish, 10000);
 }
 
-function useModel(value) { // the model picked last, in AI Home or Mission Control: the app keeps it
+function useModel(value) { // the model picked last, in Mission Control: the app keeps it
   if (value && [...$("task-model").options].some((option) => option.value === value)) $("task-model").value = value;
 }
 
@@ -209,7 +210,7 @@ function hide() { // the chat's window hides (AI Browser's own app); a page open
 }
 
 const link = connect({ view: "chat", onMessage: handle, onState: setStatus });
-guardLinks(link, { ours: () => link.send({ type: "show_app" }) }); // a website opens in Brave; our pages, in AI Home
+guardLinks(link, { ours: () => link.send({ type: "show_app" }) }); // a website opens in Brave; ours, Mission Control
 bar = mountPageBar($("page"), { link, aib: window.aib, agents: ordered, input: $("talk-text"), onSay: flash,
                                 onChange: hereChanged });
 folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") },

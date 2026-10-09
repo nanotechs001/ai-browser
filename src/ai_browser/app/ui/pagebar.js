@@ -32,7 +32,7 @@ export const SAYS = {
   gone: "That tab has closed.",
   private: "That's a private window: AI Browser doesn't read those. Pick the tab you mean.",
   unknown: "AI Browser can't see this window's address: pick the tab you mean.",
-  not_connected: "Brave isn't connected to AI Browser: connect it in AI Home.",
+  not_connected: "Brave isn't connected to AI Browser: connect it at the top of Mission Control.",
   asking: "Brave is asking whether AI Browser may connect: answer it in Brave.",
 };
 export const DENIED_STEPS = "To allow it: System Settings → Privacy & Security → Automation → AI Browser → turn on "
@@ -122,7 +122,7 @@ export function mountPageBar(root, { link, aib, agents, input, onSay = () => {},
     part("says").textContent = tab ? "" : SAYS[state] || "";
     part("steps").textContent = !tab && state === "denied" ? DENIED_STEPS : "";
     part("steps").hidden = Boolean(tab) || state !== "denied";
-    part("home").hidden = Boolean(tab) || !(state === "not_connected" || state === "asking");
+    part("mission").hidden = Boolean(tab) || !(state === "not_connected" || state === "asking");
     part("ask").disabled = !tab;
     if (!tab) setAsk(false);
     fillHand();
@@ -231,7 +231,7 @@ export function mountPageBar(root, { link, aib, agents, input, onSay = () => {},
     if (link.send({ type: "hand_tab", id, target: tab.target })) onSay(`Handing this page to ${agentLabel(agent)}`);
     else onSay(NOT_CONNECTED);
   });
-  part("home").addEventListener("click", () => link.send({ type: "show_app" }));
+  part("mission").addEventListener("click", () => link.send({ type: "show_app" }));
   document.addEventListener("visibilitychange", () => {
     clearInterval(timer);
     timer = null;

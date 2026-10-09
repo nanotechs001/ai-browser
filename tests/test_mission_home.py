@@ -306,3 +306,17 @@ async def test_the_brains_inbox_has_its_limit_card_and_turn_it_on(stack):
     assert await until(js, f"{turn_on} !== null && !{turn_on}.hidden")  # reading is off: Turn it on in Settings
     await js(f"{turn_on}.click(); true")
     assert await until(js, "location.pathname === '/settings' && location.hash === '#brain-section'")
+
+
+# ---- a notification's click and the window's count: Mission Control's (Task 14) -------------------------------------
+
+@CHROME
+async def test_mission_controls_title_counts_the_working_agents(stack):
+    from test_bridge import EVENTS
+
+    js = await open_mission(stack)
+    stack["script"].write_text(json.dumps([EVENTS[0], {"sleep": 30}]), encoding="utf-8")  # it stays at work
+    agent = await stack["server"].agents.create("keep working")
+    assert await until(js, "document.title === '(1) Mission Control'")  # the window's title and badge read it
+    await stack["server"].agents.stop(agent.id)
+    assert await until(js, "document.title === 'Mission Control'")
