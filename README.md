@@ -827,6 +827,12 @@ e9   button   "Submit order" ⚠
 ⏱ 4 ms
 ```
 
+**Frames from other sites** (a page builder's canvas often is one, as in GoHighLevel) are read like the page: their
+elements are numbered on from the page's and tagged with their frame (`e12  button   [page-builder] "Add row"`), and
+`click`, `type`, `select` (a native menu, without opening it), `check`, `upload` and `scroll e40` reach them. The
+frames line names each frame; `(not readable)` means it couldn't be read this time (still loading, gone or crashed).
+A bot-check box in a frame is never read or touched: it stays `[bot check box: the user ticks it]`.
+
 ## Speed
 
 From `uv run ai-browser bench` (medians, local test pages, MacBook):
@@ -895,7 +901,11 @@ uv run ai-browser build                      # rebuild the image
 
 ## Limits (MVP)
 
-- Frames from other sites (cross-origin iframes) are listed but not read.
+- Frames: at most 20 are read per observe, 5 deep. A frame inside a frame of another origin on the same site (one
+  that runs in its parent's process) shows as `(not readable)`.
+- A download that a frame of another site starts before AI Browser has its address, or from a frame more than 5 deep,
+  isn't caught by the ask-first rule.
+- A page drawn on a `<canvas>` (Figma, Canva) has nothing to read: observe says so, and Claude works from screenshots.
 - Pressing Enter in a form isn't ⚠-gated; only clicks on risky buttons and page dialogs are.
 - Headless Chromium can trigger more bot checks on some sites (each one is handed to you: see
   [Bot checks](#bot-checks)), and mobile screenshots keep the desktop user agent.

@@ -469,3 +469,16 @@ async def test_the_frames_line_names_a_read_frame_and_a_canvas_says_so(builder):
             break
         await asyncio.sleep(0.1)
     assert CANVAS_HINT in out and "frames: [board]" in out
+
+
+def test_the_readme_says_frames_are_read_and_check_boxes_never():
+    from pathlib import Path
+
+    from ai_browser.render import BOX_TAG
+
+    text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    assert "listed but not read" not in text
+    for words in ("**Frames from other sites**", "`select` (a native menu, without opening it)", BOX_TAG,
+                  "`(not readable)`", "at most 20 are read per observe, 5 deep",
+                  "has nothing to read: observe says so"):
+        assert words in text, words
