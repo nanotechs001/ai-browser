@@ -145,6 +145,55 @@ def test_saving_and_deleting_an_agent_are_app_only_rows():
         assert not may_send("watcher", {"type": kind}) and not may_send("none", {"type": kind})
 
 
+# ---- its instruction, in its system prompt (Task 3) -------------------------------------------------------------------
+
+def launches(log) -> list[list[str]]:
+    """The argv of each Claude Code process the fake claude ran (its first log line each time)."""
+    import json
+
+    lines = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+    return [line for line in lines if isinstance(line, list)]
+
+
+async def test_its_instruction_reaches_its_system_prompt_and_nothing_else(fake_claude, tmp_path):
+    import json
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.bridge import BRAVE_PROMPT, INSTRUCTION_LINE
+    from ai_browser.app.savedagents import SavedAgents
+    from test_app_server import told, wait_for
+    from test_bridge import EVENTS
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    saved = SavedAgents(tmp_path / "home").save({**AGENT, "instruction": "Answer in French.\nNever buy anything."})
+    manager = AgentManager(tmp_path / "home", claude=runner)
+    try:
+        run = await manager.create("List the prices", saved_agent=saved)
+        await wait_for(lambda: run.state == "your_turn")
+        assert run.saved == "research" and manager.snapshot()["agents"][0]["saved"] == "research"
+        argv = launches(log)[0]
+        prompt = argv[argv.index("--append-system-prompt") + 1]
+        assert INSTRUCTION_LINE == "The user's standing instruction for this agent:"
+        assert prompt == f"{BRAVE_PROMPT}\n\n{INSTRUCTION_LINE}\nAnswer in French.\nNever buy anything."
+        assert "Answer in French" not in " ".join(told(log))  # only the task is its message
+        log.write_text("", encoding="utf-8")
+        plain = await manager.create("Fix the footer")  # a one-off run: AI Browser's own prompt alone
+        await wait_for(lambda: plain.state == "your_turn")
+        argv = launches(log)[0]
+        assert argv[argv.index("--append-system-prompt") + 1] == BRAVE_PROMPT and plain.saved == ""
+    finally:
+        await manager.close_all()
+
+
+def test_the_bridge_cleans_the_instruction_once_more():
+    from ai_browser.app.bridge import BRAVE_PROMPT, INSTRUCTION_LINE, ClaudeBridge
+
+    bridge = ClaudeBridge("home", instruction="Be brief\x00‮.\r\nThanks")
+    assert bridge.system_prompt() == f"{BRAVE_PROMPT}\n\n{INSTRUCTION_LINE}\nBe brief.\nThanks"
+    assert ClaudeBridge("home", instruction="  ​ ").system_prompt() == BRAVE_PROMPT
+
+
 def test_an_edit_never_writes_over_a_file_it_cannot_read(tmp_path):
     from ai_browser.app.savedagents import SavedAgents
 

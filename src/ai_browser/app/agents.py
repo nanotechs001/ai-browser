@@ -205,12 +205,14 @@ class Agent:
     auto: bool = False  # Auto-approve in its folder: the user's switch (the composer's, the drawer's), off by default
     description: str = ""  # Build a Mission's What it works on: the user's one line, shown under its name
     named: bool = False  # the user gave it a name (False: its task's first words name it); the pages can't tell
+    saved: str = ""  # the saved agent this is a run of (its slug), or "" for a one-off run
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
                                          "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
-                                         "result", "files", "workspace", "web", "auto", "description", "named")
+                                         "result", "files", "workspace", "web", "auto", "description", "named",
+                                         "saved")
 
     @property
     def number(self) -> int:
@@ -294,7 +296,7 @@ class AgentManager:
                      tab: dict | None = None, servers: list[str] | None = None,
                      account: str | None = None, folder: str | None = None, workspace: str | None = None,
                      files=(), web: str = "web", auto: bool = False, name: str | None = None,
-                     description: str | None = None) -> Agent:
+                     description: str | None = None, saved_agent=None) -> Agent:
         """A new agent for `text`; with `adopt`, it works in that tab of the user's (started from the panel). Its MCP
         servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list). It runs on
         `account`, else on the default account for new agents; ValueError for an account that isn't listed. With
@@ -302,7 +304,8 @@ class AgentManager:
         folder?" isn't answered yet, is a ValueError too. Without, it works in its own scratch folder. `auto`:
         Auto-approve in its folder, only when the user's own switch says True (the Brain and templates never pass
         it). `name` and `description` are Build a Mission's Name and What it works on (mission_words): without a name,
-        the task's first words name it, as before."""
+        the task's first words name it, as before. `saved_agent`: the saved agent (savedagents.SavedAgent) this is a run
+        of: its standing instruction goes into its system prompt."""
         given = mission_words(name, MISSION_NAME_LIMIT, NAME_TOO_LONG)  # first: refused words leave nothing behind
         about = mission_words(description, ABOUT_LIMIT, ABOUT_TOO_LONG)
         chosen = self._account_row(account)  # first: a refused account leaves no agent and no number behind
@@ -326,12 +329,12 @@ class AgentManager:
                               tools=self.tools_for(chosen["id"]), servers=servers,
                               on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request),
                               environment=self._environment(chosen["id"]), work=work, rules=self.rules, web=web,
-                              trusted=trusted, auto=auto)
+                              trusted=trusted, auto=auto, instruction=saved_agent.instruction if saved_agent else "")
         if self.accounts is not None:  # its account must be signed in before its Claude Code starts
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
         agent = Agent(agent_id, given or _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge,
                       account=chosen, task=text, folder=work, trusted=trusted, workspace=workspace, web=web, auto=auto,
-                      description=about, named=bool(given))
+                      description=about, named=bool(given), saved=saved_agent.slug if saved_agent else "")
         if work is not None:
             with contextlib.suppress(OSError):  # a read-only home: the folder isn't listed as recent, nothing more
                 self.rules.note_used(work)
