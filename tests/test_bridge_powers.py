@@ -590,7 +590,7 @@ async def test_when_the_skills_folders_cant_be_read_a_skills_script_shows_a_card
 
     scripts = a_skill(tmp_path, monkeypatch)
 
-    def vanished(blocked=frozenset()):
+    def vanished(blocked=frozenset(), allowed=None):
         raise FileNotFoundError("a synced skills folder went away between glob and stat")
 
     monkeypatch.setattr(bridge_module, "skill_folders", vanished)

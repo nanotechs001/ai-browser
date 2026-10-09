@@ -224,6 +224,15 @@ async def test_can_use_is_enforced_by_ai_browsers_own_skill_tools(tmp_path, monk
     assert "Read price pages" in (await only.load_skill("prices")).text  # one it may use loads as before
     assert (await only.read_skill_file("personal:prices", "scripts/run.py")).text.startswith("print('hi')")
     assert (await only.load_skill("personal:nothing")).text.startswith("error: no skill")  # not installed: as before
+    assert (await only.read_skill_file("secrets", "SKILL.md")).text.startswith(f"error: {NOT_ALLOWED}")  # short name
+    make_skill(tmp_path / "a", "prices", desc="Prices from A")
+    make_skill(tmp_path / "b", "prices", desc="Prices from B")
+    twins = [SkillSource(space, tmp_path / space, f"/skills/{space}", "*/SKILL.md") for space in ("a", "b")]
+    monkeypatch.setenv("AIB_APP_SKILLS", json.dumps(["a:prices"]))
+    same = Engine(home=tmp_path / "home", catalog=Catalog(twins, set()))
+    assert (await same.load_skill("b:prices")).text.startswith(f"error: {NOT_ALLOWED}")
+    loaded = (await same.load_skill("prices")).text  # one short name, two skills: the one it may use
+    assert "Prices from A" in loaded and "Prices from B" not in loaded
     monkeypatch.setenv("AIB_APP_SKILLS", "[]")  # none named: every skill
     assert "secrets" in (await engine().find_skills("prices")).text
     monkeypatch.setenv("AIB_APP_SKILLS", "not json")  # broken: no skill at all, never every skill
@@ -364,3 +373,24 @@ async def test_load_at_start_names_the_skills_own_folder_when_docker_doesnt_answ
         assert f"Run {folder}/x.py" in first and "/skills/personal" not in first
     finally:
         await manager.close_all()
+
+
+def test_a_narrowed_runs_bash_treats_skills_outside_can_use_like_blocked_ones(tmp_path, monkeypatch):
+    import json
+
+    from ai_browser import config, skills
+    from ai_browser.app.bridge import ClaudeBridge
+    from test_skills import make_skill
+
+    claude = tmp_path / ".claude"
+    prices, secrets, tidy = (make_skill(claude / "skills", name, scripts=True) for name in ("prices", "secrets", "tidy"))
+    monkeypatch.setattr(skills, "user_folders", lambda: (claude, tmp_path / "app"))  # never the user's own
+    config.set_blocked(tmp_path / "home", "personal:tidy", True)
+
+    def hidden(env):
+        return set(ClaudeBridge(tmp_path / "home", env=env).skill_folders().blocked)
+
+    narrowed = hidden({"AIB_APP_SKILLS": json.dumps(["personal:prices"])})
+    assert str(secrets) in narrowed and str(tidy) in narrowed and str(prices) not in narrowed
+    assert hidden({}) == {str(tidy)}  # every skill: as before, only the blocked one
+    assert hidden({"AIB_APP_SKILLS": "not json"}) == {str(prices), str(secrets), str(tidy)}  # broken: none of them

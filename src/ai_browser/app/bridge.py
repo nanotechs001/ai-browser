@@ -22,7 +22,7 @@ from ..brain.tools import ToolsConfig, server_of
 from ..claudecli import ClaudeNotUsable, claude_argv, spawn_options, track
 from ..limits import from_event, from_text, windows_from_event
 from ..config import load_config
-from ..skills import SkillFolders, skill_folders
+from ..skills import SkillFolders, skill_folders, usable_skills
 from ..syncdir import write_atomic
 from . import powers
 from .savedagents import clean_instruction
@@ -383,7 +383,8 @@ class ClaudeBridge:
         now = time.monotonic()
         if self._skills_read is None or now - self._skills_read[0] >= SKILLS_TTL:
             try:
-                self._skills_read = (now, skill_folders(set(load_config(self.home).blocked_skills)))
+                allowed = usable_skills(self.env)  # this run's Can use: the others' folders are hidden too
+                self._skills_read = (now, skill_folders(set(load_config(self.home).blocked_skills), allowed))
             except Exception:  # fail closed: no skill's folder, so their scripts show a card (read again next time)
                 log.warning("couldn't read the installed skills' folders", exc_info=True)
                 return SkillFolders()
