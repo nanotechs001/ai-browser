@@ -4,6 +4,7 @@
 // to the app as AI Home (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
 import { askError } from "./accountui.js";
 import { mountHandoffSlot } from "./brainui.js";
+import { mountBraveBar } from "./bravebar.js";
 import { mountCalendar } from "./calendar.js";
 import { el } from "./chat.js";
 import { mountComposer } from "./composer.js";
@@ -122,6 +123,7 @@ parts.push(spaces, {
   },
 });
 parts.push(mountHandoffSlot($("handoff"), send)); // the Brain's hand-offs, by the globe (its inbox lists them all)
+parts.push(mountBraveBar($("brave-bar"), { send, openTab })); // Brave's connection, until it is connected
 // the hand-offs never cover the composer, nor Ask AI's history above it
 const reserved = new ResizeObserver(() => $("centre").style.setProperty("--composer",
   `${$("composer").offsetHeight + $("talk").offsetHeight}px`));
