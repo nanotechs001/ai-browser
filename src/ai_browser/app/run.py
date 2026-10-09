@@ -58,7 +58,7 @@ def no_app_page() -> str:
 
 
 def ready_text(system: str | None = None) -> str:
-    return ("AI Browser is open in its own window: AI Home shows every agent, tab and skill.\n"
+    return ("AI Browser is open in its own window: Mission Control shows every agent, tab and skill.\n"
             "Close the window, or press Ctrl-C here, to stop.")
 
 
@@ -67,7 +67,7 @@ def app_text(system: str | None = None) -> str:
     where = platforms.shortcut("in the menu bar", "by the clock", system)
     stop = platforms.shortcut("press ⌘Q or choose Quit from its menu-bar icon", "choose Quit from its icon there",
                               system)
-    return ("AI Browser is open as its own app: AI Home shows every agent, tab and skill.\n"
+    return ("AI Browser is open as its own app: Mission Control shows every agent, tab and skill.\n"
             f"Closing its window keeps it running {where}. To stop it, {stop}, or press Ctrl-C here.")
 
 
@@ -85,13 +85,12 @@ SWITCH = """Agents browse in your {name}, but its remote-debugging switch is off
   3. When {name} asks "Allow remote debugging?", click Allow. AI Browser holds one connection for all its agents
      and Claude Code sessions, so {name} asks once each time AI Browser starts, and again after {name} restarts.
 While this switch is on, any program on this computer can reach your {name}, not only AI Browser. That includes the
-sites you are signed in to. While AI Browser is connected, a program that can read AI Browser's files can also use
-your {name} through it without a new question; AI Home lists everything connected, with Disconnect. Turn the switch
+sites you are signed in to. While AI Browser is connected, a program that can read AI Browser's files can also use your
+{name} through it without a new question; Settings → Brave lists everything connected, with Disconnect. Turn the switch
 off when agents aren't working: untick the same box. Only click Allow right after you started AI Browser, clicked
-Connect, gave an agent a task, asked Claude Code to browse, or opened {name} again while an agent was working. If
-{name} asks at any other time, it isn't AI Browser: click Deny, unless you just started another browser tool
-yourself.
-Once the switch is on, AI Home's browser card has a Connect button."""
+Connect, gave an agent a task, asked Claude Code to browse, or opened {name} again while an agent was working. If {name}
+asks at any other time, it isn't AI Browser: click Deny, unless you just started another browser tool yourself.
+Once the switch is on, the bar at the top of Mission Control has a Connect button."""
 LEFT_ASKING = ('{name} is still showing "Allow remote debugging?" from this AI Browser: click Cancel there. AI Browser '
                "has closed, so Allow would connect nothing and keep {name}'s \"controlled by automated test software\" "
                "bar up until {name} restarts.")

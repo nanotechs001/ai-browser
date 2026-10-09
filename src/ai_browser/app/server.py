@@ -1,4 +1,4 @@
-"""The AI Browser app server: AI Home's, Mission Control's and Settings' only way to the agents.
+"""The AI Browser app server: Mission Control's, Settings' and the floating chat's only way to the agents.
 
 It listens on 127.0.0.1 only, and every route checks the Host header. AI Browser's pages are served here to its own
 window, which swaps a one-time code for an HttpOnly cookie and lands on its tab menu (/app); the menu shows our other
@@ -107,15 +107,16 @@ CODE_TTL = 60  # seconds a one-time start code is good for
 PICK_WAIT = 120.0  # seconds a pick may take: the user points and clicks in Brave
 PICK_OFF = "Turn on Read my Gmail, Slack and Asana tabs first"
 PICK_TAB = "Pick one of your open tabs in Brave"
-# watcher_note: AI Home's Got it; read_tabs, brain_sources and auto_hand: Settings → Brain's switch, checkboxes and
-# hand-off switch
+# watcher_note: Settings → Brave's Got it; read_tabs, brain_sources and auto_hand: Settings → Brain's switch, checkboxes
+# and hand-off switch
 SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs", "agents_profile",
                 "brain_sources", "auto_hand")
 CHAT_OFF = "The Brain isn't listening to the floating chat: check it in Settings → Brain"
 NOTES_KEPT = 50  # the app's notifications whose click is still answered
 PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
 APP_SILENT = "AI Browser's app didn't answer: try again"
-CHAT_NOT_CONNECTED = "Brave isn't connected to AI Browser, so the chat can't read that page: connect it in AI Home"
+CHAT_NOT_CONNECTED = ("Brave isn't connected to AI Browser, so the chat can't read that page: connect it at the top of "
+                      "Mission Control")
 CHAT_PAGE_CHANGED = "That tab went to another site before AI Browser read it, so nothing was sent: ask again"
 URL_LIMIT = 2000  # characters of a website address a page may ask the user's browser to open
 NOT_HERE = "AI Browser's pages open only in its own window. Start it {how}."  # not_here()
@@ -157,7 +158,7 @@ APP_ONLY = Rule()
 MESSAGE_RULES: dict[str, Rule] = {
     "hello": APP_ONLY,
     "visibility": APP_ONLY,  # the Brain's hand-offs (2026-10-08): a page shown or hidden (link.js)
-    # the Brain's inbox, in AI Home, Mission Control and Settings
+    # the Brain's inbox, in Mission Control and Settings
     "brain": APP_ONLY, "draft": APP_ONLY, "approve": APP_ONLY, "hand": APP_ONLY, "done": APP_ONLY,
     "tell": APP_ONLY, "watch_set": APP_ONLY, "watch_remove": APP_ONLY, "style": APP_ONLY,
     "watch_pick": APP_ONLY,  # Settings → Brain: Pick the part to watch, on the user's click
@@ -174,14 +175,14 @@ MESSAGE_RULES: dict[str, Rule] = {
     "handoff_send": APP_ONLY, "handoff_cancel": APP_ONLY,
     "check_continue": APP_ONLY, "check_skip": APP_ONLY, "check_show": APP_ONLY,
     "brave_connect": APP_ONLY, "hand_tab": APP_ONLY, "take_back": APP_ONLY,
-    "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in AI Home's list of connected clients
+    "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in Settings → Brave's list
     "new_task": APP_ONLY,  # with or without adopt
     # send: the user's message to an agent, with the files a page staged (the drawer's chat): a file, never a right
     "send": APP_ONLY, "stop": APP_ONLY, "close": APP_ONLY, "model": APP_ONLY,
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
-    "settings_set": APP_ONLY,  # the window's Settings, AI Home's and Mission Control's picks
+    "settings_set": APP_ONLY,  # the window's Settings and Mission Control's picks
     "open_url": APP_ONLY,  # a website link in one of our pages
-    # the floating chat (native-app part c): "This page" as AI Browser's own app read it, and Open AI Home
+    # the floating chat (native-app part c): "This page" as AI Browser's own app read it, and Open Mission Control
     "this_page": APP_ONLY, "show_app": APP_ONLY,
     # AI accounts: Settings → Accounts, the Account pickers and Continue on. The Brain and voice never add, sign in,
     # choose or move (the spec's Safety)
@@ -366,7 +367,7 @@ class AppServer:
         self.hearing = hearing  # push-to-talk: the user's speech becomes text on this computer (Mission Control)
         if hearing is not None:
             hearing.on_status = lambda status: self._send_all({"type": "hearing_status", **status})
-        self.tools = tools  # the user's MCP servers for the agents (AI Home → Tools)
+        self.tools = tools  # the user's MCP servers for the agents (Integrations)
         if tools is not None:
             agents.tools = tools
         self.accounts = accounts  # AI accounts (Settings → Accounts); None: Default only, as before
@@ -378,10 +379,10 @@ class AppServer:
         self.open_terminal = open_terminal
         self._signing_in: dict[str, asyncio.Task] = {}  # account id -> the look at its sign-in
         self.brain_account = brain_account  # the Brain's and its skill writer's calls, on the Brain's account
-        self.brain_limit: dict | None = None  # {"account", "resets_at"}: AI Home's Brain card, until a switch
+        self.brain_limit: dict | None = None  # {"account", "resets_at"}: the Brain's card in its inbox, until a switch
         if brain_account is not None:
             brain_account.on_limit = self._brain_limit_hit
-        self.workflows, self.runner = workflows, runner  # the user's workflows (AI Home → Workflows)
+        self.workflows, self.runner = workflows, runner  # the user's templates (the Agents page)
         if runner is not None:
             runner.on_change = self.workflows_changed
             runner.saved = self.saved  # a template's Runs as: a saved agent
@@ -391,7 +392,7 @@ class AppServer:
         self._views: dict[WebSocket, str] = {}  # which page said hello on a socket: "home", "mission", "chat"…
         self._shown: set[WebSocket] = set()  # the sockets whose page says it can be seen (link.js: hello, visibility)
         self._holding: asyncio.TimerHandle | None = None  # the hold that waits HOLD_AFTER for another page in front
-        self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (AI Home…)
+        self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (Mission Control…)
         self.window_seen = False  # the window's first socket has come in
         if brain is not None:
             brain.broadcast = self._send_all
@@ -495,7 +496,7 @@ class AppServer:
 
     def _old_watcher(self) -> bool:
         """Whether an earlier AI Browser's copy of Brave's watcher is still in <home>/app/watcher, so the extension may
-        still be loaded in Brave: AI Home then says the user can remove it. AI Browser never removes either."""
+        still be loaded in Brave: Settings → Brave then says the user can remove it. AI Browser never removes either."""
         return (self.home / "app" / "watcher" / "manifest.json").is_file()
 
     def _settings_set(self, queue: asyncio.Queue, message: dict) -> None:
@@ -545,7 +546,7 @@ class AppServer:
         self.desktop = None
 
     def _desktop_payload(self) -> dict:
-        """Settings' and AI Home's view of AI Browser's own app: whether it is set up and running, what went wrong
+        """Settings' view of AI Browser's own app: whether it is set up and running, what went wrong
         last, and the shortcut with the app's word on it."""
         value = self.settings.get()["shortcut"]
         said = self.desktop.shortcut if self.desktop is not None else {}
@@ -591,7 +592,7 @@ class AppServer:
 
     def _notify_desktop(self, message: dict) -> bool:
         """A notification from AI Browser's own app, in place of Brave's, in fixed words (desktop/notes.py). False when
-        the app isn't running: AI Home shows it then."""
+        the app isn't running: Mission Control shows it then."""
         desktop = self.desktop
         note = note_for(message) if desktop is not None and not desktop.ended.is_set() else None
         if note is None:
@@ -605,7 +606,7 @@ class AppServer:
 
     async def _clicked(self, note_id: str) -> None:
         """A click on one of the app's notifications. A bot check brings the agent's tab forward, in Brave. Anything
-        else brings the app's window forward, on AI Home, at that agent's row (or the Brain)."""
+        else brings the app's window forward, on Mission Control, at that agent's drawer (or the Brain's inbox)."""
         note = self._notes.pop(note_id, None)
         if note is None or self.desktop is None:
             return
@@ -658,7 +659,8 @@ class AppServer:
         queue.put_nowait({**answer, "state": "found", "tab": tab} if tab is not None else {**answer, "state": "choose"})
 
     def _show_app(self, message: dict) -> None:
-        """The floating chat's Open AI Home (or an agent's number in it): AI Browser's window comes forward on AI Home,
+        """The floating chat's Open Mission Control (or an agent's number in it): AI Browser's window comes forward on
+        Mission Control,
         at that agent's row, or the Brain's. A view only: nothing runs."""
         agent = message.get("agent")
         if isinstance(agent, str) and AGENT_ID.match(agent):
@@ -916,7 +918,8 @@ class AppServer:
         return body, None
 
     def _owner_of(self, agent_id: str, handed: bool = False) -> dict | None:
-        """Who an id is, as AI Home's chips show it: an agent (or a tab handed to it), or a Claude Code session."""
+        """Who an id is, as the Tabs page's chips show it: an agent (or a tab handed to it), or a Claude Code
+        session."""
         if SESSION_ID.match(agent_id):
             session = self.sessions.get(agent_id)
             return None if session is None else {"kind": "session", "id": agent_id, "name": session["name"],
@@ -927,7 +930,7 @@ class AppServer:
         return {"kind": "handed" if handed else "agent", "id": agent.id, "name": agent.name, "color": agent.color}
 
     def _own(self, target: str, owner: dict | None) -> None:
-        """Whose a tab of the user's Brave is, for AI Home (brave mode only)."""
+        """Whose a tab of the user's Brave is, for the Tabs page (brave mode only)."""
         if self.brave is None or not target:
             return
         if owner is None:
@@ -958,7 +961,7 @@ class AppServer:
             self._own(target, None)
 
     def _after_agent_report(self, report: dict) -> None:
-        """AI Home's chips follow an agent's tabs."""
+        """The Tabs page's chips follow an agent's tabs."""
         agent_id, kind, target = report["agent"], report.get("kind"), report.get("target")
         if not isinstance(target, str) or not target or self.agents.agents.get(agent_id) is None:
             return
@@ -1026,7 +1029,7 @@ class AppServer:
             return Response(status_code=404)
         relay = self.brave.relay if self.brave is not None else None
         if relay is not None and relay.is_cut_off(session_id):
-            return Response(status_code=410)  # the user disconnected it in AI Home: not listed again this run
+            return Response(status_code=410)  # the user disconnected it in Settings → Brave: not again this run
         known = self.sessions.get(session_id)
         self.sessions[session_id] = {"id": session_id, "name": "Claude Code", "color": "orange",
                                      "tabs": known["tabs"] if known else [], "pid": pid}
@@ -1179,8 +1182,8 @@ class AppServer:
         await relay.serve(ws)
 
     def _browser_clients(self) -> list[dict]:
-        """AI Home's list of what uses the user's Brave through the app (the relay's rows, with names and colours).
-        No token is in it."""
+        """Settings → Brave's list of what uses the user's Brave through the app (the relay's rows, with names and
+        colours). No token is in it."""
         if self.brave is None:
             return []
         rows = []
@@ -1338,7 +1341,7 @@ class AppServer:
         return False
 
     def _shows_handoffs(self) -> bool:
-        """Whether a page that shows the Brain's hand-off cards (AI Home, Mission Control, the floating chat) can be
+        """Whether a page that shows the Brain's hand-off cards (Mission Control, the floating chat) can be
         seen: it is open and says it isn't hidden (the desktop app only hides its window on close). Only then may a
         hand-off count down. Nothing is sent while nobody can see it."""
         return any(self._views.get(ws) in HANDOFF_VIEWS for ws in self._shown)
@@ -1446,7 +1449,7 @@ class AppServer:
             self._job(self._open_url(queue, message))
         elif kind == "this_page":  # the floating chat: which listed tab the user is on
             self._this_page(queue, message)
-        elif kind == "show_app":  # the floating chat's Open AI Home, or an agent's number in it
+        elif kind == "show_app":  # the floating chat's Open Mission Control, or an agent's number
             self._show_app(message)
         elif kind == "new_task":
             request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
@@ -1996,7 +1999,7 @@ class AppServer:
         self._send_all({"type": "accounts", "accounts": self._account_rows()})
 
     def _brain_limit_hit(self, limit: dict) -> None:
-        """The Brain's account hit its usage limit: AI Home's Brain card asks to continue on another account."""
+        """The Brain's account hit its usage limit: the Brain's card asks to continue on another account."""
         self.brain_limit = {"account": str(limit.get("account", "")), "resets_at": limit.get("resets_at")}
         self._send_all({"type": "brain_limit", "limit": self.brain_limit})
         self._accounts_changed()

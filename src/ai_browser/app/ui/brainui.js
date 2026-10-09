@@ -1,4 +1,4 @@
-// The Brain's inbox, in AI Home and Mission Control: only what is new or needs the user, each with what the Brain
+// The Brain's inbox, in Mission Control: only what is new or needs the user, each with what the Brain
 // makes of it and what to do next; above them, its hand-offs (handoffCard). Message text is set as text, never as
 // HTML. Use draft sends the reply the user sees (and may have edited), once; AI Browser then puts it in the reply box,
 // and the user presses Send.
@@ -98,7 +98,7 @@ export function handoffCard(handoff, send) {
   return card;
 }
 
-// The Brain's hand-offs, in a slot of their own (under Mission Control's view switch, in AI Home, in the floating
+// The Brain's hand-offs, in a slot of their own (under Mission Control's view switch, in the floating
 // chat): every one counting down, the soonest to send on top, so none counts down unseen, and the user's own words a
 // countdown of theirs held; else the newest waiting for Send. A card stays in its place until it is done, then shows
 // what happened there for a moment; a new one goes below. The Brain's inbox lists them all.

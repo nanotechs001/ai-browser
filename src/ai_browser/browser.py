@@ -86,7 +86,7 @@ class Tab:
     dialogs: list = field(default_factory=list)  # (kind, message, accepted), answered automatically
     reported: int = 0  # dialogs already shown to the caller
     adopted: bool = False  # a tab the user handed over: left open when the session ends
-    handed: bool = False  # a tab the user handed this agent in AI Home: let go of when they take it back
+    handed: bool = False  # a tab the user handed this agent in Mission Control: let go of when they take it back
     detached: bool = False  # the relay cut our session on this handed tab (Take back): let go of at the next call
     world: int | None = None  # the reader's isolated-world context in the current document (dropped on navigation)
     inside: dict = field(default_factory=dict)  # row id -> the Frame it was read in (the page's own rows: not listed)
@@ -688,10 +688,10 @@ class Browser:
 
     async def adopt(self, target: str) -> Tab:
         """Work in one of the user's tabs: it stays theirs (released, never closed, by this session). In the user's
-        own browser only a tab they handed over in AI Home can be taken on."""
+        own browser only a tab they handed over in Mission Control can be taken on."""
         if self.mode == "chrome" and target not in {item["target"] for item in await self._handed_now()}:
             raise BrowserError("that tab isn't a tab the user handed you: only tabs you open, and tabs the user hands "
-                               "you in AI Home (tabs list shows them as h1…), can be used")
+                               "you in Mission Control (tabs list shows them as h1…), can be used")
         tab = await self._setup_tab(target, adopted=True)
         tab.handed = self.mode == "chrome"
         await self._switch(tab)
@@ -707,8 +707,8 @@ class Browser:
             return []
 
     async def let_go_of_taken_back(self) -> str:
-        """Let go of handed tabs the user took back (AI Home's Take back): detached, never closed. Returns the notes;
-        the session carries on in its newest own tab."""
+        """Let go of handed tabs the user took back (the Tabs page's Take back): detached, never closed. Returns the
+        notes; the session carries on in its newest own tab."""
         mine = [tab for tab in self.owned.values() if tab.handed]
         if not mine:
             return ""

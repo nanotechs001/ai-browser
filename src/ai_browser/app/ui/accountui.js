@@ -1,4 +1,4 @@
-// The AI accounts' pieces that AI Home, Mission Control and Settings share: when a usage limit resets, what an
+// The AI accounts' pieces that Mission Control and Settings share: when a usage limit resets, what an
 // account's status says, the Account picker, an agent's ask (Continue on, Wait for the reset), and the Brain's card.
 // Every text is built here and set as text; none is an email or an organisation.
 import { el } from "./chat.js";
@@ -134,7 +134,7 @@ export function askBox(agent, rows, send) {
   return box;
 }
 
-// The Brain's card in AI Home (Decision 10): "The Brain hit its limit on Personal. Continue on Work?". The click sets
+// The Brain's card in its inbox (Decision 10): "The Brain hit its limit on Personal. Continue on Work?". The click sets
 // the Brain's account (account_brain), which Settings can change back; the card goes once the Brain is moved. It is
 // rebuilt only when what it shows changes, never for a usage reading, so a pick and a Continue that waits both stay.
 export function brainCard(node, limit, rows, send) {

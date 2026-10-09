@@ -1,8 +1,9 @@
 """The Brain's account (AI accounts Decision 10): every one-shot Claude call of the Brain and its skill writer runs on
 the account chosen in Settings → Accounts → The Brain's account.
 
-A call refused at a usage limit marks that account, and the app shows the Brain's card in AI Home ("The Brain hit its
-limit on Personal. Continue on Work?"). The call then waits, for the rest of its own time limit, for the user's click:
+A call refused at a usage limit marks that account, and the app shows the Brain's card in the Brain's inbox ("The Brain
+hit its limit on Personal. Continue on Work?"). The call then waits, for the rest of its own time limit, for the user's
+click:
 the click sets the Brain's account, and the call runs once more there. Without a click in that time, it ends with
 "<name> hit its usage limit". Nothing switches without the click."""
 

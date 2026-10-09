@@ -320,3 +320,26 @@ async def test_mission_controls_title_counts_the_working_agents(stack):
     assert await until(js, "document.title === '(1) Mission Control'")  # the window's title and badge read it
     await stack["server"].agents.stop(agent.id)
     assert await until(js, "document.title === 'Mission Control'")
+
+
+# ---- the words: none the user or Claude reads names AI Home (Task 19) ------------------------------------------------
+
+WORDS = ("agentlink.py", "browser.py", "cli.py", "engine.py", "settings.py", "app/__init__.py", "app/agents.py",
+         "app/bravelink.py", "app/bridge.py", "app/cdprelay.py", "app/run.py", "app/tabs.py", "app/window.py",
+         "brain/account.py", "brain/workflows.py", "desktop/notes.py", "desktop/electron/main.js",
+         "desktop/electron/preload.js", "app/ui/setup.html", "app/ui/accountui.js", "app/ui/brainui.css",
+         "app/ui/brainui.js", "app/ui/permission.js", "app/ui/plan.js", "app/ui/settings.css", "app/ui/tabspage.js",
+         "app/ui/tools.js", "app/ui/train.js", "app/ui/uploads.js")
+
+
+def test_no_word_the_user_or_claude_reads_names_ai_home():
+    from pathlib import Path
+
+    from ai_browser import engine
+
+    root = Path(__file__).parents[1] / "src" / "ai_browser"
+    for name in WORDS:
+        assert "AI Home" not in (root / name).read_text(encoding="utf-8"), name
+    for text in (engine.ASK_AGENT, engine.CUT_OFF_AGENT, engine.CUT_OFF_SESSION):
+        assert "AI Home" not in text
+    assert "the top of Mission Control" in engine.ASK_AGENT

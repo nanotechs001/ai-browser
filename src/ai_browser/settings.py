@@ -75,7 +75,7 @@ class Settings:
         elif key == "shortcut":
             if value is not None and value not in SHORTCUTS:
                 raise ValueError(SHORTCUT_ERROR)
-        elif key in ("read_tabs", "watcher_note", "auto_hand"):  # Settings → Brain's switches; AI Home's note
+        elif key in ("read_tabs", "watcher_note", "auto_hand"):  # Settings → Brain's switches; Settings → Brave's note
             if not isinstance(value, bool):
                 raise ValueError("That setting is on or off")
         elif key == "brain_sources":  # Settings → Brain's checkboxes: {source: on or off}, any of SOURCES

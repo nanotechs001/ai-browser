@@ -548,7 +548,7 @@ async def test_the_app_can_hear_with_its_models_folder(fake_claude, tmp_path, se
 def test_the_terminal_texts_name_no_extension_no_panel_and_no_keyword():
     from ai_browser.app import run
 
-    expected = ("AI Browser is open in its own window: AI Home shows every agent, tab and skill.\n"
+    expected = ("AI Browser is open in its own window: Mission Control shows every agent, tab and skill.\n"
                 "Close the window, or press Ctrl-C here, to stop.")
     assert run.ready_text("darwin") == run.ready_text("win32") == expected
     assert not hasattr(run, "brave_text") and not hasattr(run, "reveal")  # the watcher's steps are gone
