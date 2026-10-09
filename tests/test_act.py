@@ -395,7 +395,8 @@ async def test_autocomplete_options_arrive_in_the_same_result(env):
 async def test_type_and_click_inside_same_origin_frame(env):
     browser, base = env
     await browser.open(base + "frames.html")
-    found = await ids(browser)
+    # the canvas's own rows: the map, a frame from another site with the same page in it, is read too now
+    found = {row["name"]: row["id"] for row in (await browser.state())["rows"] if row.get("frame") == "canvas"}
     await run(browser, f'type {found["Inner name"]} "hi"', f"click {found['Inner button']}")
     frame = "document.querySelector('iframe[name=canvas]').contentDocument"
     assert await js(browser, f"{frame}.getElementById('inner').value") == "hi"

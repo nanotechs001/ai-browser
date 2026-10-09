@@ -149,3 +149,124 @@ async def test_a_frame_that_goes_is_forgotten_with_the_frames_inside_it(builder)
     assert await until(lambda: len(own_frames(tab)) == 2)
     await browser._eval("document.querySelector('[name=page-builder]').remove()")
     assert await until(lambda: not own_frames(tab))
+
+
+async def read_until(browser, *names, find=None) -> dict:
+    """The state once rows with all these names are read (a frame's address comes a moment after its page's)."""
+    for _ in range(100):
+        state = await browser.state(find)
+        if all(any(row["name"] == name for row in state["rows"]) for name in names):
+            return state
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"never read {names}: {[row['name'] for row in state['rows']]}")
+
+
+def row(state, name) -> dict:
+    return next(row for row in state["rows"] if row["name"] == name)
+
+
+def line(state, label) -> dict:
+    return next(frame for frame in state["frames"] if frame["label"] == label)
+
+
+@CHROME
+async def test_observe_numbers_the_canvas_with_its_frames_label(builder):
+    browser, page = builder
+    await browser.open(page)
+    state = await read_until(browser, "Add row", "Nested button", "Side button")
+    assert row(state, "Add section").get("frame") is None  # the builder's own toolbar
+    assert row(state, "Add row")["frame"] == "page-builder" and row(state, "Add row")["role"] == "button"
+    assert row(state, "Headline")["role"] == "textbox"
+    sticky = row(state, "Sticky")
+    assert (sticky["role"], sticky["value"], sticky["options"], sticky["frame"]) == ("select", "Off", ["Off", "On"],
+                                                                                     "page-builder")
+    assert row(state, "Nested button")["frame"] == "nested"  # a frame from another site inside the canvas
+    assert row(state, "Side button")["frame"] == "side"  # another origin on the same site, in the page's process
+    ids = [item["id"] for item in state["rows"]]
+    assert len(ids) == len(set(ids))  # one number space for the whole page
+    assert all(line(state, label).get("readable") for label in ("page-builder", "nested", "side"))
+    assert "Header section" in state["text"]  # the canvas's text is the page's text too (data, as any page text)
+    again = await browser.state()
+    assert [(item["id"], item["name"]) for item in again["rows"]] == [(item["id"], item["name"])
+                                                                     for item in state["rows"]]  # ids stay put
+
+
+@CHROME
+async def test_find_reaches_into_frames_and_a_frame_out_of_view_waits(builder):
+    browser, page = builder
+    await browser.open(page)
+    await read_until(browser, "Add row")
+    found = await browser.state(find="Deep button")  # below the fold of the canvas's panel
+    assert [(item["name"], item["frame"]) for item in found["rows"]] == [("Deep button", "page-builder")]
+    await browser._eval("document.querySelector('[name=page-builder]').style.top = '5000px'")
+    state = await browser.state()
+    assert not [item for item in state["rows"] if item.get("frame") in ("page-builder", "nested")]
+    assert line(state, "page-builder").get("readable")  # out of view: left for when it shows, never "not readable"
+    assert [item["name"] for item in (await browser.state(find="Add row"))["rows"]] == ["Add row"]
+
+
+@CHROME
+async def test_a_frame_that_goes_mid_read_is_reported_not_crashed_on(builder, monkeypatch):
+    from ai_browser.browser import Frame
+
+    browser, page = builder
+    await browser.open(page)
+    await read_until(browser, "Add row", "Side button")
+    reader_in = browser._reader_in
+
+    async def removing(where, call, *args, **kwargs):
+        if isinstance(where, Frame) and where.url.endswith("/frames/canvas.html") and call.startswith("observe("):
+            await browser.cdp.send("Runtime.evaluate", {"expression": "document.querySelector('[name=page-builder]')"
+                                                                      ".remove()"}, session_id=browser.current.session)
+            await asyncio.sleep(0.3)  # gone by the time it is read
+        return await reader_in(where, call, *args, **kwargs)
+
+    monkeypatch.setattr(browser, "_reader_in", removing)
+    state = await browser.state()
+    assert row(state, "Add section") and row(state, "Side button")  # the rest of the page reads as before
+    assert not line(state, "page-builder").get("readable")  # "(not readable)"
+    assert not [item for item in state["rows"] if item.get("frame") in ("page-builder", "nested")]
+
+
+@CHROME
+async def test_an_editor_drawn_on_a_canvas_is_noticed(builder):
+    browser, page = builder
+    await browser.open(page)
+    assert not (await read_until(browser, "Add row")).get("canvas")
+    await browser.open(page.split("frames/")[0] + "frames/drawn.html")  # Figma's or Canva's kind, in a frame
+    for _ in range(100):
+        state = await browser.state()
+        if state.get("canvas"):
+            break
+        await asyncio.sleep(0.1)
+    assert state["canvas"] is True and line(state, "board").get("readable")
+
+
+@CHROME
+async def test_a_frame_whose_address_hasnt_come_is_not_readable_yet(builder):
+    browser, page = builder
+    await browser.open(page)
+    await read_until(browser, "Add row")
+    canvas = next(frame for frame in browser.current.frames.values() if frame.url.endswith("/frames/canvas.html"))
+    address, canvas.url = canvas.url, ""  # as just after Chrome attached it: its address comes a moment later
+    state = await browser.state()
+    assert not line(state, "page-builder").get("readable")  # "(not readable)", never an error
+    assert not [item for item in state["rows"] if item.get("frame") in ("page-builder", "nested")]
+    canvas.url = address
+    assert row(await browser.state(), "Add row")["frame"] == "page-builder"  # read at the next observe
+
+
+@CHROME
+async def test_frames_share_one_limit_and_one_time(builder, monkeypatch):
+    from ai_browser import browser as browser_module
+
+    browser, page = builder
+    await browser.open(page)
+    await read_until(browser, "Add row", "Nested button", "Side button")
+    monkeypatch.setattr(browser_module, "MAX_FRAMES", 1)
+    state = await browser.state()
+    assert {item.get("frame") for item in state["rows"]} == {None, "page-builder"}  # the first frame only
+    assert not line(state, "nested").get("readable") and not line(state, "side").get("readable")
+    monkeypatch.setattr(browser_module, "FRAME_TIME", 0)
+    state = await browser.state()
+    assert {item.get("frame") for item in state["rows"]} == {None}  # out of time: the page's own rows still come

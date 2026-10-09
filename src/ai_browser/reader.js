@@ -25,6 +25,11 @@
   let downloadsRisky = false; // the user's own browser: a link that downloads is ⚠ too
   const downloadLink = (el) => el.tagName === "A" && el.hasAttribute("download");
   let nameLimit = 80;
+  // In a frame from another site: where the engine places this document on the page ({x, y, sx, sy}: a point here is
+  // at x + its x * sx, y + its y * sy), the page's viewport (w, h) and the frame's label. null in the page itself.
+  let at = null;
+  const onPage = (x, y) => (at ? { x: at.x + x * at.sx, y: at.y + y * at.sy } : { x, y });
+  let frameEls = []; // the <iframe> elements of the last observe's frames, in the same order
 
   const idOf = (el) => {
     let n = ids.get(el);
@@ -208,15 +213,17 @@
   const collect = (opts) => {
     const find = opts.find ? String(opts.find).toLowerCase() : null;
     const out = [], frames = [], seen = new Set();
+    frameEls = [];
     let above = 0, below = 0, pointerChecks = 0;
-    const topW = innerWidth, topH = innerHeight;
+    const topW = at ? at.w : innerWidth, topH = at ? at.h : innerHeight;
 
     const place = (geo, ctx) => {
       const r = geo.getBoundingClientRect();
-      const top = r.top + ctx.y, bottom = r.bottom + ctx.y, left = r.left + ctx.x, right = r.right + ctx.x;
+      const a = onPage(r.left + ctx.x, r.top + ctx.y), b = onPage(r.right + ctx.x, r.bottom + ctx.y);
+      const top = a.y, bottom = b.y, left = a.x, right = b.x;
       const inFrame = r.bottom > 0 && r.top < ctx.h && r.right > 0 && r.left < ctx.w;
       const inView = inFrame && bottom > 0 && top < topH && right > 0 && left < topW;
-      return { inView, top, bottom, left, h: r.height };
+      return { inView, top, bottom, left, h: bottom - top };
     };
     const entry = (p, row) => ({ top: p.top, left: p.left, h: p.h, row });
 
@@ -266,10 +273,12 @@
       if (!doc || !doc.documentElement) {
         if (!label) { try { label = new URL(iframe.src).hostname; } catch (e) { label = "frame"; } }
         frames.push({ label, url: iframe.src, cross: true });
+        frameEls.push(iframe);
         return;
       }
       label = label || "frame" + (frames.length + 1);
       frames.push({ label, url: doc.location.href, cross: false });
+      frameEls.push(iframe);
       const cs = styleOf(iframe);
       walk(doc, {
         x: ctx.x + r.left + iframe.clientLeft + parseFloat(cs.paddingLeft),
@@ -290,7 +299,7 @@
       }
     };
 
-    walk(document, { x: 0, y: 0, w: topW, h: topH, label: null });
+    walk(document, { x: 0, y: 0, w: innerWidth, h: innerHeight, label: at ? at.label : null });
     return { rows: readingOrder(out), frames, above, below };
   };
 
@@ -415,6 +424,15 @@
     return docs;
   };
 
+  // An editor drawn on a <canvas> (Figma, Canva) has nothing to read: a visible canvas over a quarter of the view.
+  const drawn = () => [...document.querySelectorAll("canvas")].some((canvas) => {
+    if (!visible(canvas)) return false;
+    const r = canvas.getBoundingClientRect();
+    const w = Math.min(r.right, innerWidth) - Math.max(r.left, 0);
+    const h = Math.min(r.bottom, innerHeight) - Math.max(r.top, 0);
+    return w > 0 && h > 0 && w * h >= innerWidth * innerHeight / 4;
+  });
+
   const textIn = (needle) => sameOriginDocs().some((d) => d.body && d.body.innerText.toLowerCase().includes(needle));
 
   // Safety limits only; extract reports when one is hit.
@@ -525,12 +543,14 @@
     },
 
     observe(opts) {
+      at = opts.at || null;
+      next = Math.max(next, opts.next || 1); // the page and its frames number their rows from one count
       riskyRe = opts.risky ? new RegExp(opts.risky, "i") : null;
       downloadsRisky = !!opts.downloads;
       nameLimit = opts.nameLimit || 80;
       for (const [n, el] of nodes) if (!el.isConnected) { nodes.delete(n); sigs.delete("e" + n); }
       const { rows, frames, above, below } = collect(opts);
-      const maxRows = opts.maxRows || 150;
+      const maxRows = opts.maxRows ?? 150; // a frame may get 0: the page's rows came first
       const find = opts.find ? String(opts.find).toLowerCase() : null;
       const shown = rows.slice(0, maxRows);
       // Remember identities only for rows the caller actually sees; targets are checked against these.
@@ -550,8 +570,10 @@
         frames,
         rows: shown,
         truncated: Math.max(0, rows.length - maxRows),
-        text: visibleText(opts.textLimit || 1500, find),
+        text: visibleText(opts.textLimit ?? 1500, find),
         doc: docId,
+        next,
+        canvas: drawn(),
         find: opts.find || null,
         signals: readSignals(),
       };
@@ -592,6 +614,19 @@
 
     node(id) {
       return byId(id) || null;
+    },
+
+    // A frame from another site, seen from this document (the engine asks, with its <iframe> element): where it draws
+    // the frame (its content box's corner, and the scale a CSS transform or zoom gives it: the drawn size versus the
+    // layout size), its lower right corner, and its place in the last observe's frames (-1: not listed, too small).
+    // null when it shows nowhere.
+    frameAt(fe) {
+      if (!fe || !fe.isConnected || !visible(fe)) return null;
+      const r = fe.getBoundingClientRect(), cs = styleOf(fe), o = frameOffset(fe);
+      const sx = fe.offsetWidth ? r.width / fe.offsetWidth : 1, sy = fe.offsetHeight ? r.height / fe.offsetHeight : 1;
+      return { x: o.x + r.left + (fe.clientLeft + parseFloat(cs.paddingLeft)) * sx,
+               y: o.y + r.top + (fe.clientTop + parseFloat(cs.paddingTop)) * sy, sx, sy,
+               right: o.x + r.right, bottom: o.y + r.bottom, slot: frameEls.indexOf(fe) };
     },
 
     // Element box in page coordinates (for screenshots).
