@@ -1,4 +1,4 @@
-# Handoff: where AI Browser stands (2026-10-08)
+# Handoff: where AI Browser stands (2026-10-09)
 
 This note carries what a new session needs that isn't in the code: the decisions taken, the order of work, the rules,
 and what only the user can check on their own machines. The work ledgers (`.superpowers/`) are git-ignored.
@@ -93,8 +93,17 @@ capability for faster navigation and all feature of the claude app". Four projec
    - **The user's Windows build:** "Build Windows app" run 37778480630 from main 75809de (no test suite, as asked):
      AI-Browser-windows.zip (182 MB) on https://github.com/nanotechs001/ai-browser/actions/runs/37778480630 (kept 14
      days). It has everything merged on 2026-10-08, not the `win-fixes` branch.
-   - **Windows work is paused until all changes are done.** Resume in this order:
-   1. **Build saved agents and Mission Control without AI Home** (the next change).
+   - **The user: "we'll build later all planning for now"** (2026-10-09). Nothing is being built. Build order, when the
+     user says go (each subagent-driven, as the brain-delegation batch was):
+   0. **Iframes from another site** (first: small, used daily, and saved agents' page-building agents rely on it).
+      Spec `docs/superpowers/specs/2026-10-09-frames-design.md`, plan `docs/superpowers/plans/2026-10-09-frames.md`
+      (8 tasks; base f8cb177; 56 quotes checked; dry-run replayed, whole suite 2747 passed). Security-sensitive: Tasks
+      2 and 7 (the relay's frame sessions). Found by the user on GoHighLevel's builder (one iframe from
+      page-builder.leadconnectorhq.com); confirmed by a hand test in the browser pane on 2026-10-09 (the header rebuilt
+      by clicks, left unsaved in the user's GHL page).
+   - **Windows work is paused until all changes are done.** Then, in this order:
+   1. **Build saved agents and Mission Control without AI Home** (after the iframes; it re-reads its quotes in the five
+      files both plans touch: app/cdprelay.py, browser.py, tests/test_cdprelay.py, tests/conftest.py, README.md).
       Spec `docs/superpowers/specs/2026-10-08-saved-agents-design.md`, plan `docs/superpowers/plans/2026-10-08-saved-agents.md`
       (21 tasks, two lanes, merge points M1–M3 in its "Lanes and order"; base 8d5fb44; 583 quotes checked — the
       builders find each place by its quoted text, so drift from later main commits is handled the same way).
