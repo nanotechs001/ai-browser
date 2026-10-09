@@ -126,6 +126,9 @@ export function mountKnowledge(root, link, { tabs = () => [], model = () => "son
     shown(page) {
       if (page === "knowledge") link.send({ type: "skills" });
     },
+    fromAgent(id, name) { // the drawer's Save as skill: Train drafts a skill from that agent's chat
+      train.fromAgent(id, name);
+    },
     agents(map) { // mission.js, on every change of an agent
       all = [...map.values()];
       running = all.filter((agent) => agent.state !== "failed");

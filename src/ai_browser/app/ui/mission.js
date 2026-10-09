@@ -99,7 +99,11 @@ guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 window.addEventListener("focus", () => link.send({ type: "accounts" })); // shown again: each account's status, now
 const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: () => accountRows,
-                             browserOf: () => ({ tabs, scope: tabScope, browser }) });
+                             browserOf: () => ({ tabs, scope: tabScope, browser }),
+                             saveSkill: (id, name) => { // Save as skill: Knowledge's Train drafts it from that chat
+                               showPage("knowledge");
+                               knowledge.fromAgent(id, name);
+                             } });
 const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
 const list = mountList($("view-list"), { onOpen: select });
 const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI and Build a Mission
@@ -109,12 +113,12 @@ const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible
                                                                                        agent.workspace) });
 const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
 parts.push(missions, history);
-parts.push(mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value,
-                                                      useSkill: (ref) => { // Use in new mission
-                                                        showPage("dashboard");
-                                                        composer.pickSkill(ref);
-                                                      } }),
-           mountIntegrations($("page-integrations"), link));
+const knowledge = mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value,
+                                                             useSkill: (ref) => { // Use in new mission
+                                                               showPage("dashboard");
+                                                               composer.pickSkill(ref);
+                                                             } });
+parts.push(knowledge, mountIntegrations($("page-integrations"), link));
 parts.push(mountTabsPage($("page-tabs"), { // the user's tabs: Hand over, Take back, and a click brings one forward
   send,
   agents: () => [...agents.values()].sort((one, two) => (two.number || 0) - (one.number || 0)),

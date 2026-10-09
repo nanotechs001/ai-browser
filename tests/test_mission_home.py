@@ -10,7 +10,7 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from test_app_server import wait_for
 from test_home import HOSTILE, open_settings, stack, until  # noqa: F401  (fixtures)
-from test_mission import open_mission
+from test_mission import open_drawer, open_mission
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 BAR = "document.getElementById('brave-bar')"
@@ -262,3 +262,47 @@ async def test_knowledge_says_who_uses_a_skill_and_hands_it_on(stack, monkeypatc
     assert await until(js, "!document.getElementById('page-dashboard').hidden && document.querySelector("
                            "'#skills-pick input[value=\"personal:prices\"]').checked")
     assert await js("document.activeElement.id") == "task"
+
+
+# ---- the drawer: Save as skill, time, cost and skills loaded; the Brain's inbox: its limit card (Task 13) ------------
+
+@CHROME
+async def test_the_drawer_shows_cost_and_skills_and_saves_a_skill(stack):
+    server = stack["server"]
+    agent = await server.agents.create("Fix the footer")
+    await wait_for(lambda: agent.state == "your_turn")
+    agent.cost, agent.loaded_skills = 0.25, ["personal:prices"]
+    server.agents._changed(agent)
+    js = await open_mission(stack)
+    assert await until(js, "document.querySelector('.station[data-id=\"a1\"]') !== null")
+    await js(open_drawer("a1"))
+    totals = "document.querySelector('#drawer-body .totals')?.textContent"
+    assert await until(js, f"{totals}?.endsWith(' · $0.25 · skills: personal:prices')")
+    await js("document.querySelector('#drawer-body .save-skill').click(); true")  # Knowledge's Train drafts it
+    assert await until(js, "!document.getElementById('page-knowledge').hidden && document.querySelector("
+                           "'#page-knowledge .train-body').textContent.includes(\"Drafting a skill from 1 · Fix "
+                           "the footer's chat…\")")
+
+
+@CHROME
+async def test_the_brains_inbox_has_its_limit_card_and_turn_it_on(stack):
+    from fake_accounts import sign_in
+
+    server, accounts = stack["server"], stack["accounts"]
+    work = accounts.add("Work")
+    sign_in(work.folder)
+    await server._refresh_accounts()
+    js = await open_mission(stack)
+    await js("document.getElementById('bubble').click(); true")  # the globe's drawer: the Brain's inbox
+    card = "document.querySelector('#drawer-body .brain-limit')"
+    assert await until(js, f"{card} !== null && {card}.hidden")  # no limit: no card
+    server._brain_limit_hit({"account": "default", "resets_at": None})
+    assert await until(js, f"!{card}.hidden && {card}.querySelector('.account-ask-head').textContent"
+                           " === 'The Brain hit its limit on Default. Continue on Work?'")
+    await js(f"{card}.querySelector('.continue').click(); true")
+    await wait_for(lambda: accounts.brain_id() == work.id)
+    assert await until(js, f"{card}.hidden")
+    turn_on = "document.querySelector('#drawer-body .brain-turn-on')"
+    assert await until(js, f"{turn_on} !== null && !{turn_on}.hidden")  # reading is off: Turn it on in Settings
+    await js(f"{turn_on}.click(); true")
+    assert await until(js, "location.pathname === '/settings' && location.hash === '#brain-section'")
