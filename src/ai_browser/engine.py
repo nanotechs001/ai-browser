@@ -24,7 +24,7 @@ from .grouping import Placer
 from .live import LiveView
 from .sandbox import DockerError, SandboxInfo, Sandboxes
 from .shellguard import shell_problem
-from .skills import Catalog
+from .skills import Catalog, usable_skills
 from .steps import parse_steps
 from .tasklog import TaskLog, new_task_id
 from .workfs import PathError, WorkDir
@@ -166,6 +166,8 @@ class Engine:
     def catalog(self) -> Catalog:
         if self._catalog is None:
             self._catalog = Catalog.of_user(project_root() / "skills", set(self.cfg.blocked_skills))
+        if self._catalog.allowed is None:  # a saved agent's Can use, from the app: find_skills lists only those,
+            self._catalog.allowed = usable_skills()  # load_skill and read_skill_file refuse the others
         return self._catalog
 
     # ---- plumbing ---------------------------------------------------------------------------------

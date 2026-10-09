@@ -63,10 +63,11 @@ from . import attachments
 from . import pagematch
 from . import powers
 from .agents import CLOSED, Agent, AgentManager
-from .bravelink import NOT_CONNECTED, PlaceError
+from .bravelink import NOT_CONNECTED, NOT_OPEN, PlaceError
 from .inworld import WorldError
+from .savedagents import BAD_ACCOUNT, BAD_PROFILE, NOT_AN_AGENT, SavedAgents
 from .workspaces import GONE as WORKSPACE_GONE
-from .workspaces import Workspaces
+from .workspaces import Workspaces, one_line
 from .cdprelay import Tokens
 
 APP_PORTS = range(8792, 8812)
@@ -91,7 +92,7 @@ BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back", "browser_disconnect"
 CHECK_SITE = re.compile(r"[a-z0-9.-]{1,253}")  # a host name, nothing else
 CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{1,64}")  # an engine's live view
 WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "schedule", "run", "tools", "skills",
-                   "model")
+                   "model", "runs_as")
 WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabled")
 UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
 SETUP_PAGE = UI / "setup.html"
@@ -129,9 +130,14 @@ ACCOUNT_MESSAGES = {"accounts", "account_add", "account_add_existing", "account_
 POWERS_MESSAGES = {"folder_choose", "folder_trust", "permission_rules", "permission_rule_remove"}  # agent powers
 WORKSPACE_MESSAGES = {"workspaces", "workspace_save", "workspace_delete", "workspace_assign"}  # the new look
 ATTACH_MESSAGES = {"attach_start", "attach_chunk", "attach_drop"}  # the new look's Attach: a file in pieces
+SAVED_MESSAGES = {"saved_agents", "saved_agent_save", "saved_agent_delete"}  # the Agents page: our own pages only
+SAVED_FIELDS = ("slug", "name", "description", "instruction", "profile", "web", "model", "account", "folder",
+                "auto_approve", "can_use", "load_at_start")
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
+NOT_LEARNED = ("Agent {number} browses in Brave's {name} profile. Open a window of that profile once; AI Browser learns "
+               "it in about 30 seconds.")  # the user's words on the run (Claude hears bravelink's NOT_OPEN)
 EMPTY_MESSAGE = "Write a message, or attach a file"
 YOU = {"kind": "you"}
 
@@ -194,6 +200,9 @@ MESSAGE_RULES: dict[str, Rule] = {
     # Auto-approve in its folder (the user's choice, 2026-10-07): the drawer's switch, on or off, the user's click on
     # one of our pages. The Brain, templates and voice never turn it on (new_task's "auto" is the composer's switch)
     "agent_auto": APP_ONLY,
+    # Saved agents (2026-10-08): the Agents page lists, saves and deletes them, on the user's click on one of our pages.
+    # Their instruction reaches their system prompt: the Brain, templates, voice and pages' text never write one
+    "saved_agents": APP_ONLY, "saved_agent_save": APP_ONLY, "saved_agent_delete": APP_ONLY,
 }
 
 
@@ -342,6 +351,7 @@ class AppServer:
         self.home = Path(home)
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
         self.workspaces = Workspaces(self.home)  # <home>/workspaces.json: the new look's groups
+        self.saved = SavedAgents(self.home)  # <home>/agents: the saved agents (the Agents page)
         self.uploads = attachments.Uploads(self.home / "app" / "uploads")  # files on their way from a page
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
         self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
@@ -374,6 +384,7 @@ class AppServer:
         self.workflows, self.runner = workflows, runner  # the user's workflows (AI Home → Workflows)
         if runner is not None:
             runner.on_change = self.workflows_changed
+            runner.saved = self.saved  # a template's Runs as: a saved agent
         if brain is not None:
             brain.workflows, brain.runner = workflows, runner
         self._roles: dict[WebSocket, str] = {}  # "app", stored when a socket is accepted
@@ -411,6 +422,7 @@ class AppServer:
         self._feed = agents.subscribe()
         self._fanout: asyncio.Task | None = None
         self._thumbs: dict[str, dict] = {}  # agent id -> {"last": monotonic time, "task", "again", "jpeg"}
+        self._told_profile: set[str] = set()  # runs told their profile isn't learned yet (once each)
         self._jobs: set[asyncio.Task] = set()
         self._server: _QuietServer | None = None
         self._task: asyncio.Task | None = None
@@ -418,6 +430,7 @@ class AppServer:
         agents.let_go = self._let_go  # a handed tab taken back, or let go when its agent closes
         agents.on_turn = lambda agent: self.connect_brave("turn", agent.id)  # right after the user's task
         agents.mint_token = self.tokens.mint
+        agents.catalog = self._skill_catalog  # Load at start: a run's first message carries its skills' text
         if brain is not None:
             brain.set_sources(self.settings.get()["brain_sources"])  # Settings → Brain's checkboxes
             brain.auto_hand = lambda: self.settings.get()["auto_hand"]  # Settings → Brain's hand-off switch
@@ -967,13 +980,27 @@ class AppServer:
             return Response(status_code=404)
         if self.brave is None:
             return JSONResponse({"error": NOT_CONNECTED})
+        agent = self.agents.agents.get(owner_id)
+        profile = agent.profile if agent is not None else None  # a saved agent's own Brave profile, else Settings'
         try:
-            target = await self.brave.open_ai_tab(owner_id)
+            target = await self.brave.open_ai_tab(owner_id, profile=profile)
         except PlaceError as exc:
+            if profile is not None and str(exc) == NOT_OPEN:
+                self._not_learned(agent)
             return JSONResponse({"error": str(exc)})
         self._record_tab(owner_id, target)
         self._own(target, owner)
         return JSONResponse({"target": target})
+
+    def _not_learned(self, agent: Agent) -> None:
+        """A run's profile isn't learned yet: its chat says so once, in fixed words that name the profile. Nothing
+        opens a Brave window by itself."""
+        if agent.id in self._told_profile:
+            return
+        self._told_profile.add(agent.id)
+        name = next((row["name"] for row in self._profiles() if row["folder"] == agent.profile), agent.profile)
+        name = one_line(name)[:60]  # Brave's name is the user's own: one line, as long as the other one-line fields
+        self.agents.note(agent.id, NOT_LEARNED.format(number=agent.number, name=name))
 
     async def _agent_status(self, request: Request) -> Response:
         agent_id = request.query_params.get("agent", "")
@@ -1049,6 +1076,7 @@ class AppServer:
         relay.port = self.port or 0  # 0 until the server listens (the relay's own default)
         relay.handed = self._handed_to
         relay.may_open = lambda identity: bool(SESSION_ID.match(identity)) or self.agents.working(identity)
+        relay.placed_only = self._placed_only  # a run with a Brave profile of its own: the app opens its tabs
         self.agents.own_tabs = relay.own_targets
         relay.on_grant(lambda identity, target: self._own(target, self._owner_of(identity)))
         relay.on_change(self._clients_changed)
@@ -1122,6 +1150,14 @@ class AppServer:
             answer(error=error)
         else:
             answer(site=site, sample=_text(result.get("sample"))[:300])
+
+    def _placed_only(self, identity: str) -> bool:
+        """Whether only the app may open this client's tabs: a run with a Brave profile of its own, or an agent's id
+        the app no longer knows (its socket outlived AgentManager.close): fail closed, never the profile used last."""
+        agent = self.agents.agents.get(identity)
+        if agent is None:
+            return bool(AGENT_ID.match(identity))
+        return agent.profile is not None
 
     def _handed_to(self, identity: str) -> set[str]:
         """The tabs the user handed this agent now (Hand over, or a task started in a tab): read live."""
@@ -1394,6 +1430,8 @@ class AppServer:
             self._attach_command(ws, queue, kind, message)
         elif kind in WORKSPACE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._workspace_command(queue, kind, message)
+        elif kind in SAVED_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            self._saved_command(queue, kind, message)
         elif kind == "hello":
             self._views[ws] = message.get("view") if isinstance(message.get("view"), str) else ""
             self._seen(ws, message.get("visible") is True)
@@ -1429,17 +1467,30 @@ class AppServer:
                 else None  # agent powers: the task's folder; none is the agent's own scratch folder
             listed = message.get("attachments") if isinstance(message.get("attachments"), list) else []
             web = message.get("web") if message.get("web") in powers.WEB_CHOICES else "web"
+            saved = self.saved.get(message["agent"]) if message.get("agent") is not None else None  # Agent ▾
+            if message.get("agent") is not None and saved is None:
+                queue.put_nowait({"type": "error", "text": NOT_AN_AGENT, "request": request})
+                return
+            started = True
             try:  # an account that isn't listed any more is said, never swapped for another
                 files = self.uploads.take(ws, listed)  # each attached file whole, or nothing starts
-                agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
-                                            folder=folder, workspace=self._workspace_of(message), files=files,
-                                            web=web, auto=message.get("auto") is True,  # the composer's switch
-                                            name=message.get("name"), description=message.get("description"))
+                if saved is not None:  # its own settings, Auto-approve too: the page's pickers don't apply
+                    agent, started = await agents.run_as(saved, text, skills, tab=_tab(message.get("tab")),
+                                                         adopt=adopt, files=files,
+                                                         workspace=self._workspace_of(message))
+                else:
+                    agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")),
+                                                account=account, folder=folder, workspace=self._workspace_of(message),
+                                                files=files, web=web,
+                                                auto=message.get("auto") is True,  # the composer's switch
+                                                name=message.get("name"), description=message.get("description"))
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
             self.uploads.done(ws, listed)
-            if handed is not None:
+            if handed is not None and not started:  # its run is at work: the tab is handed to that run
+                await self._hand(agent.id, adopt)
+            elif handed is not None:
                 self._own(adopt, self._owner_of(agent.id, handed=True))
             queue.put_nowait({"type": "created", "id": agent.id, "request": request})
         elif kind == "send":
@@ -1860,6 +1911,65 @@ class AppServer:
             return
         self._send_all(self._workspaces_message())
 
+    # ---- saved agents: the Agents page lists, saves and deletes them (AI Browser's own pages only) -------------------
+
+    def _saved_snapshot(self) -> dict:
+        """The saved agents, and Brave's profiles for their settings: each "ready" once AI Browser has learned it on
+        this connection (else the page says "open it once")."""
+        place = self.brave.place if self.brave is not None else None
+        return {"type": "saved_agents", "agents": [saved.public() for saved in self.saved.all()],
+                "profiles": [{**row, "ready": place.ready(row["folder"])} for row in self._profiles()]}
+
+    def _saved_check(self, fields: dict) -> None:
+        """What only the app can judge, before the file is written: a profile Brave lists, an account Settings lists,
+        a folder a task may use. ValueError in the words the Agents page shows."""
+        profile, account, folder = fields.get("profile"), fields.get("account"), fields.get("folder")
+        # a list, not a set: a page's ["x"] is refused, never hashed (a TypeError would drop the window's socket)
+        if profile not in (None, "") and profile not in [row["folder"] for row in self._profiles()]:
+            raise ValueError(BAD_PROFILE)
+        listed = self.accounts.get(account) if self.accounts is not None else account == "default" or None
+        if account not in (None, "") and listed is None:
+            raise ValueError(BAD_ACCOUNT)
+        why = self.agents.folder_problem(folder) if isinstance(folder, str) and folder else None
+        if why:
+            raise ValueError(why)
+
+    def _forget_tasks(self, slug: str) -> None:
+        """A saved agent was deleted: its tasks (the templates that run as it) are deleted with it."""
+        if self.workflows is None:
+            return
+        for workflow in self.workflows.all():
+            if workflow.runs_as == slug:
+                self.workflows.delete(workflow.slug)
+        self.workflows_changed()
+
+    def _saved_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        """The Agents page: the list, Save (a new agent, or an edit) and Delete agent. Every page then hears the list
+        again. Nothing but these clicks writes an agent."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        if kind == "saved_agents":
+            queue.put_nowait(self._saved_snapshot())
+            return
+        try:
+            if kind == "saved_agent_save":
+                fields = {key: message[key] for key in SAVED_FIELDS if key in message}
+                self._saved_check(fields)
+                saved = self.saved.save(fields)
+                queue.put_nowait({"type": "saved_agent_saved", "request": request, "slug": saved.slug})
+            elif kind == "saved_agent_delete":
+                if not self.saved.delete(message.get("slug")):
+                    raise ValueError(NOT_AN_AGENT)
+                self.agents.forget_saved(message["slug"])  # a run at work goes on, as a one-off run
+                self._forget_tasks(message["slug"])
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        except OSError as exc:  # a read-only home, a full disk: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't save that: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._send_all(self._saved_snapshot())
+
     def _tools_snapshot(self, account: str = "default", tools=None) -> dict:
         tools = tools if tools is not None else self.tools
         return {"type": "tools_snapshot", "account": account, "servers": tools.servers(),
@@ -2002,10 +2112,13 @@ class AppServer:
 
     # ---- skills -----------------------------------------------------------------------------------------------
 
-    def _skills(self) -> list:
+    def _skill_catalog(self) -> Catalog:
         if self._catalog is None:  # the same skills the agents' engines see
             self._catalog = Catalog.of_user(project_root() / "skills", set(load_config(self.home).blocked_skills))
-        return self._catalog.all()
+        return self._catalog
+
+    def _skills(self) -> list:
+        return self._skill_catalog().all()
 
     def _skills_summary(self) -> dict:
         by_source: dict[str, int] = {}

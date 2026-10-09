@@ -231,6 +231,7 @@ NO_DOWNLOAD = (-32602, "No download with given guid found")
 NO_CONTEXT = (-32602, "Failed to find browser context with given id")
 SPECIAL_TAB = (-32000, "hidden, focused or special tabs don't open through AI Browser's connection")
 NOT_FLAT = (-32000, "AI Browser's connection needs flatten: true")
+OWN_PROFILE = (-32000, "AI Browser opens this agent's tabs, in its own Brave profile")  # a saved agent's profile
 CREATE_PARAMS = frozenset({"url", "newWindow", "background", "browserContextId"})  # what an engine sends
 CUT_OFF_TEXT = "The user disconnected this client in AI Home."
 _SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")
@@ -398,6 +399,9 @@ class Relay:
         self.upstream_opens = 0  # handshakes started to the browser: each one is a question the user is asked
         self.handed: Callable[[str], set[str]] = lambda identity: set()  # set by the server: agent.adopted, live
         self.may_open: Callable[[str], bool] = lambda identity: bool(_SESSION_ID.match(identity))  # by the server
+        # by the server: a run of a saved agent with a Brave profile of its own. Only the app's client opens its tabs
+        # (POST /agent-tab, in that profile's context): a tab it made itself would open in the profile used last
+        self.placed_only: Callable[[str], bool] = lambda identity: False
         self._ws = None
         self._reader: asyncio.Task | None = None
         self._ids = itertools.count(1)
@@ -726,6 +730,8 @@ class Relay:
                 return -32000, problem
             if set(params) - CREATE_PARAMS:  # hidden, focused, minimized, off-screen or special: never
                 return SPECIAL_TAB
+            if not client.app and self.placed_only(identity):
+                return OWN_PROFILE
             context = params.get("browserContextId")
             if context is not None and context not in self._contexts_of(identity):
                 return NO_CONTEXT  # never a private window or another profile it learned of
