@@ -261,6 +261,40 @@ async def test_close_asks_only_while_the_run_still_works(stack):
     assert await js(f"{DIALOG} === null")
 
 
+# ---- Save as agent: a one-off run's settings, for a new saved agent (Task 18) ----------------------------------------
+
+@CHROME
+async def test_save_as_agent_fills_a_new_agents_settings_from_the_run(stack):
+    server = stack["server"]
+    agent = await server.agents.create("List the prices", model="haiku", web="brave", name="Prices",
+                                       description="Rivals' plans")
+    await wait_for(lambda: agent.state == "your_turn")
+    agent.loaded_skills = ["personal:prices"]
+    server.agents._changed(agent)
+    js = await open_mission(stack)
+    assert await until(js, "document.querySelector('.station[data-id=\"a1\"]') !== null")
+    await js(open_drawer("a1"))
+    button = "document.querySelector('#drawer-body .save-as-agent')"
+    assert await until(js, f"{button} !== null && !{button}.hidden")
+    await js(f"{button}.click(); true")
+    assert await until(js, f"!document.getElementById('page-agents').hidden && !{PANEL}.hidden"
+                           f" && {in_panel('agent-name')}.value === 'Prices'")
+    assert await js(f"[{in_panel('agent-about')}.value, {in_panel('agent-model')}.value, {in_panel('agent-web')}.value,"
+                    f" {in_panel('agent-instruction')}.value]") == ["Rivals' plans", "haiku", "brave", ""]
+    assert await js(f"{PANEL}.querySelector('.agent-panel-title').textContent") == "New agent"  # nothing saved yet
+    assert server.saved.all() == []
+    await js(f"{PANEL}.querySelector('.save-agent').click(); true")
+    await wait_for(lambda: server.saved.get("prices") is not None)
+    saved = server.saved.get("prices")
+    assert (saved.description, saved.model, saved.web, saved.load, saved.use, saved.instruction) == (
+        "Rivals' plans", "haiku", "brave", ["personal:prices"], [], "")  # the skills it loaded, at start
+    run, _ = await server.agents.run_as(saved, "Again")
+    await js(f"{PANEL}.querySelector('header button').click(); true")
+    await js(open_drawer(run.id))
+    assert await until(js, f"document.getElementById('drawer-title').textContent.endsWith('Prices')"
+                           f" && {button}.hidden")  # a saved agent's run is one already
+
+
 @CHROME
 async def test_a_long_agent_name_does_not_widen_the_agent_picker_or_add_a_row(stack):
     stack["server"].saved.save({**AGENT, "name": "W" * 60})  # a select is as wide as its widest option, unless capped

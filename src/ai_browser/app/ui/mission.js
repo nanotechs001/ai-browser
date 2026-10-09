@@ -104,6 +104,15 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                              saveSkill: (id, name) => { // Save as skill: Knowledge's Train drafts it from that chat
                                showPage("knowledge");
                                knowledge.fromAgent(id, name);
+                             },
+                             saveAgent: (agent) => { // Save as agent: a new agent's settings, filled from this run
+                               drawer.close();
+                               showPage("agents");
+                               agentsPage.showAgent("", {
+                                 name: agent.name, description: agent.description || "", model: agent.model,
+                                 web: agent.web || "web", account: agent.account?.id || null,
+                                 folder: agent.folder || null, use: [], load: agent.loaded_skills || [],
+                               });
                              } });
 const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
 const list = mountList($("view-list"), { onOpen: select });
