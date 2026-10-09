@@ -194,6 +194,70 @@ def test_the_bridge_cleans_the_instruction_once_more():
     assert ClaudeBridge("home", instruction="  ​ ").system_prompt() == BRAVE_PROMPT
 
 
+# ---- Can use: enforced by AI Browser's own skill tools (Task 4) --------------------------------------------------------
+
+async def test_can_use_is_enforced_by_ai_browsers_own_skill_tools(tmp_path, monkeypatch):
+    import json
+
+    from ai_browser.engine import Engine
+    from ai_browser.skills import NOT_ALLOWED, Catalog, SkillSource
+    from test_skills import make_skill
+
+    root = tmp_path / "skills"
+    make_skill(root, "prices", desc="Read price pages", scripts=True)
+    make_skill(root, "tables", desc="Keep tables of prices")
+    make_skill(root, "secrets", desc="Prices of the secret plans")
+
+    def engine():
+        source = SkillSource("personal", root, "/skills/personal", "*/SKILL.md")
+        return Engine(home=tmp_path / "home", catalog=Catalog([source], set()))
+
+    assert NOT_ALLOWED == "This agent can't use that skill: change it in its settings"
+    monkeypatch.setenv("AIB_APP_SKILLS", json.dumps(["personal:prices", "personal:tables"]))
+    only = engine()
+    found = (await only.find_skills("prices")).text
+    assert "personal:prices" in found and "personal:tables" in found and "secrets" not in found
+    assert "secrets" not in (await only.find_skills("")).text  # the whole list too
+    for call in (only.load_skill("personal:secrets"), only.load_skill("secrets"),
+                 only.read_skill_file("personal:secrets", "SKILL.md")):
+        assert (await call).text.startswith(f"error: {NOT_ALLOWED}")
+    assert "Read price pages" in (await only.load_skill("prices")).text  # one it may use loads as before
+    assert (await only.read_skill_file("personal:prices", "scripts/run.py")).text.startswith("print('hi')")
+    assert (await only.load_skill("personal:nothing")).text.startswith("error: no skill")  # not installed: as before
+    monkeypatch.setenv("AIB_APP_SKILLS", "[]")  # none named: every skill
+    assert "secrets" in (await engine().find_skills("prices")).text
+    monkeypatch.setenv("AIB_APP_SKILLS", "not json")  # broken: no skill at all, never every skill
+    assert (await engine().load_skill("personal:prices")).text.startswith(f"error: {NOT_ALLOWED}")
+
+
+async def test_a_run_tells_its_tools_which_skills_it_may_use(fake_claude, tmp_path):
+    import json
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.savedagents import SavedAgents
+    from test_app_server import wait_for
+    from test_bridge import EVENTS
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    store = SavedAgents(tmp_path / "home")
+    narrow, every = store.save(AGENT), store.save({**AGENT, "can_use": [], "load_at_start": []})
+    manager = AgentManager(tmp_path / "home", claude=runner)
+
+    def tools_env(agent_id):
+        config = tmp_path / "home" / "app" / "agents" / agent_id / "mcp.json"
+        return json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["ai-browser"]["env"]
+
+    try:
+        one, two, three = (await manager.create("a", saved_agent=narrow), await manager.create("b", saved_agent=every),
+                           await manager.create("c"))
+        await wait_for(lambda: all(agent.state == "your_turn" for agent in (one, two, three)))
+        assert json.loads(tools_env("a1")["AIB_APP_SKILLS"]) == ["personal:prices", "personal:tables"]
+        assert "AIB_APP_SKILLS" not in tools_env("a2") and "AIB_APP_SKILLS" not in tools_env("a3")  # every skill
+    finally:
+        await manager.close_all()
+
+
 def test_an_edit_never_writes_over_a_file_it_cannot_read(tmp_path):
     from ai_browser.app.savedagents import SavedAgents
 

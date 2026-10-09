@@ -14,6 +14,8 @@ from . import platforms
 from .config import READ_LIMIT
 
 FILE_LIST_LIMIT = 30
+USABLE_ENV = "AIB_APP_SKILLS"  # a saved agent's Can use, from the app: a JSON list of skill refs
+NOT_ALLOWED = "This agent can't use that skill: change it in its settings"
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
 
 
@@ -75,6 +77,21 @@ def _one_line(text) -> str:
     return " ".join(str(text or "").split())
 
 
+def usable_skills(env=None) -> set[str] | None:
+    """The skills this agent may use (a saved agent's Can use, in USABLE_ENV), or None for every skill: the variable
+    unset, or an empty list. A value that isn't a list of names allows none, never every skill."""
+    raw = (os.environ if env is None else env).get(USABLE_ENV, "")
+    if not raw:
+        return None
+    try:
+        refs = json.loads(raw)
+    except ValueError:
+        return set()
+    if not isinstance(refs, list):
+        return set()
+    return {ref for ref in refs if isinstance(ref, str)} if refs else None
+
+
 def user_folders() -> tuple[Path, Path]:
     """Where the user's own skills are: Claude Code's folder (~/.claude: personal skills and plugins) and the Claude
     desktop app's (the skills synced from claude.ai). The test suite points it at a throwaway folder."""
@@ -85,6 +102,7 @@ class Catalog:
     def __init__(self, sources: list[SkillSource], blocked: set[str]):
         self.sources = [source for source in sources if source.host_root.is_dir()]
         self.blocked = set(blocked)
+        self.allowed: set[str] | None = None  # a saved agent's Can use (usable_skills); None: every skill
         self._skills: dict[str, Skill] = {}
         for source in self.sources:
             for skill_md in sorted(source.host_root.glob(source.pattern)):
@@ -125,7 +143,13 @@ class Catalog:
         return cls([*_sources(claude_home, app_support), project], blocked)
 
     def all(self) -> list[Skill]:
-        return [skill for ref, skill in self._skills.items() if ref not in self.blocked]
+        return [skill for ref, skill in self._skills.items()
+                if ref not in self.blocked and (self.allowed is None or ref in self.allowed)]
+
+    def _outside(self, name: str) -> bool:
+        """An installed skill this agent may not use (Can use): asked for by its ref or by its name."""
+        named = [skill for skill in self._skills.values() if name in (skill.ref, skill.name)]
+        return self.allowed is not None and bool(named) and not any(skill.ref in self.allowed for skill in named)
 
     def find(self, query: str, limit: int = 10) -> list[Skill]:
         tokens = [token for token in re.findall(r"[a-z0-9]+", query.lower()) if len(token) >= 2]
@@ -148,6 +172,8 @@ class Catalog:
 
     def get(self, name: str) -> Skill:
         name = name.strip()
+        if self._outside(name):  # load_skill and read_skill_file both come here
+            raise SkillNotFound(NOT_ALLOWED)
         if ":" in name:
             skill = self._skills.get(name)
             if skill is None or name in self.blocked:

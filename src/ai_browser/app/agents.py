@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -20,6 +21,7 @@ from typing import ClassVar
 
 from ..accounts import DEFAULT, DEFAULT_NAME, GONE, NOT_SIGNED_IN, clean_env, default_folder
 from ..checks import KINDS
+from ..skills import USABLE_ENV
 from . import attachments
 from . import move as moving
 from . import powers
@@ -325,6 +327,8 @@ class AgentManager:
         env = {**self.env, "AIB_APP_AGENT": agent_id, **({"AIB_APP_ADOPT": adopt} if adopt else {})}
         if self.mint_token is not None:  # its own token: the app knows who reports, asks for tabs and connects
             env["AIB_APP_AGENT_TOKEN"] = self.mint_token(agent_id)
+        if saved_agent and saved_agent.use:  # Can use: its own tools list and load only these (none: every skill)
+            env[USABLE_ENV] = json.dumps(sorted(saved_agent.use))
         bridge = ClaudeBridge(self.home, model=model, claude=self.claude, env=env, agent_id=agent_id,
                               tools=self.tools_for(chosen["id"]), servers=servers,
                               on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request),
