@@ -26,7 +26,8 @@ TRIGGERS = {"manual", "message", "schedule"}
 MODELS = {"opus", "sonnet", "haiku"}
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 ACTIVE = {"working", "waiting", "needs_you"}  # a run still going: the next one waits
-_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}$")
+_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}$")  # a workflow's, and a saved agent's (app/savedagents.py)
+BAD_RUNS_AS = "Runs as is one of your agents, or a new agent"
 _SKILL = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")
 _SERVER = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 _SITE = re.compile(r"^(gmail|slack|asana|custom:[A-Za-z0-9.-]{1,253})$")
@@ -50,6 +51,7 @@ class Workflow:
     tools: list[str] = field(default_factory=list)  # MCP servers its agent may use
     skills: list[str] = field(default_factory=list)  # skills its agent loads first
     model: str = "sonnet"
+    runs_as: str = ""  # Runs as: a saved agent's slug (its settings, its one run at a time), or "" for a new agent
 
     def public(self) -> dict:
         return asdict(self)
@@ -153,8 +155,11 @@ def check(fields: dict, slug: str) -> Workflow:
     model = fields.get("model") or "sonnet"
     if model not in MODELS:
         raise ValueError("The model is opus, sonnet or haiku")
+    runs_as = fields.get("runs_as") or ""
+    if runs_as and (not isinstance(runs_as, str) or not _SLUG.match(runs_as)):
+        raise ValueError(BAD_RUNS_AS)
     return Workflow(slug, name.strip(), instructions.strip(), trigger, site if trigger == "message" else "",
-                    when if trigger == "message" else "", schedule, run, list(tools), list(skills), model)
+                    when if trigger == "message" else "", schedule, run, list(tools), list(skills), model, runs_as)
 
 
 class WorkflowStore:
@@ -181,7 +186,7 @@ class WorkflowStore:
             raise ValueError("its front matter isn't valid YAML") from None
         if not isinstance(data, dict):
             raise ValueError("its front matter isn't a set of fields")
-        fields = {key: data.get(key) for key in ("name", "run", "tools", "skills", "model")}
+        fields = {key: data.get(key) for key in ("name", "run", "tools", "skills", "model", "runs_as")}
         fields["instructions"] = text[end + 4:].strip()
         trigger = data.get("trigger", "manual")
         if trigger == "manual":
@@ -240,6 +245,8 @@ class WorkflowStore:
         else:
             front["trigger"] = "manual"
         front.update(tools=workflow.tools, skills=workflow.skills, model=workflow.model)
+        if workflow.runs_as:  # a template of a new agent keeps the file it always had
+            front["runs_as"] = workflow.runs_as
         text = f"---\n{yaml.safe_dump(front, sort_keys=False, allow_unicode=True)}---\n{workflow.instructions}\n"
         self.folder.mkdir(parents=True, exist_ok=True)
         path = self.path_of(slug)
@@ -258,6 +265,7 @@ class WorkflowRunner:
         self.active: dict[str, str] = {}  # slug -> the agent of its latest run
         self.notes: dict[str, str] = {}  # slug -> "Started 09:00", "Skipped 10:00: the last run is still going"
         self.on_change: Callable[[], None] | None = None  # the app shows new notes
+        self.saved = None  # the saved agents (app/savedagents.SavedAgents), set by the app: a template's Runs as
         self._last: dict[str, float] = {}
 
     def _now(self) -> float:
@@ -287,12 +295,14 @@ class WorkflowRunner:
             runs = schedule.moments(self._last.get(workflow.slug, now), now, now + days * 86400,
                                     most=1 if schedule.every is not None else 100)
             out.append({"slug": workflow.slug, "name": workflow.name, "schedule": workflow.schedule,
-                        "every": schedule.every, "runs": runs})
+                        "every": schedule.every, "runs": runs, "runs_as": workflow.runs_as})
         return out
 
     async def run(self, slug: str, text: str | None = None, page: str | None = None) -> str:
         """Start the workflow's agent: its instructions (the user's words), then the message as labelled page data
-        or the user's extra words. Returns the agent's id."""
+        or the user's extra words. Returns the agent's id. One that runs as a saved agent runs with that agent's
+        settings, one run at a time: by hand, while its run works, the words go to that run as a message; a message's
+        text never joins a run at work (ValueError)."""
         workflow = self.store.get(slug)
         if workflow is None:
             raise ValueError(f"There is no workflow {json.dumps(slug)}")
@@ -301,8 +311,16 @@ class WorkflowRunner:
             message += f"\n\n{page}"
         elif text:
             message += f"\n\nThe user adds: {text}"
-        agent = await self.agents.create(message, skills=workflow.skills, model=workflow.model,
-                                         servers=workflow.tools)
+        if workflow.runs_as:
+            saved = self.saved.get(workflow.runs_as) if self.saved is not None else None
+            if saved is None:
+                raise ValueError(f"{workflow.name} runs as an agent that was deleted: pick another in its Runs as")
+            if page and self.agents.run_of(saved.slug) is not None:
+                raise ValueError(f"{saved.name} is working: run it again when it is done")
+            agent, _ = await self.agents.run_as(saved, message, skills=workflow.skills, servers=workflow.tools)
+        else:
+            agent = await self.agents.create(message, skills=workflow.skills, model=workflow.model,
+                                             servers=workflow.tools)
         self.active[slug] = agent.id
         self._note(slug, f"Started {time.strftime('%H:%M', time.localtime(self._now()))}")
         return agent.id
@@ -321,8 +339,16 @@ class WorkflowRunner:
             if not due:
                 continue
             self._last[workflow.slug] = now
-            if self.running(workflow.slug):
-                self._note(workflow.slug, f"Skipped {time.strftime('%H:%M', time.localtime(now))}: the last run is "
-                                          "still going")
+            at = time.strftime('%H:%M', time.localtime(now))
+            if self.running(workflow.slug) or self._agent_busy(workflow):
+                self._note(workflow.slug, f"Skipped {at}: the last run is still going")
                 continue
-            await self.run(workflow.slug)
+            try:
+                await self.run(workflow.slug)
+            except ValueError as exc:  # its agent was deleted: said on the template, and the others still run
+                self._note(workflow.slug, f"Skipped {at}: {exc}")
+
+    def _agent_busy(self, workflow: Workflow) -> bool:
+        """A template that runs as a saved agent waits while that agent's run works: one run at a time."""
+        run_of = getattr(self.agents, "run_of", None)
+        return bool(workflow.runs_as) and run_of is not None and run_of(workflow.runs_as) is not None

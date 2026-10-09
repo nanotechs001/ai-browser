@@ -386,7 +386,7 @@ def test_the_runner_lists_the_next_runs_of_scheduled_templates(tmp_path):
     assert morning["runs"][0] == local(2026, 10, 5, 9, 0) and 61 <= len(morning["runs"]) <= 63
     assert morning["every"] is None and morning["schedule"] == "daily 09:00"
     assert rows["check-often"] == {"slug": "check-often", "name": "Check often", "schedule": "every 2h",
-                                   "every": 7200, "runs": [now + 7200]}
+                                   "every": 7200, "runs": [now + 7200], "runs_as": ""}  # a new agent's
 
 
 async def test_pages_get_the_next_runs_with_the_workflows(fake_claude, tmp_path):

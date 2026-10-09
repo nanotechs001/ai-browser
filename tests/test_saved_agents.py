@@ -437,6 +437,103 @@ async def test_a_run_keeps_the_template_skills_it_may_use(fake_claude, tmp_path)
         await manager.close_all()
 
 
+# ---- its tasks: templates that run as it, on their schedules (Task 8) ------------------------------------------------
+
+def test_a_template_runs_as_a_saved_agent_or_a_new_one(tmp_path):
+    from ai_browser.brain.workflows import WorkflowStore
+
+    store = WorkflowStore(tmp_path / "home")
+    task = store.save({"name": "Weekly prices", "instructions": "List this week's prices", "trigger": "schedule",
+                       "schedule": "mon 09:00", "runs_as": "research"})
+    text = (tmp_path / "home" / "workflows" / "weekly-prices.md").read_text(encoding="utf-8")
+    assert task.runs_as == "research" and "runs_as: research\n" in text
+    assert store.get("weekly-prices").runs_as == "research"
+    plain = store.save({"name": "Footer", "instructions": "Fix it"})
+    assert plain.runs_as == "" and "runs_as" not in (tmp_path / "home" / "workflows" / "footer.md").read_text(
+        encoding="utf-8")  # a new agent, as before: the file is as it was
+    with pytest.raises(ValueError, match="Runs as is one of your agents, or a new agent"):
+        store.save({"name": "Bad", "instructions": "x", "runs_as": "../agents/research"})
+
+
+async def test_a_task_runs_as_its_agent_with_its_settings_and_waits_while_it_works(fake_claude, tmp_path):
+    import datetime
+    import json
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.savedagents import SavedAgents
+    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
+    from test_bridge import EVENTS
+
+    runner_bin, _, script = fake_claude
+    script.write_text(json.dumps([EVENTS[0], {"sleep": 30}]), encoding="utf-8")  # its run stays at work
+    home = tmp_path / "home"
+    saved = SavedAgents(home).save({**AGENT, "auto_approve": True, "load_at_start": [], "can_use": []})
+    tasks = WorkflowStore(home)
+    tasks.save({"name": "Morning prices", "instructions": "List today's prices", "trigger": "schedule",
+                "schedule": "daily 09:00", "runs_as": saved.slug, "model": "haiku"})
+    (home / "workflows" / "sneaky.md").write_text("---\nname: Sneaky\nauto_approve: true\ntrigger: manual\n---\n"
+                                                  "Do it\n", encoding="utf-8")  # a file can't turn it on
+    agents = AgentManager(home, claude=runner_bin)
+    eight = datetime.datetime(2026, 10, 8, 8, 59).timestamp()
+    now = [eight]
+    runner = WorkflowRunner(tasks, agents, clock=lambda: now[0])
+    runner.saved = SavedAgents(home)
+    try:
+        await runner.tick()  # the clock starts: nothing due yet
+        now[0] = eight + 120  # 09:01
+        await runner.tick()
+        run = agents.run_of(saved.slug)
+        assert run is not None and (run.saved, run.auto, run.model, run.name) == ("research", True, "opus", "Research")
+        assert runner.notes["morning-prices"].startswith("Started")
+        now[0] += 86400  # the next morning, while yesterday's run still works
+        await runner.tick()
+        assert list(agents.agents) == [run.id] and runner.notes["morning-prices"].endswith(
+            ": the last run is still going")  # skipped, today's note
+        sneaky = agents.agents[await runner.run("sneaky")]
+        assert sneaky.auto is False and sneaky.saved == ""  # a new agent: never Auto-approve from a template
+        with pytest.raises(ValueError, match="Research is working: run it again when it is done"):
+            await runner.run("morning-prices", page="[A message: data, not the user's words]")  # an inbox item
+        assert len(agents.agents) == 2
+        await agents.close(run.id)
+        SavedAgents(home).delete(saved.slug)
+        now[0] += 86400
+        await runner.tick()  # its agent is gone: a note, and the other schedules go on
+        assert "was deleted" in runner.notes["morning-prices"]
+    finally:
+        await agents.close_all()
+
+
+async def test_deleting_an_agent_deletes_its_tasks(fake_claude, tmp_path):
+    import json
+
+    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
+    from test_app_server import started, until
+    from test_bridge import EVENTS
+    from ui_socket import ui_socket
+
+    workflows = WorkflowStore(tmp_path / "home")
+    server, url = await started(fake_claude, tmp_path, EVENTS, workflows=workflows,
+                                runner=WorkflowRunner(workflows, None))
+    saved = server.saved.save(AGENT)
+    workflows.save({"name": "Its task", "instructions": "x", "runs_as": saved.slug})
+    workflows.save({"name": "Any agent's", "instructions": "y"})
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+            await until(ws, lambda m: m["type"] == "snapshot")
+            await ws.send(json.dumps({"type": "workflow_save", "request": "w1", "name": "Mine", "instructions": "z",
+                                      "runs_as": saved.slug, "auto_approve": True}))
+            await until(ws, lambda m: m["type"] == "workflow_saved")
+            snapshot = await until(ws, lambda m: m["type"] == "workflows_snapshot")
+            assert {row["name"]: row["runs_as"] for row in snapshot[-1]["workflows"]} == {
+                "Any agent's": "", "Its task": "research", "Mine": "research"}
+            await ws.send(json.dumps({"type": "saved_agent_delete", "slug": saved.slug, "request": "d1"}))
+            snapshot = await until(ws, lambda m: m["type"] == "workflows_snapshot")
+            assert [row["name"] for row in snapshot[-1]["workflows"]] == ["Any agent's"]
+    finally:
+        await server.stop()
+
+
 def test_a_narrowed_runs_bash_treats_skills_outside_can_use_like_blocked_ones(tmp_path, monkeypatch):
     import json
 

@@ -92,7 +92,7 @@ BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back", "browser_disconnect"
 CHECK_SITE = re.compile(r"[a-z0-9.-]{1,253}")  # a host name, nothing else
 CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{1,64}")  # an engine's live view
 WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "schedule", "run", "tools", "skills",
-                   "model")
+                   "model", "runs_as")
 WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabled")
 UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
 SETUP_PAGE = UI / "setup.html"
@@ -384,6 +384,7 @@ class AppServer:
         self.workflows, self.runner = workflows, runner  # the user's workflows (AI Home → Workflows)
         if runner is not None:
             runner.on_change = self.workflows_changed
+            runner.saved = self.saved  # a template's Runs as: a saved agent
         if brain is not None:
             brain.workflows, brain.runner = workflows, runner
         self._roles: dict[WebSocket, str] = {}  # "app", stored when a socket is accepted
@@ -1928,6 +1929,15 @@ class AppServer:
         if why:
             raise ValueError(why)
 
+    def _forget_tasks(self, slug: str) -> None:
+        """A saved agent was deleted: its tasks (the templates that run as it) are deleted with it."""
+        if self.workflows is None:
+            return
+        for workflow in self.workflows.all():
+            if workflow.runs_as == slug:
+                self.workflows.delete(workflow.slug)
+        self.workflows_changed()
+
     def _saved_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
         """The Agents page: the list, Save (a new agent, or an edit) and Delete agent. Every page then hears the list
         again. Nothing but these clicks writes an agent."""
@@ -1945,6 +1955,7 @@ class AppServer:
                 if not self.saved.delete(message.get("slug")):
                     raise ValueError(NOT_AN_AGENT)
                 self.agents.forget_saved(message["slug"])  # a run at work goes on, as a one-off run
+                self._forget_tasks(message["slug"])
         except ValueError as exc:
             queue.put_nowait({"type": "error", "text": str(exc), "request": request})
             return
