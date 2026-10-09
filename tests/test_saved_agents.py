@@ -93,3 +93,53 @@ def test_a_file_written_by_hand_is_read_and_a_broken_one_skipped(tmp_path):
     assert store.get("broken") is None and store.get("../workflows/x") is None
     with pytest.raises(ValueError, match="There is no such agent"):
         store.save({**AGENT, "slug": "../x"})
+
+
+# ---- saved and deleted over the socket, by AI Browser's own pages only (Task 2) -------------------------------------
+
+async def test_the_agents_page_saves_lists_and_deletes_agents(fake_claude, tmp_path):
+    import json
+
+    from fake_brave import FakeBrave
+    from test_app_server import started, until
+    from test_bridge import EVENTS
+    from ui_socket import ui_socket
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    brave = FakeBrave([])
+    brave.place.listed = [{"folder": "Profile 1", "name": "Work", "color": "#1a73e8"}]
+    server.attach_brave(brave)
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+            await until(ws, lambda m: m["type"] == "snapshot")
+            await ws.send(json.dumps({"type": "saved_agent_save", "request": "s1", **AGENT, "profile": "Profile 1"}))
+            saved = await until(ws, lambda m: m["type"] == "saved_agent_saved")
+            listed = await until(ws, lambda m: m["type"] == "saved_agents")  # every page hears the new list
+            assert saved[-1] == {"type": "saved_agent_saved", "request": "s1", "slug": "research"}
+            assert [(row["slug"], row["profile"], row["instruction"]) for row in listed[-1]["agents"]] == [
+                ("research", "Profile 1", AGENT["instruction"])]
+            for refused, words in ((dict(profile="Profile 9"), "Pick one of the profiles listed"),
+                                   (dict(profile=["Profile 1"]), "Pick one of the profiles listed"),
+                                   (dict(account="acct-gone"), "Pick one of the accounts listed"),
+                                   (dict(name="n" * 61), "An agent's name is at most 60 characters"),
+                                   (dict(folder=str(tmp_path / "home")), "AI Browser's own folder")):
+                await ws.send(json.dumps({"type": "saved_agent_save", "request": "s2", **AGENT, **refused}))
+                error = await until(ws, lambda m: m["type"] == "error" and m.get("request") == "s2")
+                assert words in error[-1]["text"], error[-1]
+            assert [one.slug for one in server.saved.all()] == ["research"]  # nothing refused was written
+            await ws.send(json.dumps({"type": "saved_agent_delete", "slug": "research", "request": "d1"}))
+            listed = await until(ws, lambda m: m["type"] == "saved_agents")
+            assert listed[-1]["agents"] == [] and server.saved.all() == []
+            await ws.send(json.dumps({"type": "saved_agents"}))
+            assert (await until(ws, lambda m: m["type"] == "saved_agents"))[-1]["agents"] == []
+    finally:
+        await server.stop()
+
+
+def test_saving_and_deleting_an_agent_are_app_only_rows():
+    from ai_browser.app.server import MESSAGE_RULES, may_send
+
+    for kind in ("saved_agents", "saved_agent_save", "saved_agent_delete"):
+        assert MESSAGE_RULES[kind].app and may_send("app", {"type": kind})
+        assert not may_send("watcher", {"type": kind}) and not may_send("none", {"type": kind})

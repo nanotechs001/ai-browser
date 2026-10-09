@@ -65,6 +65,7 @@ from . import powers
 from .agents import CLOSED, Agent, AgentManager
 from .bravelink import NOT_CONNECTED, PlaceError
 from .inworld import WorldError
+from .savedagents import BAD_ACCOUNT, BAD_PROFILE, NOT_AN_AGENT, SavedAgents
 from .workspaces import GONE as WORKSPACE_GONE
 from .workspaces import Workspaces
 from .cdprelay import Tokens
@@ -129,6 +130,9 @@ ACCOUNT_MESSAGES = {"accounts", "account_add", "account_add_existing", "account_
 POWERS_MESSAGES = {"folder_choose", "folder_trust", "permission_rules", "permission_rule_remove"}  # agent powers
 WORKSPACE_MESSAGES = {"workspaces", "workspace_save", "workspace_delete", "workspace_assign"}  # the new look
 ATTACH_MESSAGES = {"attach_start", "attach_chunk", "attach_drop"}  # the new look's Attach: a file in pieces
+SAVED_MESSAGES = {"saved_agents", "saved_agent_save", "saved_agent_delete"}  # the Agents page: our own pages only
+SAVED_FIELDS = ("slug", "name", "description", "instruction", "profile", "web", "model", "account", "folder",
+                "auto_approve", "can_use", "load_at_start")
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
@@ -194,6 +198,9 @@ MESSAGE_RULES: dict[str, Rule] = {
     # Auto-approve in its folder (the user's choice, 2026-10-07): the drawer's switch, on or off, the user's click on
     # one of our pages. The Brain, templates and voice never turn it on (new_task's "auto" is the composer's switch)
     "agent_auto": APP_ONLY,
+    # Saved agents (2026-10-08): the Agents page lists, saves and deletes them, on the user's click on one of our pages.
+    # Their instruction reaches their system prompt: the Brain, templates, voice and pages' text never write one
+    "saved_agents": APP_ONLY, "saved_agent_save": APP_ONLY, "saved_agent_delete": APP_ONLY,
 }
 
 
@@ -342,6 +349,7 @@ class AppServer:
         self.home = Path(home)
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
         self.workspaces = Workspaces(self.home)  # <home>/workspaces.json: the new look's groups
+        self.saved = SavedAgents(self.home)  # <home>/agents: the saved agents (the Agents page)
         self.uploads = attachments.Uploads(self.home / "app" / "uploads")  # files on their way from a page
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
         self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
@@ -1394,6 +1402,8 @@ class AppServer:
             self._attach_command(ws, queue, kind, message)
         elif kind in WORKSPACE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._workspace_command(queue, kind, message)
+        elif kind in SAVED_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            self._saved_command(queue, kind, message)
         elif kind == "hello":
             self._views[ws] = message.get("view") if isinstance(message.get("view"), str) else ""
             self._seen(ws, message.get("visible") is True)
@@ -1859,6 +1869,50 @@ class AppServer:
                               "request": request})
             return
         self._send_all(self._workspaces_message())
+
+    # ---- saved agents: the Agents page lists, saves and deletes them (AI Browser's own pages only) -------------------
+
+    def _saved_snapshot(self) -> dict:
+        return {"type": "saved_agents", "agents": [saved.public() for saved in self.saved.all()]}
+
+    def _saved_check(self, fields: dict) -> None:
+        """What only the app can judge, before the file is written: a profile Brave lists, an account Settings lists,
+        a folder a task may use. ValueError in the words the Agents page shows."""
+        profile, account, folder = fields.get("profile"), fields.get("account"), fields.get("folder")
+        # a list, not a set: a page's ["x"] is refused, never hashed (a TypeError would drop the window's socket)
+        if profile not in (None, "") and profile not in [row["folder"] for row in self._profiles()]:
+            raise ValueError(BAD_PROFILE)
+        listed = self.accounts.get(account) if self.accounts is not None else account == "default" or None
+        if account not in (None, "") and listed is None:
+            raise ValueError(BAD_ACCOUNT)
+        why = self.agents.folder_problem(folder) if isinstance(folder, str) and folder else None
+        if why:
+            raise ValueError(why)
+
+    def _saved_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        """The Agents page: the list, Save (a new agent, or an edit) and Delete agent. Every page then hears the list
+        again. Nothing but these clicks writes an agent."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        if kind == "saved_agents":
+            queue.put_nowait(self._saved_snapshot())
+            return
+        try:
+            if kind == "saved_agent_save":
+                fields = {key: message[key] for key in SAVED_FIELDS if key in message}
+                self._saved_check(fields)
+                saved = self.saved.save(fields)
+                queue.put_nowait({"type": "saved_agent_saved", "request": request, "slug": saved.slug})
+            elif kind == "saved_agent_delete":
+                if not self.saved.delete(message.get("slug")):
+                    raise ValueError(NOT_AN_AGENT)
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        except OSError as exc:  # a read-only home, a full disk: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't save that: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._send_all(self._saved_snapshot())
 
     def _tools_snapshot(self, account: str = "default", tools=None) -> dict:
         tools = tools if tools is not None else self.tools
