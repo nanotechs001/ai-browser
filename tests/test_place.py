@@ -10,7 +10,7 @@ from test_app_server import recv, started
 from test_app_server import until as told
 from test_bravelink import local_state
 from test_bridge import EVENTS
-from test_home import CHROME, home, open_settings, stack  # noqa: F401  (fixtures)
+from test_home import CHROME, page, open_settings, stack  # noqa: F401  (fixtures)
 from test_home import until as page_until
 from ui_socket import ui_socket
 
@@ -106,8 +106,8 @@ async def test_settings_lists_the_profiles_and_takes_only_one_of_them(fake_claud
 
 
 @CHROME
-async def test_settings_where_agents_browse_names_the_profiles_and_says_what_it_cant_do(home):  # Review Focus 1
-    _, stack = home
+async def test_settings_where_agents_browse_names_the_profiles_and_says_what_it_cant_do(page):  # Review Focus 1
+    _, stack = page
     brave, server = stack["brave"], stack["server"]
     brave.place.listed = [{"folder": "Default", "name": "Work", "color": "#008000"},
                           {"folder": "Profile 1", "name": "Home", "color": None}]

@@ -9,7 +9,7 @@ import pytest
 
 from ai_browser.chrome import chrome_binary
 from test_brain_handoffs import Clock
-from test_home import HOSTILE, home, stack, until  # noqa: F401  (fixtures)
+from test_home import HOSTILE, page, stack, until  # noqa: F401  (fixtures)
 from test_mission import WORKING, open_mission, open_with
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
@@ -406,11 +406,12 @@ async def test_send_now_sends_the_words_shown_and_the_chat_says_from_the_brain(s
 
 
 @CHROME
-async def test_an_emails_handoff_waits_for_send_in_ai_home(home):
-    js, stack = home
+async def test_an_emails_handoff_waits_for_send_in_the_brains_inbox(page):
+    js, stack = page
     row = await working_agent(stack)
+    await js("document.getElementById('bubble').click(); true")  # the globe: the Brain's inbox
     stack["brain"].give(row, "Reply to Maria with the new prices", "gmail", item="gmail:t1")
-    card = "document.querySelector('#brain .brain-handoffs .handoff')"
+    card = "document.querySelector('#brain-inbox .brain-handoffs .handoff')"
     assert await until(js, f"{card}?.dataset.state === 'waiting'")
     assert await js(f"{card}.querySelector('.handoff-line').textContent") == "Waiting for your Send"  # no countdown
     assert await js(f"{card}.querySelector('.handoff-from').textContent") == "From an email in Gmail"
@@ -424,8 +425,7 @@ async def test_an_emails_handoff_waits_for_send_in_ai_home(home):
     assert await until(js, f"{card}?.dataset.state === 'sent'")
     assert sent_by_the_brain(stack) == ["From the Brain: Reply to Maria with the new prices"]
     stack["brain"].countdown = Clock()
-    stack["brain"].give(row, "Compare the annual plans", "you")  # AI Home shows a countdown wherever it is scrolled
-    await js("window.scrollTo(0, document.body.scrollHeight); true")
+    stack["brain"].give(row, "Compare the annual plans", "you")  # the slot shows a countdown, in reach
     assert await until(js, hits(f"{in_slot('counting')}?.querySelector('.handoff-cancel')"))
 
 

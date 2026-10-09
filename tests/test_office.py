@@ -384,7 +384,7 @@ async def test_a_done_desk_shows_a_tick_and_the_time_it_took(stack):
 
 @CHROME
 async def test_a_desk_that_needs_the_user_raises_a_hand_in_amber(stack, tmp_path):
-    from test_ai_home_phase2 import ask_for_clickup
+    from test_tools import ask_for_clickup
 
     ask_for_clickup(stack, tmp_path)
     agents = stack["server"].agents
@@ -644,7 +644,7 @@ async def test_the_room_pauses_while_its_tab_is_hidden(shell):  # the spec's per
     running = f"{page}.document.getAnimations().filter((one) => one.playState === 'running').length"
     assert await until(js, f"{page}.document.querySelector('.station[data-state=\"working\"]') !== null"
                            f" && {running} > 0")
-    await pick(js, "/home")
+    await pick(js, "/settings")
     assert await until(js, f"{page}.document.documentElement.classList.contains('paused')")
     assert await until(js, f"{running} === 0")
     timer = f"{page}.document.querySelector('.station .timer').textContent"

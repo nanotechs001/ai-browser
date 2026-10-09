@@ -74,7 +74,7 @@ def test_the_tests_have_the_helpers_this_plan_uses():
     for module, names in ((fake_brave, ("FakePort", "FakeBrave", "FakeRelay", "add_agent", "until")),
                           (fake_desktop, ("FakeDesktop",)),
                           (test_app_server, ("started", "recv", "until", "quiet", "with_brain")),
-                          (test_home, ("stack", "home", "until", "open_page", "page_js", "open_settings")),
+                          (test_home, ("stack", "page", "until", "open_page", "page_js", "open_settings")),
                           (test_tab_menu, ("frame", "click_in")),
                           (ui_socket, ("ui_socket",))):
         for name in names:

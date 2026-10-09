@@ -11,7 +11,7 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from conftest import file_mode
 from test_bridge import EVENTS
-from test_home import home, stack  # noqa: F401  (fixtures)
+from test_home import stack  # noqa: F401  (fixture)
 from test_oneshot import oneshots
 from ui_socket import ui_socket
 

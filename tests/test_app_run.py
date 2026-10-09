@@ -79,7 +79,7 @@ async def test_it_opens_the_window_and_ends_when_the_window_closes(fake_claude, 
         async with httpx.AsyncClient() as client:
             seen["health"] = (await client.get(url + "/health")).json()
         page = await window.page()
-        seen["home"] = await until(page, f"location.pathname === '/app' && {connected('/home')}")  # the tab menu
+        seen["home"] = await until(page, f"location.pathname === '/app' && {connected('/mission')}")  # the tab menu
         await window.cdp.send("Target.closeTarget", {"targetId": window.targets[0]})  # the user closes the window
         seen["closed_at"] = time.monotonic()
 
@@ -112,7 +112,7 @@ async def test_a_reload_doesnt_end_it(fake_claude, tmp_path, window, monkeypatch
 
     async def ready(url, opened):
         page = await window.page()
-        assert await until(page, connected("/home"))
+        assert await until(page, connected("/mission"))
         jobs.append(asyncio.create_task(check(page)))
 
     running = asyncio.create_task(run.run_app(tmp_path / "home", claude=runner, ready=ready, stop=stop, out=quiet,
@@ -131,19 +131,19 @@ async def test_switching_or_closing_tabs_never_ends_it_and_closing_the_window_do
 
     async def check(page):
         try:
-            for key in ("/mission", "/settings", "/home"):  # every tab's page is the window's
+            for key in ("/settings", "/mission"):  # every tab's page is the window's
                 await pick(page, key)
                 assert await until(page, connected(key))
-            action = f"{frame('/home')}.document.getElementById('browser-action')"
+            action = f"{frame('/mission')}.document.querySelector('#brave-bar .brave-action')"
             assert await until(page, f"{action}?.textContent === 'Show me how'")  # Brave's switch is off here
-            await click_in(page, "/home", "#browser-action")  # the setup steps: a closable tab
+            await click_in(page, "/mission", "#brave-bar .brave-action")  # the setup steps: a closable tab
             assert await until(page, active_is("/setup"))
             await page(f"{tab('/setup')}.querySelector('.tab-close').click(); true")  # closed again
-            assert await until(page, f"{tab('/setup')} === null && {active_is('/home')}")
-            await click_in(page, "/home", "#browser-action")
+            assert await until(page, f"{tab('/setup')} === null && {active_is('/mission')}")
+            await click_in(page, "/mission", "#brave-bar .brave-action")
             assert await until(page, f"{active_is('/setup')} && {ready_for_keys('/setup')}")
             await close_key(page)  # Command-W (Ctrl+W): the setup steps' tab closes, never the window
-            seen["key_closed"] = await until(page, f"{tab('/setup')} === null && {active_is('/home')}")
+            seen["key_closed"] = await until(page, f"{tab('/setup')} === null && {active_is('/mission')}")
             await pick(page, "/mission")
             await close_key(page)  # on a fixed tab: nothing closes
             await asyncio.sleep(2.5)  # more than twice the grace
@@ -155,13 +155,13 @@ async def test_switching_or_closing_tabs_never_ends_it_and_closing_the_window_do
 
     async def ready(url, opened):
         page = await window.page()
-        assert await until(page, connected("/home"))
+        assert await until(page, connected("/mission"))
         jobs.append(asyncio.create_task(check(page)))
 
     running = asyncio.create_task(run.run_app(tmp_path / "home", claude=runner, ready=ready, out=quiet,
                                               launcher=lambda setting: window))
     assert await asyncio.wait_for(running, 60) == 0 and seen.get("key_closed") and seen["alive"]
-    assert seen["windows"] == 3 and seen["tabs"] == ["/home", "/mission", "/settings"]
+    assert seen["windows"] == 2 and seen["tabs"] == ["/mission", "/settings"]
     assert time.monotonic() - seen["closed_at"] < run.WINDOW_GRACE + 2
 
 

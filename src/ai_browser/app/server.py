@@ -78,7 +78,7 @@ THUMB_EVERY = 2  # seconds between two thumbnails of one agent's tab
 TEXT_LIMIT = 20_000  # characters of a task or a message
 BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "style",
                   "tell_confirm", "tell_dismiss", "handoff_send", "handoff_cancel"}
-HANDOFF_VIEWS = frozenset({"home", "mission", "chat"})  # the pages that show the Brain's hand-off cards
+HANDOFF_VIEWS = frozenset({"mission", "chat"})  # the pages that show the Brain's hand-off cards
 HOLD_AFTER = 0.3  # seconds without a page that can show a card before every countdown holds (a tab switch is quicker)
 TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"}
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
@@ -97,9 +97,10 @@ WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabl
 UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
 SETUP_PAGE = UI / "setup.html"
 SHELL = "/app"  # the window's own page: the tab menu, which shows the others in frames
-PAGES = {SHELL: "app.html", "/home": "home.html", "/mission": "mission.html", "/settings": "settings.html",
+PAGES = {SHELL: "app.html", "/mission": "mission.html", "/settings": "settings.html",
          "/chat": "chat.html"}  # /chat: the floating chat, in a window of its own (nothing frames it)
-FRAMED = frozenset({"/home", "/mission", "/settings", "/setup"})  # the pages the tab menu shows: only it frames them
+FRAMED = frozenset({"/mission", "/settings", "/setup"})  # the pages the tab menu shows: only it frames them
+OLD_HOME = "/home"  # the old home page's address (the saved-agents spec, 6): a bookmark of it opens Mission Control
 LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an engine's live view binds one of these
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png", "theme.css"}  # the setup page's own files: it opens in Brave too
@@ -389,7 +390,7 @@ class AppServer:
         if brain is not None:
             brain.workflows, brain.runner = workflows, runner
         self._roles: dict[WebSocket, str] = {}  # "app", stored when a socket is accepted
-        self._views: dict[WebSocket, str] = {}  # which page said hello on a socket: "home", "mission", "chat"…
+        self._views: dict[WebSocket, str] = {}  # which page said hello on a socket: "mission", "chat", "settings"…
         self._shown: set[WebSocket] = set()  # the sockets whose page says it can be seen (link.js: hello, visibility)
         self._holding: asyncio.TimerHandle | None = None  # the hold that waits HOLD_AFTER for another page in front
         self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (Mission Control…)
@@ -735,7 +736,7 @@ class AppServer:
     async def start(self) -> str:
         self.uploads.clear()  # a crash's leftovers: no page is there to send them any more
         app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open), Route(SHELL, self._page),
-                                       Route("/home", self._page), Route("/mission", self._page),
+                                       Route(OLD_HOME, self._old_home), Route("/mission", self._page),
                                        Route("/settings", self._page), Route("/chat", self._page),
                                        Route("/health", self._health), Route("/setup", self._setup),
                                        Route("/agent-events", self._agent_events, methods=["POST"]),
@@ -808,6 +809,10 @@ class AppServer:
 
     async def _root(self, request: Request) -> Response:
         return RedirectResponse(SHELL, status_code=303)
+
+    async def _old_home(self, request: Request) -> Response:
+        """The old home page's address: Mission Control, where everything it had now is."""
+        return RedirectResponse("/mission", status_code=303)
 
     async def _open(self, request: Request) -> Response:
         """The window's start address: a valid code becomes the cookie, and the redirect to the tab menu drops the code
@@ -1341,9 +1346,9 @@ class AppServer:
         return False
 
     def _shows_handoffs(self) -> bool:
-        """Whether a page that shows the Brain's hand-off cards (Mission Control, the floating chat) can be
-        seen: it is open and says it isn't hidden (the desktop app only hides its window on close). Only then may a
-        hand-off count down. Nothing is sent while nobody can see it."""
+        """Whether a page that shows the Brain's hand-off cards (Mission Control, the floating chat) can be seen: it is
+        open and says it isn't hidden (the desktop app only hides its window on close). Only then may a hand-off count
+        down. Nothing is sent while nobody can see it."""
         return any(self._views.get(ws) in HANDOFF_VIEWS for ws in self._shown)
 
     def _seen(self, ws: WebSocket, shown: bool) -> None:

@@ -279,7 +279,7 @@ async def test_hand_over_gives_this_page_to_an_open_agent_on_the_click_only(stac
 
 
 @CHROME
-async def test_the_open_agents_show_by_number_and_a_click_opens_ai_home_there(stack):
+async def test_the_open_agents_show_by_number_and_a_click_opens_mission_control_there(stack):
     desktop = FakeDesktop()
     stack["server"].attach_desktop(desktop)
     add_agent(stack["server"].agents, "a1", "Fix the footer")
@@ -295,8 +295,8 @@ async def test_the_open_agents_show_by_number_and_a_click_opens_ai_home_there(st
 
 
 @CHROME
-async def test_the_chat_shows_the_same_permission_card(stack, tmp_path):  # moved from test_ai_home_phase2
-    from test_ai_home_phase2 import answered, ask_for_clickup
+async def test_the_chat_shows_the_same_permission_card(stack, tmp_path):
+    from test_tools import answered, ask_for_clickup
 
     js, _ = await open_chat(stack)
     ask_for_clickup(stack, tmp_path)

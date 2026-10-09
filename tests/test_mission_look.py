@@ -241,7 +241,7 @@ async def test_long_words_clip_in_the_right_column(stack):  # Review Focus 1
 
 @CHROME
 async def test_a_click_picks_a_desk_and_a_waiting_card_opens_its_drawer(stack, tmp_path):
-    from test_ai_home_phase2 import ask_for_clickup
+    from test_tools import ask_for_clickup
 
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("keep working")
@@ -942,7 +942,7 @@ async def test_a_long_run_time_stays_on_one_line_in_my_missions_and_history(stac
 # ---- Templates, Knowledge and Integrations (Task 15) -----------------------------------------------------------------
 
 @CHROME
-async def test_integrations_are_ai_homes_own(stack):
+async def test_integrations_have_their_own_page(stack):
     js = await open_mission(stack)
     await js(f"{page_link('integrations')}.click(); true")
     assert await until(js, "document.querySelector('#page-integrations .tool-servers') !== null")
