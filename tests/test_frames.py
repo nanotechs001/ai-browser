@@ -450,3 +450,22 @@ async def test_a_click_on_a_frame_row_under_a_page_element_is_covered_and_one_no
     assert (await act(browser, f"click {nested}")).startswith("✓ click")
     await read_until(browser, "Nested clicked")
     assert "Row added" not in [item["name"] for item in (await browser.state())["rows"]]
+
+
+@CHROME
+async def test_the_frames_line_names_a_read_frame_and_a_canvas_says_so(builder):
+    from ai_browser.render import CANVAS_HINT
+
+    browser, page = builder
+    await browser.open(page)
+    await read_until(browser, "Add row", "Nested button", "Side button")
+    out = await browser.observe()
+    assert "frames: [page-builder] [side] [nested]" in out.splitlines()[1]
+    assert CANVAS_HINT not in out
+    await browser.open(page.split("frames/")[0] + "frames/drawn.html")  # an editor drawn on a canvas, in a frame
+    for _ in range(100):
+        out = await browser.observe()
+        if CANVAS_HINT in out:
+            break
+        await asyncio.sleep(0.1)
+    assert CANVAS_HINT in out and "frames: [board]" in out
