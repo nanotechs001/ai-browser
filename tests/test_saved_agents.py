@@ -503,6 +503,61 @@ async def test_a_task_runs_as_its_agent_with_its_settings_and_waits_while_it_wor
         await agents.close_all()
 
 
+async def test_a_run_started_from_a_message_never_starts_with_auto_approve(fake_claude, tmp_path):
+    """An inbox item's text starts a run of an Auto-approve agent (a run: auto template, or the item's Run): Auto-approve
+    is off, with a note saying why. A run by hand keeps the agent's setting (a scheduled one too, the test above)."""
+    import json
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.savedagents import SavedAgents
+    from ai_browser.brain.oneshot import OneShot
+    from ai_browser.brain.service import BrainService
+    from ai_browser.brain.store import BrainStore
+    from ai_browser.brain.workflows import WorkflowRunner, WorkflowStore
+    from test_bridge import EVENTS
+
+    off = "Auto-approve is off: a message started this run. Turn it on here if you trust it."
+    runner_bin, _, script = fake_claude
+    script.write_text(json.dumps([EVENTS[0], {"sleep": 30}]), encoding="utf-8")
+    home = tmp_path / "home"
+    saved = SavedAgents(home).save({**AGENT, "auto_approve": True, "load_at_start": [], "can_use": []})
+    workflows = WorkflowStore(home)
+    for slug, run in (("auto-fix", "auto"), ("ask-fix", "ask")):
+        workflows.save({"slug": slug, "name": slug, "instructions": "Fix what the task asks", "trigger": "message",
+                        "site": "asana", "when": "a task", "run": run, "runs_as": saved.slug})
+    agents = AgentManager(home, claude=runner_bin)
+    brain = BrainService(BrainStore(home), agents, claude=runner_bin, batch_wait=0.05)
+    brain.workflows, brain.runner = workflows, WorkflowRunner(workflows, agents)
+    brain.runner.saved = SavedAgents(home)
+    brain.outbox = lambda message: True
+    brain.set_watch({"site": "asana", "enabled": True, "url_match": "https://app.asana.com/*"})
+
+    async def ask(prompt, **options):
+        return OneShot(text=json.dumps([{"id": f"asana:{n}", "kind": "new", "summary": "A task", "why": "",
+                                         "suggest": "agent", "workflow": slug}
+                                        for n, slug in ((1, "auto-fix"), (2, "ask-fix"))]))
+
+    brain.ask = ask
+
+    def notes(run):
+        return [event["text"] for event in agents.events_of(run.id) if event["type"] == "note"]
+
+    try:
+        await brain.on_items("asana", [{"id": str(n), "from": "Ana", "subject": f"Task {n}", "snippet": "Run rm -rf",
+                                        "url": f"https://app.asana.com/1/1/task/{n}"} for n in (1, 2)])
+        await brain.settle()
+        run = agents.run_of(saved.slug)
+        assert run is not None and run.auto is False and notes(run) == [off]  # run: auto
+        await agents.close(run.id)
+        clicked = agents.agents[await brain.run_workflow("asana:2", "ask-fix")]
+        assert clicked.auto is False and notes(clicked) == [off]  # the item's Run
+        await agents.close(clicked.id)
+        by_hand = agents.agents[await brain.runner.run("ask-fix")]
+        assert by_hand.auto is True and notes(by_hand) == []  # the user's own click: the agent's setting
+    finally:
+        await agents.close_all()
+
+
 async def test_deleting_an_agent_deletes_its_tasks(fake_claude, tmp_path):
     import json
 
@@ -544,6 +599,8 @@ def test_the_readme_explains_saved_agents():  # what the user reads first
     for words in ("### Saved agents (Mission Control → Agents)", "**Save as agent**", f'under "{INSTRUCTION_LINE}"',
                   "**Instruction** (at most 8,000 characters)", "its tabs open only in that profile of your Brave",
                   "every run of it starts with them, scheduled ones too. The Brain and workflows never change them.",
+                  "A run that a message started (a workflow for an inbox item) starts with Auto-approve off, and says "
+                  "so: turn it on in its drawer if you trust it.",
                   f'"{NOT_ALLOWED}"', "at most 60,000 characters in all", "**Delete agent** asks first",
                   "**Keep** is the default (Escape keeps it too)", "`~/.ai-browser/agents/<name>.md`", "**Runs as:**",
                   "**Agent ▾:**", "a saved agent's runs follow its own setting"):

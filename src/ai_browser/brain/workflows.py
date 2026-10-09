@@ -28,6 +28,7 @@ DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 ACTIVE = {"working", "waiting", "needs_you"}  # a run still going: the next one waits
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}$")  # a workflow's, and a saved agent's (app/savedagents.py)
 BAD_RUNS_AS = "Runs as is one of your agents, or a new agent"
+AUTO_OFF_NOTE = "Auto-approve is off: a message started this run. Turn it on here if you trust it."
 _SKILL = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")
 _SERVER = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 _SITE = re.compile(r"^(gmail|slack|asana|custom:[A-Za-z0-9.-]{1,253})$")
@@ -303,7 +304,8 @@ class WorkflowRunner:
         """Start the workflow's agent: its instructions (the user's words), then the message as labelled page data
         or the user's extra words. Returns the agent's id. One that runs as a saved agent runs with that agent's
         settings, one run at a time: by hand, while its run works, the words go to that run as a message; a message's
-        text never joins a run at work (ValueError)."""
+        text never joins a run at work (ValueError),
+        and never starts one with Auto-approve on."""
         workflow = self.store.get(slug)
         if workflow is None:
             raise ValueError(f"There is no workflow {json.dumps(slug)}")
@@ -318,7 +320,10 @@ class WorkflowRunner:
                 raise ValueError(f"{workflow.name} runs as an agent that was deleted: pick another in its Runs as")
             if page and self.agents.run_of(saved.slug) is not None:
                 raise ValueError(f"{saved.name} is working: run it again when it is done")
-            agent, _ = await self.agents.run_as(saved, message, skills=workflow.skills, servers=workflow.tools)
+            agent, _ = await self.agents.run_as(saved, message, skills=workflow.skills, servers=workflow.tools,
+                                                auto=False if page else None)
+            if page and saved.auto:  # a message's text never starts an Auto-approve run: the user's own click does
+                self.agents.note(agent.id, AUTO_OFF_NOTE)
         else:
             agent = await self.agents.create(message, skills=workflow.skills, model=workflow.model,
                                              servers=workflow.tools)

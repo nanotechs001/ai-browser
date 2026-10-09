@@ -398,12 +398,13 @@ class AgentManager:
                     None)
 
     async def run_as(self, saved, text: str, skills=(), servers: list[str] | None = None, tab: dict | None = None,
-                     adopt: str | None = None, files=(), workspace: str | None = None) -> tuple[Agent, bool]:
+                     adopt: str | None = None, files=(), workspace: str | None = None,
+                     auto: bool | None = None) -> tuple[Agent, bool]:
         """A task for a saved agent (Build a Mission's Agent ▾, or a template that runs as it): one run at a time.
         While its run is going, the task goes to that run as a message, as the drawer's Send does: (run, False). Else
         a new run starts with its settings (name, what it works on, profile, web, model, account, folder,
         Auto-approve, instruction, skills): (run, True). Skills asked for beside its own join its Load at start only
-        when it may use them."""
+        when it may use them. `auto` overrides its Auto-approve (False: a run a message started)."""
         run = self.run_of(saved.slug)
         if run is not None:
             await self.send(run.id, text, tab, files=files)
@@ -411,7 +412,7 @@ class AgentManager:
         extra = [ref for ref in skills if not saved.use or ref in saved.use]
         agent = await self.create(text, list(dict.fromkeys([*saved.load, *extra])), saved.model, adopt, tab, servers,
                                   account=saved.account, folder=saved.folder, workspace=workspace, files=files,
-                                  web=saved.web, auto=saved.auto, name=saved.name, description=saved.description,
+                                  web=saved.web, auto=saved.auto if auto is None else auto, name=saved.name, description=saved.description,
                                   saved_agent=saved)
         return agent, True
 
