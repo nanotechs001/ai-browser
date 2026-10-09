@@ -110,7 +110,9 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                                showPage("agents");
                                agentsPage.showAgent("", {
                                  name: agent.name, description: agent.description || "", model: agent.model,
-                                 web: agent.web || "web", account: agent.account?.id || null,
+                                 web: agent.web || "web",
+                                 // a run on Default: the agent follows "the default account for new agents"
+                                 account: agent.account?.id && agent.account.id !== "default" ? agent.account.id : null,
                                  folder: agent.folder || null, use: [], load: agent.loaded_skills || [],
                                });
                              } });

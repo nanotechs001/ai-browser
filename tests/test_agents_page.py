@@ -311,6 +311,7 @@ async def test_save_as_agent_fills_a_new_agents_settings_from_the_run(stack):
     saved = server.saved.get("prices")
     assert (saved.description, saved.model, saved.web, saved.load, saved.use, saved.instruction) == (
         "Rivals' plans", "haiku", "brave", ["personal:prices"], [], "")  # the skills it loaded, at start
+    assert saved.account is None  # a run on Default: the agent follows the default account for new agents
     run, _ = await server.agents.run_as(saved, "Again")
     await js(f"{PANEL}.querySelector('header button').click(); true")
     await js(open_drawer(run.id))
