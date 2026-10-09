@@ -2,9 +2,9 @@
 // without the user's Start, Send or a plain yes) and Build a Mission (start an agent). Agent ▾ picks a new agent (Name
 // and What it works on) or a saved one: then its own settings apply, and while its run works the task goes to that
 // run (the saved-agents spec, 2). Templates are the Agents page's. Under the box: Attach (uploads.js),
-// Web ▾, Model ▾, Account ▾, Folder ▾ (agent powers' picker), Auto-approve in its folder (a switch, off again for each
-// new task), Skills (loaded at start; Knowledge's Use in new mission ticks one) and Workspace ▾, the mic, and the main
-// button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter
+// Web ▾, Model ▾ (Model and Effort, behind one face), Account ▾, Folder ▾ (agent powers' picker), Auto-approve in
+// its folder (a switch, off again for each new task), Skills (loaded at start; Knowledge's Use in new mission ticks
+// one) and Workspace ▾, the mic, and the main button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter
 // makes a new line. A picture pasted into the box, or a file dropped on it (paste.js), is attached as Attach does in
 // Build a Mission; Ask AI takes none, and says where pictures go. Narrow windows fold the pickers into ⋯ Options.
 // Every word is set as text.
@@ -57,7 +57,8 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     $("task").placeholder = MODES[mode].placeholder;
     const build = mode === "build";
     const own = build && $("task-agent").value === ""; // a new agent: the pickers are its settings
-    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "task-skills", "mission-words"]) {
+    for (const id of ["task-web", "task-think", "task-model", "task-effort", "task-folder", "task-auto-switch",
+                      "task-skills", "mission-words"]) {
       $(id).hidden = !own;
     }
     $("attach").hidden = !build;
@@ -67,6 +68,15 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     $("task-account").hidden = !own || rows.length < 2;
     $("task-workspace").hidden = mode === "ask";
     $("attached").hidden = !build || uploads.count() === 0;
+  }
+
+  function thinkFace() { // Model ▾'s face: "Sonnet · balanced", or "Sonnet · Low effort" unless Default
+    const model = $("task-model").selectedOptions[0]?.textContent || "";
+    const effort = $("task-effort").selectedOptions[0];
+    const face = $("task-think").querySelector("summary");
+    face.textContent = $("task-effort").value === "default" ? model
+      : `${model.split(" · ")[0]} · ${effort.textContent} effort`;
+    face.title = `Model and effort: ${face.textContent}`; // the whole face, when a long one is cut short
   }
 
   function renderSkills() { // the picked ones first, then what the search finds (there may be hundreds)
@@ -163,6 +173,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     const name = $("task-name").value.trim(); // Name and What it works on: shown as text, never the agent's instruction
     const description = $("task-about").value.trim();
     begin({ type: "new_task", text, skills: [...picked], model: $("task-model").value, web: $("task-web").value,
+            effort: $("task-effort").value,
             ...account,
             ...(name ? { name } : {}), ...(description ? { description } : {}),
             ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...auto, ...workspace(),
@@ -230,12 +241,16 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   $("handing-clear").addEventListener("click", () => setHanding(null));
   $("task-agent").addEventListener("change", () => setMode(mode));
   $("skills-find").addEventListener("input", renderSkills);
+  $("task-think").addEventListener("change", thinkFace);
   $("start-key").textContent = MAC ? "⌘ ↵" : "Ctrl ↵";
   $("task-auto-switch").title = autoTitle(false, false); // until the app says this computer runs commands
   setMode("build");
+  thinkFace();
 
   return {
     note,
+    thinkFace, // the model set from the app's settings
+
     focus() { // Command-K (Ctrl+K) and New Mission: Build a Mission, the cursor in the box
       setMode("build");
       $("task").focus();

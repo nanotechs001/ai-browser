@@ -744,3 +744,11 @@ async def test_effort_reaches_claude_code_for_a_one_off_run_and_a_saved_agent(fa
             assert (saved.saved, saved.effort, flag) == ("research", "high", "high")
     finally:
         await server.stop()
+
+
+def test_the_readme_explains_effort():
+    from pathlib import Path
+
+    text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    assert "**Effort**" in text and "Claude Code's `--effort`" in text
+    assert "**Default** passes none" in text and "**Model**, **Effort**, **Account**" in text  # a saved agent's too

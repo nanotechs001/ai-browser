@@ -450,6 +450,34 @@ async def test_build_a_mission_starts_an_agent_with_its_pickers(stack):
     assert await until(js, "document.getElementById('task').value === ''")
 
 
+EFFORT_OPTIONS = [["default", "Default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"],
+                  ["xhigh", "Extra high"], ["max", "Max"]]
+FACE = "document.querySelector('#task-think summary').textContent"
+
+
+@CHROME
+async def test_effort_sits_with_the_model_and_reaches_the_run(stack):
+    js = await open_mission(stack)
+    efforts = "[...document.querySelectorAll('#task-effort option')].map(option => [option.value, option.textContent])"
+    assert await js(efforts) == EFFORT_OPTIONS
+    # folded with Model, in the pickers: Model, then Effort, behind one face that shows both
+    assert await js("(() => { const model = document.getElementById('task-model');"
+                    " const effort = document.getElementById('task-effort');"
+                    " const menu = document.getElementById('task-think');"
+                    " return menu.parentElement.id === 'pickers' && menu.contains(model) && menu.contains(effort)"
+                    " && Boolean(model.compareDocumentPosition(effort) & Node.DOCUMENT_POSITION_FOLLOWING); })()")
+    assert await until(js, f"{FACE} === 'Sonnet · balanced'")  # Default: the model alone, as before
+    await js("const effort = document.getElementById('task-effort'); effort.value = 'low';"
+             "effort.dispatchEvent(new Event('change', {bubbles: true}));"
+             "const model = document.getElementById('task-model'); model.value = 'haiku';"
+             "model.dispatchEvent(new Event('change', {bubbles: true})); true")
+    assert await until(js, f"{FACE} === 'Haiku · Low effort'")
+    await js("document.getElementById('task').value = 'check the shop'; document.getElementById('start').click(); true")
+    agents = stack["server"].agents
+    await wait_for(lambda: "a1" in agents.agents)
+    assert (agents.agents["a1"].model, agents.agents["a1"].effort) == ("haiku", "low")
+
+
 @CHROME
 async def test_ask_ai_asks_the_brain_and_shows_its_answer(stack):
     from test_talk import talk_script
@@ -458,7 +486,8 @@ async def test_ask_ai_asks_the_brain_and_shows_its_answer(stack):
     js = await open_mission(stack)
     await js("document.getElementById('mode-ask').click(); true")
     assert await js("document.getElementById('start-label').textContent") == "Ask"
-    hidden = "['task-web', 'task-model', 'task-folder', 'attach'].every(id => document.getElementById(id).hidden)"
+    hidden = ("['task-web', 'task-think', 'task-model', 'task-effort', 'task-folder', 'attach']"
+              ".every(id => document.getElementById(id).hidden)")
     assert await js(hidden)
     await js("document.getElementById('task').value = 'what are my agents doing?';"
              "document.getElementById('start').click(); true")

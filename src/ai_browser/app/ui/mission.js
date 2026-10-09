@@ -110,6 +110,7 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                                showPage("agents");
                                agentsPage.showAgent("", {
                                  name: agent.name, description: agent.description || "", model: agent.model,
+                                 effort: agent.effort || "default",
                                  web: agent.web || "web",
                                  // a run on Default: the agent follows "the default account for new agents"
                                  account: agent.account?.id && agent.account.id !== "default" ? agent.account.id : null,
@@ -224,6 +225,7 @@ function applySettings(settings) { // the model picked last: the app keeps it
   if (!settings) return;
   const model = settings.model ?? defaultModel;
   if ([...$("task-model").options].some((option) => option.value === model)) $("task-model").value = model;
+  composer.thinkFace();
 }
 
 // ---- the agents ----------------------------------------------------------------------------------------------

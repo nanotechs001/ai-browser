@@ -11,7 +11,8 @@ import { askBox, askKey, brainCard } from "./accountui.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
 import { confirmAction } from "./confirm.js";
-import { AUTO_EDITS_ONLY, AUTO_LABEL, AUTO_NO_SANDBOX, agentLabel, autoTitle, createChat, el } from "./chat.js";
+import { AUTO_EDITS_ONLY, AUTO_LABEL, AUTO_NO_SANDBOX, EFFORTS, agentLabel, autoTitle, createChat,
+         el } from "./chat.js";
 import { COLORS } from "./desk.js";
 import { icon } from "./icons.js";
 import { openLive, openTab } from "./nav.js";
@@ -20,6 +21,8 @@ import { renderPlan, renderSubagents } from "./plan.js";
 import { STATES, stateOf } from "./step.js";
 import { mountYourTabs } from "./tablist.js";
 import { mountMessageBox } from "./uploads.js";
+
+const MODEL_NAMES = { opus: "Opus", sonnet: "Sonnet", haiku: "Haiku" };
 
 // saveSkill(id, name): Save as skill (Knowledge's Train drafts a skill from this agent's chat); saveAgent(agent): Save
 // as agent (a new saved agent's settings, filled from this one-off run)
@@ -153,6 +156,8 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
     setText(parts.autoNote, autoCommands ? AUTO_NO_SANDBOX : AUTO_EDITS_ONLY); // what this computer lacks
     parts.autoNote.hidden = agent.auto !== true || (autoCommands && autoSandbox);
     const totals = [`${Math.round(agent.seconds || 0)} s`]; // its time, its cost and the skills it loaded
+    const effort = EFFORTS.find(([value]) => value === agent.effort && value !== "default");
+    if (effort) totals.unshift(`${MODEL_NAMES[agent.model] || agent.model} · ${effort[1]} effort`); // Default: none
     if (agent.cost) totals.push(`$${agent.cost.toFixed(2)}`);
     if ((agent.loaded_skills || []).length) totals.push(`skills: ${agent.loaded_skills.join(", ")}`);
     setText(parts.totals, totals.join(" · "));
