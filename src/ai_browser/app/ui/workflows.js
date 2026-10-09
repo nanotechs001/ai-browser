@@ -1,6 +1,7 @@
-// AI Home → Workflows: the user's own recipes, each a file in ~/.ai-browser/workflows. Run one by hand (with extra
-// words if you like), edit it, or delete it; the form writes the file and says where. Triggers: by hand, a message
-// (a site from the Brain's watch list, and when it applies), or a schedule.
+// Templates (tasks): the user's own recipes, each a file in ~/.ai-browser/workflows, on the Agents page: Tasks for any
+// agent, and each saved agent's own Tasks. Run one by hand (with extra words if you like), edit it, or delete it; the
+// form writes the file and says where. Triggers: by hand, a message (a site from the Brain's watch list, and when it
+// applies), or a schedule. Runs as: a new agent, or one of the saved agents (its settings, one run at a time).
 import { el } from "./chat.js";
 
 const TRIGGERS = { manual: "By hand", message: "When a message comes", schedule: "On a schedule" };
@@ -29,8 +30,11 @@ function select(name, options) {
   return node;
 }
 
+// filter(workflow): which templates this list shows; runsAs: the saved agent every save from here runs as (its own
+// Tasks), or null for a Runs as picker of agents() (the saved agents: {slug, name}); removeLabel: the delete button's
 export function mountWorkflows(root, link, { skills = () => [], sites = () => [], servers = () => [],
-                                              heading = "New workflow" } = {}) {
+                                              heading = "New workflow", filter = () => true, runsAs = null,
+                                              agents = () => [], removeLabel = "Delete" } = {}) {
   const list = el("div", "list workflows-list");
   const problems = el("div", "problems muted");
   const form = el("div", "workflow-form card");
@@ -51,6 +55,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
   const run = select("run", [["ask", "Ask me first"], ["auto", "Run right away"]]);
   const schedule = input("schedule", "daily 09:00, weekdays 09:00, mon 08:30 or every 2h");
   const model = select("model", [["sonnet", "Sonnet"], ["opus", "Opus"], ["haiku", "Haiku"]]);
+  const runsAsPick = select("runs_as", []); // a new agent, or a saved one: then its settings, not this form's
   const tools = el("div", "checks tools");
   const skillChecks = el("div", "skill-picker"); // the chosen skills, and a search for more (there may be hundreds)
   const chosenBox = el("div", "chosen");
@@ -69,6 +74,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
   const buttons = el("div", "row");
   buttons.append(save, cancel, saved);
   form.append(field("Name", name), field("Instructions", instructions), field("Trigger", trigger), message, timing,
+              ...(runsAs === null ? [field("Runs as", runsAsPick)] : []),
               field("Model", model), el("span", "muted", "Tools it may use (it still asks before each)"), tools,
               el("span", "muted", "Skills its agent loads first"), skillChecks, buttons);
 
@@ -137,7 +143,19 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
     if (!found.length) matches.append(el("span", "muted", "No skill matches"));
   }
 
+  function fillRunsAs(picked) {
+    const kept = picked ?? runsAsPick.value;
+    runsAsPick.replaceChildren(...[["", "A new agent"], ...agents().map((agent) => [agent.slug, agent.name])]
+      .map(([value, label]) => {
+        const option = el("option", "", label);
+        option.value = value;
+        return option;
+      }));
+    runsAsPick.value = [...runsAsPick.options].some((option) => option.value === kept) ? kept : "";
+  }
+
   function options(picked = {}) {
+    fillRunsAs(picked.runs_as);
     const current = site.value;
     site.replaceChildren();
     for (const entry of sites()) {
@@ -160,7 +178,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
     trigger.value = "manual";
     run.value = "ask";
     model.value = "sonnet";
-    options({ tools: [], skills: [] });
+    options({ tools: [], skills: [], runs_as: "" });
     showFields();
   }
 
@@ -173,7 +191,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
     schedule.value = workflow.schedule || "";
     run.value = workflow.run || "ask";
     model.value = workflow.model || "sonnet";
-    options({ site: workflow.site, tools: workflow.tools, skills: workflow.skills });
+    options({ site: workflow.site, tools: workflow.tools, skills: workflow.skills, runs_as: workflow.runs_as || "" });
     showFields();
     saved.textContent = `Editing ${workflow.path}`;
     name.focus();
@@ -188,7 +206,8 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
   function render(snapshot) {
     last = snapshot;
     list.replaceChildren();
-    for (const workflow of snapshot.workflows || []) {
+    const shown = (snapshot.workflows || []).filter(filter);
+    for (const workflow of shown) {
       const row = el("div", "workflow card");
       row.dataset.slug = workflow.slug;
       const extra = el("input", "run-text");
@@ -207,7 +226,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
       });
       const editButton = el("button", "edit", "Edit");
       editButton.addEventListener("click", () => edit(workflow));
-      const remove = el("button", "delete ghost", "Delete");
+      const remove = el("button", "delete ghost", removeLabel);
       remove.addEventListener("click", () => { // a second click: it deletes the user's file
         if (remove.dataset.sure) send({ type: "workflow_delete", slug: workflow.slug });
         else {
@@ -222,7 +241,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
       row.append(buttons);
       list.append(row);
     }
-    if (!(snapshot.workflows || []).length) list.append(el("p", "empty", "No workflows yet: write one below."));
+    if (!shown.length) list.append(el("p", "empty", "No tasks yet: write one below."));
     problems.replaceChildren(...(snapshot.problems || []).map((problem) => el("div", "", `Can't read ${problem}`)));
   }
 
@@ -237,7 +256,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
     send({ type: "workflow_save", request: pending, ...(editing ? { slug: editing } : {}), name: name.value,
            instructions: instructions.value, trigger: trigger.value, site: site.value, when: when.value,
            schedule: schedule.value, run: run.value, model: model.value, tools: picked(tools),
-           skills: [...chosenSkills] });
+           skills: [...chosenSkills], runs_as: runsAs ?? runsAsPick.value });
   });
   skillFind.addEventListener("input", renderSkills);
   reset();

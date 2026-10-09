@@ -261,7 +261,7 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
   .history-row :is(.chip, .took, .account, .files) { display: none; }
 }
 
-/* ---- Templates, Knowledge and Integrations: AI Home's own pieces, on navy ------------------------------------- */
+/* ---- the Agents page's tasks, Knowledge and Integrations, on navy -------------------------------------------- */
 .page :is(.workflow, .tool-server, .skill-editor, .skill) { display: flex; flex-direction: column; gap: 6px;
   font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
 .page :is(.list, .skills-list) { display: flex; flex-direction: column; gap: 8px; }
@@ -283,6 +283,29 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .removed-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .removed-list li { display: flex; gap: 8px; align-items: center; }
 .knowledge-note:empty { display: none; }
+/* the Agents page: a card per saved agent, and its settings in a panel over the page (agentspage.js) */
+.agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.agent-card { flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 12px 14px; }
+.agent-card .top-line { display: flex; gap: 8px; align-items: center; width: 100%; }
+.agent-card .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-card .about { overflow-wrap: anywhere; }
+.agent-card .about:empty { display: none; }
+.page .workflow.focus { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.agent-panel { z-index: 12; }
+.agent-panel-body { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.agent-panel-body h3 { font-size: 14px; margin: 8px 0 0; }
+.agent-panel .field { display: flex; flex-direction: column; gap: 2px; }
+.agent-panel :is(textarea, input:not([type="checkbox"]):not([type="radio"]), select) { border: 1px solid var(--line);
+  border-radius: 8px; padding: 5px 8px; background: var(--field); color: var(--text); }
+.agent-panel textarea { width: 100%; resize: vertical; }
+.agent-panel .field-note, .agent-panel .skills-note { font-size: 12px; margin: 0; }
+.agent-skills { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; }
+.agent-skill { display: flex; gap: 10px; align-items: center; font-size: 13px; }
+.agent-skill .ref { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-panel .check { display: inline-flex; gap: 4px; align-items: center; font-size: 13px; }
+.agent-tasks :is(.workflow, .workflow-form) { display: flex; flex-direction: column; gap: 6px; font-size: 13px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.agent-note:empty { display: none; }
 .page .skill .uses { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .page .skill .uses :is(button, select) { font-size: 12px; padding: 2px 8px; }
 .page .skill .in-use { display: flex; gap: 4px; flex-wrap: wrap; }

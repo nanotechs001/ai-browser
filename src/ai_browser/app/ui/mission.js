@@ -1,8 +1,9 @@
 // Mission Control (the new look): the user's AI office. The left menu (the line's light, the counts, New Mission, the
 // pages, the workspaces and the Usage card), the centre (the Flow · List · Calendar switch, the office of scene.js,
-// the menu's pages and the composer), and the right column (side.js) for the agent picked. On the same line
-// to the app as AI Home (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
+// the menu's pages and the composer), and the right column (side.js) for the agent picked. On the line to the app
+// (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
 import { askError } from "./accountui.js";
+import { mountAgentsPage } from "./agentspage.js";
 import { mountHandoffSlot } from "./brainui.js";
 import { mountBraveBar } from "./bravebar.js";
 import { mountCalendar } from "./calendar.js";
@@ -24,7 +25,7 @@ import { createVoice } from "./voice.js";
 import { fillMove, mountWorkspaces } from "./workspaces.js";
 
 const $ = (id) => document.getElementById(id);
-const PAGES = ["dashboard", "missions", "knowledge", "integrations", "tabs", "history"];
+const PAGES = ["dashboard", "missions", "agents", "knowledge", "integrations", "tabs", "history"];
 const VIEWS = ["flow", "list", "calendar"];
 const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
 const agents = new Map(); // id -> the agent, as the app describes it
@@ -112,7 +113,9 @@ const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible
                                                      decorate: (row, agent) => moveFor(row, { agent: agent.id },
                                                                                        agent.workspace) });
 const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
-parts.push(missions, history);
+const agentsPage = mountAgentsPage($("page-agents"), $("agent-panel"), { link, agents: () => agents,
+                                                                        accounts: () => accountRows });
+parts.push(missions, history, agentsPage);
 const knowledge = mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value,
                                                              useSkill: (ref) => { // Use in new mission
                                                                showPage("dashboard");
@@ -149,8 +152,9 @@ reserved.observe($("talk"));
 parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
                                                 visibleTemplate: templateInWorkspace }));
 
-function openTemplate() { // a template in the Calendar: AI Home, at its templates (Run, Edit, New are AI Home's)
-  openTab("/home#workflows-section");
+function openTemplate(slug) { // a template in the Calendar: the Agents page, at its agent's settings or the template
+  showPage("agents");
+  agentsPage.showTemplate(slug);
 }
 
 function workspaceOfTemplate(slug) {
@@ -188,7 +192,7 @@ talk = mountTalk({
   },
   openAgent: (id, options) => openDrawer(id, options),
   openBrain: () => drawer.openBrain(),
-  model: () => $("task-model").value, // the model last picked here or in AI Home
+  model: () => $("task-model").value, // the model last picked here (the app remembers it)
   fill: (words) => composer.fill(words), // the mic outside Ask AI fills the box
   keep: 200, // Ask AI's history: this run's talk with the Brain, scrolled on hover (composer.css)
 });
@@ -205,7 +209,7 @@ function setStatus(state) {
     || "Not connected: is `ai-browser app` running?";
 }
 
-function applySettings(settings) { // the model picked last, here or in AI Home: the app keeps it
+function applySettings(settings) { // the model picked last: the app keeps it
   if (!settings) return;
   const model = settings.model ?? defaultModel;
   if ([...$("task-model").options].some((option) => option.value === model)) $("task-model").value = model;

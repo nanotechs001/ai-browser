@@ -24,6 +24,8 @@
         class="label">Dashboard</span></button></li>
       <li><button class="page-link" type="button" data-page="missions" data-icon="missions"><span class="label">My
         Missions</span></button></li>
+      <li><button class="page-link" type="button" data-page="agents" data-icon="agents"><span
+        class="label">Agents</span></button></li>
       <li><button class="page-link" type="button" data-page="knowledge" data-icon="book"><span
         class="label">Knowledge</span></button></li>
       <li><button class="page-link" type="button" data-page="integrations" data-icon="cube"><span
@@ -55,6 +57,7 @@
       <div id="view-calendar" class="view-calendar" hidden></div>
     </section>
     <section id="page-missions" class="page" hidden aria-label="My Missions"></section>
+    <section id="page-agents" class="page" hidden aria-label="Agents"></section>
     <section id="page-knowledge" class="page" hidden aria-label="Knowledge"></section>
     <section id="page-integrations" class="page" hidden aria-label="Integrations"></section>
     <section id="page-tabs" class="page" hidden aria-label="Tabs"></section>
@@ -97,25 +100,28 @@
             <button id="options" class="icon-button options" type="button" data-icon="more" aria-expanded="false"
                     aria-controls="pickers" aria-label="Options"></button>
             <div id="pickers" class="pickers">
-              <select id="task-web" aria-label="Web" title="The agent's web tools">
-                <option value="web">Web + Brave</option>
-                <option value="brave">Brave only</option>
-                <option value="none">No web</option>
-              </select>
+              <select id="task-agent" aria-label="Agent"
+                      title="A new agent, or one of your saved agents: then its own settings apply"><option
+                value="">New agent</option></select>
               <select id="task-model" aria-label="Model">
                 <option value="opus">Opus · most capable</option>
                 <option value="sonnet">Sonnet · balanced</option>
                 <option value="haiku">Haiku · fastest</option>
               </select>
+              <select id="task-web" aria-label="Web" title="The agent's web tools">
+                <option value="web">Web + Brave</option>
+                <option value="brave">Brave only</option>
+                <option value="none">No web</option>
+              </select>
               <select id="task-account" aria-label="Account" hidden></select>
               <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
-              <label id="task-auto-switch" class="auto-switch"><input id="task-auto"
-                type="checkbox"> Auto-approve in its folder</label>
               <details id="task-skills" class="skills-menu"><summary>Skills <span id="skills-count"
                 class="muted"></span></summary>
                 <div class="skills-pick"><input id="skills-find" type="search" autocomplete="off"
                   placeholder="Find a skill" aria-label="Find a skill"><div id="skills-pick"></div>
                   <p class="muted">Loaded at start: their text goes in the agent's first message.</p></div></details>
+              <label id="task-auto-switch" class="auto-switch"><input id="task-auto"
+                type="checkbox"> Auto-approve in its folder</label>
               <select id="task-workspace" aria-label="Workspace"></select>
             </div>
             <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
@@ -177,6 +183,7 @@
     </section>
   </aside>
 </div>
+<aside id="agent-panel" class="drawer panel agent-panel" hidden aria-label="Agent settings"></aside>
 <aside id="drawer" class="drawer panel" hidden aria-label="Details">
   <header><span id="drawer-dot" class="dot"></span><strong id="drawer-title"></strong>
     <button id="drawer-close" class="ghost" type="button" aria-label="Close">✕</button></header>

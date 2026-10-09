@@ -18,7 +18,7 @@ CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is no
 # ---- Templates leave Mission Control (spec 2) ------------------------------------------------------------------------
 
 @CHROME
-async def test_templates_leave_mission_control_and_the_calendar_opens_ai_home(stack):
+async def test_templates_leave_the_composer_and_the_calendar_opens_the_agents_page(stack):
     server = stack["server"]
     stack["workflows"].save({"name": "Morning report", "instructions": "Write it", "trigger": "schedule",
                              "schedule": "daily 09:00"})
@@ -34,9 +34,9 @@ async def test_templates_leave_mission_control_and_the_calendar_opens_ai_home(st
     await js("document.querySelector('#views-switch [data-view=\"calendar\"]').click(); true")
     entry = "document.querySelector('#view-calendar .entry.template')"
     assert await until(js, f"{entry} !== null")  # the Calendar still shows the scheduled template
-    await js(f"{entry}.click(); true")
-    assert await until(js, "location.pathname === '/home' && location.hash === '#workflows-section'"
-                           " && document.getElementById('workflows-section').open === true")
+    await js(f"{entry}.click(); true")  # the Agents page, at the template (the saved-agents spec, 1)
+    assert await until(js, "!document.getElementById('page-agents').hidden && document.querySelector("
+                           "'#page-agents .workflow[data-slug=\"morning-report\"]') !== null")
 
 
 # ---- Ask AI's history (spec 3) ---------------------------------------------------------------------------------------
