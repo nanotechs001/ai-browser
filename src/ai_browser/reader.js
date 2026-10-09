@@ -616,6 +616,11 @@
       return byId(id) || null;
     },
 
+    // The next free row number (asked after a read whose result was dropped: its rows were numbered all the same).
+    nextId() {
+      return next;
+    },
+
     // A frame from another site, seen from this document (the engine asks, with its <iframe> element): where it draws
     // the frame (its content box's corner, and the scale a CSS transform or zoom gives it: the drawn size versus the
     // layout size), its lower right corner, and its place in the last observe's frames (-1: not listed, too small).

@@ -882,6 +882,9 @@ class Browser:
                     read = await asyncio.wait_for(self._read_frame(tab, frame, root, placed, state, page, opts),
                                                   deadline - loop.time())
                 except (BrowserError, CDPError, TimeoutError):
+                    # its reader may have numbered rows before the result was dropped: keep those numbers taken
+                    with contextlib.suppress(BrowserError, CDPError, TimeoutError):
+                        tab.next = max(tab.next, await asyncio.wait_for(self._reader_in(frame, "nextId()"), 1))
                     continue
                 if read is not None and frame.session != frame.host:
                     roots.append(read)

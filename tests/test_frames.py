@@ -270,3 +270,35 @@ async def test_frames_share_one_limit_and_one_time(builder, monkeypatch):
     monkeypatch.setattr(browser_module, "FRAME_TIME", 0)
     state = await browser.state()
     assert {item.get("frame") for item in state["rows"]} == {None}  # out of time: the page's own rows still come
+
+
+@CHROME
+async def test_a_dropped_frame_read_never_makes_two_rows_share_a_number(builder, monkeypatch):
+    from ai_browser.browser import BrowserError, Frame
+
+    browser, page = builder
+    await browser.open(page)
+    await read_until(browser, "Add row", "Side button")
+    reader_in = browser._reader_in
+    drop = [True]
+
+    async def dropping(where, call, *args, **kwargs):
+        result = await reader_in(where, call, *args, **kwargs)
+        if drop[0] and isinstance(where, Frame) and where.url.endswith("/frames/canvas.html") \
+                and call.startswith("observe("):
+            raise BrowserError("lost")  # the frame's reader ran (it numbered rows), but its result is dropped
+        return result
+
+    canvas = next(frame for frame in browser.current.frames.values() if frame.url.endswith("/frames/canvas.html"))
+    await browser.eval_in(canvas, "for (let i = 0; i < 8; i++) { const b = document.createElement('button'); "
+                                  "b.textContent = 'Fresh ' + i; document.body.prepend(b); }")
+    monkeypatch.setattr(browser, "_reader_in", dropping)
+    await browser.state()
+    drop[0] = False
+    await browser._eval("for (let i = 0; i < 8; i++) { const b = document.createElement('button'); "
+                        "b.textContent = 'New ' + i; document.body.prepend(b); }")
+    state = await read_until(browser, "New 7", "Add row")
+    ids = [item["id"] for item in state["rows"]]
+    assert len(ids) == len(set(ids))
+    framed = {item["id"] for item in state["rows"] if item.get("frame")}
+    assert set(browser.current.inside) == framed  # only the frame's own rows
