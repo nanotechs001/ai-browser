@@ -375,6 +375,68 @@ async def test_load_at_start_names_the_skills_own_folder_when_docker_doesnt_answ
         await manager.close_all()
 
 
+# ---- running a saved agent: its settings apply, one run at a time (Task 6) --------------------------------------------
+
+async def test_a_task_for_a_saved_agent_starts_its_run_or_goes_to_the_one_at_work(fake_claude, tmp_path):
+    import json
+
+    from test_app_server import started, until, wait_for
+    from test_bridge import EVENTS
+    from ui_socket import ui_socket
+
+    server, url = await started(fake_claude, tmp_path, [EVENTS[0], {"sleep": 30}])  # its run stays at work
+    agents = server.agents
+    saved = server.saved.save({**AGENT, "auto_approve": True})
+    calm = server.saved.save({**AGENT, "name": "Calm", "auto_approve": False})
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+            await until(ws, lambda m: m["type"] == "snapshot")
+            await ws.send(json.dumps({"type": "new_task", "agent": saved.slug, "text": "List the prices",
+                                      "name": "Not this", "model": "haiku", "web": "none", "request": "m1"}))
+            created = await until(ws, lambda m: m["type"] == "created" and m.get("request") == "m1")
+            run = agents.agents[created[-1]["id"]]
+            assert (run.saved, run.name, run.description, run.model, run.web, run.auto) == (
+                "research", "Research", AGENT["description"], "opus", "brave", True)  # its settings, not the box's
+            await wait_for(lambda: run.state == "working")
+            await ws.send(json.dumps({"type": "new_task", "agent": saved.slug, "text": "Add the yearly plans",
+                                      "request": "m2"}))
+            again = await until(ws, lambda m: m["type"] == "created" and m.get("request") == "m2")
+            assert again[-1]["id"] == run.id and list(agents.agents) == [run.id]  # one run at a time: a message
+            await wait_for(lambda: run.queued == 1)
+            await ws.send(json.dumps({"type": "new_task", "agent": calm.slug, "text": "Check", "auto": True,
+                                      "request": "m3"}))
+            other = agents.agents[(await until(ws, lambda m: m["type"] == "created" and m.get("request") == "m3"))[-1]
+                                  ["id"]]
+            assert other.auto is False and other.saved == "calm"  # its setting, never the page's switch
+            await ws.send(json.dumps({"type": "new_task", "agent": "gone", "text": "x", "request": "m4"}))
+            refused = await until(ws, lambda m: m["type"] == "error" and m.get("request") == "m4")
+            assert refused[-1]["text"] == "There is no such agent" and len(agents.agents) == 2
+            await ws.send(json.dumps({"type": "saved_agent_delete", "slug": saved.slug, "request": "d1"}))
+            await until(ws, lambda m: m["type"] == "saved_agents")
+            assert run.saved == "" and run.state == "working"  # it goes on, as a one-off run
+    finally:
+        await server.stop()
+
+
+async def test_a_run_keeps_the_template_skills_it_may_use(fake_claude, tmp_path):
+    import json
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.savedagents import SavedAgents
+    from test_bridge import EVENTS
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    saved = SavedAgents(tmp_path / "home").save(AGENT)  # Can use: prices and tables
+    manager = AgentManager(tmp_path / "home", claude=runner)
+    try:
+        run, started = await manager.run_as(saved, "Weekly prices", skills=["personal:tables", "personal:secrets"])
+        assert started is True and run.pending[0][2] == ["personal:prices", "personal:tables"]  # not secrets
+    finally:
+        await manager.close_all()
+
+
 def test_a_narrowed_runs_bash_treats_skills_outside_can_use_like_blocked_ones(tmp_path, monkeypatch):
     import json
 

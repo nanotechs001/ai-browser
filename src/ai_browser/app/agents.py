@@ -58,6 +58,7 @@ CLOSED = "That agent has closed"
 NOTE_LIMIT = 300  # characters of Deny's note to the agent
 SUBAGENTS_KEPT = 20  # sub-agents an agent's drawer lists, the newest
 FINISHED = ("your_turn", "stopped", "failed")  # a turn that ended: the room's finished agents (the new look)
+GOING = ("working", "waiting", "needs_you")  # a saved agent's run still going: a new task for it is a message
 FILES_KEPT = 50  # files an agent changed, the newest, for History
 RESULT_LIMIT = 200  # characters of its last answer's first line, for History
 WORDS_LIMIT = 20_000  # characters of an answer kept while it streams in
@@ -388,6 +389,36 @@ class AgentManager:
         self._line.append(agent_id)
         self._pump()
         return agent
+
+    def run_of(self, slug: str) -> Agent | None:
+        """The run of this saved agent that is still going (working, waiting in line or needing the user), if any."""
+        return next((agent for agent in self.agents.values() if slug and agent.saved == slug and agent.state in GOING),
+                    None)
+
+    async def run_as(self, saved, text: str, skills=(), servers: list[str] | None = None, tab: dict | None = None,
+                     adopt: str | None = None, files=(), workspace: str | None = None) -> tuple[Agent, bool]:
+        """A task for a saved agent (Build a Mission's Agent ▾, or a template that runs as it): one run at a time.
+        While its run is going, the task goes to that run as a message, as the drawer's Send does: (run, False). Else
+        a new run starts with its settings (name, what it works on, profile, web, model, account, folder,
+        Auto-approve, instruction, skills): (run, True). Skills asked for beside its own join its Load at start only
+        when it may use them."""
+        run = self.run_of(saved.slug)
+        if run is not None:
+            await self.send(run.id, text, tab, files=files)
+            return run, False
+        extra = [ref for ref in skills if not saved.use or ref in saved.use]
+        agent = await self.create(text, list(dict.fromkeys([*saved.load, *extra])), saved.model, adopt, tab, servers,
+                                  account=saved.account, folder=saved.folder, workspace=workspace, files=files,
+                                  web=saved.web, auto=saved.auto, name=saved.name, description=saved.description,
+                                  saved_agent=saved)
+        return agent, True
+
+    def forget_saved(self, slug: str) -> None:
+        """A saved agent was deleted: its runs go on, as one-off runs."""
+        for agent in self.agents.values():
+            if slug and agent.saved == slug:
+                agent.saved = ""
+                self._changed(agent)
 
     def _scratch(self, agent_id: str) -> Path:
         """An agent's own scratch folder: the bridge's own path when no folder is chosen."""

@@ -1440,17 +1440,30 @@ class AppServer:
                 else None  # agent powers: the task's folder; none is the agent's own scratch folder
             listed = message.get("attachments") if isinstance(message.get("attachments"), list) else []
             web = message.get("web") if message.get("web") in powers.WEB_CHOICES else "web"
+            saved = self.saved.get(message["agent"]) if message.get("agent") is not None else None  # Agent ▾
+            if message.get("agent") is not None and saved is None:
+                queue.put_nowait({"type": "error", "text": NOT_AN_AGENT, "request": request})
+                return
+            started = True
             try:  # an account that isn't listed any more is said, never swapped for another
                 files = self.uploads.take(ws, listed)  # each attached file whole, or nothing starts
-                agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
-                                            folder=folder, workspace=self._workspace_of(message), files=files,
-                                            web=web, auto=message.get("auto") is True,  # the composer's switch
-                                            name=message.get("name"), description=message.get("description"))
+                if saved is not None:  # its own settings, Auto-approve too: the page's pickers don't apply
+                    agent, started = await agents.run_as(saved, text, skills, tab=_tab(message.get("tab")),
+                                                         adopt=adopt, files=files,
+                                                         workspace=self._workspace_of(message))
+                else:
+                    agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")),
+                                                account=account, folder=folder, workspace=self._workspace_of(message),
+                                                files=files, web=web,
+                                                auto=message.get("auto") is True,  # the composer's switch
+                                                name=message.get("name"), description=message.get("description"))
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
             self.uploads.done(ws, listed)
-            if handed is not None:
+            if handed is not None and not started:  # its run is at work: the tab is handed to that run
+                await self._hand(agent.id, adopt)
+            elif handed is not None:
                 self._own(adopt, self._owner_of(agent.id, handed=True))
             queue.put_nowait({"type": "created", "id": agent.id, "request": request})
         elif kind == "send":
@@ -1906,6 +1919,7 @@ class AppServer:
             elif kind == "saved_agent_delete":
                 if not self.saved.delete(message.get("slug")):
                     raise ValueError(NOT_AN_AGENT)
+                self.agents.forget_saved(message["slug"])  # a run at work goes on, as a one-off run
         except ValueError as exc:
             queue.put_nowait({"type": "error", "text": str(exc), "request": request})
             return
