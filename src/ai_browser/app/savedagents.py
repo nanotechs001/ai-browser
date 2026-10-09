@@ -30,6 +30,7 @@ NAME_TOO_LONG = f"An agent's name is at most {NAME_LIMIT} characters"
 ABOUT_TOO_LONG = f"What it works on is at most {ABOUT_LIMIT} characters"
 INSTRUCTION_TOO_LONG = f"The instruction is at most {INSTRUCTION_LIMIT:,} characters"
 BAD_MODEL = "The model is opus, sonnet or haiku"
+BAD_EFFORT = "Effort is Default, Low, Medium, High, Extra high or Max"
 BAD_WEB = "Web is Web + Brave, Brave only or No web"
 BAD_SKILLS = "Pick the skills from the list"
 BAD_PROFILE = "Pick one of the profiles listed"
@@ -56,6 +57,7 @@ class SavedAgent:
     auto: bool = False  # Auto-approve in its folder: the user's tick here; every run of it starts with it on
     use: list[str] = field(default_factory=list)  # Can use: skill refs; none is every skill
     load: list[str] = field(default_factory=list)  # Load at start: skill refs, in its first message
+    effort: str = "default"  # Claude Code's --effort for its runs (EFFORTS); default: no flag
 
     def public(self) -> dict:
         return asdict(self)
@@ -109,6 +111,9 @@ def check(fields: dict, slug: str) -> SavedAgent:
     model = fields.get("model") or "sonnet"
     if model not in MODELS:
         raise ValueError(BAD_MODEL)
+    effort = fields.get("effort") or "default"  # absent (a file from before Effort): Default
+    if effort not in EFFORTS:
+        raise ValueError(BAD_EFFORT)
     web = fields.get("web") or "web"
     if web not in WEBS:
         raise ValueError(BAD_WEB)
@@ -120,7 +125,7 @@ def check(fields: dict, slug: str) -> SavedAgent:
         use = sorted(set(use) | set(load))
     return SavedAgent(slug, name, description, instruction, _choice(fields.get("profile"), BAD_PROFILE), web, model,
                       _choice(fields.get("account"), BAD_ACCOUNT), _choice(fields.get("folder"), BAD_FOLDER), auto,
-                      use, load)
+                      use, load, effort)
 
 
 class SavedAgents:
@@ -178,7 +183,7 @@ class SavedAgents:
                 slug = f"{base}-{number}"
         saved.slug = slug
         front = {"name": saved.name, "description": saved.description, "profile": saved.profile, "web": saved.web,
-                 "model": saved.model, "account": saved.account, "folder": saved.folder,
+                 "model": saved.model, "effort": saved.effort, "account": saved.account, "folder": saved.folder,
                  "auto_approve": saved.auto, "can_use": saved.use, "load_at_start": saved.load}
         text = f"---\n{yaml.safe_dump(front, sort_keys=False, allow_unicode=True)}---\n{saved.instruction}\n"
         write_atomic(self.path_of(slug), text.encode("utf-8"), 0o600)

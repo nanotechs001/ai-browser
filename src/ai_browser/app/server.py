@@ -133,8 +133,8 @@ POWERS_MESSAGES = {"folder_choose", "folder_trust", "permission_rules", "permiss
 WORKSPACE_MESSAGES = {"workspaces", "workspace_save", "workspace_delete", "workspace_assign"}  # the new look
 ATTACH_MESSAGES = {"attach_start", "attach_chunk", "attach_drop"}  # the new look's Attach: a file in pieces
 SAVED_MESSAGES = {"saved_agents", "saved_agent_save", "saved_agent_delete"}  # the Agents page: our own pages only
-SAVED_FIELDS = ("slug", "name", "description", "instruction", "profile", "web", "model", "account", "folder",
-                "auto_approve", "can_use", "load_at_start")
+SAVED_FIELDS = ("slug", "name", "description", "instruction", "profile", "web", "model", "effort", "account",
+                "folder", "auto_approve", "can_use", "load_at_start")
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
@@ -1489,7 +1489,7 @@ class AppServer:
                 else:
                     agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")),
                                                 account=account, folder=folder, workspace=self._workspace_of(message),
-                                                files=files, web=web,
+                                                files=files, web=web, effort=message.get("effort"),
                                                 auto=message.get("auto") is True,  # the composer's switch
                                                 name=message.get("name"), description=message.get("description"))
             except ValueError as exc:

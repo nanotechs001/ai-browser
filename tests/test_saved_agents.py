@@ -28,7 +28,7 @@ def test_a_saved_agent_is_a_file_of_its_own(tmp_path):
         "slug": "research", "name": "Research", "description": "Pricing pages of the three biggest rivals",
         "instruction": "Always answer in French.\nKeep a table of every price.", "profile": None, "web": "brave",
         "model": "opus", "account": None, "folder": None, "auto": True, "use": ["personal:prices", "personal:tables"],
-        "load": ["personal:prices"]}
+        "load": ["personal:prices"], "effort": "default"}
     assert store.save({**AGENT, "description": ""}).slug == "research-2"  # a new one never takes another's file
     edited = store.save({**AGENT, "slug": "research", "name": "Rivals"})
     assert edited.slug == "research" and store.get("research").name == "Rivals"  # an edit keeps its file
@@ -53,6 +53,7 @@ def test_a_saved_agent_is_a_file_of_its_own(tmp_path):
     ({"account": ["a"]}, "Pick one of the accounts listed"),
     ({"folder": 3}, "Pick a folder"),
     ({"auto_approve": "yes"}, "Auto-approve is on or off"),
+    ({"effort": "turbo"}, "Effort is Default, Low, Medium, High, Extra high or Max"),
 ])
 def test_refused_values_save_nothing(tmp_path, fields, error):
     from ai_browser.app.savedagents import SavedAgents
@@ -690,3 +691,56 @@ def test_a_narrowed_run_auto_approves_only_the_scripts_of_skills_it_may_use(tmp_
     assert all(auto(every, name) for name in found)  # every skill: as before, every folder under a root runs
     assert auto(prices, "prices") and not any(auto(prices, name) for name in ("secrets", "copy", "loose"))
     assert not any(auto(none, name) for name in found)  # broken: no skill folder is trusted
+
+
+# ---- Effort: Claude Code's --effort, a saved agent's setting like its model ------------------------------------------
+
+def test_a_saved_agents_effort_is_kept_in_its_file(tmp_path):
+    from ai_browser.app.savedagents import SavedAgents
+
+    store = SavedAgents(tmp_path / "home")
+    saved = store.save({**AGENT, "effort": "xhigh"})
+    text = (tmp_path / "home" / "agents" / "research.md").read_text(encoding="utf-8")
+    assert "\nmodel: opus\neffort: xhigh\naccount: null\n" in text  # beside its model; the other keys as before
+    assert store.get("research").effort == "xhigh" and saved.public()["effort"] == "xhigh"
+    assert store.save({**AGENT, "name": "Plain"}).effort == "default"  # none given: Default
+    (tmp_path / "home" / "agents" / "old.md").write_text("---\nname: Old\nmodel: haiku\n---\nHi\n", encoding="utf-8")
+    assert store.get("old").effort == "default"  # a file from before Effort: Default, as its runs were
+
+
+async def test_effort_reaches_claude_code_for_a_one_off_run_and_a_saved_agent(fake_claude, tmp_path):
+    import json
+
+    from test_app_server import started, until, wait_for
+    from test_bridge import EVENTS
+    from ui_socket import ui_socket
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    _, log, _ = fake_claude
+    agents = server.agents
+
+    async def run(ws, request, **message):
+        await ws.send(json.dumps({"type": "new_task", "text": "List the prices", "request": request, **message}))
+        created = await until(ws, lambda m: m["type"] in ("created", "error") and m.get("request") == request)
+        agent = agents.agents[created[-1]["id"]]
+        await wait_for(lambda: agent.state == "your_turn")
+        argv = launches(log)[-1]
+        return agent, argv[argv.index("--effort") + 1] if "--effort" in argv else None
+
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+            await until(ws, lambda m: m["type"] == "snapshot")
+            one, flag = await run(ws, "r1", effort="low")
+            assert (one.effort, flag) == ("low", "low")
+            plain, flag = await run(ws, "r2")
+            assert (plain.effort, flag) == ("default", None)  # Default: no flag, as before
+            odd, flag = await run(ws, "r3", effort="turbo")
+            assert (odd.effort, flag) == ("default", None)  # an unknown value is Default, as a bad model is
+            await ws.send(json.dumps({"type": "saved_agent_save", "request": "s1", **AGENT, "effort": "high"}))
+            await until(ws, lambda m: m["type"] == "saved_agent_saved")
+            assert server.saved.get("research").effort == "high"
+            saved, flag = await run(ws, "r4", agent="research", effort="low")  # its own setting rules
+            assert (saved.saved, saved.effort, flag) == ("research", "high", "high")
+    finally:
+        await server.stop()
