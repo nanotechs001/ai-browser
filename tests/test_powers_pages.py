@@ -209,6 +209,23 @@ async def test_a_refused_folder_is_said_and_the_typed_path_stays(mission, user_h
 
 
 @CHROME
+async def test_no_folder_holds_when_a_late_check_answers(mission):  # final review: a saved agent's folder persists
+    js, _ = mission
+    shown = await js("""import('/folderpick.js').then(({ mountFolderPicker }) => {
+      const select = document.createElement('select'), box = document.createElement('div'), sent = [];
+      document.body.append(select, box);
+      const picker = mountFolderPicker({ select, box, prefix: 'late' }, (message) => sent.push(message) || true);
+      picker.set('/work/site'); // a saved agent's folder: the app checks it
+      select.value = ''; // the user picks No folder before the check answers
+      select.dispatchEvent(new Event('change'));
+      picker.onMessage({ type: 'folder', request: sent[0].request,
+                         folder: { path: '/work/site', name: 'site', trusted: true } });
+      return [sent.length, picker.value(), select.value];
+    })""")
+    assert shown == [1, None, ""]
+
+
+@CHROME
 async def test_the_tab_menu_opens_the_folder_dialog_for_mission_control(stack, user_home, tmp_path):  # decision 13
     from test_tab_menu import frame, in_frame, window_page
 

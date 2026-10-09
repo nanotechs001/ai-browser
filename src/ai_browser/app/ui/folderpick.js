@@ -158,6 +158,7 @@ export function mountFolderPicker({ select, box, prefix = "fold" }, send) {
     } else if (select.value === NONE) {
       chosen = null;
       kept = null;
+      waiting = null; // a late answer to set()'s check never brings the folder back
       showChosen();
     } else {
       ask({ type: "folder_choose", path: select.value });
