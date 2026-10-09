@@ -16,7 +16,7 @@ Claude is the worker, so no LLM API keys are needed.
 
 Two parts, with designs and plans in `docs/superpowers/`:
 - **the engine** (tools, sandbox, your-own-browser mode);
-- **the AI Browser app** (its own window: AI Home, Mission Control and the Brain).
+- **the AI Browser app** (its own window: Mission Control, Settings and the Brain).
 
 WordPress and Elementor skills come next.
 
@@ -161,7 +161,7 @@ Ctrl-C when done; the login stays saved. In Claude Code, use `sandbox_start(prof
 `AIB_PROFILE=client-acme` for the session: with no `AIB_BROWSER` set, that chooses the sandbox up front, with that
 profile's logins. If `AIB_BROWSER` names your Brave, the profile isn't used, and the status line says so.
 
-## AI Browser (its own window: AI Home, Mission Control and the Brain)
+## AI Browser (its own window: Mission Control, Settings and the Brain)
 
 ```bash
 uv run ai-browser app            # add --model haiku for the fastest replies, or opus for the most capable
@@ -181,47 +181,50 @@ in another app never lands in AI Browser's window, and Microsoft Edge on Windows
 shows that browser's icon while AI Browser is open. A change applies at the next start;
 `uv run ai-browser app --window brave` picks one for a single run.
 
-**First start (once):** there is nothing to load in the window, and nothing to install in Brave. AI Home's browser
-card opens Brave's one step (its remote-debugging switch) in a tab of its own, with a × to close it. If an earlier AI
-Browser's extension is still in Brave, AI Home says you can remove it, until you click **Got it**.
+**First start (once):** there is nothing to load in the window, and nothing to install in Brave. The bar at the top
+of Mission Control opens Brave's one step (its remote-debugging switch) in a tab of its own, with a × to close it. If
+an earlier AI Browser's extension is still in Brave, Settings → **Brave** says you can remove it, until you click
+**Got it**.
 
-**AI Home** is the window's first tab.
-- **Start a task:** pick skills and a model if you like.
+**Mission Control** is the window's first tab (below); an old bookmark of `/home` opens it too.
+- **Start a task:** **Build a Mission**, with its skills, model and folder if you like.
 - **Agents:**
   - Up to 3 work at once (`AIB_APP_MAX_AGENTS`); the rest wait in line.
-  - Each row shows what the agent is doing now, its last action with timing, a small picture of its tab, and its
-    time and cost.
-  - Each row has **Watch**, **Chat**, **Stop** and **Close**.
-  - The window's title counts the agents at work, whichever tab is shown: "(2) AI Home · AI Browser".
-- **Your browser:** a card at the top says where agents browse and whether your Brave is connected. When Brave's
-  switch is off, it shows the steps; when Brave asks "Allow remote debugging?", it says so.
-- **Tabs:** the web tabs of the Brave profile where agents browse (Settings → **Where agents browse**; until you
-  pick one, the profile you used last), each marked with whose it is: an agent's, Claude Code's, the Brain's, or yours. Other profiles and private windows
-  are only counted, never listed.
+  - Each has a desk in the office and a row in **My Missions**; its drawer shows what it is doing now, its time, its
+    cost and its skills, with **Watch**, **Stop** and **Close**.
+  - The window's title counts the agents at work, whichever tab is shown: "(2) Mission Control · AI Browser".
+- **Your browser:** until your Brave is connected, a bar at the top of Mission Control says so. When Brave's switch
+  is off, **Show me how** shows the steps; when Brave asks "Allow remote debugging?", it says so; **Connect** and
+  **Try again** ask again.
+- **Tabs** (Mission Control's **Tabs** page): the web tabs of the Brave profile where agents browse (Settings →
+  **Where agents browse**; until you pick one, the profile you used last), each marked with whose it is: an agent's,
+  Claude Code's, the Brain's, or yours. Other profiles and private windows are only counted, never listed.
   - A click brings a tab to the front.
-  - **Hand over** gives one of your tabs to a new or running agent (it reads that tab and acts in it).
+  - **Hand over** gives one of your tabs to a running agent, or to a new one (**New agent…** starts Build a Mission
+    in it). The agent reads that tab and acts in it.
   - **Take back** ends that.
-- **Skills:**
-  - every one of Claude's skills (personal, plugins, claude.ai, ai-browser), and which ones each agent loaded;
-  - add one to a new task, or ask a running agent to use it.
-- **Settings** (a tab, and a button beside **Mission Control**): which browser draws the window, your AI
-  accounts, **Where agents browse** (your Brave profiles, by name and colour) and the **Brain** (reading your
-  Gmail, Slack and Asana tabs). The model you pick and Voice are remembered by AI Browser itself, in every tab and across restarts.
+- **Skills** (Mission Control's **Knowledge** page): every one of Claude's skills (personal, plugins, claude.ai,
+  ai-browser), and which of your saved agents use each one; **Use in new mission** adds one to Build a Mission, and
+  **Ask an agent** asks a running agent to use it.
+- **Settings** (a tab): which browser draws the window, your AI accounts, **Where agents browse** (your Brave
+  profiles, by name and colour), **Brave** (what uses Brave through AI Browser, each with **Disconnect**) and the
+  **Brain** (reading your Gmail, Slack and Asana tabs). The model you pick and Voice are remembered by AI Browser
+  itself, in every tab and across restarts.
 
-**Tabs and links:** AI Home, Mission Control and Settings are tabs in a row under the title bar, and the window's
+**Tabs and links:** Mission Control and Settings are tabs in a row under the title bar, and the window's
 title follows the one shown ("Mission Control · AI Browser"). A tab loads the first time you pick it, and then stays
 as you left it while you look at another: a half-typed message, the scroll and Mission Control's room are all still
 there when you come back. The setup steps open as tabs at the end of the row, each with a × to close it. Nothing
 opens a window: a link between AI Browser's pages switches tabs, and a link to a website opens in your
 Brave, never in AI Browser's window. The AI's tabs open in windows of their own in your Brave, never among your
-windows, and AI Home and Mission Control say which agent owns each one.
+windows, and Mission Control's Tabs page says which agent owns each one.
 
 How it works:
 - **Claude:** each agent is Claude Code on this computer (`claude -p`), signed in with one of your Claude accounts
   (AI accounts, below), with no API keys. Besides ai-browser's tools it has Claude Code's own, each asked first
   ([Agent powers](#agent-powers-commands-file-edits-the-web-sub-agents-and-to-do-lists)). Skill scripts run in the
   Docker sandbox, or, without Docker, with the agent's own commands.
-- **Background agents:** tasks from AI Home or Mission Control work in background tabs. They
+- **Background agents:** tasks from Mission Control or the floating chat work in background tabs. They
   never take your focus, and they stay at full speed. **Watch** brings one to the front.
 - **Stop and Close:** **Stop** interrupts an agent and keeps its tabs. **Close** ends it and closes the tabs it
   opened; your own tabs stay open.
@@ -232,7 +235,7 @@ How it works:
   only that window holds. The same address typed into Brave shows "AI Browser's pages open only in its own window".
 - **Closing:** closing the window stops AI Browser: close it (⌘Q on a Mac), or press Ctrl-C in the terminal, and
   the agents end with it. ⌘W (Ctrl+W on Windows and Linux) closes only the tab you're on, and only if it has a ×
-  (the setup steps, a live view); on AI Home, Mission Control and Settings it does nothing. Switching tabs, or closing
+  (the setup steps, a live view); on Mission Control and Settings it does nothing. Switching tabs, or closing
   the setup steps' or a live view's tab, never ends AI Browser. The Docker shell container keeps running for the next
   start; stop it with `uv run ai-browser stop chrome`.
 - **The microphone** is asked for once, in the window, and kept across restarts: AI Browser comes back on the same
@@ -246,8 +249,8 @@ How it works:
 Agents have Claude Code's own tools besides the browser: shell commands, reading and editing files, Web Search and
 Web Fetch, sub-agents, and a to-do list.
 
-- **The folder:** New task's **Folder** picker sits beside the model and the account, in AI Home, Mission Control and
-  the floating chat:
+- **The folder:** the **Folder** picker sits beside the model and the account, in Build a Mission and the floating
+  chat's **New task**:
   - **No folder**, the default: the agent's own scratch folder, `~/.ai-browser/app/agents/<id>/work`;
   - a folder you used lately;
   - **Choose…**: the system's folder dialog in AI Browser's own app; in a browser window, you type the path.
@@ -313,7 +316,8 @@ Web Fetch, sub-agents, and a to-do list.
   - what still asks is judged from what a command names, not from what a script it runs does: `npm test` runs your
     package's own script, whatever it does inside the folder. Turn it on only for folders and tasks you trust.
 
-  The Brain, templates and Claude Code sessions never turn it on, and after **Stop** nothing runs.
+  The Brain, templates and Claude Code sessions never turn it on (a saved agent's runs follow its own setting), and
+  after **Stop** nothing runs.
 - **Your answers are kept per folder** in `~/.ai-browser/permissions.json`. **Settings → Permissions** lists each
   folder with your trust answer and the rules you allowed always, each with **Remove**. A folder that was deleted,
   renamed or unplugged keeps its rules until you remove them.
@@ -321,14 +325,14 @@ Web Fetch, sub-agents, and a to-do list.
   - every action shows a badge (Bash, Edit, Write, Read, Web Search, Web Fetch, Browser Agent, Sub-agent, Skill) and
     its time;
   - Mission Control's drawer shows the agent's plan ("3 / 5 steps · 60%") and each sub-agent's task and current
-    action, and AI Home's row says how many sub-agents are working;
+    action, and its desk shows each sub-agent as a smaller chibi;
   - **Stop** stops its sub-agents too.
 - **Commands and the sandbox:** on a Mac, commands run in Claude Code's sandbox, so they can't write outside the
   task's folder. A command that needs more asks, every time, on a card of its own: reaching a site ("let a command
   reach a site") or running outside the sandbox. You still answer each command's card, unless **Auto-approve in its
   folder** runs an ordinary one. On Windows, commands don't run in a sandbox: the cards and Auto-approve's list are the
   guard.
-- **Workflows** still run in a scratch folder of their own.
+- **Workflows** still run in a scratch folder of their own, unless they run as a saved agent with a folder.
 
 ### AI accounts (Settings → Accounts)
 
@@ -347,18 +351,19 @@ apart.
   You sign in there and in your browser. AI Browser never sees a password or a token.
 - Each account shows **Signed in · Pro** or **Not signed in**. That is all AI Browser keeps: never your email or your
   organisation.
-- **Choosing:** Settings sets the default account for new agents, and the Brain's account. AI Home and Mission
-  Control have an **Account** picker next to the model when you have two or more. An agent keeps its account until
-  you move it.
+- **Choosing:** Settings sets the default account for new agents, and the Brain's account. Build a Mission and a
+  saved agent's settings have an **Account** picker next to the model when you have two or more. An agent keeps its
+  account until you move it.
 - **At a usage limit,** the agent stops, and its row says "Personal hit its usage limit (resets 3:00 pm).":
   - **Continue on Work** carries its conversation to the other account, and it goes on there. When the conversation
     can't come along, it starts fresh there with a hand-over note: the task, its last steps and its tabs;
   - **Wait for the reset** leaves it paused.
 
   Nothing moves without your click. The Brain and voice never move an agent. When the Brain hits its
-  limit, a card in AI Home's Brain area asks the same.
-- **Per account:** the login, Claude Code's settings, MCP servers and connectors (AI Home → Tools shows one account's
-  at a time), and conversations. **Shared:** AI Browser's skills, workflows, the browser and the Brain's inbox.
+  limit, a card in the Brain's inbox (click the globe in Mission Control) asks the same.
+- **Per account:** the login, Claude Code's settings, MCP servers and connectors (Mission Control → **Integrations**
+  shows one account's at a time), and conversations. **Shared:** AI Browser's skills, workflows, the browser and the
+  Brain's inbox.
 - **Remove** only makes AI Browser forget an account. Its folder, its conversations and its sign-in stay.
 
 ### AI Browser's own app (a menu-bar icon, a shortcut and notifications)
@@ -390,12 +395,12 @@ chat, which a shortcut shows and hides from any app, and native notifications. T
   offers two others, and Off. If another app already uses it, Settings says so: pick another one. Press it once after
   a change, to check it.
 - **Notifications** say only what needs you: "An agent is waiting for you", "A bot check on example.com", "The Brain
-  has 2 new notes". Never a message's text or a page's. A click opens AI Home at that agent's row, or brings the
-  agent's tab forward in Brave.
+  has 2 new notes". Never a message's text or a page's. A click opens Mission Control at that agent's drawer (or the
+  Brain's inbox), or brings the agent's tab forward in Brave.
 - The menu-bar icon offers **Open AI Browser**, **Show chat** and **Quit**. **Show chat** works even when another app
   holds the shortcut.
-- Until it is set up, or with `--window`, AI Browser opens in a browser window as before, and AI Home offers the
-  setup.
+- Until it is set up, or with `--window`, AI Browser opens in a browser window as before, and Settings → AI Browser
+  app offers the setup.
 - Started by a double-click (Finder, or the Start menu), it asks you to start AI Browser from a terminal. A
   double-click start comes later.
 
@@ -422,12 +427,14 @@ Press the shortcut again, Esc or ✕ to hide it. It needs AI Browser's own app (
   answers, and proposes nothing.
 - **Talk to the Brain:** type, or hold the mic button. "Tell agent 2 to check the footer" makes a card: press **Send**
   or **Start**, or say yes. While agent 2 is working, the card counts down 15 seconds and then sends, unless you press
-  **Cancel**; the Brain's other hand-offs show here too. The open agents show by number; a click opens one in AI Home.
+  **Cancel**; the Brain's other hand-offs show here too. The open agents show by number; a click opens one in
+  Mission Control.
 - **New task** starts an agent with the model and the account you pick. It replaces typing `ai` in Brave's address
   bar. **Start it in this page** hands this tab over to it as it starts. A picture pasted into its box, or a file
   dropped on it, goes with the task, as in Mission Control (at most 10 files, 20 MB each). The Brain's box takes text
   only: a picture pasted there says "Pictures go with New task".
-- **Hand over…** gives this page to an open agent. Only your click hands a tab over, as in AI Home.
+- **Hand over…** gives this page to an open agent. Only your click hands a tab over, as on Mission Control's Tabs
+  page.
 - An agent that waits for you (a tool to allow, a bot check) shows its card in the chat too.
 - The old side panel is gone: the floating chat takes its place.
 
@@ -439,8 +446,8 @@ that need your reply, never your whole inbox. Everything else is only counted ("
 
 **Turn it on (once):** Settings → **Brain** → **Read my Gmail, Slack and Asana tabs**. It is off until you turn it
 on. While it is on, AI Browser reads those sites in your open tabs, in the profile where agents browse, through its
-one connection to Brave. Turning it off stops reading at once, and a read under way keeps nothing. AI Home's Brain
-section says when reading is off, or waiting for Brave.
+one connection to Brave. Turning it off stops reading at once, and a read under way keeps nothing. The Brain's inbox
+says when reading is off (with **Turn it on in Settings**), or waiting for Brave.
 
 **Settings → Brain** shows:
 - **What the Brain listens to:** a checkbox each for **Agents' chats and results**, **Gmail**, **Slack**, **Asana**,
@@ -454,7 +461,7 @@ section says when reading is off, or waiting for Brave.
   click **Pick the part to watch**: that tab comes to the front in Brave, an outline follows your mouse, a click picks
   the part (for example an orders table), and Escape cancels.
 
-**AI Home's Brain section** shows:
+**The Brain's inbox** (click the globe in Mission Control) shows:
 - **The inbox:** each item has the site, who it's from, the Brain's one-line summary, why it matters and a suggested
   action.
   - A **needs your reply** item stays until you reply, or click **Done**.
@@ -472,7 +479,7 @@ section says when reading is off, or waiting for Brave.
 - **Hand to agent:** an AI Browser agent gets your instruction and the message.
 - **Tell the Brain:** your own words ("draft a polite no", "check the page", "give this to agent 2") become a draft, or
   a card that starts a NEW agent or sends your words to an open one. Press **Start** or **Send** on it (or type yes)
-  in AI Home or Mission Control.
+  in Mission Control or the floating chat.
 - **Done.**
 
 AI Browser's own app shows a notification when new items need you ("The Brain has 7 new notes"), never their text.
@@ -483,13 +490,13 @@ on a card. It shows where the task came from, "Giving **2 · Research competitor
 - From **your own words** (Ask AI, the floating chat), it sends after **15 seconds** unless you press **Cancel**, and
   only when you named the agent (or only one agent is open). Saying "no", "cancel it", "stop", "wait" or "never mind"
   cancels it; saying anything else pauses it, and it then waits for your **Send**. It counts down only while an AI
-  Browser window that shows the card is on screen (AI Home, Mission Control or the floating chat): a hidden window, or
+  Browser window that shows the card is on screen (Mission Control or the floating chat): a hidden window, or
   another tab in front, makes it wait for your **Send**. Stop on that agent cancels it. Turning off **Hand tasks to
   working agents by itself** makes every hand-off wait for your **Send**, and nothing is sent once AI Browser quits.
 - From **an agent's result, an email, a Slack or Asana message, or a watched page part**, it never counts down: it
   waits for your **Send**, since the instruction may carry someone else's words.
 - A **new agent** is only ever a suggestion, with its exact task and **Start**.
-- The card shows in the Brain's inbox (AI Home, and the globe's drawer in Mission Control), under Mission Control's
+- The card shows in the Brain's inbox (the globe's drawer in Mission Control), under Mission Control's
   view switch and in the floating chat, and AI Browser's own app notifies you, never with the instruction. The agent's
   chat shows "From the Brain: …", and the Brain's inbox keeps this run's cards.
 
@@ -509,7 +516,7 @@ How it works:
     sends there.
 - **When the app is off:** nothing is read.
 
-### Tools: your MCP servers for the agents (AI Home → Tools)
+### Tools: your MCP servers for the agents (Mission Control → Integrations)
 
 Agents can use the same MCP tools as your Claude Code app. The Tools section lists:
 - the servers in Claude Code's configuration (`~/.claude.json` and your projects' `.mcp.json`);
@@ -522,25 +529,27 @@ and **Always allow** list.
 
 **Asking first:**
 - The first time an agent wants a tool that isn't allowed always, it waits ("needs you").
-- AI Home's agent row, Mission Control and the chat beside its tab show the tool and its exact input, with **Allow
+- The agent's drawer in Mission Control and the floating chat show the tool and its exact input, with **Allow
   once**, **Always allow** and **Deny**. AI Browser's own app also shows a notification, in fixed words.
 - **Always allow** is remembered in `~/.ai-browser/tools.json`, for that account. **Forget** removes it.
 - **Stop** or **Close** denies a request that is still waiting.
 - Nothing a page or a message says can answer for you.
 
-### Workflows: your own recipes (AI Home → Workflows)
+### Workflows: your own recipes (Mission Control → Agents → Tasks for any agent)
 
 A workflow is a name and instructions in your words, for example "Open the site in AI Browser, make the change the
 task asks for, then post what you did in #web-team". It has:
 - **a trigger:**
-  - **by hand:** **Run** in AI Home;
+  - **by hand:** **Run** on the Agents page;
   - **a message:** a site from the Brain's watch list and when it applies ("an Asana task tagged website"). The
     matching inbox item offers **Run <name>**, or the workflow starts at once if you chose "Run right away";
   - **a schedule:** `daily 09:00`, `weekdays 09:00`, `mon,wed 17:00`, `every 2h` or `every 30m`. It runs while
     `ai-browser app` runs. A missed run isn't caught up, and a run never starts while the last one is still going;
 - **the tools it may use:** it still asks before each tool, scheduled runs too;
 - **skills** its agent loads first;
-- **a model.**
+- **a model;**
+- **Runs as:** a new agent each time (the default), or one of your saved agents (below): then it runs with that
+  agent's settings, and a run that is due while that agent's run still works is skipped.
 
 Each workflow is a file, `~/.ai-browser/workflows/<name>.md` (front matter, then the instructions), which you can also
 edit in a text editor:
@@ -560,7 +569,7 @@ model: sonnet
 Open the site in AI Browser, fix what the task asks, then post what you did in #web-team.
 ```
 
-### Train a new agent (AI Home → Skills)
+### Train a new agent (Mission Control → Knowledge)
 
 - **Train a new agent:** describe the job, add examples or rules, and point at an AI Browser tab to learn from if you
   like.
@@ -574,13 +583,13 @@ Open the site in AI Browser, fix what the task asks, then post what you did in #
 - **Writing safely:**
   - a skill is one file, with no scripts;
   - an existing skill is never overwritten: **Save as <name>-2**, or **Update**, which shows the diff and asks again.
-- **Assign it:** pick it in a workflow's skills (or for one task in AI Home's Skills menu), and that workflow's agent
-  loads it first.
+- **Assign it:** pick it in a workflow's skills, a saved agent's **Can use** or **Load at start**, or for one task in
+  Build a Mission's **Skills**.
 
 ## Mission Control (your AI office)
 
-**Mission Control**, a tab of AI Browser's window (or its button in AI Home's header), is your agents' office, in the
-same dark navy and neon blue as the rest of AI Browser. It is drawn in code on this computer: nothing is downloaded.
+**Mission Control**, the first tab of AI Browser's window, is your agents' office, in the same dark navy and neon blue
+as the rest of AI Browser. It is drawn in code on this computer: nothing is downloaded.
 
 - **The left menu:** the counts ("1 active task · 3 completed"), **New Mission** (⌘K; Ctrl+K on Windows), and the
   pages:
@@ -590,6 +599,8 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     and never deletes its files (it is listed under `blocked_skills` in `~/.ai-browser/config.json`); **Bring back**
     undoes it. **Remove** applies to the agents you start next: agents that are running keep the skills they started
     with;
+  - **Agents:** your saved agents (below), and **Tasks for any agent** (your workflows);
+  - **Tabs:** your tabs in Brave and whose each one is, with **Hand over** and **Take back**;
   - **Integrations:** your tools, switched on or off per account;
   - **History:** this run's finished agents, with the result, the time, the account and the files changed, and a
     search. **Open** shows the whole chat.
@@ -626,8 +637,8 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   - Drag to turn, scroll to zoom, double-click to reset. Keys: ← → turn, ↑ ↓ tilt, + − zoom, 0 resets. On a narrow
     window, where the page scrolls, scrolling over the office scrolls the page: hold Ctrl or ⌘ (or pinch) to zoom.
 - **List** shows the room's agents as rows. **Calendar** shows a month, or a week, with your scheduled templates' next
-  runs and this run's finished agents. A scheduled run that has passed isn't shown. A click on a template opens AI
-  Home at its templates (**Workflows**: Run, Edit, New).
+  runs and this run's finished agents. A scheduled run that has passed isn't shown. A click on a template opens it on
+  the Agents page (Run, Edit, New).
 - **The right column**, for the agent you click (or the one at work):
   - **Mission Progress:** "3 / 5 steps complete", the bar, and your agents as Completed, In Progress and Pending;
   - **Current Task:** its name and what it works on, its step and timer, its checklist (its to-do list, or its latest
@@ -636,14 +647,14 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     clicking a desk that needs you opens its card too;
   - **Chat** opens the agent's drawer: its state, **Watch**, **Stop**, **Close**, its permission card (**Allow once**,
     **Always allow**, **Deny**), **Your tabs** and its chat. When agents work in your Brave, **Give to this agent**
-    under **Your tabs** hands it one of your own tabs, as AI Home's **Hand over** does. Its message box takes files as
+    under **Your tabs** hands it one of your own tabs, as on the Tabs page. Its message box takes files as
     **Build a Mission** does: paste a picture, drop a file on it, or click the clip. They go with your message into
     the agent's folder under `attachments/`, and the message names them; their chips go only once the app has placed
     them, so a refused message keeps your words and files for another try;
   - **Recent Activity:** started, a step done, needs you, finished. **See all** opens History.
 - **The composer:** **Ask AI** (the Brain answers and proposes; nothing runs until you press Start or Send, or say
   yes, except your words for a working agent you named, after a 15-second countdown you can cancel) and **Build a
-  Mission** (a new agent). Templates are AI Home's (**Workflows**). **Build a Mission** has two optional fields above
+  Mission** (a new agent). Templates are on the Agents page. **Build a Mission** has two optional fields above
   the box, **Name** (at most 60 characters) and **What it works on** (one line, at most 160): the name shows on its
   desk and wherever the agent is listed, the description under its name in Current Task and its drawer and as a
   tooltip elsewhere, and neither is sent to the agent (your task is its instruction). **Ask AI** keeps this run's talk
@@ -654,8 +665,8 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
     Claude Code's own Read. Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it, and it is
     attached the same way. Pasted text stays text. Cells copied from a spreadsheet paste as text, without the picture
     of them that comes along. **Ask AI** takes no files: a picture pasted there says "Pictures
-    go with Build a Mission or an agent's chat". AI Home's **New task** and an agent's chat there take pictures and
-    files the same way, and so does the floating chat's **New task**. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
+    go with Build a Mission or an agent's chat". The floating chat's **New task** takes pictures and files the same
+    way. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
     that folder has been replaced by a link, the task refuses to start and says which folder. After a reconnect, every
     attached file says "Not sent: attach it again", even one that showed ✓: the app forgets files when the connection
     drops.
@@ -667,14 +678,54 @@ same dark navy and neon blue as the rest of AI Browser. It is drawn in code on t
   - **Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**; the mic (in Ask AI it talks
     to the Brain; otherwise your words fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
     **Auto-approve in its folder** (see Agent powers) is off again for each new task.
+  - **Agent ▾:** shown once you have a saved agent. **New agent** (the default), or one of your saved agents: the
+    task runs with that agent's own settings, so the pickers above hide. While its run works, the task goes to that
+    run as a message.
+  - **Skills:** skills for this one run. Their text goes into its first message, as a saved agent's **Load at start**
+    does.
   - On a narrow window the pickers fold into **⋯ Options**, the right column moves under the office, and the menu
     shows icons only.
+- **The drawer's buttons:** **Save as skill** (the Brain drafts a skill from that chat, in Knowledge's Train), **Save as
+  agent** on a one-off run (a new saved agent's settings, filled from that run, for you to check and save), and
+  **Close**: on an agent that still works, it asks first ("End agent 2 while it works?"), and **Keep** is the default
+  (Escape keeps it too).
 - **Talking back:** the Brain's updates show in a speech bubble over the globe, one at a time: a new message that
   needs your reply, a draft that is ready, an agent that is done, failed, or waits for a permission. More than three
   at once become one summary. Only names and the Brain's one-line summaries are used, never a message's text.
 - **Voice** (beside the composer's modes): the updates are also spoken, only with a voice that runs on this Mac, so
   nothing is sent anywhere. It is off by default, and AI Browser remembers it. Without such a voice, it says so and
   stays off.
+
+### Saved agents (Mission Control → Agents)
+
+A saved agent is set up once and runs many times. **New agent** on the Agents page makes one, and **Save as agent**
+in a one-off run's drawer starts one from that run. Each is a card, with its settings, its skills and its tasks:
+- **Name** (at most 60 characters) and **What it works on** (one line, at most 160): shown wherever the agent is
+  listed, and never sent to it.
+- **Instruction** (at most 8,000 characters): what it should always do. It goes into the agent's system prompt, after
+  AI Browser's own, under "The user's standing instruction for this agent:". A task's own words still come as the
+  task.
+- **Brave profile:** its tabs open only in that profile of your Brave. Until AI Browser has learned the profile, the
+  run says so: open a window of it in Brave once.
+- **Web**, **Model**, **Account**, **Folder** and **Auto-approve in its folder** (see Agent powers): every run of it
+  starts with them, scheduled ones too. The Brain and workflows never change them. A run that a message started (a
+  workflow for an inbox item) starts with Auto-approve off, and says so: turn it on in its drawer if you trust it.
+- **Can use:** the skills its skill tools list and load (none picked: all of them). A skill outside the list is
+  refused with "This agent can't use that skill: change it in its settings". With some picked, **Auto-approve in its
+  folder** runs only those skills' scripts without a card. Can use is not a wall: AI Browser's own skill tools
+  (`find_skills`, `load_skill`, `read_skill_file`) keep to it, but every skill's folder stays readable by the agent's
+  shell.
+- **Load at start:** skills whose text goes into its first message, at most 60,000 characters in all. One that is no
+  longer installed is skipped, and the run says so.
+- **One run at a time:** a task for it from Build a Mission's **Agent ▾**, or a workflow that **Runs as** it that you
+  run by hand, starts its run, or, while that run works, goes to it as a message. A scheduled workflow is skipped
+  while it works, and one started by a message waits for you to run it again.
+- **Delete agent** asks first, and says what goes: its settings, its instruction and the workflows that run as it.
+  Its runs and their files stay; a run of it that still works keeps going, as a one-off run. **Keep** is the default
+  (Escape keeps it too).
+
+Each agent is a file, `~/.ai-browser/agents/<slug>.md` (front matter, then the instruction), written by the Agents
+page's Save; one you edit by hand is read too and checked as a Save is; a broken one is skipped.
 
 ## Talking to the Brain (push-to-talk, speech to text on this computer)
 
@@ -732,7 +783,7 @@ When a site asks "are you a robot?" (Google's "unusual traffic" page, a CAPTCHA 
 you are human", a "Press & Hold" check, an Akamai block page), the agent stops and hands it to you:
 - the tab comes to the front (in the sandbox, the agent gives you the live-view link);
 - nothing else runs until you've dealt with it: no reload, no retry, no other tab, browser, profile or tool;
-- in AI Browser the agent shows **needs you** on AI Home, in the chat panel and in Mission Control, with **Show me**,
+- in AI Browser the agent shows **needs you** in Mission Control and in the floating chat, with **Show me**,
   **Continue** and **Skip this site**, and a notification from AI Browser's own app.
 
 Solve it in the tab yourself, then click **Continue** (in Claude Code, tell the agent it's done). If you'd rather not,
@@ -759,7 +810,7 @@ that blocked another browser.
 **While this switch is on, any program on this computer can reach your Brave, not only ai-browser.** That includes
 the sites you are signed in to.
 - While AI Browser is connected, a program that can read AI Browser's files can also use your Brave through it without
-  a new question. AI Home lists everything connected, with Disconnect.
+  a new question. Settings → **Brave** lists everything connected, with Disconnect.
 - Turn it off when agents aren't working: untick the same box.
 - Only click Allow right after you started AI Browser, clicked Connect, gave an agent a task, asked Claude Code to
   browse, or opened Brave again while an agent was working. If Brave asks at any other time, it isn't AI Browser:
@@ -771,13 +822,15 @@ the sites you are signed in to.
 What happens in your Brave:
 - **Background tabs only:**
   - each agent works in background tabs AI Browser opens for it, in windows of their own, in the profile where agents
-    browse. An agent keeps to its tab and opens at most 2 of its own (so usually at most 2 windows), a third reusing
+    browse (a saved agent's, in its own profile). An agent keeps to its tab and opens at most 2 of its own (so usually
+    at most 2 windows), a third reusing
     the oldest;
   - nothing comes to the front unless you click **Watch**, or a site shows a bot check (handed to you, see
     "Bot checks");
   - a Claude Code session's tabs go in a group called "Claude Code" while `ai-browser app` runs, and in a window of
     their own otherwise.
-- **Your other tabs:** never read, listed to an agent or touched. AI Home shows the ones in the agents' profile (other
+- **Your other tabs:** never read, listed to an agent or touched. Mission Control's Tabs page shows the ones in the
+  agents' profile (other
   profiles and private windows only as a count), and **Hand over** gives one to an agent; **Take back** ends that at its
   next step. A tab the agent's own click opens from a handed tab is the agent's: it sits in its group and closes with
   it.

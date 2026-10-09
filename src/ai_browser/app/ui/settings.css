@@ -1,0 +1,75 @@
+/* Settings: its own styles (the saved-agents spec, 6). Colours, type and
+   radii: theme.css. */
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--font); }
+h1 { font-size: 20px; font-weight: 600; margin: 0; }
+h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 18px 0 8px; }
+button, select, textarea, input { font: inherit; color: inherit; }
+button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+button:hover:not(:disabled) { background: var(--soft); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+button.ghost { background: transparent; border-color: transparent; }
+select, input[type="search"] { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 4px 8px; }
+[hidden] { display: none !important; }
+.muted { color: var(--muted); font-size: 13px; }
+.top { display: flex; align-items: center; justify-content: space-between; padding: 18px 28px 0; max-width: 1180px;
+       margin: 0 auto; }
+.brand { display: flex; align-items: center; gap: 10px; }
+main { max-width: 1180px; margin: 0 auto; padding: 12px 28px 40px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; display: inline-block; }
+.dot[data-state="connected"] { background: var(--ok); }
+.chip { font-size: 12px; border-radius: 999px; padding: 1px 8px; background: var(--soft); white-space: nowrap; }
+.chip.account { background: transparent; border: 1px solid var(--line); }
+.check { display: flex; gap: 4px; align-items: center; }
+.brain-sources { border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; padding: 6px 12px 8px; }
+.brain-sources legend { padding: 0 4px; font-weight: 600; }
+.app-command { display: inline-block; font: 12px/1.45 ui-monospace, Menlo, monospace; background: var(--soft);
+               border-radius: 8px; padding: 4px 8px; user-select: all; }
+
+/* the sections */
+.settings { max-width: 720px; }
+.settings .choices { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.settings .choices label { display: flex; align-items: center; gap: 8px; }
+.settings .choices label:has(input:disabled) { color: var(--muted); }
+.settings .card + .card { margin-top: 16px; }
+.settings .swatch { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--line); }
+.settings .brain-sites { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.settings .brain-site { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.settings .brain-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.settings h3 { font-size: 15px; margin: 14px 0 4px; }
+.settings .accounts { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.settings .account .top-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.settings .account .row { margin-top: 6px; }
+.settings .account-choice { display: grid; grid-template-columns: max-content 1fr; gap: 6px 10px; align-items: center;
+                            margin: 10px 0; }
+.settings .account-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.settings .account-add input[type="text"] { flex: 1; min-width: 220px; border: 1px solid var(--line);
+                                            border-radius: 8px; padding: 4px 8px; background: var(--card); }
+.signin-ways { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.signin-ways .command { display: block; font: 12px/1.45 ui-monospace, Menlo, monospace; background: var(--soft);
+                        border-radius: 8px; padding: 6px 8px; word-break: break-all; user-select: all; }
+.account-ask { border-color: var(--needs); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.account-ask p { margin: 0; }
+.account-ask-head { font-weight: 600; font-size: 14px; }
+.account-ask-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* Settings → Brave: what uses it through AI Browser, and Brave's old extension */
+.clients { list-style: none; margin: 4px 0; padding: 0; }
+.clients li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.clients li::before { content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none;
+                      background: var(--client-color, transparent); }
+.clients li span { flex: 1; }
+.old-watcher { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 8px; }
+.old-watcher p { margin: 0; }
+
+/* Settings → Permissions (agent powers): a card per folder, its trust and its rules */
+.permissions { display: flex; flex-direction: column; gap: 8px; }
+.perm-folder .top-line { display: flex; gap: 8px; align-items: center; }
+.perm-folder .path { margin: 2px 0; font: 12px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+.perm-folder .rules { margin: 4px 0; padding-left: 0; list-style: none; display: flex; flex-direction: column;
+                      gap: 4px; }
+.perm-folder .rule { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.perm-folder .row { display: flex; gap: 6px; }

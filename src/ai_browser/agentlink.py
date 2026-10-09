@@ -1,8 +1,8 @@
 """Tell `ai-browser app` which tabs an agent (or a Claude Code session) works in, and ask it for what only it knows.
 
-Each agent's engine (in its own `ai-browser mcp` process) posts small reports to the app's /agent-events with the
-agent token; a Claude Code session uses a session token from <home>/app/link.json. Reports go one at a time, in order;
-a lost one only costs AI Home a stale line, never the agent its work. Beside /agent-events sit /agent-tab (a new tab,
+Each agent's engine (in its own `ai-browser mcp` process) posts small reports to the app's /agent-events with the agent
+token; a Claude Code session uses a session token from <home>/app/link.json. Reports go one at a time, in order; a lost
+one only costs Mission Control a stale line, never the agent its work. Beside /agent-events sit /agent-tab (a new tab,
 opened by the app), /agent-status (the tabs the user handed over), /agent-hello and /agent-bye (sessions)."""
 
 from __future__ import annotations
@@ -81,9 +81,9 @@ class AgentLink:
         return self._status
 
     async def hello(self) -> dict | None:
-        """A Claude Code session joins the running app (its tabs then show in AI Home, marked "Claude Code"). The
-        app's answer: {"cdp_token": …} when it relays the browser connection, {} without a relay (204), {"cut_off":
-        True} when the user disconnected this session in AI Home (410), None when it didn't answer."""
+        """A Claude Code session joins the running app (its tabs then show in Mission Control, marked "Claude Code").
+        The app's answer: {"cdp_token": …} when it relays the browser connection, {} without a relay (204), {"cut_off":
+        True} when the user disconnected this session in Settings → Brave (410), None when it didn't answer."""
         return await asyncio.to_thread(self._hello)
 
     def _hello(self) -> dict | None:

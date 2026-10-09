@@ -1,6 +1,6 @@
 """What retired with Brave's watcher extension (native app part b): its folder, the module that copied it, its id, its
-place in the pages and the `ai` keyword's words. AI Browser never removes the copy a user loaded in Brave: AI Home
-says they can (tests/test_home.py)."""
+place in the pages and the `ai` keyword's words. AI Browser never removes the copy a user loaded in Brave: Settings
+→ Brave says they can (tests/test_mission_home.py)."""
 
 import importlib.util
 from pathlib import Path
@@ -23,7 +23,7 @@ def test_no_page_reaches_an_extension_or_names_the_keyword():
         text = path.read_text(encoding="utf-8")
         assert "chrome." not in text and "chrome-extension" not in text, path.name
         assert "config.json" not in text, path.name
-    assert "address bar" not in (UI / "home.html").read_text(encoding="utf-8")
+    assert "address bar" not in (UI / "mission.html").read_text(encoding="utf-8")
     assert "address bar" not in (UI / "workflows.js").read_text(encoding="utf-8")
     assert ".brain-watcher" not in (UI / "brainui.css").read_text(encoding="utf-8")
     assert "watcher-status" not in (UI / "setup.css").read_text(encoding="utf-8")

@@ -18,11 +18,11 @@ CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is no
 
 
 @pytest.fixture
-async def builder(throwaway_chrome, tmp_path, route):
+async def builder(throwaway_chrome, tmp_path, route, fake_claude):
     """(a started Browser in chrome mode, direct or through the app's relay; the fake builder's address). The builder is
     on localhost, its canvas on 127.0.0.1 (another site), its side frame on the test pages' second port."""
     base, other, stop_pages = testpages.serve_host()
-    async with browser_connection(throwaway_chrome, route, tmp_path / "relay-home") as cdp:
+    async with browser_connection(throwaway_chrome, route, tmp_path / "relay-home", fake_claude) as cdp:
         browser = Browser(cdp, WorkDir(tmp_path / "work", "frames"), Config(), mode="chrome")
         await browser.start()
         try:

@@ -1,9 +1,11 @@
 // Settings, in its tab of AI Browser's window: AI Browser's own app (its state, its shortcut, its setup), which browser
 // draws that window, the Accounts section (AI accounts), the folders agents worked in, with their trust and rules
-// (agent powers), where agents browse, and the Brain's reading of the user's tabs. The choices come from the app; a
+// (agent powers), Brave (what uses it through AI Browser, with Disconnect), where agents browse, and the Brain's
+// reading of the user's tabs. The choices come from the app; a
 // change is saved there, and the window's browser applies the next time AI Browser starts. Every name is set as text.
 import { mountAccounts } from "./accountsettings.js";
 import { mountBrainSettings } from "./brainsettings.js";
+import { mountBraveSettings } from "./bravesettings.js";
 import { connect } from "./link.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
 import { mountPermissions } from "./permsettings.js";
@@ -116,6 +118,7 @@ function renderApp() { // AI Browser's own app: running, set up, or offered (its
 
 function handle(message) {
   brain.onMessage(message); // Settings → Brain
+  brave.onMessage(message); // Settings → Brave
   place.onMessage(message); // Settings → Where agents browse
   permissions.onMessage(message); // Settings → Permissions (agent powers)
   if (message.type === "snapshot") {
@@ -149,6 +152,10 @@ const accounts = mountAccounts({ // Settings → Accounts (AI accounts)
   existing: $("account-existing"), folder: $("account-folder"), add: $("account-add"), error: $("accounts-error"),
 }, (message) => link.send(message));
 
+const brave = mountBraveSettings({ // Settings → Brave
+  state: $("brave-state"), using: $("brave-using"), title: $("brave-using-title"), list: $("brave-clients"),
+  note: $("brave-clients-note"), watcher: $("watcher-note"), watcherClose: $("watcher-note-close"),
+}, (message) => link.send(message));
 const place = mountPlaceSettings({ choices: $("place-choices"), state: $("place-state") },
                                  (message) => link.send(message));
 const permissions = mountPermissions({ list: $("permissions"), note: $("permissions-note") },
@@ -171,4 +178,4 @@ $("app-copy").addEventListener("click", async () => {
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 // Shown again (its tab, or the window after the user signed in in a terminal): each account's status, now
 window.addEventListener("focus", () => link.send({ type: "accounts" }));
-$("home-link").addEventListener("click", () => openTab("/home"));
+$("mission-link").addEventListener("click", () => openTab("/mission"));

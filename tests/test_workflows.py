@@ -11,7 +11,7 @@ import pytest
 from ai_browser.chrome import chrome_binary
 from conftest import file_mode
 from test_bridge import EVENTS
-from test_home import home, stack  # noqa: F401  (fixtures)
+from test_home import stack  # noqa: F401  (fixture)
 from test_oneshot import oneshots
 from ui_socket import ui_socket
 
@@ -261,7 +261,9 @@ async def test_run_by_hand_over_the_socket(fake_claude, tmp_path):
             assert created["request"] == "r1"
             await until(ws, lambda m: m["type"] == "agent" and m["agent"]["state"] == "your_turn")
         content = user_messages(log)[0]["message"]["content"]
-        assert content.startswith("Load and use these skills with load_skill: elementor-pages")
+        assert "elementor-pages" not in content  # not installed here: Load at start skips it, with a note on the run
+        assert {"type": "note", "text": "Not loaded, no longer installed: elementor-pages"} in server.agents.events_of(
+            created["id"])
         assert "Open the site, fix the footer" in content and content.rstrip().endswith("The user adds: the header")
     finally:
         await server.stop()
@@ -384,7 +386,7 @@ def test_the_runner_lists_the_next_runs_of_scheduled_templates(tmp_path):
     assert morning["runs"][0] == local(2026, 10, 5, 9, 0) and 61 <= len(morning["runs"]) <= 63
     assert morning["every"] is None and morning["schedule"] == "daily 09:00"
     assert rows["check-often"] == {"slug": "check-often", "name": "Check often", "schedule": "every 2h",
-                                   "every": 7200, "runs": [now + 7200]}
+                                   "every": 7200, "runs": [now + 7200], "runs_as": ""}  # a new agent's
 
 
 async def test_pages_get_the_next_runs_with_the_workflows(fake_claude, tmp_path):

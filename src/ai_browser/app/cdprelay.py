@@ -231,8 +231,9 @@ NO_DOWNLOAD = (-32602, "No download with given guid found")
 NO_CONTEXT = (-32602, "Failed to find browser context with given id")
 SPECIAL_TAB = (-32000, "hidden, focused or special tabs don't open through AI Browser's connection")
 NOT_FLAT = (-32000, "AI Browser's connection needs flatten: true")
+OWN_PROFILE = (-32000, "AI Browser opens this agent's tabs, in its own Brave profile")  # a saved agent's profile
 CREATE_PARAMS = frozenset({"url", "newWindow", "background", "browserContextId"})  # what an engine sends
-CUT_OFF_TEXT = "The user disconnected this client in AI Home."
+CUT_OFF_TEXT = "The user disconnected this client in Settings → Brave."
 _SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")
 _AGENT_ID = re.compile(r"^a[0-9]{1,9}$")
 _HANDSHAKE_NOISE = "ASGI callable returned without completing handshake."
@@ -398,6 +399,9 @@ class Relay:
         self.upstream_opens = 0  # handshakes started to the browser: each one is a question the user is asked
         self.handed: Callable[[str], set[str]] = lambda identity: set()  # set by the server: agent.adopted, live
         self.may_open: Callable[[str], bool] = lambda identity: bool(_SESSION_ID.match(identity))  # by the server
+        # by the server: a run of a saved agent with a Brave profile of its own. Only the app's client opens its tabs
+        # (POST /agent-tab, in that profile's context): a tab it made itself would open in the profile used last
+        self.placed_only: Callable[[str], bool] = lambda identity: False
         self._ws = None
         self._reader: asyncio.Task | None = None
         self._ids = itertools.count(1)
@@ -430,7 +434,7 @@ class Relay:
         self._states.append(callback)
 
     def on_change(self, callback: Callable[[], None]) -> None:
-        """callback() when the list of clients (AI Home's rows) may have changed."""
+        """callback() when the list of clients (Settings → Brave's rows) may have changed."""
         self._changes.append(callback)
 
     def on_grant(self, callback: Callable[[str, str], None]) -> None:
@@ -656,11 +660,12 @@ class Relay:
             return (f"{self.name}'s remote-debugging switch is off: the user turns it on at "
                     f"{inspect_address(self.folder)}")
         if self.state == "refused":
-            return f"{self.name} said no to AI Browser's connection: ask the user to click Try again in AI Home"
+            return (f"{self.name} said no to AI Browser's connection: ask the user to click Try again at the top of "
+                    "Mission Control")
         if self.state == "asking":
             return (f"{self.name} is asking \"Allow remote debugging?\" for AI Browser: ask the user to click Allow "
                     f"there, then try again (it is the one question, for everyone)")
-        return f"AI Browser isn't connected to {self.name}: ask the user to click Connect in AI Home"
+        return f"AI Browser isn't connected to {self.name}: ask the user to click Connect at the top of Mission Control"
 
     async def _listen(self, client: _Socket) -> None:
         while True:
@@ -726,6 +731,8 @@ class Relay:
                 return -32000, problem
             if set(params) - CREATE_PARAMS:  # hidden, focused, minimized, off-screen or special: never
                 return SPECIAL_TAB
+            if not client.app and self.placed_only(identity):
+                return OWN_PROFILE
             context = params.get("browserContextId")
             if context is not None and context not in self._contexts_of(identity):
                 return NO_CONTEXT  # never a private window or another profile it learned of
@@ -771,7 +778,7 @@ class Relay:
 
     async def _one_shot(self, page: str, client, client_id, params: dict, session_id: str) -> None:
         """A tab's screenshots take turns. Chrome draws a scaled shot by shrinking the tab for a moment, and two at once
-        (an agent's and AI Home's thumbnail) put back each other's shrunk size: the tab stayed tiny until reloaded."""
+        (an agent's and Mission Control's thumbnail) put back each other's shrunk size: the tab stayed tiny until reloaded."""
         async with self._shooting.setdefault(page, asyncio.Lock()):
             done = asyncio.get_running_loop().create_future()
             await self._forward(client, client_id, "Page.captureScreenshot", params, session_id, done)
@@ -1205,7 +1212,7 @@ class Relay:
                 await self._call("Target.detachFromTarget", {"sessionId": session_id}, timeout=5)
 
     async def disconnect(self, identity: str) -> None:
-        """AI Home's Disconnect (Decision 14): cut off for the rest of this run; its tabs stay open."""
+        """Settings → Brave's Disconnect (Decision 14): cut off for the rest of this run; its tabs stay open."""
         if identity == APP:
             return
         self._cut_off.add(identity)
@@ -1230,8 +1237,8 @@ class Relay:
         self._changed()
 
     def clients(self) -> list[dict]:
-        """AI Home's list (Decision 14): the app while connected, then each agent and session with an open socket or
-        own tabs. The server adds names and colours."""
+        """Settings → Brave's list (Decision 14): the app while connected, then each agent and session with an open
+        socket or own tabs. The server adds names and colours."""
         rows = []
         if self.state == "connected":
             rows.append({"id": APP, "kind": "app", "number": None, "tabs": 0, "connected": True, "cut_off": False})

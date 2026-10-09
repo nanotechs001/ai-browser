@@ -1,6 +1,6 @@
-// Mission Control's Knowledge and Integrations (the new look, Decision 5): AI Home's own pieces, on the menu's pages.
-// Knowledge is the skills (what each one teaches, Remove, Bring back) and Train. Integrations are the Tools, each
-// server on or off per account. Templates stay AI Home's alone (the brain-delegation spec). Every word is set as text.
+// Mission Control's Knowledge and Integrations (the new look, Decision 5), on the menu's pages. Knowledge is the skills
+// (what each one teaches, which agents use it, Use in new mission, Ask an agent to use it, Remove, Bring back) and
+// Train. Integrations are the Tools, each server on or off per account. Every word is set as text.
 "use strict";
 
 import { el } from "./chat.js";
@@ -8,7 +8,8 @@ import { pageHead } from "./pages.js";
 import { mountTools } from "./tools.js";
 import { mountTrain } from "./train.js";
 
-export function mountKnowledge(root, link, { tabs = () => [], model = () => "sonnet" } = {}) {
+// useSkill(ref): Use in new mission (Build a Mission's Skills ticks it)
+export function mountKnowledge(root, link, { tabs = () => [], model = () => "sonnet", useSkill = () => {} } = {}) {
   const search = el("input", "search");
   search.type = "search";
   search.id = "skill-find";
@@ -27,6 +28,36 @@ export function mountKnowledge(root, link, { tabs = () => [], model = () => "son
   let skills = [];
   let blocked = [];
   let asked = 0;
+  let running = []; // the open agents an agent's Ask can go to (not failed)
+  let all = []; // every agent: "in use by" reads what each one loaded
+
+  function usedBy(skill) {
+    return all.filter((agent) => (agent.loaded_skills || []).some((name) => name === skill.ref || name === skill.name
+      || name.endsWith(`:${skill.name}`)));
+  }
+
+  function refreshUses() { // the "in use by" chips and the agents to ask, updated in place: a list never rebuilt
+    const options = running.map((agent) => `${agent.id}:${agent.name}`).join("|");
+    for (const row of list.querySelectorAll(".skill")) {
+      const { inUse, choose, ask } = row.parts;
+      const names = usedBy(row.skill).map((agent) => agent.name);
+      if (inUse.dataset.names !== names.join("|")) {
+        inUse.replaceChildren(...names.map((name) => el("span", "chip", `in use by ${name}`)));
+        inUse.dataset.names = names.join("|");
+      }
+      if (choose.dataset.options !== options && document.activeElement !== choose) { // never while it's open
+        const kept = choose.value;
+        choose.replaceChildren(...running.map((agent) => {
+          const option = el("option", "", agent.name);
+          option.value = agent.id;
+          return option;
+        }));
+        if (running.some((agent) => agent.id === kept)) choose.value = kept;
+        choose.dataset.options = options;
+      }
+      choose.hidden = ask.hidden = !running.length;
+    }
+  }
 
   function block(ref, on) {
     asked += 1;
@@ -46,10 +77,27 @@ export function mountKnowledge(root, link, { tabs = () => [], model = () => "son
       remove.title = "Hide it from AI Browser's agents. Its files stay where they are.";
       remove.addEventListener("click", () => block(skill.ref, true));
       top.append(el("strong", "name", skill.name), el("span", "chip", skill.source), remove);
-      row.append(top, el("div", "desc muted", skill.description || "No description"));
+      const uses = el("div", "uses");
+      const inUse = el("span", "in-use");
+      const use = el("button", "use", "Use in new mission");
+      use.type = "button";
+      use.addEventListener("click", () => useSkill(skill.ref));
+      const choose = el("select", "ask-who");
+      choose.setAttribute("aria-label", "An agent to ask");
+      const ask = el("button", "ask", "Ask an agent to use it");
+      ask.type = "button";
+      ask.addEventListener("click", () => { // a message to that agent, the user's click: as the drawer's Send
+        if (choose.value) link.send({ type: "send", id: choose.value,
+                                      text: `Load and use the skill ${skill.ref} with load_skill` });
+      });
+      uses.append(inUse, use, choose, ask);
+      row.append(top, el("div", "desc muted", skill.description || "No description"), uses);
+      row.skill = skill;
+      row.parts = { inUse, choose, ask };
       return row;
     }));
     if (!shown.length) list.append(el("p", "empty", skills.length ? "No skill matches." : "No skills yet."));
+    refreshUses();
     removed.hidden = !blocked.length;
     removedList.replaceChildren(...blocked.map((ref) => {
       const item = el("li");
@@ -77,6 +125,14 @@ export function mountKnowledge(root, link, { tabs = () => [], model = () => "son
     },
     shown(page) {
       if (page === "knowledge") link.send({ type: "skills" });
+    },
+    fromAgent(id, name) { // the drawer's Save as skill: Train drafts a skill from that agent's chat
+      train.fromAgent(id, name);
+    },
+    agents(map) { // mission.js, on every change of an agent
+      all = [...map.values()];
+      running = all.filter((agent) => agent.state !== "failed");
+      refreshUses();
     },
   };
 }

@@ -850,8 +850,8 @@ def test_the_readme_says_how_to_talk_and_the_zero_setup_way():
 
 def test_the_readme_says_the_brain_can_send_to_an_open_agent():
     text = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
-    for words in ('"give this to agent 2"', "Press **Start** or **Send** on it (or type yes) in AI Home or Mission "
-                  "Control.", '"1 · Fix the footer"', "**Your tabs**",
+    for words in ('"give this to agent 2"', "Press **Start** or **Send** on it (or type yes) in Mission Control or "
+                  "the floating chat.", '"1 · Fix the footer"', "**Your tabs**",
                   "**Give to this agent**", "**send your words to an agent that's already open**",
                   'a "yes" with no card open does nothing', "hands over or takes back a tab"):
         assert words in text, words
@@ -961,7 +961,8 @@ async def test_hand_over_hint_opens_this_agents_tab_list(stack):
     await js(f"{yours}.querySelector('.give-here').click(); true")  # the user's click
     assert await eventually(lambda: "U1" in agents.agents["a1"].adopted)
     brave.set_state("ready")
-    assert await until(js, f"{yours}.textContent.includes(\"Brave isn't connected yet: connect it in AI Home.\")")
+    assert await until(js, f"{yours}.textContent.includes(\"Brave isn't connected yet: connect it at the top of "
+                           "Mission Control.\")")
     assert await js(f"{yours}.querySelectorAll('.your-tab').length") == 0
 
 

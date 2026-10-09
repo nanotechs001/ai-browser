@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -20,6 +21,8 @@ from typing import ClassVar
 
 from ..accounts import DEFAULT, DEFAULT_NAME, GONE, NOT_SIGNED_IN, clean_env, default_folder
 from ..checks import KINDS
+from ..sandbox import DockerError, Sandboxes
+from ..skills import USABLE_ENV
 from . import attachments
 from . import move as moving
 from . import powers
@@ -55,10 +58,14 @@ CLOSED = "That agent has closed"
 NOTE_LIMIT = 300  # characters of Deny's note to the agent
 SUBAGENTS_KEPT = 20  # sub-agents an agent's drawer lists, the newest
 FINISHED = ("your_turn", "stopped", "failed")  # a turn that ended: the room's finished agents (the new look)
+GOING = ("working", "waiting", "needs_you")  # a saved agent's run still going: a new task for it is a message
 FILES_KEPT = 50  # files an agent changed, the newest, for History
 RESULT_LIMIT = 200  # characters of its last answer's first line, for History
 WORDS_LIMIT = 20_000  # characters of an answer kept while it streams in
 EDITS = ("Edit", "Write")  # the tools whose path is a file the agent changed
+PRELOAD_LIMIT = 60_000  # characters of skills' text a run's first message carries (Load at start)
+PRELOAD_LINE = "Skills the user loaded for you:"
+NOT_INSTALLED = "Not loaded, no longer installed: {names}"  # a note on the run, never the agent's
 _SCHEME = re.compile(r"\bhttps?://(?:www\.)?", re.IGNORECASE)
 _FILLER = {"and", "or", "then", "to", "the", "a", "an", "of", "in", "on", "with", "for", "from"}
 _AGENT_ID = re.compile(r"a([0-9]{1,9})")  # the ids the server and the relay accept: ^a[0-9]{1,9}$
@@ -95,6 +102,37 @@ def mission_words(value, limit: int, too_long: str) -> str:
     if len(text) > limit:
         raise ValueError(too_long)
     return text
+
+
+def docker_answers(home: Path) -> bool:
+    """Whether Docker answers with the sandbox image (Sandboxes.check: it starts nothing), as load_skill asks. Without
+    it, a loaded skill names its folder on this computer, for the agent's own commands."""
+    try:
+        Sandboxes(home).check()
+    except DockerError:
+        return False
+    return True
+
+
+def preload(catalog, refs, limit: int = PRELOAD_LIMIT,
+            host: bool = False) -> tuple[str, list[str], list[str], list[str]]:
+    """Load at start (the saved-agents spec, 3): (the block for a run's first message, the refs in it, the refs past
+    `limit` characters, which the agent is asked to load with load_skill as before, the refs no longer installed). Each
+    skill's text is what load_skill gives, so its paths are rewritten the same way (`host`: Docker doesn't answer)."""
+    parts, loaded, later, gone, size = [], [], [], [], 0
+    for ref in dict.fromkeys(refs):
+        try:
+            text = catalog.load(ref, host=host)
+        except (KeyError, OSError, ValueError):  # SkillNotFound and AmbiguousSkill are KeyErrors
+            gone.append(ref)
+            continue
+        if size + len(text) > limit:
+            later.append(ref)
+            continue
+        parts.append(text)
+        loaded.append(ref)
+        size += len(text)
+    return (f"{PRELOAD_LINE}\n\n" + "\n\n".join(parts) if parts else ""), loaded, later, gone
 
 
 def _own_scratch(scratch: Path) -> None:
@@ -185,6 +223,7 @@ class Agent:
     task: str = field(default="", repr=False)  # its first words: the hand-over note (wave C's Restart in too)
     handover: str | None = field(default=None, repr=False)  # the note a resume that doesn't take falls back to
     moving: bool = field(default=False, repr=False)  # one move at a time
+    closing: bool = field(default=False, repr=False)  # the user closed it: no longer a saved agent's run at work
     # agent powers: the task's folder (its real path; None: the agent's own scratch folder) and whether the user trusts
     # it; Claude Code's to-do list, and its sub-agents ({id, task, action, state}), for the row and the drawer
     folder: str | None = None
@@ -205,12 +244,15 @@ class Agent:
     auto: bool = False  # Auto-approve in its folder: the user's switch (the composer's, the drawer's), off by default
     description: str = ""  # Build a Mission's What it works on: the user's one line, shown under its name
     named: bool = False  # the user gave it a name (False: its task's first words name it); the pages can't tell
+    saved: str = ""  # the saved agent this is a run of (its slug), or "" for a one-off run
+    profile: str | None = None  # its saved agent's Brave profile (a folder); None: Settings' choice
 
     PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
                                          "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
-                                         "result", "files", "workspace", "web", "auto", "description", "named")
+                                         "result", "files", "workspace", "web", "auto", "description", "named",
+                                         "saved", "profile")
 
     @property
     def number(self) -> int:
@@ -244,8 +286,10 @@ class AgentManager:
         self.tools = None  # the user's MCP servers (ToolsConfig), set by the app: agents ask before using them
         self.accounts = accounts  # AI accounts (Accounts); None: every agent runs on Default, as before
         self.rules = powers.Rules(self.home)  # agent powers: the user's rules and trusted folders, per folder
+        self._docker: bool | None = None  # whether Docker answers (Load at start's paths), asked once
         self.on_limit: Callable[[str], None] | None = None  # set by the app: an account hit its usage limit
         self.on_usage: Callable[[str], None] | None = None  # set by the app: an account reported how much is used
+        self.catalog: Callable[[], object] | None = None  # set by the app: the skills a run's first message loads
         self._asks: dict[str, asyncio.Future] = {}  # agent id -> its tool request waiting for the user
         self.agents: dict[str, Agent] = {}
         self._line: deque[str] = deque()  # agents waiting for a free slot, first come first served
@@ -294,7 +338,7 @@ class AgentManager:
                      tab: dict | None = None, servers: list[str] | None = None,
                      account: str | None = None, folder: str | None = None, workspace: str | None = None,
                      files=(), web: str = "web", auto: bool = False, name: str | None = None,
-                     description: str | None = None) -> Agent:
+                     description: str | None = None, saved_agent=None) -> Agent:
         """A new agent for `text`; with `adopt`, it works in that tab of the user's (started from the panel). Its MCP
         servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list). It runs on
         `account`, else on the default account for new agents; ValueError for an account that isn't listed. With
@@ -302,7 +346,8 @@ class AgentManager:
         folder?" isn't answered yet, is a ValueError too. Without, it works in its own scratch folder. `auto`:
         Auto-approve in its folder, only when the user's own switch says True (the Brain and templates never pass
         it). `name` and `description` are Build a Mission's Name and What it works on (mission_words): without a name,
-        the task's first words name it, as before."""
+        the task's first words name it, as before. `saved_agent`: the saved agent (savedagents.SavedAgent) this is a run
+        of: its standing instruction goes into its system prompt."""
         given = mission_words(name, MISSION_NAME_LIMIT, NAME_TOO_LONG)  # first: refused words leave nothing behind
         about = mission_words(description, ABOUT_LIMIT, ABOUT_TOO_LONG)
         chosen = self._account_row(account)  # first: a refused account leaves no agent and no number behind
@@ -322,16 +367,19 @@ class AgentManager:
         env = {**self.env, "AIB_APP_AGENT": agent_id, **({"AIB_APP_ADOPT": adopt} if adopt else {})}
         if self.mint_token is not None:  # its own token: the app knows who reports, asks for tabs and connects
             env["AIB_APP_AGENT_TOKEN"] = self.mint_token(agent_id)
+        if saved_agent and saved_agent.use:  # Can use: its own tools list and load only these (none: every skill)
+            env[USABLE_ENV] = json.dumps(sorted(saved_agent.use))
         bridge = ClaudeBridge(self.home, model=model, claude=self.claude, env=env, agent_id=agent_id,
                               tools=self.tools_for(chosen["id"]), servers=servers,
                               on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request),
                               environment=self._environment(chosen["id"]), work=work, rules=self.rules, web=web,
-                              trusted=trusted, auto=auto)
+                              trusted=trusted, auto=auto, instruction=saved_agent.instruction if saved_agent else "")
         if self.accounts is not None:  # its account must be signed in before its Claude Code starts
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
         agent = Agent(agent_id, given or _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge,
                       account=chosen, task=text, folder=work, trusted=trusted, workspace=workspace, web=web, auto=auto,
-                      description=about, named=bool(given))
+                      description=about, named=bool(given), saved=saved_agent.slug if saved_agent else "",
+                      profile=saved_agent.profile if saved_agent else None)
         if work is not None:
             with contextlib.suppress(OSError):  # a read-only home: the folder isn't listed as recent, nothing more
                 self.rules.note_used(work)
@@ -344,6 +392,44 @@ class AgentManager:
         self._line.append(agent_id)
         self._pump()
         return agent
+
+    def run_of(self, slug: str) -> Agent | None:
+        """The run of this saved agent that is still going (working, waiting in line or needing the user), and not
+        closing, if any."""
+        return next((agent for agent in self.agents.values()
+                     if slug and agent.saved == slug and agent.state in GOING and not agent.closing), None)
+
+    async def run_as(self, saved, text: str, skills=(), servers: list[str] | None = None, tab: dict | None = None,
+                     adopt: str | None = None, files=(), workspace: str | None = None,
+                     auto: bool | None = None) -> tuple[Agent, bool]:
+        """A task for a saved agent (Build a Mission's Agent ▾, or a template that runs as it): one run at a time.
+        While its run is going, the task goes to that run as a message, as the drawer's Send does: (run, False). Else
+        a new run starts with its settings (name, what it works on, profile, web, model, account, folder,
+        Auto-approve, instruction, skills): (run, True). Skills asked for beside its own join its Load at start only
+        when it may use them. `auto` overrides its Auto-approve (False: a run a message started)."""
+        run = self.run_of(saved.slug)
+        if run is not None:
+            await self.send(run.id, text, tab, files=files)
+            return run, False
+        extra = [ref for ref in skills if not saved.use or ref in saved.use]
+        agent = await self.create(text, list(dict.fromkeys([*saved.load, *extra])), saved.model, adopt, tab, servers,
+                                  account=saved.account, folder=saved.folder, workspace=workspace, files=files,
+                                  web=saved.web, auto=saved.auto if auto is None else auto, name=saved.name,
+                                  description=saved.description, saved_agent=saved)
+        return agent, True
+
+    def note(self, agent_id: str, text: str) -> None:
+        """A line of the app's own in an agent's chat, for the user: never sent to its Claude."""
+        agent = self.agents.get(agent_id)
+        if agent is not None:
+            self._record(agent, {"type": "note", "text": text})
+
+    def forget_saved(self, slug: str) -> None:
+        """A saved agent was deleted: its runs go on, as one-off runs."""
+        for agent in self.agents.values():
+            if slug and agent.saved == slug:
+                agent.saved = ""
+                self._changed(agent)
 
     def _scratch(self, agent_id: str) -> Path:
         """An agent's own scratch folder: the bridge's own path when no folder is chosen."""
@@ -408,8 +494,8 @@ class AgentManager:
         return self.accounts.env_for(account_id) if self.accounts is not None else clean_env()
 
     def tools_for(self, account_id: str):
-        """An account's tools (AI Home → Tools, one account at a time): its own servers, switches and always-allowed
-        tools. Default's are `self.tools`; None without Tools."""
+        """An account's tools (Mission Control → Integrations, one account at a time): its own servers, switches and
+        always-allowed tools. Default's are `self.tools`; None without Tools."""
         if self.tools is None or self.accounts is None or account_id == DEFAULT:
             return self.tools
         return self.tools.for_account(account_id, self.accounts.claude_home(account_id),
@@ -471,6 +557,7 @@ class AgentManager:
         agent = self.agents.get(agent_id)
         if agent is None:
             return
+        agent.closing = True  # a task for its saved agent starts a new run from now on
         await self.stop(agent_id)
         turn = self._turns.get(agent_id)
         if turn is not None:
@@ -598,8 +685,8 @@ class AgentManager:
         self._changed(agent)
 
     async def hand_tab(self, agent_id: str, target: str, tab: dict) -> bool:
-        """The user handed one of their tabs to this agent (AI Home's Hand over): it is the agent's to use, and stays
-        the user's. The note reaches the agent now, or when its turn ends; the tab's title and address go as page
+        """The user handed one of their tabs to this agent (the Tabs page's Hand over): it is the agent's to use, and
+        stays the user's. The note reaches the agent now, or when its turn ends; the tab's title and address go as page
         data."""
         agent = self.agents.get(agent_id)
         if agent is None or not target:
@@ -612,7 +699,7 @@ class AgentManager:
         return True
 
     def take_back(self, target: str) -> str | None:
-        """The user took a handed tab back (AI Home's Take back): the id of the agent that had it, or None. The
+        """The user took a handed tab back (the Tabs page's Take back): the id of the agent that had it, or None. The
         agent's engine lets go of it at its next action."""
         for agent in self.agents.values():
             if target in agent.adopted:
@@ -719,6 +806,8 @@ class AgentManager:
                     self._record(agent, {"type": "note", "text": FRESH_NOTE})
                 else:
                     self._record(agent, {"type": "user", "text": text})
+                if skills and self.catalog is not None:  # Load at start: the skills' text goes first, never to the chat
+                    text, skills = self._preload(agent, text, skills, await self._skills_on_host())
                 resuming, started = agent.handover is not None, False  # the first turn after a move that copied
                 agent.words = ""  # a turn Stop, a limit or an error cut short left its words: they aren't this turn's
                 async for event in agent.bridge.send(text, tab.get("url", ""), tab.get("title", ""), skills,
@@ -739,6 +828,28 @@ class AgentManager:
                 agent.state = "your_turn"
                 self._changed(agent)
             self._pump()
+
+    async def _skills_on_host(self) -> bool:
+        """Whether Load at start names the skills' folders on this computer: Docker doesn't answer, as load_skill
+        decides."""
+        if self._docker is None:
+            self._docker = await asyncio.to_thread(docker_answers, self.home)
+        return not self._docker
+
+    def _preload(self, agent: Agent, text: str, skills: list[str], host: bool = False) -> tuple[str, list[str]]:
+        """A run's first message with its skills' own text before the task (preload); the skills past the cap are
+        left to load_skill, and one no longer installed is skipped with a note on the run."""
+        try:
+            block, loaded, later, gone = preload(self.catalog(), skills, PRELOAD_LIMIT, host)
+        except Exception:  # the skills couldn't be read: the agent loads them itself, as before
+            return text, skills
+        if gone:
+            self._record(agent, {"type": "note", "text": NOT_INSTALLED.format(names=", ".join(gone))})
+        if loaded:
+            agent.bridge.loaded_skills.update(loaded)
+            agent.loaded_skills = sorted(agent.bridge.loaded_skills)
+            self._changed(agent)
+        return (f"{block}\n\n{text}" if block else text), later
 
     def _on_event(self, agent: Agent, event: dict) -> None:
         kind = event.get("type")
@@ -874,7 +985,7 @@ class AgentManager:
                 self.on_usage(account)
 
     async def move(self, agent_id: str, account_id: str, tabs=()) -> str:
-        """Continue on another account (a click in AI Home or Mission Control; app-only in MESSAGE_RULES). One move
+        """Continue on another account (a click in Mission Control; app-only in MESSAGE_RULES). One move
         per agent at a time, and only while it isn't working:
         1. its Claude Code process ends (it ended its turn already);
         2. its conversation is copied to the other account's folder;

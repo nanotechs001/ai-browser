@@ -23,12 +23,12 @@ def note_for(message: dict) -> dict | None:
                 "body": "An agent waits for you to solve it."}
     if kind == "permission_request":
         return {"kind": "permission", "agent": agent, "title": "An agent is waiting for you",
-                "body": "It asks to use a tool. Answer in AI Home."}
+                "body": "It asks to use a tool. Answer in Mission Control."}
     if kind == "notify":
         count = message.get("count")
         count = count if isinstance(count, int) and not isinstance(count, bool) and 0 < count < 1000 else 1
         title = "The Brain has a new note" if count == 1 else f"The Brain has {count} new notes"
-        return {"kind": "brain", "agent": "", "title": title, "body": "Open AI Home to see what needs you."}
+        return {"kind": "brain", "agent": "", "title": title, "body": "Open Mission Control to see what needs you."}
     if kind == "handoff":  # the Brain's hand-off: never its instruction, nor the agent's name
         if message.get("kind") == "start":
             return {"kind": "brain", "agent": "", "title": "The Brain suggests a new agent",

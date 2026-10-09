@@ -9,7 +9,7 @@ import pytest
 
 from ai_browser.chrome import chrome_binary
 from test_brain_handoffs import Clock
-from test_home import HOSTILE, home, stack, until  # noqa: F401  (fixtures)
+from test_home import HOSTILE, page, stack, until  # noqa: F401  (fixtures)
 from test_mission import WORKING, open_mission, open_with
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
@@ -18,7 +18,7 @@ CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is no
 # ---- Templates leave Mission Control (spec 2) ------------------------------------------------------------------------
 
 @CHROME
-async def test_templates_leave_mission_control_and_the_calendar_opens_ai_home(stack):
+async def test_templates_leave_the_composer_and_the_calendar_opens_the_agents_page(stack):
     server = stack["server"]
     stack["workflows"].save({"name": "Morning report", "instructions": "Write it", "trigger": "schedule",
                              "schedule": "daily 09:00"})
@@ -34,9 +34,9 @@ async def test_templates_leave_mission_control_and_the_calendar_opens_ai_home(st
     await js("document.querySelector('#views-switch [data-view=\"calendar\"]').click(); true")
     entry = "document.querySelector('#view-calendar .entry.template')"
     assert await until(js, f"{entry} !== null")  # the Calendar still shows the scheduled template
-    await js(f"{entry}.click(); true")
-    assert await until(js, "location.pathname === '/home' && location.hash === '#workflows-section'"
-                           " && document.getElementById('workflows-section').open === true")
+    await js(f"{entry}.click(); true")  # the Agents page, at the template (the saved-agents spec, 1)
+    assert await until(js, "!document.getElementById('page-agents').hidden && document.querySelector("
+                           "'#page-agents .workflow[data-slug=\"morning-report\"]') !== null")
 
 
 # ---- Ask AI's history (spec 3) ---------------------------------------------------------------------------------------
@@ -406,11 +406,12 @@ async def test_send_now_sends_the_words_shown_and_the_chat_says_from_the_brain(s
 
 
 @CHROME
-async def test_an_emails_handoff_waits_for_send_in_ai_home(home):
-    js, stack = home
+async def test_an_emails_handoff_waits_for_send_in_the_brains_inbox(page):
+    js, stack = page
     row = await working_agent(stack)
+    await js("document.getElementById('bubble').click(); true")  # the globe: the Brain's inbox
     stack["brain"].give(row, "Reply to Maria with the new prices", "gmail", item="gmail:t1")
-    card = "document.querySelector('#brain .brain-handoffs .handoff')"
+    card = "document.querySelector('#brain-inbox .brain-handoffs .handoff')"
     assert await until(js, f"{card}?.dataset.state === 'waiting'")
     assert await js(f"{card}.querySelector('.handoff-line').textContent") == "Waiting for your Send"  # no countdown
     assert await js(f"{card}.querySelector('.handoff-from').textContent") == "From an email in Gmail"
@@ -424,8 +425,7 @@ async def test_an_emails_handoff_waits_for_send_in_ai_home(home):
     assert await until(js, f"{card}?.dataset.state === 'sent'")
     assert sent_by_the_brain(stack) == ["From the Brain: Reply to Maria with the new prices"]
     stack["brain"].countdown = Clock()
-    stack["brain"].give(row, "Compare the annual plans", "you")  # AI Home shows a countdown wherever it is scrolled
-    await js("window.scrollTo(0, document.body.scrollHeight); true")
+    stack["brain"].give(row, "Compare the annual plans", "you")  # the slot shows a countdown, in reach
     assert await until(js, hits(f"{in_slot('counting')}?.querySelector('.handoff-cancel')"))
 
 
@@ -473,7 +473,7 @@ def test_the_readme_explains_names_handoffs_sources_and_the_history():
                    "**Hand tasks to working agents by itself (15 s to cancel):**", "**Hand-offs:**",
                    "it sends after **15 seconds** unless you press **Cancel**",
                    "it never counts down: it waits for your **Send**", "A **new agent** is only ever a suggestion",
-                   '"From the Brain: …"', "A click on a template opens AI Home at its templates",
+                   '"From the Brain: …"', "A click on a template opens it on the Agents page",
                    "**Current Task:** its name and what it works on",
                    "the card counts down 15 seconds and then sends, unless you press **Cancel**",
                    # the build's rulings (2026-10-08): who counts down, what cancels and pauses, where it runs

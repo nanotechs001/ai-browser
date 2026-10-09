@@ -34,6 +34,7 @@ SENDS = {
     "agent_auto",  # Auto-approve in its folder: the drawer's switch, the user's click only
     "handoff_send", "handoff_cancel",  # the Brain's hand-offs: Send now, Send, Start and Cancel on a card
     "visibility",  # a page shown or hidden (link.js): a hand-off counts down only while a page can show it
+    "saved_agents", "saved_agent_save", "saved_agent_delete",  # saved agents: the Agents page, the user's clicks only
 }
 RETIRED = {"items", "replied", "thread", "filled", "reader_status", "watcher_caps", "tab_grouped", "pause",
            "ai_keyword"}  # the watcher's own: gone with it
@@ -128,12 +129,13 @@ async def test_show_me_with_no_tab_source_does_nothing(fake_claude, tmp_path):  
         await server.stop()
 
 
-def test_the_readme_says_what_ai_home_lists_and_where_always_allow_is():
+def test_the_readme_says_what_the_tabs_page_lists_and_where_always_allow_is():
     text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
-    assert ("**Tabs:** the web tabs of the Brave profile where agents browse (Settings → **Where agents browse**; until "
-            "you pick one, the profile you used last), each marked with whose it is") in text
+    assert ("**Tabs** (Mission Control's **Tabs** page): the web tabs of the Brave profile where agents browse "
+            "(Settings → **Where agents browse**; until you pick one, the profile you used last), each marked with "
+            "whose it is") in text
     assert "Other profiles and private windows are only counted, never listed." in text
     assert "**Always allow** is remembered in `~/.ai-browser/tools.json`" in text
     assert "watcher's Brain page" not in text  # the extension retired
-    assert ("AI Home shows the ones in the agents' profile (other profiles and private windows only as a count)"
-            in text)
+    assert ("Mission Control's Tabs page shows the ones in the agents' profile (other profiles and private windows "
+            "only as a count)" in text)

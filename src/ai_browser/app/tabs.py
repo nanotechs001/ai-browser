@@ -16,7 +16,7 @@ from collections.abc import Callable
 from ..cdp import CDP, CDPError
 from . import inworld
 
-THUMB_WIDTH = 320  # pixels: enough to recognise a page in an AI Home row
+THUMB_WIDTH = 320  # pixels: enough to recognise a page on a desk's monitor
 THUMB_TIMEOUT = 3  # seconds; a page too busy to draw gets no new thumbnail this time
 PAGE_TEXT_LIMIT = 20_000  # characters of a tab's text read for a skill draft
 REFRESH = 1.5  # seconds between full reads of the tab list: Chrome reports title changes late or not at all

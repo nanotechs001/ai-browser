@@ -1,7 +1,7 @@
 // Settings → Where agents browse: the Brave profiles browser detection found, by name and colour (never an email),
-// and the one agents work in. AI Home lists that profile's tabs and only counts the others. Brave can't be told a
-// profile, so AI Browser learns it while the user uses it; this section says plainly when it can't yet, and nothing
-// here makes Brave ask anything. Every name is set as text.
+// and the one agents work in (unless a saved agent picks its own). Mission Control's Tabs page lists that profile's
+// tabs and only counts the others. Brave can't be told a profile, so AI Browser learns it while the user uses it; this
+// section says plainly when it can't yet, and nothing here makes Brave ask anything. Every name is set as text.
 "use strict";
 
 function el(tag, className, text) {
@@ -50,7 +50,7 @@ export function mountPlaceSettings(parts, send) {
 
   function renderState() {
     if (brave && brave !== "connected") {
-      parts.state.textContent = "Brave isn't connected: connect it in AI Home.";
+      parts.state.textContent = "Brave isn't connected: connect it at the top of Mission Control.";
     } else if (!scope) {
       parts.state.textContent = "";
     } else if (scope.profile === "chosen") {

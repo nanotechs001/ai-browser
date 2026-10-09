@@ -329,9 +329,13 @@ class FakePlace:
     def __init__(self):
         self.listed: list[dict] = []
         self.chosen = None
+        self.learned: set[str] = set()  # the profiles whose context is known on this connection
 
     def profiles(self):
         return [dict(profile) for profile in self.listed]
+
+    def ready(self, folder):
+        return folder in self.learned
 
 
 class FakeBrave:
@@ -349,6 +353,7 @@ class FakeBrave:
         self.relay = FakeRelay()
         self.place = FakePlace()  # Settings → Where agents browse
         self.opened_ai: list[str] = []  # who each tab open_ai_tab opened was for (N1, N2, …)
+        self.opened_in: list[tuple[str, str | None]] = []  # (who, the profile asked for) of each open_ai_tab
         self.ai_tab_error: Exception | None = None  # what open_ai_tab raises instead
         self.page_answers: dict = {}  # target -> what read_page answers (a dict, or an Exception it raises)
         self.read_pages: list[tuple[str, int]] = []  # (target, limit) of each read_page: the chat's asks
@@ -401,7 +406,8 @@ class FakeBrave:
     async def watch(self, target):
         self.watched.append(target)
 
-    async def open_ai_tab(self, identity):
+    async def open_ai_tab(self, identity, profile=None):
+        self.opened_in.append((identity, profile))
         if self.ai_tab_error is not None:
             raise self.ai_tab_error
         self.opened_ai.append(identity)

@@ -1,4 +1,4 @@
-// AI Home → Tools: the user's MCP servers (Claude Code's own configuration, and the claude.ai connectors), each
+// Integrations: the user's MCP servers (Claude Code's own configuration, and the claude.ai connectors), each
 // switched on or off for AI Browser's agents, their tools (any can be allowed always), and the tools allowed always.
 // Agents ask before any other tool. With two or more accounts (AI accounts), a picker shows one account's tools at a
 // time: each account has its own servers, switches and always-allowed tools. Everything is shown as text.

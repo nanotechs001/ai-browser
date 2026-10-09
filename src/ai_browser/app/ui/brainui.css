@@ -1,4 +1,4 @@
-/* The Brain's inbox (brainui.js), in AI Home and Mission Control. Colours come from the page's own variables (--card,
+/* The Brain's inbox (brainui.js), in Mission Control and Settings. Colours come from the page's own variables (--card,
    --line, --muted, --accent…). */
 .brain-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
 .brain-item { display: flex; flex-direction: column; gap: 4px; }
@@ -32,7 +32,7 @@
 .brain-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap;
                          font-size: 13px; }
 .brain-card .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-/* A hand-off (brainui.js's handoffCard): in the Brain's inbox, by Mission Control's globe, in AI Home and the chat */
+/* A hand-off (brainui.js's handoffCard): in the Brain's inbox, by Mission Control's globe and in the chat */
 .handoff.card { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 12px; display: flex;
                 flex-direction: column; gap: 4px; background: var(--card, var(--panel)); box-sizing: border-box; }
 .handoff.card:not([data-state="counting"], [data-state="waiting"]) { border-color: var(--line); }
@@ -45,7 +45,7 @@
 .brain-handoffs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 .handoff-slot { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; overscroll-behavior: contain; }
 .brain-handoffs:empty { display: none; }
-/* A tool request waiting for the user (permission.js): on AI Home's agent rows, in the chat panel, on the Brain page. */
+/* A tool request waiting for the user (permission.js): in an agent's drawer, in the chat panel, on the Brain page. */
 .permission { border-color: var(--needs); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .permission-head { font-weight: 600; font-size: 14px; }
 .permission-tool { display: flex; gap: 8px; align-items: center; }
@@ -55,7 +55,7 @@
                     word-break: break-word; }
 .permission-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .permission button { font-size: 13px; padding: 2px 10px; }
-/* A bot check waiting for the user (check.js): on AI Home's agent rows, in the chat panel and in Mission Control. */
+/* A bot check waiting for the user (check.js): in an agent's drawer and in the chat panel. */
 .bot-check { border-color: var(--needs); display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .bot-check-head { font-weight: 600; font-size: 14px; }
 .bot-check-what { font-size: 13px; overflow-wrap: anywhere; }

@@ -1,4 +1,4 @@
-"""AI Browser's own window: AI Home, Mission Control and Settings, drawn by an installed browser in Chrome's --app
+"""AI Browser's own window: Mission Control and Settings, drawn by an installed browser in Chrome's --app
 mode (a title bar only: no tabs, no address bar), on a profile of the app's own.
 
 The window has no debugging port: no --remote-debugging-port, no --remote-debugging-pipe, no --enable-automation and

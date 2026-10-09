@@ -50,9 +50,9 @@ def _command(argv: list[str]) -> int:
     stop.add_argument("profile", nargs="?", default="default",
                       help="profile to stop (default: default), or chrome for the shell used with your own Chrome")
     stop.add_argument("--all", action="store_true", help="stop every ai-browser container")
-    app = commands.add_parser("app", help="open AI Browser in its own window: AI Home, Mission Control and the Brain")
+    app = commands.add_parser("app", help="open AI Browser in its own window: Mission Control, Settings and the Brain")
     app.add_argument("--model", choices=["sonnet", "opus", "haiku"], default="sonnet",
-                     help="Claude model for new agents until you pick one in AI Home (default: sonnet)")
+                     help="Claude model for new agents until you pick one in Mission Control (default: sonnet)")
     app.add_argument("--browser", default=None, metavar="{brave}",
                      help="where agents browse: your Brave (the only choice: AI Browser's own Chrome is gone)")
     app.add_argument("--window", choices=["auto", "chrome", "brave", "edge"], default=None,

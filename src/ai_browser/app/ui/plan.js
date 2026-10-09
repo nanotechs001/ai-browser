@@ -1,4 +1,4 @@
-// An agent's plan (Claude Code's to-do list: agent powers, Decision 9) and its sub-agents (Decision 8), as AI Home's
+// An agent's plan (Claude Code's to-do list: agent powers, Decision 9) and its sub-agents (Decision 8), as the drawer's
 // row and Mission Control's drawer show them, and a task's folder by name. Every word is Claude's or a path, set as
 // text.
 "use strict";

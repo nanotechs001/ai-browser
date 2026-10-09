@@ -14,6 +14,8 @@ from . import platforms
 from .config import READ_LIMIT
 
 FILE_LIST_LIMIT = 30
+USABLE_ENV = "AIB_APP_SKILLS"  # a saved agent's Can use, from the app: a JSON list of skill refs
+NOT_ALLOWED = "This agent can't use that skill: change it in its settings"
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
 
 
@@ -75,6 +77,21 @@ def _one_line(text) -> str:
     return " ".join(str(text or "").split())
 
 
+def usable_skills(env=None) -> set[str] | None:
+    """The skills this agent may use (a saved agent's Can use, in USABLE_ENV), or None for every skill: the variable
+    unset, or an empty list. A value that isn't a list of names allows none, never every skill."""
+    raw = (os.environ if env is None else env).get(USABLE_ENV, "")
+    if not raw:
+        return None
+    try:
+        refs = json.loads(raw)
+    except ValueError:
+        return set()
+    if not isinstance(refs, list):
+        return set()
+    return {ref for ref in refs if isinstance(ref, str)} if refs else None
+
+
 def user_folders() -> tuple[Path, Path]:
     """Where the user's own skills are: Claude Code's folder (~/.claude: personal skills and plugins) and the Claude
     desktop app's (the skills synced from claude.ai). The test suite points it at a throwaway folder."""
@@ -85,6 +102,7 @@ class Catalog:
     def __init__(self, sources: list[SkillSource], blocked: set[str]):
         self.sources = [source for source in sources if source.host_root.is_dir()]
         self.blocked = set(blocked)
+        self.allowed: set[str] | None = None  # a saved agent's Can use (usable_skills); None: every skill
         self._skills: dict[str, Skill] = {}
         for source in self.sources:
             for skill_md in sorted(source.host_root.glob(source.pattern)):
@@ -125,7 +143,13 @@ class Catalog:
         return cls([*_sources(claude_home, app_support), project], blocked)
 
     def all(self) -> list[Skill]:
-        return [skill for ref, skill in self._skills.items() if ref not in self.blocked]
+        return [skill for ref, skill in self._skills.items()
+                if ref not in self.blocked and (self.allowed is None or ref in self.allowed)]
+
+    def _outside(self, name: str) -> bool:
+        """An installed skill this agent may not use (Can use): asked for by its ref or by its name."""
+        named = [skill for skill in self._skills.values() if name in (skill.ref, skill.name)]
+        return self.allowed is not None and bool(named) and not any(skill.ref in self.allowed for skill in named)
 
     def find(self, query: str, limit: int = 10) -> list[Skill]:
         tokens = [token for token in re.findall(r"[a-z0-9]+", query.lower()) if len(token) >= 2]
@@ -148,6 +172,8 @@ class Catalog:
 
     def get(self, name: str) -> Skill:
         name = name.strip()
+        if self._outside(name):  # load_skill and read_skill_file both come here
+            raise SkillNotFound(NOT_ALLOWED)
         if ":" in name:
             skill = self._skills.get(name)
             if skill is None or name in self.blocked:
@@ -216,18 +242,23 @@ def _too_wide(root: Path, claude_home: Path) -> bool:
     return real == Path(real.anchor) or any(real == folder or real in folder.parents for folder in held)
 
 
-def skill_folders(blocked: set[str] = frozenset()) -> SkillFolders:
+def skill_folders(blocked: set[str] = frozenset(), allowed: set[str] | None = None) -> SkillFolders:
     """The folders the catalog reads the user's own skills from, those that are there and not too wide (what the
-    Docker sandbox mounts), and the folders of the skills in `blocked` (config's blocked_skills): an agent may run the
-    scripts of the others like its own folder's (Part 2 of the review of 2026-10-08)."""
+    Docker sandbox mounts), and the folders of the skills in `blocked` (config's blocked_skills) or outside `allowed`
+    (a saved agent's Can use, usable_skills; None: every skill): an agent may run the scripts of the others like its
+    own folder's (Part 2 of the review of 2026-10-08). For a narrowed run the roots are only its allowed skills'
+    folders (only Auto-approve reads them; the Docker sandbox mounts come from Catalog.mounts)."""
     claude_home, app_support = user_folders()
     sources = [source for source in _sources(claude_home, app_support)
                if source.host_root.is_dir() and not _too_wide(source.host_root, claude_home)]
-    hidden = ()
-    if blocked:  # only then the skills are read: blocked ones by their names
+    roots, hidden = tuple(str(source.host_root) for source in sources), ()
+    if blocked or allowed is not None:  # only then the skills are read: blocked ones by their names
         catalog = Catalog(sources, set(blocked))
-        hidden = tuple(str(skill.host_dir) for ref, skill in catalog._skills.items() if ref in catalog.blocked)
-    return SkillFolders(tuple(str(source.host_root) for source in sources), hidden)
+        hidden = tuple(str(skill.host_dir) for ref, skill in catalog._skills.items()
+                       if ref in catalog.blocked or (allowed is not None and ref not in allowed))
+        if allowed is not None:  # a narrowed run trusts only its own skills' folders, never a whole root: a folder
+            roots = tuple(str(skill.host_dir) for skill in catalog.all() if skill.ref in allowed)  # the catalog
+    return SkillFolders(roots, hidden)  # skipped (a shadowed name, no SKILL.md) is never one of them
 
 
 def _plugin_sources(claude_home: Path) -> list[SkillSource]:

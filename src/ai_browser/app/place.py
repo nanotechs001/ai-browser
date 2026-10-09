@@ -62,11 +62,17 @@ class ProfilePlace:
         self._learned[folder] = context  # one context per profile, one profile per context
         return True
 
-    def context(self, default_context: str | None) -> tuple[str | None, str]:
-        """(context, source) of the profile where agents browse: the chosen one's, once Brave has shown it on this
-        connection ("chosen"), else None ("not_open"); with none chosen, the profile Brave used last ("last_used"),
-        or none yet ("none")."""
-        if self.chosen is None:
+    def ready(self, folder: str) -> bool:
+        """Whether this profile's context is learned on this connection: a saved agent's settings say "ready", else
+        "open it once"."""
+        return folder in self._learned
+
+    def context(self, default_context: str | None, folder: str | None = None) -> tuple[str | None, str]:
+        """(context, source) of the profile where agents browse: the chosen one's (a saved agent's own `folder`, else
+        Settings' choice), once Brave has shown it on this connection ("chosen"), else None ("not_open"); with none
+        chosen, the profile Brave used last ("last_used"), or none yet ("none")."""
+        chosen = folder if folder is not None else self.chosen
+        if chosen is None:
             return (default_context, "last_used") if default_context else (None, "none")
-        context = self._learned.get(self.chosen)
+        context = self._learned.get(chosen)
         return (context, "chosen") if context else (None, "not_open")

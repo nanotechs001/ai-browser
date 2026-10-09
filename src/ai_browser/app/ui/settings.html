@@ -6,13 +6,13 @@
 <title>Settings</title>
 <link rel="icon" href="icon.png">
 <link rel="stylesheet" href="theme.css">
-<link rel="stylesheet" href="home.css">
+<link rel="stylesheet" href="settings.css">
 </head>
 <body>
 <header class="top">
   <div class="brand"><span id="status" class="dot" data-state="connecting" title="Connecting…"></span>
     <h1>Settings</h1></div>
-  <button id="home-link" class="ghost" type="button" title="Back to AI Home's tab">AI Home</button>
+  <button id="mission-link" class="ghost" type="button" title="Back to Mission Control's tab">Mission Control</button>
 </header>
 <main class="settings">
   <section id="app-section" class="card" aria-labelledby="app-title">
@@ -70,10 +70,25 @@
     <div id="permissions" class="permissions"></div>
     <p id="permissions-note" class="muted" role="status"></p>
   </section>
+  <section id="brave-section" class="card" aria-labelledby="brave-title">
+    <h2 id="brave-title">Brave</h2>
+    <p id="brave-state" class="muted" role="status"></p>
+    <div id="brave-using" hidden>
+      <p id="brave-using-title" class="muted"></p>
+      <ul id="brave-clients" class="clients"></ul>
+      <p id="brave-clients-note" class="muted"></p>
+    </div>
+    <div id="watcher-note" class="old-watcher" role="status" hidden>
+      <p>AI Browser doesn't use its Brave extension any more. You can remove "AI Browser Watcher" from Brave: open
+        <code>brave://extensions</code> in Brave and click <strong>Remove</strong> on it. AI Browser never removes it
+        for you.</p>
+      <button id="watcher-note-close" type="button">Got it</button>
+    </div>
+  </section>
   <section id="place-section" class="card" aria-labelledby="place-title">
     <h2 id="place-title">Where agents browse</h2>
-    <p class="muted">The Brave profile agents work in. AI Home lists its tabs, and only counts the tabs of your other
-      profiles.</p>
+    <p class="muted">The Brave profile agents work in, unless an agent's own settings pick another. Mission Control's
+      Tabs page lists its tabs, and only counts the tabs of your other profiles.</p>
     <div id="place-choices" class="choices" role="radiogroup" aria-labelledby="place-title"></div>
     <p id="place-state" class="muted" role="status"></p>
   </section>

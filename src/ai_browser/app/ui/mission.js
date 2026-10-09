@@ -1,9 +1,11 @@
 // Mission Control (the new look): the user's AI office. The left menu (the line's light, the counts, New Mission, the
 // pages, the workspaces and the Usage card), the centre (the Flow · List · Calendar switch, the office of scene.js,
-// the menu's pages and the composer), and the right column (side.js) for the agent picked. On the same line
-// to the app as AI Home (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
+// the menu's pages and the composer), and the right column (side.js) for the agent picked. On the line to the app
+// (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
 import { askError } from "./accountui.js";
+import { mountAgentsPage } from "./agentspage.js";
 import { mountHandoffSlot } from "./brainui.js";
+import { mountBraveBar } from "./bravebar.js";
 import { mountCalendar } from "./calendar.js";
 import { el } from "./chat.js";
 import { mountComposer } from "./composer.js";
@@ -16,13 +18,14 @@ import { mountHistory, mountList, mountMissions } from "./pages.js";
 import { createScene } from "./scene.js";
 import { mountSide } from "./side.js";
 import { stateOf, toolLabel } from "./step.js";
+import { mountTabsPage } from "./tabspage.js";
 import { mountTalk } from "./talk.js";
 import { mountUsage } from "./usage.js";
 import { createVoice } from "./voice.js";
 import { fillMove, mountWorkspaces } from "./workspaces.js";
 
 const $ = (id) => document.getElementById(id);
-const PAGES = ["dashboard", "missions", "knowledge", "integrations", "history"];
+const PAGES = ["dashboard", "missions", "agents", "knowledge", "integrations", "tabs", "history"];
 const VIEWS = ["flow", "list", "calendar"];
 const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
 const agents = new Map(); // id -> the agent, as the app describes it
@@ -97,7 +100,22 @@ guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
 window.addEventListener("focus", () => link.send({ type: "accounts" })); // shown again: each account's status, now
 const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: () => accountRows,
-                             browserOf: () => ({ tabs, scope: tabScope, browser }) });
+                             browserOf: () => ({ tabs, scope: tabScope, browser }),
+                             saveSkill: (id, name) => { // Save as skill: Knowledge's Train drafts it from that chat
+                               showPage("knowledge");
+                               knowledge.fromAgent(id, name);
+                             },
+                             saveAgent: (agent) => { // Save as agent: a new agent's settings, filled from this run
+                               drawer.close();
+                               showPage("agents");
+                               agentsPage.showAgent("", {
+                                 name: agent.name, description: agent.description || "", model: agent.model,
+                                 web: agent.web || "web",
+                                 // a run on Default: the agent follows "the default account for new agents"
+                                 account: agent.account?.id && agent.account.id !== "default" ? agent.account.id : null,
+                                 folder: agent.folder || null, use: [], load: agent.loaded_skills || [],
+                               });
+                             } });
 const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
 const list = mountList($("view-list"), { onOpen: select });
 const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI and Build a Mission
@@ -106,9 +124,23 @@ const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible
                                                      decorate: (row, agent) => moveFor(row, { agent: agent.id },
                                                                                        agent.workspace) });
 const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
-parts.push(missions, history);
-parts.push(mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value }),
-           mountIntegrations($("page-integrations"), link));
+const agentsPage = mountAgentsPage($("page-agents"), $("agent-panel"), { link, agents: () => agents,
+                                                                        accounts: () => accountRows });
+parts.push(missions, history, agentsPage);
+const knowledge = mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value,
+                                                             useSkill: (ref) => { // Use in new mission
+                                                               showPage("dashboard");
+                                                               composer.pickSkill(ref);
+                                                             } });
+parts.push(knowledge, mountIntegrations($("page-integrations"), link));
+parts.push(mountTabsPage($("page-tabs"), { // the user's tabs: Hand over, Take back, and a click brings one forward
+  send,
+  agents: () => [...agents.values()].sort((one, two) => (two.number || 0) - (one.number || 0)),
+  newAgent: (tab) => { // Hand over → New agent…: Build a Mission, starting in that tab
+    showPage("dashboard");
+    composer.startIn(tab);
+  },
+}));
 
 const spaces = mountWorkspaces($("workspaces"), { send, onFilter: setWorkspace });
 const usage = mountUsage($("usage"));
@@ -122,6 +154,7 @@ parts.push(spaces, {
   },
 });
 parts.push(mountHandoffSlot($("handoff"), send)); // the Brain's hand-offs, by the globe (its inbox lists them all)
+parts.push(mountBraveBar($("brave-bar"), { send, openTab })); // Brave's connection, until it is connected
 // the hand-offs never cover the composer, nor Ask AI's history above it
 const reserved = new ResizeObserver(() => $("centre").style.setProperty("--composer",
   `${$("composer").offsetHeight + $("talk").offsetHeight}px`));
@@ -130,8 +163,9 @@ reserved.observe($("talk"));
 parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
                                                 visibleTemplate: templateInWorkspace }));
 
-function openTemplate() { // a template in the Calendar: AI Home, at its templates (Run, Edit, New are AI Home's)
-  openTab("/home#workflows-section");
+function openTemplate(slug) { // a template in the Calendar: the Agents page, at its agent's settings or the template
+  showPage("agents");
+  agentsPage.showTemplate(slug);
 }
 
 function workspaceOfTemplate(slug) {
@@ -169,7 +203,7 @@ talk = mountTalk({
   },
   openAgent: (id, options) => openDrawer(id, options),
   openBrain: () => drawer.openBrain(),
-  model: () => $("task-model").value, // the model last picked here or in AI Home
+  model: () => $("task-model").value, // the model last picked here (the app remembers it)
   fill: (words) => composer.fill(words), // the mic outside Ask AI fills the box
   keep: 200, // Ask AI's history: this run's talk with the Brain, scrolled on hover (composer.css)
 });
@@ -186,7 +220,7 @@ function setStatus(state) {
     || "Not connected: is `ai-browser app` running?";
 }
 
-function applySettings(settings) { // the model picked last, here or in AI Home: the app keeps it
+function applySettings(settings) { // the model picked last: the app keeps it
   if (!settings) return;
   const model = settings.model ?? defaultModel;
   if ([...$("task-model").options].some((option) => option.value === model)) $("task-model").value = model;
@@ -196,6 +230,14 @@ function applySettings(settings) { // the model picked last, here or in AI Home:
 
 function renderCounts() { // "1 active task · 3 completed", and who needs the user or failed (plan decision 19)
   const states = [...agents.values()].map(stateOf);
+  const atWork = [...agents.values()].filter((agent) => agent.state === "working").length;
+  setText(document.querySelector("title"), atWork ? `(${atWork}) Mission Control` : "Mission Control"); // the window's
+  try { // and the app's badge (there is no toolbar badge)
+    if (atWork) navigator.setAppBadge?.(atWork)?.catch(() => {});
+    else navigator.clearAppBadge?.()?.catch(() => {});
+  } catch {
+    // not an installed app: the title says it
+  }
   if (!states.length) {
     setText($("counts"), "No agents yet");
     return;
@@ -293,6 +335,12 @@ function select(id) { // a desk, a row or an activity: the right column shows it
   scene.select(id);
   renderSide();
   if (agents.has(id) && stateOf(agents.get(id)) === "needs_you") drawer.open(id); // a card waits: one click away
+}
+
+function focusOn(message) { // a notification's click, or the floating chat's Open: that agent's drawer, or the Brain's
+  if (window.parent !== window) openTab("/mission"); // inside the tab menu: Mission Control's tab in front
+  if (message.brain) drawer.openBrain();
+  else if (agents.has(String(message.agent || ""))) openDrawer(String(message.agent));
 }
 
 function openDrawer(id, options = {}) { // Chat, Hand over, Answer, an activity or a page's Open: the agent's drawer
@@ -398,11 +446,14 @@ function handle(message) {
       if (drawer.id) link.send({ type: "events", id: drawer.id });
       eventsFor = null; // and the right column asks for its agent's actions again
       renderAll();
-      for (const kind of ["accounts", "thumbs", "brain", "hearing", "permission_rules", "workflows"]) { // workflows:
-        link.send({ type: kind }); // the Calendar's scheduled templates, and each workspace's count of them
+      for (const kind of ["accounts", "thumbs", "brain", "hearing", "permission_rules", "workflows", "skills"]) {
+        link.send({ type: kind }); // workflows: the Calendar's templates and each workspace's count; skills: Skills
       }
       break;
     }
+    case "focus":
+      focusOn(message);
+      break;
     case "agent_event":
       side.event(message.id, message.event);
       break;
@@ -474,6 +525,7 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("keydown", (event) => { // Command-K (Ctrl+K elsewhere): a new mission, from anywhere
   const command = MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (!command || event.altKey || event.shiftKey || String(event.key).toLowerCase() !== "k") return;
+  if (document.querySelector("dialog:modal")) return; // a question is open (confirm.js): the page behind waits
   event.preventDefault();
   newMission();
 }, true);
