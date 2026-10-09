@@ -2,7 +2,8 @@
 // without the user's Start, Send or a plain yes) and Build a Mission (start an agent). Templates are AI Home's own
 // (Run, Edit, New): Mission Control has none since the brain-delegation spec. Under the box: Attach (uploads.js),
 // Web ▾, Model ▾, Account ▾, Folder ▾ (agent powers' picker), Auto-approve in its folder (a switch, off again for each
-// new task) and Workspace ▾, the mic, and the main button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter
+// new task), Skills (loaded at start; Knowledge's Use in new mission ticks one) and Workspace ▾, the mic, and the main
+// button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter
 // makes a new line. A picture pasted into the box, or a file dropped on it (paste.js), is attached as Attach does in
 // Build a Mission; Ask AI takes none, and says where pictures go. Narrow windows fold the pickers into ⋯ Options.
 // Every word is set as text.
@@ -32,6 +33,9 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   let rows = []; // the accounts
   let workspaces = [];
   let workspacePicked = false; // the user chose one here: the menu's filter no longer sets it
+  let handing = null; // one of the user's tabs the next Start begins in (the Tabs page's Hand over → New agent…)
+  let skillRows = []; // the skills, as Knowledge lists them
+  const picked = new Set(); // Skills: the refs the next run loads at start
   const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") }, send);
   const uploads = mountUploads({ list: $("attached"), send, note });
 
@@ -50,12 +54,43 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     $("start-label").textContent = MODES[mode].label;
     $("task").placeholder = MODES[mode].placeholder;
     const build = mode === "build";
-    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "attach", "mission-words"]) {
+    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "task-skills", "attach",
+                      "mission-words"]) {
       $(id).hidden = !build;
     }
     $("task-account").hidden = !build || rows.length < 2;
     $("task-workspace").hidden = mode === "ask";
     $("attached").hidden = !build || uploads.count() === 0;
+  }
+
+  function renderSkills() { // the picked ones first, then what the search finds (there may be hundreds)
+    const query = $("skills-find").value.trim().toLowerCase();
+    const shown = skillRows.filter((skill) => picked.has(skill.ref) || !query
+      || `${skill.ref} ${skill.description || ""}`.toLowerCase().includes(query))
+      .sort((one, two) => Number(picked.has(two.ref)) - Number(picked.has(one.ref))).slice(0, 200);
+    $("skills-pick").replaceChildren(...shown.map((skill) => {
+      const label = el("label", "check");
+      const box = el("input");
+      box.type = "checkbox";
+      box.value = skill.ref;
+      box.checked = picked.has(skill.ref);
+      box.addEventListener("change", () => {
+        if (box.checked) picked.add(skill.ref);
+        else picked.delete(skill.ref);
+        $("skills-count").textContent = picked.size ? `(${picked.size})` : "";
+      });
+      label.title = skill.description || skill.ref;
+      label.append(box, el("span", "", skill.ref));
+      return label;
+    }));
+    if (!shown.length) $("skills-pick").append(el("p", "muted", skillRows.length ? "No skill matches." : "No skills."));
+    $("skills-count").textContent = picked.size ? `(${picked.size})` : "";
+  }
+
+  function setHanding(tab) {
+    handing = tab || null;
+    $("handing").hidden = !handing;
+    $("handing-text").textContent = handing ? `Starts in your tab: ${handing.title || handing.url}` : "";
   }
 
   function finish() {
@@ -109,9 +144,11 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     const auto = $("task-auto").checked ? { auto: true } : {}; // the user's own tick, never a default
     const name = $("task-name").value.trim(); // Name and What it works on: shown as text, never the agent's instruction
     const description = $("task-about").value.trim();
-    begin({ type: "new_task", text, skills: [], model: $("task-model").value, web: $("task-web").value, ...account,
+    begin({ type: "new_task", text, skills: [...picked], model: $("task-model").value, web: $("task-web").value,
+            ...account,
             ...(name ? { name } : {}), ...(description ? { description } : {}),
-            ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...auto, ...workspace() });
+            ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...auto, ...workspace(),
+            ...(handing ? { adopt: handing.target } : {}) });
   }
 
   function option(value, label) {
@@ -161,6 +198,8 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   $("task-workspace").addEventListener("change", () => {
     workspacePicked = true;
   });
+  $("handing-clear").addEventListener("click", () => setHanding(null));
+  $("skills-find").addEventListener("input", renderSkills);
   $("start-key").textContent = MAC ? "⌘ ↵" : "Ctrl ↵";
   $("task-auto-switch").title = autoTitle(false, false); // until the app says this computer runs commands
   setMode("build");
@@ -168,6 +207,17 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   return {
     note,
     focus() { // Command-K (Ctrl+K) and New Mission: Build a Mission, the cursor in the box
+      setMode("build");
+      $("task").focus();
+    },
+    pickSkill(ref) { // Knowledge's Use in new mission: ticked in Build a Mission's Skills, the cursor in the box
+      picked.add(ref);
+      renderSkills();
+      setMode("build");
+      $("task").focus();
+    },
+    startIn(tab) { // the Tabs page's Hand over → New agent…: the next Start begins in that tab of the user's
+      setHanding(tab);
       setMode("build");
       $("task").focus();
     },
@@ -202,6 +252,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
           workspaces = message.workspaces || [];
           fillWorkspaces();
           break;
+        case "skills":
+          skillRows = message.skills || [];
+          renderSkills();
+          break;
         case "created":
           if (pending && message.request === pending) {
             const took = taking;
@@ -210,6 +264,9 @@ export function mountComposer({ link, workspaceOf = () => null }) {
             $("task-name").value = "";
             $("task-about").value = "";
             $("task-auto").checked = false; // each task is its own choice: the next one starts off
+            setHanding(null);
+            picked.clear(); // each run picks its own
+            renderSkills();
             uploads.taken(took); // the app moved those into the agent's folder
             setMode(mode); // the chips show in Build a Mission only
             pickDefault($("task-account"), rows);

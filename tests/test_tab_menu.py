@@ -147,14 +147,14 @@ async def test_the_active_tab_is_marked_and_the_others_are_hidden(shell):
 
 
 @CHROME
-async def test_the_title_follows_the_tab_and_keeps_ai_homes_count(shell):
+async def test_the_title_follows_the_tab_and_keeps_mission_controls_count(shell):
     js, stack = shell
     assert await until(js, "document.title === 'AI Home · AI Browser'")
     await pick(js, "/mission")
     assert await until(js, "document.title === 'Mission Control · AI Browser'")
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     agent = await stack["server"].agents.create("keep working")
-    assert await until(js, "document.title === '(1) Mission Control · AI Browser'")  # AI Home counts, hidden
+    assert await until(js, "document.title === '(1) Mission Control · AI Browser'")  # Mission Control counts
     await pick(js, "/settings")
     assert await until(js, "document.title === '(1) Settings · AI Browser'")
     await pick(js, "/home")
@@ -202,14 +202,12 @@ async def test_our_buttons_switch_tabs_and_never_open_a_window(shell):
     assert await until(js, f"{active_is('/mission')} && {connected('/mission')}")
     await click_in(js, "/mission", "#usage")  # Mission Control's Usage card: Settings → Accounts
     assert await until(js, f"{active_is('/settings')} && {connected('/settings')}")
-    await click_in(js, "/settings", "#home-link")
-    assert await until(js, active_is("/home"))
-    await click_in(js, "/home", "#mission")  # open already: shown again, never a second one
+    await click_in(js, "/settings", "#mission-link")  # Settings' way back: Mission Control
     assert await until(js, active_is("/mission"))
-    await click_in(js, "/mission", "#usage")
+    await click_in(js, "/mission", "#usage")  # open already: shown again, never a second one
     assert await until(js, active_is("/settings"))
-    await click_in(js, "/settings", "#home-link")
-    assert await until(js, active_is("/home"))
+    await click_in(js, "/settings", "#mission-link")
+    assert await until(js, active_is("/mission"))
     await asyncio.sleep(0.5)
     assert await js(keys()) == ["/home", "/mission", "/settings"]
     assert await js("document.querySelectorAll('#views iframe').length") == 3

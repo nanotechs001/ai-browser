@@ -28,6 +28,8 @@
         class="label">Knowledge</span></button></li>
       <li><button class="page-link" type="button" data-page="integrations" data-icon="cube"><span
         class="label">Integrations</span></button></li>
+      <li><button class="page-link" type="button" data-page="tabs" data-icon="browser"><span
+        class="label">Tabs</span></button></li>
       <li><button class="page-link" type="button" data-page="history" data-icon="clock"><span
         class="label">History</span></button></li>
     </ul>
@@ -36,6 +38,7 @@
       class="usage-title">Usage</span><span class="muted">Settings → Accounts</span></span></button>
   </nav>
   <main id="centre" class="centre">
+    <section id="brave-bar" class="brave-bar" hidden aria-label="Brave's connection" aria-live="polite"></section>
     <section id="handoff" class="handoff-slot" hidden aria-live="polite" aria-label="The Brain's hand-offs"></section>
     <section id="page-dashboard" class="page dashboard" aria-label="Dashboard">
       <h2 class="visually-hidden">Mission Control</h2>
@@ -54,6 +57,7 @@
     <section id="page-missions" class="page" hidden aria-label="My Missions"></section>
     <section id="page-knowledge" class="page" hidden aria-label="Knowledge"></section>
     <section id="page-integrations" class="page" hidden aria-label="Integrations"></section>
+    <section id="page-tabs" class="page" hidden aria-label="Tabs"></section>
     <section id="page-history" class="page" hidden aria-label="History"></section>
     <section id="composer" class="composer" data-mode="build" aria-label="Give an agent a task">
       <section id="talk" class="talk panel" hidden data-state="idle" aria-label="Ask AI: the Brain's answers">
@@ -107,6 +111,11 @@
               <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
               <label id="task-auto-switch" class="auto-switch"><input id="task-auto"
                 type="checkbox"> Auto-approve in its folder</label>
+              <details id="task-skills" class="skills-menu"><summary>Skills <span id="skills-count"
+                class="muted"></span></summary>
+                <div class="skills-pick"><input id="skills-find" type="search" autocomplete="off"
+                  placeholder="Find a skill" aria-label="Find a skill"><div id="skills-pick"></div>
+                  <p class="muted">Loaded at start: their text goes in the agent's first message.</p></div></details>
               <select id="task-workspace" aria-label="Workspace"></select>
             </div>
             <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
@@ -116,6 +125,8 @@
               Mission</span><kbd id="start-key"></kbd></button>
           </div>
           <span id="task-note" class="muted note" role="status"></span>
+          <p id="handing" class="muted handing" hidden><span id="handing-text"></span>
+            <button id="handing-clear" class="ghost" type="button" aria-label="Don't start in that tab">✕</button></p>
           <div id="folder-ask" class="folder-ask" hidden></div>
         </div>
       </div>

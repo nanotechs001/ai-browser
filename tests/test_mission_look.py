@@ -72,7 +72,7 @@ async def test_the_icon_only_menu_still_names_each_button(stack):  # the final r
         tree = await cdp.send("Accessibility.getPartialAXTree", {"nodeId": node, "fetchRelatives": False},
                               session_id=session)
         names.append(tree["nodes"][0].get("name", {}).get("value", ""))
-    assert names == ["New Mission", "Dashboard", "My Missions", "Knowledge", "Integrations", "History"]
+    assert names == ["New Mission", "Dashboard", "My Missions", "Knowledge", "Integrations", "Tabs", "History"]
     assert await js("[...document.querySelectorAll('#new-mission, .page-link')].map(node => node.title)") == names
 
 
@@ -86,7 +86,7 @@ async def test_the_menu_counts_and_opens_its_pages(stack):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await agents.create("keep working")
     assert await until(js, "document.getElementById('counts').textContent === '1 active task · 1 completed'")
-    for name in ("missions", "knowledge", "integrations", "history", "dashboard"):
+    for name in ("missions", "knowledge", "integrations", "tabs", "history", "dashboard"):
         await js(f"{page_link(name)}.click(); true")
         shown = await js("[...document.querySelectorAll('.centre > .page')].filter(node => !node.hidden)"
                          ".map(node => node.id)")

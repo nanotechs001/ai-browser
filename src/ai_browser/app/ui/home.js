@@ -96,15 +96,6 @@ function renderAppCard(app) { // the offer of AI Browser's own app, while it isn
   $("app-card-problem").hidden = !app.problem;
 }
 
-function focusOn(message) { // a notification's click: AI Home's tab, and the agent's row (or the Brain) in view
-  if (window.parent !== window) openTab("/home"); // inside the tab menu: show AI Home's tab
-  const target = message.brain ? $("brain") : rows.get(String(message.agent || ""));
-  if (!target) return;
-  target.scrollIntoView({ block: "center" });
-  target.classList.add("focus");
-  setTimeout(() => target.classList.remove("focus"), 2000);
-}
-
 function openSection() { // Mission Control's Calendar opens AI Home at its templates: that section, open, in view
   if (location.hash !== "#workflows-section") return;
   $("workflows-section").open = true;
@@ -134,13 +125,6 @@ function renderCounts() {
   const waiting = all.filter((agent) => agent.state === "waiting").length;
   $("counts").textContent = all.length
     ? `${working} working${waiting ? ` · ${waiting} waiting` : ""} · up to ${maxWorking} at once` : "";
-  document.title = working ? `(${working}) AI Home` : "AI Home"; // the window's title: there is no toolbar badge
-  try {
-    if (working) navigator.setAppBadge?.(working)?.catch(() => {});
-    else navigator.clearAppBadge?.()?.catch(() => {});
-  } catch {
-    // not an installed app: the title says it
-  }
 }
 
 const rows = new Map(); // agent id -> its row, built once and then updated in place (a click must not be lost)
@@ -615,9 +599,6 @@ function handle(message) {
         setHanding(null);
         pickDefault($("task-account"), accountRows);
       }
-      break;
-    case "focus":
-      focusOn(message);
       break;
     case "error":
       if (pending && message.request === pending) finishRequest();

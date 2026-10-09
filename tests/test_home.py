@@ -623,16 +623,6 @@ async def test_ai_home_says_the_old_extension_can_be_removed_until_got_it(home):
     assert await js(f"{note}.hidden") is True
 
 
-@CHROME
-async def test_the_title_counts_the_working_agents(home):
-    js, stack = home
-    stack["script"].write_text(json.dumps([EVENTS[0], {"sleep": 30}]), encoding="utf-8")  # it stays at work
-    agent = await stack["server"].agents.create("keep working")
-    assert await until(js, "document.title === '(1) AI Home'")
-    await stack["server"].agents.stop(agent.id)
-    assert await until(js, "document.title === 'AI Home'")
-
-
 # ---- pictures pasted into AI Home's boxes (the review of look-3, F1: "any chat") -----------------------------------
 
 HOME_CHIPS = "[...document.querySelectorAll('{list} .attached-file')]"
