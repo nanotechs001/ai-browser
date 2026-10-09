@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Drawn (test page)</title></head>
+<body style="margin:0">
+<!-- An editor drawn on a canvas, as Figma's or Canva's, inside a frame from another site: nothing there to read. -->
+<button>Zoom in</button>
+<iframe name="board" style="width:1200px;height:700px;border:0"></iframe>
+<script>document.querySelector("[name=board]").src = `http://127.0.0.1:${location.port}/frames/board.html`;</script>
+</body>
+</html>

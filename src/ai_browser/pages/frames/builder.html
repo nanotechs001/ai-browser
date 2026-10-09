@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Builder (test page)</title></head>
+<body style="margin:0">
+<!-- A page builder, as GoHighLevel's: the canvas is a frame from another site (127.0.0.1 inside localhost), drawn at
+     three quarters of its size; "side" is a frame of another origin on the same site (another port), which runs in
+     this page's process. ?other=<port> names that port. A worker runs too: only frames are ever attached. -->
+<div style="height:60px"><button>Add section</button></div>
+<iframe name="page-builder" style="position:absolute;left:200px;top:80px;width:1000px;height:700px;
+  border:2px solid #000;padding:3px;transform:scale(0.75);transform-origin:0 0"></iframe>
+<iframe name="side" style="position:absolute;left:1000px;top:80px;width:300px;height:200px;border:0"></iframe>
+<script>
+  const other = new URLSearchParams(location.search).get("other");
+  document.querySelector("[name=page-builder]").src = `http://127.0.0.1:${location.port}/frames/canvas.html`;
+  if (other) document.querySelector("[name=side]").src = `http://localhost:${other}/frames/side.html`;
+  window.worker = new Worker(URL.createObjectURL(new Blob(["setInterval(() => {}, 1000)"], {type: "text/javascript"})));
+</script>
+</body>
+</html>
