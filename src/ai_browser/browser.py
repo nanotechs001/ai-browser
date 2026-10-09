@@ -926,6 +926,10 @@ class Browser:
     async def _frame_box(self, frame: Frame, root) -> dict | None:
         """Where frame's <iframe> element draws it in root's document (reader.js's frameAt, asked of root's reader with
         that element), or None when it shows nowhere."""
+        return await self._on_owner(frame, root, "frameAt(this)")
+
+    async def _on_owner(self, frame: Frame, root, call: str):
+        """`window.__aib.<call>` in root's reader, with `this` the <iframe> element that draws frame in root."""
         owner = await self.cdp.send("DOM.getFrameOwner", {"frameId": frame.frame}, session_id=root.session)
         node = await self.cdp.send("DOM.resolveNode", {"backendNodeId": owner.get("backendNodeId"),
                                                        "executionContextId": await self.isolated(root)},
@@ -936,7 +940,7 @@ class Browser:
         try:
             result = await self.cdp.send("Runtime.callFunctionOn", {
                 "objectId": handle, "returnByValue": True,
-                "functionDeclaration": "function () { return window.__aib ? window.__aib.frameAt(this) : null; }"},
+                "functionDeclaration": f"function () {{ return window.__aib ? window.__aib.{call} : null; }}"},
                 session_id=root.session)
         finally:
             with contextlib.suppress(CDPError):
@@ -1451,9 +1455,32 @@ class Browser:
             place = {**placed, "w": (tab.last or {}).get("w", 0), "h": (tab.last or {}).get("h", 0)}
             result = await self._reader_in(frame, f"{call}, {json.dumps(place)})")
             if result.get("reason") != "moved":
-                return result
+                return result if '"upload"' in call else await self._uncovered(tab, frame, result)  # no input lands
             await self._settle(None)  # the page scrolled too: a frame of its own process is hit where it is drawn
         return {"ok": False, "reason": "offscreen"}
+
+    async def _uncovered(self, tab: Tab, frame: Frame, result: dict) -> dict:
+        """`result` (an ok target in `frame`), unless something on the page (or in a frame above) covers the frame
+        where the input would land: then the same answer as a covered element on the page."""
+        if not result.get("ok"):
+            return result
+        x, y, f = result["x"], result["y"], frame
+        while True:
+            root = self._session_root(f.host)[1]
+            if root is None:
+                root_tab, scale = tab, None
+            else:
+                scale = await self._placed(tab, root)
+                if scale is None:
+                    return {"ok": False, "reason": "hidden"}
+                root_tab = root
+            rx, ry = (x, y) if scale is None else ((x - scale["x"]) / scale["sx"], (y - scale["y"]) / scale["sy"])
+            by = await self._on_owner(f, root_tab, f"coveredAt(this, {rx}, {ry})")
+            if by:
+                return {"ok": False, "reason": "covered", "by": by}
+            if root is None:
+                return result
+            f = root
 
     async def _target(self, element: str, kind: str, confirmed: bool) -> dict:
         where = self._where(element)

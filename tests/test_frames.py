@@ -435,3 +435,18 @@ async def test_a_screenshot_of_an_element_in_a_frame_says_what_to_do(builder):
     add = row(await read_until(browser, "Add row"), "Add row")["id"]
     with pytest.raises(BrowserError, match="is in a frame from another site: take a screenshot of the page instead"):
         await browser.screenshot(element=add)
+
+
+@CHROME
+async def test_a_click_on_a_frame_row_under_a_page_element_is_covered_and_one_not_under_it_clicks(builder):
+    browser, page = builder
+    await browser.open(page)
+    state = await read_until(browser, "Add row", "Nested button")
+    add, nested = row(state, "Add row")["id"], row(state, "Nested button")["id"]
+    await browser._eval("document.body.insertAdjacentHTML('beforeend', '<div id=cover style=\"position:fixed;left:200px;"
+                        "top:80px;width:350px;height:700px;background:#fff\">cover</div>')")
+    out = await act(browser, f"click {add}")
+    assert out.startswith(f"✗ stale click {add}: {add} covered by div#cover"), out
+    assert (await act(browser, f"click {nested}")).startswith("✓ click")
+    await read_until(browser, "Nested clicked")
+    assert "Row added" not in [item["name"] for item in (await browser.state())["rows"]]

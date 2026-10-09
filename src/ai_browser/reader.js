@@ -618,6 +618,13 @@
       return { ok: true, x: p.x, y: p.y, role, name, risky: isRisky };
     },
 
+    // Is anything but the <iframe> `frameEl` (or what it holds) the topmost thing at this point of this document?
+    // null when not; else what is.
+    coveredAt(frameEl, x, y) {
+      const hit = deepHit(x, y);
+      return hit && containsDeep(frameEl, hit) ? null : describe(hit);
+    },
+
     node(id) {
       return byId(id) || null;
     },
