@@ -482,7 +482,7 @@
 
   // Bot-check signals: a few facts about the top page, for the rules in checks.py (Python decides). Nothing inside a
   // check frame is read: only its address, its size and whether it shows.
-  const CHECK_FRAME = /\/recaptcha\/(?:api2|enterprise)\/|hcaptcha\.com|challenges\.cloudflare\.com|\/cdn-cgi\/challenge-platform\//i;
+  const CHECK_FRAME = /\/recaptcha\/(?:api2|enterprise)\/|hcaptcha\.com|challenges\.cloudflare\.com|\/cdn-cgi\/challenge-platform\/|arkoselabs\.com|funcaptcha\.com/i;
   const CHECK_IDS = ["px-captcha", "challenge-form", "challenge-stage", "challenge-running"];
   const readSignals = () => {
     const text = document.body ? squash(document.body.innerText) : "";

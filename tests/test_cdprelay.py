@@ -106,7 +106,7 @@ def _sent_methods(path: Path) -> set[str]:
         if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) \
                 and isinstance(node.args[0].value, str):
             name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-            if name in ("send", "_call", "_send") and "." in node.args[0].value:
+            if name in ("send", "_call", "_send", "_later") and "." in node.args[0].value:
                 found.add(node.args[0].value)
     return found
 
