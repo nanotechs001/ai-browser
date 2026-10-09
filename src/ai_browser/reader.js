@@ -403,9 +403,10 @@
     return { x: o.x + lx, y: o.y + ly, lx, ly };
   };
   const inView = (geo, c) => {
-    const w = winOf(geo);
+    const w = winOf(geo), p = onPage(c.x, c.y);
     return c.x >= 0 && c.y >= 0 && c.x < innerWidth && c.y < innerHeight &&
-      c.lx >= 0 && c.ly >= 0 && c.lx < w.innerWidth && c.ly < w.innerHeight;
+      c.lx >= 0 && c.ly >= 0 && c.lx < w.innerWidth && c.ly < w.innerHeight &&
+      (!at || (p.x >= 0 && p.y >= 0 && p.x < at.w && p.y < at.h)); // in a frame: in the page's view too
   };
 
   const placeCaret = (el, toEnd) => {
@@ -580,8 +581,10 @@
       };
     },
 
-    // Re-check a row before input. kind: click|dblclick|hover|type|append|select|drag|drop|upload.
-    target(id, kind, risky, downloads) {
+    // Re-check a row before input. kind: click|dblclick|hover|type|append|select|drag|drop|upload. In a frame from
+    // another site, `place` is where the engine places it now (as observe's opts.at), and x and y are on the page.
+    target(id, kind, risky, downloads, place) {
+      at = place || null;
       const el = byId(id);
       if (!el || !el.isConnected) return { ok: false, reason: "gone" };
       const role = roleOf(el) || "clickable";
@@ -601,6 +604,7 @@
       let c = centerOf(geo);
       if (!inView(geo, c)) {
         geo.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+        if (at) return { ok: false, reason: "moved" }; // the frame may have moved on the page too: placed again
         c = centerOf(geo);
         if (!inView(geo, c)) return { ok: false, reason: "offscreen" };
       }
@@ -610,7 +614,8 @@
           return { ok: false, reason: "covered", by: describe(hit) };
         }
       }
-      return { ok: true, x: c.x, y: c.y, role, name, risky: isRisky };
+      const p = onPage(c.x, c.y);
+      return { ok: true, x: p.x, y: p.y, role, name, risky: isRisky };
     },
 
     node(id) {

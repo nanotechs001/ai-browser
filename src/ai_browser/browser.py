@@ -1125,6 +1125,8 @@ class Browser:
     async def _capture(self, label: str, full_page: bool, element: str | None) -> Shot:
         metrics = await self._call("Page.getLayoutMetrics")
         if element:
+            if self.current is not None and element in self.current.inside:
+                raise BrowserError(f"{element} is in a frame from another site: take a screenshot of the page instead")
             rect = await self._reader(f"rect({json.dumps(element)})")
             if not rect:
                 raise StepStale(f"{element} gone; observe again")
@@ -1415,9 +1417,50 @@ class Browser:
         await self._ready()
         return True
 
+    def _where(self, element: str | None):
+        """Where a row's element is: the frame from another site it was read in, or else the working tab. A row in a
+        frame that has since become a bot check's is refused; one whose frame went is stale."""
+        tab = self.current
+        frame = tab.inside.get(element) if tab is not None and element else None
+        if frame is None:
+            return tab
+        if CHECK_FRAME.search(frame.url):
+            raise StepBlocked(f"{element} is in a bot check box: the user ticks it, never you")
+        if tab.frames.get(frame.frame) is not frame:
+            raise StepStale(f"{element} gone (its frame went); the current page is below")
+        return frame
+
+    async def _placed(self, tab: Tab, frame: Frame) -> dict | None:
+        """Where `frame` is drawn on the page now ({x, y, sx, sy}), its parent frames placed first; None when it shows
+        nowhere."""
+        found, parent = self._session_root(frame.host)
+        if found is not tab:
+            return None
+        placed = PAGE if parent is None else await self._placed(tab, parent)
+        box = await self._frame_box(frame, parent or tab) if placed else None
+        return on_page(placed, box) if box else None
+
+    async def _frame_target(self, frame: Frame, call: str) -> dict:
+        """target() in a frame's own reader, with where the frame is drawn now: its element's position is read again
+        there, as a same-site frame's is. Once more when scrolling to the element moved the frame too."""
+        tab = self.current
+        for _ in range(2):
+            placed = await self._placed(tab, frame)
+            if placed is None:
+                return {"ok": False, "reason": "hidden"}
+            place = {**placed, "w": (tab.last or {}).get("w", 0), "h": (tab.last or {}).get("h", 0)}
+            result = await self._reader_in(frame, f"{call}, {json.dumps(place)})")
+            if result.get("reason") != "moved":
+                return result
+            await self._settle(None)  # the page scrolled too: a frame of its own process is hit where it is drawn
+        return {"ok": False, "reason": "offscreen"}
+
     async def _target(self, element: str, kind: str, confirmed: bool) -> dict:
-        result = await self._reader(f"target({json.dumps(element)}, {json.dumps(kind)}, "
-                                    f"{json.dumps(self._risky)}, {json.dumps(self._downloads)})")
+        where = self._where(element)
+        call = (f"target({json.dumps(element)}, {json.dumps(kind)}, "
+                f"{json.dumps(self._risky)}, {json.dumps(self._downloads)}")
+        result = await (self._frame_target(where, call) if isinstance(where, Frame) else
+                        self._reader_in(where, call + ")"))
         if not result.get("ok"):
             reason = result.get("reason", "unavailable")
             if reason in {"disabled", "not editable", "not a file input"}:
@@ -1431,9 +1474,10 @@ class Browser:
 
     async def _settle(self, element: str | None) -> None:
         try:
-            await self._reader(f"settle({json.dumps(element)})", await_promise=True, timeout=5)
+            await self._reader_in(self._where(element), f"settle({json.dumps(element)})", await_promise=True,
+                                  timeout=5)
         except (BrowserError, CDPError):
-            pass  # the page is navigating away; _finish_navigation handles it
+            pass  # the page (or the frame) is navigating away; _finish_navigation handles it
 
     async def _mouse(self, kind: str, x: float, y: float, **extra) -> None:
         await self._call("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y, **extra})
@@ -1492,8 +1536,8 @@ class Browser:
         raise BrowserError(f'"{text}" did not appear within {WAIT_TEXT_CAP:g}s')
 
     async def _scroll(self, step: Step) -> None:
-        if step.target:
-            if not await self._reader(f"scrollIntoView({json.dumps(step.target)})"):
+        if step.target:  # in its own frame, if it is in one: scrolled there, never guessed with the wheel
+            if not await self._reader_in(self._where(step.target), f"scrollIntoView({json.dumps(step.target)})"):
                 raise StepStale(f"{step.target} gone; the current page is below")
         elif step.value in {"top", "bottom"}:
             await self._eval("window.scrollTo(0, " +
@@ -1529,9 +1573,9 @@ class Browser:
         elif op in {"type", "append"}:
             if element:
                 await self._click(await self._target(element, op, confirmed=True))
-                if op == "type":
-                    await self._reader(f"selectContents({json.dumps(element)})")
-                elif await self._reader(f"caretEnd({json.dumps(element)})") == "end-key":
+                if op == "type":  # focused in its own frame: the typing below follows the focus there
+                    await self._reader_in(self._where(element), f"selectContents({json.dumps(element)})")
+                elif await self._reader_in(self._where(element), f"caretEnd({json.dumps(element)})") == "end-key":
                     await self._press("End")
             if step.value:
                 await self._call("Input.insertText", {"text": step.value})
@@ -1543,14 +1587,15 @@ class Browser:
             await self._settle(None)
         elif op == "select":
             await self._target(element, "select", confirmed=True)
-            result = await self._reader(f"selectOption({json.dumps(element)}, {json.dumps(step.value)})")
+            result = await self._reader_in(self._where(element),
+                                           f"selectOption({json.dumps(element)}, {json.dumps(step.value)})")
             if not result.get("ok"):
                 options = ", ".join(result.get("options") or [])
                 raise BrowserError(result.get("reason", "cannot select") + (f"; options: {options}" if options else ""))
             await self._settle(element)
         elif op in {"check", "uncheck"}:
             target = await self._target(element, "click", confirmed)  # identity first, then state
-            row = await self._reader(f"state({json.dumps(element)})")
+            row = await self._reader_in(self._where(element), f"state({json.dumps(element)})")
             if row is None:
                 raise StepStale(f"{element} gone; the current page is below")
             want = op == "check"
@@ -1566,12 +1611,13 @@ class Browser:
         elif op == "upload":
             await self._target(element, "upload", confirmed=True)
             path = self._upload_path(step.value)
-            node = await self._evaluate(self.current, {"expression": f"window.__aib.node({json.dumps(element)})"})
+            where = self._where(element)
+            node = await self._evaluate(where, {"expression": f"window.__aib.node({json.dumps(element)})"})
             object_id = node.get("result", {}).get("objectId")
             if not object_id:
                 raise StepStale(f"{element} gone; the current page is below")
-            await self._call("DOM.setFileInputFiles", {"files": [path],
-                                                        "objectId": object_id})
+            await self.cdp.send("DOM.setFileInputFiles", {"files": [path], "objectId": object_id},
+                                session_id=where.session)
             await self._settle(None)
         elif op == "scroll":
             await self._scroll(step)

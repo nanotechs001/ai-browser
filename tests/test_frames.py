@@ -305,3 +305,133 @@ async def test_a_dropped_frame_read_never_makes_two_rows_share_a_number(builder,
     assert len(ids) == len(set(ids))
     framed = {item["id"] for item in state["rows"] if item.get("frame")}
     assert set(browser.current.inside) == framed  # only the frame's own rows
+
+
+
+async def act(browser, *steps, confirmed=False) -> str:
+    from ai_browser.steps import parse_steps
+
+    return await browser.act(parse_steps(list(steps)), confirmed=confirmed)
+
+
+@CHROME
+async def test_clicks_land_on_the_right_element_in_the_scaled_canvas(builder):
+    browser, page = builder
+    await browser.open(page)
+    state = await read_until(browser, "Add row", "Nested button", "Side button")
+    out = await act(browser, *(f"click {row(state, name)['id']}" for name in ("Add row", "Nested button",
+                                                                             "Side button")))
+    assert out.count("✓ click") == 3, out
+    await read_until(browser, "Row added", "Nested clicked", "Side clicked")  # the canvas at 3/4, a frame in it
+
+
+@CHROME
+async def test_type_and_append_reach_a_field_in_the_canvas(builder):
+    browser, page = builder
+    await browser.open(page)
+    headline = row(await read_until(browser, "Headline"), "Headline")["id"]
+    out = await act(browser, f'type {headline} "Big sale"', f'append {headline} " today"')
+    assert out.count("✓ ") == 2, out
+    assert row(await browser.state(), "Headline")["value"] == "Big sale today"
+
+
+@CHROME
+async def test_select_sets_a_native_menu_in_the_canvas_as_a_pick_does(builder):
+    browser, page = builder
+    await browser.open(page)
+    sticky = row(await read_until(browser, "Sticky"), "Sticky")["id"]
+    assert (await act(browser, f'select {sticky} "On"')).startswith("✓ select"), sticky
+    state = await browser.state()
+    assert row(state, "Sticky")["value"] == "On"
+    assert "input On; change On;" in state["text"]  # the events a person's pick fires, without the OS menu
+
+
+@CHROME
+async def test_check_and_upload_work_in_the_canvas(builder):
+    browser, page = builder
+    browser.work.to_host("hero.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    await browser.open(page)
+    state = await read_until(browser, "Full width", "Background image")
+    out = await act(browser, f"check {row(state, 'Full width')['id']}",
+                    f"upload {row(state, 'Background image')['id']} hero.png")
+    assert out.count("✓ ") == 2, out
+    state = await browser.state()
+    assert row(state, "Full width")["checked"] is True and "wide true; file hero.png;" in state["text"]
+
+
+@CHROME
+async def test_scroll_brings_an_element_below_the_panels_fold_into_view(builder):
+    browser, page = builder
+    await browser.open(page)
+    await read_until(browser, "Add row")
+    deep = row(await browser.state(find="Deep button"), "Deep button")["id"]
+    assert not [item for item in (await browser.state())["rows"] if item["id"] == deep]  # not in view yet
+    assert (await act(browser, f"scroll {deep}")).startswith("✓ scroll")
+    assert row(await browser.state(), "Deep button")["id"] == deep  # in view now, the same number
+
+
+@CHROME
+async def test_a_click_out_of_view_in_the_canvas_scrolls_to_it_first(builder):
+    browser, page = builder
+    await browser.open(page)
+    await read_until(browser, "Add row")
+    deep = row(await browser.state(find="Deep button"), "Deep button")["id"]
+    assert (await act(browser, f"click {deep}")).startswith("✓ click")
+    await read_until(browser, "Deep clicked")
+
+
+@CHROME
+async def test_a_step_into_a_frame_that_became_a_bot_check_is_refused(builder):
+    browser, page = builder
+    await browser.open(page)
+    add = row(await read_until(browser, "Add row"), "Add row")["id"]
+    canvas = next(frame for frame in browser.current.frames.values() if frame.url.endswith("/frames/canvas.html"))
+    check = canvas.url.replace("/frames/canvas.html", "/checks/recaptcha/api2/anchor?k=test&size=normal")
+    await browser._eval(f"document.querySelector('[name=page-builder]').src = {check!r}")
+    assert await until(lambda: canvas.url == check)
+    out = await act(browser, f"click {add}")
+    assert out.startswith(f"⛔ blocked click {add}: {add} is in a bot check box: the user ticks it, never you"), out
+    state = await browser.state()
+    assert not [item for item in state["rows"] if item.get("frame") == "page-builder"]  # never read
+    assert line(state, "page-builder").get("box")  # [bot check box: the user ticks it]
+
+
+@CHROME
+async def test_a_step_below_the_pages_fold_in_a_frame_scrolls_the_page_to_it(builder):
+    browser, page = builder
+    await browser.open(page)
+    await read_until(browser, "Add row")
+    # the canvas starts 100 px above the fold: its "Full width" box (about 160 px down it) is below the fold
+    await browser._eval("document.querySelector('[name=page-builder]').style.top = (innerHeight - 100) + 'px'")
+    assert "Full width" not in [item["name"] for item in (await browser.state())["rows"]]
+    wide = row(await browser.state(find="Full width"), "Full width")["id"]
+    assert (await act(browser, f"check {wide}")).startswith("✓ check")
+    assert row(await browser.state(), "Full width")["checked"] is True
+
+
+@CHROME
+async def test_a_row_of_a_frames_old_page_is_stale(builder):
+    browser, page = builder
+    await browser.open(page)
+    add = row(await read_until(browser, "Add row"), "Add row")["id"]
+    assert (await act(browser, f"click {add}")).startswith("✓ click")  # reached on the canvas's page
+    await browser._eval("(() => { const frame = document.querySelector('[name=page-builder]');"
+                        " frame.src = frame.src.replace('canvas.html', 'nested.html'); })()")  # the builder moves on
+    for _ in range(100):
+        state = await browser.state()
+        if any(item.get("frame") == "page-builder" and item["name"] == "Nested button" for item in state["rows"]):
+            break
+        await asyncio.sleep(0.1)
+    out = await act(browser, f"click {add}")
+    assert out.startswith(f"✗ stale click {add}: {add} gone; the current page is below"), out
+
+
+@CHROME
+async def test_a_screenshot_of_an_element_in_a_frame_says_what_to_do(builder):
+    from ai_browser.browser import BrowserError
+
+    browser, page = builder
+    await browser.open(page)
+    add = row(await read_until(browser, "Add row"), "Add row")["id"]
+    with pytest.raises(BrowserError, match="is in a frame from another site: take a screenshot of the page instead"):
+        await browser.screenshot(element=add)
