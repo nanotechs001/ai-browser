@@ -23,6 +23,7 @@ INSTRUCTION_LIMIT = 8000
 CHOICE_LIMIT = 200  # characters of a profile's folder, an account's id or a folder's path
 SKILLS_MOST = 500  # skills under Can use, or Load at start
 MODELS = ("opus", "sonnet", "haiku")
+EFFORTS = ("default", "low", "medium", "high", "xhigh", "max")  # Claude Code's --effort; default: no flag
 WEBS = ("web", "brave", "none")  # Web + Brave, Brave only, No web (powers.WEB_CHOICES)
 NO_NAME = "An agent needs a name"
 NAME_TOO_LONG = f"An agent's name is at most {NAME_LIMIT} characters"

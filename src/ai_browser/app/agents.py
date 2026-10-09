@@ -27,6 +27,7 @@ from . import attachments
 from . import move as moving
 from . import powers
 from .bridge import ClaudeBridge
+from .savedagents import EFFORTS
 from .workspaces import one_line
 
 COLORS = ("blue", "green", "cyan", "pink", "yellow", "red", "grey")  # the agents' chip colours, minus the Brain's
@@ -199,6 +200,7 @@ class Agent:
     color: str
     model: str
     bridge: ClaudeBridge = field(repr=False)
+    effort: str = "default"  # Claude Code's --effort for its runs (EFFORTS); default: no flag
     state: str = "waiting"  # working | waiting | your_turn | stopped | failed
     status: str = ""  # the tool running now and its summary, or why it failed
     last_action: str = ""  # "click e14 · 38 ms"
@@ -247,7 +249,7 @@ class Agent:
     saved: str = ""  # the saved agent this is a run of (its slug), or "" for a one-off run
     profile: str | None = None  # its saved agent's Brave profile (a folder); None: Settings' choice
 
-    PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "state", "status", "last_action", "tabs",
+    PUBLIC: ClassVar[tuple[str, ...]] = ("id", "name", "color", "model", "effort", "state", "status", "last_action", "tabs",
                                          "adopted", "working_tab", "loaded_skills", "seconds", "cost", "created",
                                          "permission", "check", "number", "queued", "account", "limit", "moved",
                                          "folder", "trusted", "todos", "subagents", "badge", "step_since", "finished",
@@ -338,7 +340,7 @@ class AgentManager:
                      tab: dict | None = None, servers: list[str] | None = None,
                      account: str | None = None, folder: str | None = None, workspace: str | None = None,
                      files=(), web: str = "web", auto: bool = False, name: str | None = None,
-                     description: str | None = None, saved_agent=None) -> Agent:
+                     description: str | None = None, saved_agent=None, effort: str = "default") -> Agent:
         """A new agent for `text`; with `adopt`, it works in that tab of the user's (started from the panel). Its MCP
         servers are the ones switched on in Tools, or only `servers` of them (a workflow's own list). It runs on
         `account`, else on the default account for new agents; ValueError for an account that isn't listed. With
@@ -353,6 +355,7 @@ class AgentManager:
         chosen = self._account_row(account)  # first: a refused account leaves no agent and no number behind
         work, trusted = self._folder_for(folder)  # and so does a refused folder
         web = web if web in powers.WEB_CHOICES else "web"
+        effort = effort if effort in EFFORTS else "default"
         auto = auto is True
         agent_id = f"a{self._seq + 1}"
         scratch = self._scratch(agent_id)
@@ -373,10 +376,11 @@ class AgentManager:
                               tools=self.tools_for(chosen["id"]), servers=servers,
                               on_permission=lambda request, agent_id=agent_id: self._ask(agent_id, request),
                               environment=self._environment(chosen["id"]), work=work, rules=self.rules, web=web,
-                              trusted=trusted, auto=auto, instruction=saved_agent.instruction if saved_agent else "")
+                              trusted=trusted, auto=auto, instruction=saved_agent.instruction if saved_agent else "",
+                              effort=effort)
         if self.accounts is not None:  # its account must be signed in before its Claude Code starts
             bridge.preflight = lambda agent_id=agent_id: self._sign_in_problem(agent_id)
-        agent = Agent(agent_id, given or _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge,
+        agent = Agent(agent_id, given or _name(text), COLORS[(self._seq - 1) % len(COLORS)], model, bridge, effort,
                       account=chosen, task=text, folder=work, trusted=trusted, workspace=workspace, web=web, auto=auto,
                       description=about, named=bool(given), saved=saved_agent.slug if saved_agent else "",
                       profile=saved_agent.profile if saved_agent else None)
