@@ -109,14 +109,14 @@ async def test_the_app_notifies_in_fixed_words(fake_claude, tmp_path):
                                   "items": [{"sender": "Maria Lopez", "subject": HOSTILE}]}) is True
         assert [(note["id"], note["title"], note["body"]) for note in notes_of(app)] == [
             ("n1", "A bot check on shop.example.com", "An agent waits for you to solve it."),
-            ("n2", "An agent is waiting for you", "It asks to use a tool. Answer in AI Home."),
-            ("n3", "The Brain has 2 new notes", "Open AI Home to see what needs you.")]
+            ("n2", "An agent is waiting for you", "It asks to use a tool. Answer in Mission Control."),
+            ("n3", "The Brain has 2 new notes", "Open Mission Control to see what needs you.")]
         sent = json.dumps(app.sent)
         assert "Maria" not in sent and "5,000" not in sent and "gmail" not in sent  # no message, no page, no tool
         server.detach_desktop()
         server.agents.check_event("a1", {"check": "captcha", "site": "other.example.com", "target": "T2"})
         await asyncio.sleep(0.3)
-        assert len(notes_of(app)) == 3  # without the app nothing else notifies: AI Home shows the check
+        assert len(notes_of(app)) == 3  # without the app nothing else notifies: Mission Control shows the check
         assert server._brain_out({"type": "notify", "count": 1, "items": []}) is False
     finally:
         await server.stop()
@@ -147,12 +147,12 @@ async def test_a_click_opens_the_right_place(fake_claude, tmp_path):
                                       "tool": "t", "input": {}})
             assert await settled(lambda: len(notes_of(app)) == 2)
             app.says({"type": "clicked", "id": "n1"})  # the bot check: the agent's tab, in Brave
-            app.says({"type": "clicked", "id": "n2"})  # the tool request: AI Home, at that agent's row
+            app.says({"type": "clicked", "id": "n2"})  # the tool request: Mission Control, that agent's drawer
             assert (await until(ws, lambda message: message["type"] == "focus"))[-1] == {"type": "focus",
                                                                                          "agent": "a2"}
             assert watched == ["T1"] and app.sent.count({"type": "show"}) == 1
             server._brain_out({"type": "notify", "count": 1, "items": []})
-            app.says({"type": "clicked", "id": "n3"})  # the Brain's note: AI Home's Brain
+            app.says({"type": "clicked", "id": "n3"})  # the Brain's note: the Brain's inbox
             assert (await until(ws, lambda message: message["type"] == "focus"))[-1] == {"type": "focus",
                                                                                          "brain": True}
             app.says({"type": "clicked", "id": "n1"})  # the same click again: nothing

@@ -1,4 +1,4 @@
-# Handoff: where AI Browser stands (2026-10-05)
+# Handoff: where AI Browser stands (2026-10-09)
 
 This note carries what a new session needs that isn't in the code: the decisions taken, the order of work, the rules,
 and what only the user can check on their own machines. The work ledgers (`.superpowers/`) are git-ignored.
@@ -18,7 +18,8 @@ and what only the user can check on their own machines. The work ledgers (`.supe
   - **wave A:** brain delegation, watcher safety and browser detection. Reports
     `docs/superpowers/reports/2026-10-04-{brain-delegation,watcher-safety,browser-detection}.md`;
   - **wave B, the app window:** report `docs/superpowers/reports/2026-10-04-app-window.md`;
-  - **the tab menu:** one window with AI Home, Mission Control and Settings tabs, and no popups. Report
+  - **the tab menu:** one window with AI Home, Mission Control and Settings tabs (AI Home was removed by the
+    saved-agents build; Mission Control is the first tab), and no popups. Report
     `docs/superpowers/reports/2026-10-04-tab-menu.md`.
   - **Replaced, not built:** waves C (`browser-profile-choice`) and D (`side-chat`). The native app took their place,
     and their specs and plans stay as history.
@@ -78,18 +79,61 @@ capability for faster navigation and all feature of the claude app". Four projec
      runs, `limits.USAGE_KEY` is None and the Usage card never shows a percentage).
    - **The build's ledger** stays at `../Ai_Browser-wt/look/.superpowers/sdd/2026-10-05-new-look/progress.md` (git-ignored)
      until the hand check, whose findings go there.
-2b. **Without Docker: PAUSED by the user on 2026-10-08** ("paise the no docker task for now. make a savepoint to continue
-   it later").
-   - **Spec** `docs/superpowers/specs/2026-10-07-no-docker-design.md`, **plan** `docs/superpowers/plans/2026-10-07-no-docker.md`
-     (11 tasks, dry-run).
-   - **The save point:** branch `no-docker` (pushed), commit 3f8aa7c. Tasks 1–3 are complete and reviewed; Task 4
-     (`LocalSandboxes`) has three review rounds fixed and is waiting only for its round-3 scoped re-review. Task 5 had
-     not started changing files.
-   - **The ledger** (git-ignored): `../Ai_Browser-wt/no-docker/.superpowers/sdd/2026-10-07-no-docker/progress.md`. It holds
-     every ruling, every deferred minor, and the notes carried to Tasks 5, 6 and 9.
-   - **To continue:** merge `main` into `no-docker`; re-run Task 4's round-3 re-review (base a4ae9d1); then Task 5 with the
-     carried rulings (fake `socket.getaddrinfo`, check WebSocket handshakes and QA's `loadNetworkResource` redirects
-     under Fetch, keep Local Network Access on), then Tasks 6–11.
+2b. **2026-10-08, merged:** brain delegation (named missions, templates out of Mission Control, Ask AI's history,
+   Settings → Brain sources, the Brain's hand-offs — only the user's own words count down; 6c753e9, report in its
+   ledger `../Ai_Browser-wt/brain-b/.superpowers/sdd/2026-10-08-brain-delegation/progress.md`); Website QA removed and
+   the CDP relay tightened (4f67d82); on Windows, Auto-approve runs ordinary commands and scripts in the agent's folder,
+   agents run their installed skills' own scripts, and without Docker skill scripts go through the agent's own
+   commands (175c94f); throwaway test Chromes use the mock keychain (dfa173b).
+   - **No-Docker shrank** (the user's choice): only "skill scripts without Docker" was kept (in 175c94f). The local
+     sandbox browser is dropped; branch `no-docker` (3f8aa7c) stays unmerged as the record.
+   - **The user's goal now:** every agent works in their own Brave and runs scripts/commands on its own; any browser
+     testing uses their actual browser.
+2c. **SAVE POINT (2026-10-08, the user: "start the building of windows now no need for test then create save point …
+   we will stop the windows for now until we finish all changes").** Nothing is running.
+   - **The user's Windows build:** "Build Windows app" run 37778480630 from main 75809de (no test suite, as asked):
+     AI-Browser-windows.zip (182 MB) on https://github.com/nanotechs001/ai-browser/actions/runs/37778480630 (kept 14
+     days). It has everything merged on 2026-10-08, not the `win-fixes` branch.
+   - **The user: "we'll build later all planning for now"** (2026-10-09). Nothing is being built. Build order, when the
+     user says go (each subagent-driven, as the brain-delegation batch was):
+   0. **Iframes from another site** (first: small, used daily, and saved agents' page-building agents rely on it).
+      Spec `docs/superpowers/specs/2026-10-09-frames-design.md`, plan `docs/superpowers/plans/2026-10-09-frames.md`
+      (8 tasks; base f8cb177; 56 quotes checked; dry-run replayed, whole suite 2747 passed). Security-sensitive: Tasks
+      2 and 7 (the relay's frame sessions). Found by the user on GoHighLevel's builder (one iframe from
+      page-builder.leadconnectorhq.com); confirmed by a hand test in the browser pane on 2026-10-09 (the header rebuilt
+      by clicks, left unsaved in the user's GHL page).
+   - **Windows work is paused until all changes are done.** Then, in this order:
+   1. **Build saved agents and Mission Control without AI Home** (after the iframes; it re-reads its quotes in the five
+      files both plans touch: app/cdprelay.py, browser.py, tests/test_cdprelay.py, tests/conftest.py, README.md).
+      Spec `docs/superpowers/specs/2026-10-08-saved-agents-design.md`, plan `docs/superpowers/plans/2026-10-08-saved-agents.md`
+      (21 tasks, two lanes, merge points M1–M3 in its "Lanes and order"; base 8d5fb44; 583 quotes checked — the
+      builders find each place by its quoted text, so drift from later main commits is handled the same way).
+      - The user's choices inside it: per-agent Brave profiles with the wait (agents in different profiles take turns
+        opening tabs; nothing opens in the wrong profile); a saved agent may keep Auto-approve as its setting.
+      - How: subagent-driven, as the brain-delegation batch was (worktrees `../Ai_Browser-wt/agents-a` and `agents-b`
+        from main; `sdd-workspace`; copy and adjust implementer/reviewer/re-reviewer rules from
+        `../Ai_Browser-wt/brain-b/.superpowers/sdd/2026-10-08-brain-delegation/`; a ledger per lane; opus reviewers for
+        the tasks the plan marks security-sensitive; a final whole-branch review, one fix wave, the whole suite on the
+        Mac; no Windows runs until step 3).
+      - Never set HOME for a test run (a throwaway Chrome then asks macOS for a keychain: the user got many dialogs).
+   2. **Any further changes the user asks for**, the same way.
+   3. **Then Windows, once all changes are in:**
+      - **Branch `win-fixes`** (pushed, f33498e, 16 commits on 8d5fb44): Windows-portable tests, the tests workflow's
+        `pytest_args` input, and six product fixes (a loading bot-check box's frame matched by its src; bash runs a
+        script by name only when no PATH folder holds that name; the app ends at once when its window closes on Windows;
+        the composer's pickers keep their height with any system font; a drive path is never a rule's word; the fake
+        claude's log takes whole lines on Windows). Local suite 2697 passed; full Windows run 37772042776: 2687 passed,
+        1 failed (`tests/test_office.py::test_the_room_pauses_while_its_tab_is_hidden`), 52m49s.
+      - To finish it: merge `main` into it (expect conflicts in test files the saved-agents build also edits — keep
+        both), fix that one test, raise `timeout-minutes` to 120 in tests.yml (and tests/test_portable.py's pin), review
+        the six product fixes, run the "tests" workflow on `windows`, merge to `main`, then run "Build Windows app" and
+        give the user the new zip.
+   - **Hand checks waiting for the user:** the brain-delegation batch's (named missions, a countdown hand-off and
+     Cancel/"no", another question pausing it, Settings → Brain's boxes and switch); Windows Auto-approve running
+     commands and a skill's scripts on the laptop.
+   - **Loose ends (not urgent):** unmerged record branches `no-docker` (3f8aa7c) and remote `win-baseline` (a1376b7,
+     can be deleted); many finished worktrees under `../Ai_Browser-wt/` can be cleaned up; the app's live-view
+     receivers have no sender since QA's removal; deferred minors are in each batch's ledger.
 3. **Projects, sessions and chat:** not designed yet. The user wants coding in project folders, sessions and history,
    and plain chat with Claude.
 4. **Claude artifacts:** not designed yet. Claude Code 2.1.263 carries claude.ai artifact tools (list and read with

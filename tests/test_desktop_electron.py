@@ -84,20 +84,20 @@ async def test_the_real_app_is_locked_down(fake_claude, tmp_path):  # Review Foc
         process, port = await started_app(tmp_path, server, url)
         cdp = await CDP.connect(await asyncio.to_thread(browser_ws, port))
         js = await page_js(cdp, await page_at(cdp, url + "/app"))
-        assert await until(js, connected("/home"), seconds=30)  # the tab menu, and AI Home's line to the engine
+        assert await until(js, connected("/mission"), seconds=30)  # the tab menu, and Mission Control's line
         assert await js("typeof require === 'undefined' && typeof process === 'undefined'")  # no Node.js in pages
         assert await js("JSON.stringify(Object.keys(window.aib))") == '["chat","thisPage"]'  # the bridge: two actions
-        assert await js(f"typeof {frame('/home')}.aib") == "undefined"  # framed pages get no bridge at all
+        assert await js(f"typeof {frame('/mission')}.aib") == "undefined"  # framed pages get no bridge at all
         assert await js("window.open('https://example.com/') === null")  # no window opens another
         await js("location.href = 'https://example.com/'; true")  # a website, in the window itself: refused
-        await js(f"{frame('/home')}.location.href = 'https://example.com/'; true")  # and in a frame
+        await js(f"{frame('/mission')}.location.href = 'https://example.com/'; true")  # and in a frame
         await asyncio.sleep(1.5)
         assert await js("location.href") == url + "/app"
-        assert await js(f"{frame('/home')}.location.pathname") == "/home"
+        assert await js(f"{frame('/mission')}.location.pathname") == "/mission"
         ask = "navigator.permissions.query({name: '%s'}).then((answer) => answer.state)"
-        assert await js(f"{frame('/home')}.{ask % 'microphone'}") == "granted"  # talking to the Brain
-        assert await js(f"{frame('/home')}.{ask % 'camera'}") == "denied"
-        assert await js(f"{frame('/home')}.{ask % 'geolocation'}") == "denied"
+        assert await js(f"{frame('/mission')}.{ask % 'microphone'}") == "granted"  # talking to the Brain
+        assert await js(f"{frame('/mission')}.{ask % 'camera'}") == "denied"
+        assert await js(f"{frame('/mission')}.{ask % 'geolocation'}") == "denied"
         process.stdin.write(b'{"type": "quit"}\n')  # the engine stops
         process.stdin.flush()
         assert await asyncio.to_thread(process.wait, 30) == 0
@@ -164,7 +164,7 @@ async def test_the_real_chat_shows_its_page_only_and_learns_the_tab_only_while_s
         process, port = await started_app(tmp_path, server, url, f"--aib-fake-page={answer}")
         cdp = await CDP.connect(await asyncio.to_thread(browser_ws, port))
         window = await page_js(cdp, await page_at(cdp, url + "/app"))
-        assert await until(window, connected("/home"), seconds=30)
+        assert await until(window, connected("/mission"), seconds=30)
         assert await window("window.aib.thisPage().then((seen) => seen.state)") == "hidden"  # only the chat learns it
         await window("window.aib.chat('show'); true")
         chat = await page_js(cdp, await page_at(cdp, url + "/chat"))
@@ -172,7 +172,7 @@ async def test_the_real_chat_shows_its_page_only_and_learns_the_tab_only_while_s
         assert json.loads(await chat("window.aib.thisPage().then((seen) => JSON.stringify(seen))")) == {
             "state": "ok", "url": "https://shop.example/cart", "title": "Cart"}
         assert await chat("typeof require === 'undefined' && typeof process === 'undefined'")  # no Node.js
-        await chat("location.href = '/home'; true")  # the chat's window shows its page and nothing else
+        await chat("location.href = '/mission'; true")  # the chat's window shows its page and nothing else
         assert await chat("window.open('https://example.com/') === null")
         await asyncio.sleep(1.5)
         assert await chat("location.pathname") == "/chat"

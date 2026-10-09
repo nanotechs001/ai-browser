@@ -206,16 +206,12 @@ async def test_chrome_mode_leaves_the_users_tabs_alone(chrome_browser):
     ours = set(browser.owned_targets())
     assert not ours & before
     await browser.close()
-
-    async def pages():
-        return {t["targetId"] for t in (await browser.cdp.send("Target.getTargets"))["targetInfos"]
-                if t["type"] == "page"}
-
-    for _ in range(50):  # a closed tab is listed a moment longer (on Windows, more than at once)
-        if not ours & await pages():
+    for _ in range(50):  # Target.closeTarget answers before the tab is gone: it may be listed a moment more
+        after = {t["targetId"] for t in (await browser.cdp.send("Target.getTargets"))["targetInfos"]
+                 if t["type"] == "page"}
+        if not ours & after:
             break
-        await asyncio.sleep(0.1)
-    after = await pages()
+        await asyncio.sleep(0.1)  # 5 s in all: on Windows a closed tab is listed longer
     assert before <= after and not ours & after
 
 
@@ -339,7 +335,7 @@ async def chrome_pages(cdp) -> set[str]:
 
 
 @pytest.fixture
-async def own_browser(throwaway_chrome, tmp_path, route):
+async def own_browser(throwaway_chrome, tmp_path, route, fake_claude):
     """(make(**options) -> a started Browser in chrome mode, base URL, the test's own CDP connection). The Browsers'
     connection is the test's own (direct) or goes through the app's relay (`route`)."""
     from ai_browser import testpages
@@ -353,7 +349,8 @@ async def own_browser(throwaway_chrome, tmp_path, route):
     made = []
     # direct: the Browsers share the test's own connection, as they always did (some tests spy on it)
     routed = contextlib.nullcontext(cdp) if route == "direct" else browser_connection(throwaway_chrome, route,
-                                                                                         tmp_path / "relay-home")
+                                                                                         tmp_path / "relay-home",
+                                                                                         fake_claude)
     async with routed as browsers:
         async def make(**options):
             browser = Browser(browsers, WorkDir(tmp_path / "work", f"t{len(made)}"), Config(), mode="chrome",

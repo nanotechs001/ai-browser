@@ -156,7 +156,7 @@ def test_a_taken_shortcut_keeps_the_one_before():  # Review Focus 1
 def test_a_notification_is_only_what_the_engine_wrote():
     got = run_js("""return [
       policy.notice({ id: 'n1', title: 'An agent is waiting for you',
-                      body: 'It asks to use a tool. Answer in AI Home.' }),
+                      body: 'It asks to use a tool. Answer in Mission Control.' }),
       policy.notice({ id: 'n2', title: 'A\\u0007 bot check\\non x', body: 'b'.repeat(500) }),
       policy.notice({ id: 'x1', title: 'no', body: '' }),
       policy.notice({ id: 'n3', title: '', body: 'only a body' }),
@@ -164,7 +164,7 @@ def test_a_notification_is_only_what_the_engine_wrote():
       policy.notice(null),
     ];""")
     assert got[0] == {"id": "n1", "title": "An agent is waiting for you",
-                      "body": "It asks to use a tool. Answer in AI Home."}
+                      "body": "It asks to use a tool. Answer in Mission Control."}
     assert got[1]["title"] == "A  bot check on x" and len(got[1]["body"]) == 240
     assert got[2:] == [None, None, None, None]
 

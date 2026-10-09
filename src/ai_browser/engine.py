@@ -24,7 +24,7 @@ from .grouping import Placer
 from .live import LiveView
 from .sandbox import DockerError, SandboxInfo, Sandboxes
 from .shellguard import shell_problem
-from .skills import Catalog
+from .skills import Catalog, usable_skills
 from .steps import parse_steps
 from .tasklog import TaskLog, new_task_id
 from .workfs import PathError, WorkDir
@@ -40,7 +40,7 @@ RETIRED_BROWSER = ("AIB_BROWSER=app is retired: AI Browser's own Chrome is gone.
                    "sandbox.")
 ASK_SESSION = ("Ask the user to turn the switch on, or whether they want the Docker sandbox instead "
                "(sandbox_start()).")
-ASK_AGENT = "Ask the user to turn the switch on (AI Home shows how)."
+ASK_AGENT = "Ask the user to turn the switch on (the top of Mission Control shows how)."
 RELAY_WAIT = 65  # seconds to wait for the app's relay: its own wait for Allow (60 s) answers first
 APP_GONE = ("AI Browser stopped, so this session lost its connection to your {name}. Ask the user to start AI Browser "
             "again, or, if they want this session to connect to {name} by itself ({name} will ask \"Allow remote "
@@ -49,9 +49,10 @@ APP_SILENT = ("AI Browser didn't answer, so this session can't use your {name} t
               "at the terminal where AI Browser runs.")
 APP_SILENT_AGENT = ("AI Browser didn't answer, so this agent can't use your {name} now. Ask the user to look at the "
                     "terminal where AI Browser runs.")
-CUT_OFF_AGENT = ("The user cut this agent off from {name} in AI Home: tell the user. The browser stays off for this "
-                 "agent.")
-CUT_OFF_SESSION = "The user disconnected this Claude Code session from {name} in AI Home: tell the user."
+CUT_OFF_AGENT = ("The user cut this agent off from {name} in Settings → Brave: tell the user. The browser stays off "
+                 "for this agent.")
+CUT_OFF_SESSION = ("The user disconnected this Claude Code session from {name} in Settings → Brave: tell the "
+                   "user.")
 
 
 @dataclass
@@ -166,6 +167,8 @@ class Engine:
     def catalog(self) -> Catalog:
         if self._catalog is None:
             self._catalog = Catalog.of_user(project_root() / "skills", set(self.cfg.blocked_skills))
+        if self._catalog.allowed is None:  # a saved agent's Can use, from the app: find_skills lists only those,
+            self._catalog.allowed = usable_skills()  # load_skill and read_skill_file refuse the others
         return self._catalog
 
     # ---- plumbing ---------------------------------------------------------------------------------
@@ -255,7 +258,7 @@ class Engine:
             browser.on_tab_change(lambda tab: self._report("working_tab", tab))
             await browser.start()
             session = self._placer.link if self._placer is not None and not agent and not self._relayed else None
-            if session is not None:  # a Claude Code session joins the running app: its tabs show in AI Home
+            if session is not None:  # a Claude Code session joins the running app: its tabs show in Mission Control
                 with contextlib.suppress(Exception):
                     await session.hello()
             if adopt and not self._adopted_start:  # once: the tab the user started this agent in
@@ -357,7 +360,7 @@ class Engine:
 
     def _app_link(self) -> AgentLink | None:
         """An agent of ai-browser app reports to the app (AIB_APP_EVENTS) from its first call, whichever browser that
-        call uses, so a bot check reaches AI Home even before any browser is connected."""
+        call uses, so a bot check reaches Mission Control even before any browser is connected."""
         agent = os.environ.get("AIB_APP_AGENT", "")
         if self._link is None and agent and os.environ.get("AIB_APP_EVENTS"):
             self._link = AgentLink(os.environ["AIB_APP_EVENTS"], os.environ.get("AIB_APP_AGENT_TOKEN", ""), agent)
@@ -370,7 +373,7 @@ class Engine:
             link.report(kind, tab.target, tab.adopted)
 
     async def _handed(self) -> list[dict]:
-        """The tabs the user handed this agent in AI Home (Hand over)."""
+        """The tabs the user handed this agent in Mission Control (Hand over)."""
         return (await self._link.status())["handed"] if self._link is not None else []
 
     async def _placement(self) -> str:
@@ -685,8 +688,8 @@ class Engine:
                 await self._teardown(stop_container=False)  # the shell stays up for other sessions of this home
                 self.info = None
                 if kept:
-                    return (f"let go of this session's tabs (AI Home closes them with the agent) and disconnected "
-                            f"from {where}")
+                    return (f"let go of this session's tabs (Mission Control closes them with the agent) and "
+                            f"disconnected from {where}")
                 return f"closed this session's tabs and disconnected from {where}"
             await self._teardown(stop_container=True)
             self.info = None

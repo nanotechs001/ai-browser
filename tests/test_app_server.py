@@ -1,5 +1,5 @@
-"""The AI Browser app server: AI Home's, the panel's and the extension's only way to the agents. Guarded by a token
-and the extension's origin; the agents' engines report their tabs with a token of their own."""
+"""The AI Browser app server: Mission Control's, Settings' and the floating chat's only way to the agents. Guarded by a
+token and the extension's origin; the agents' engines report their tabs with a token of their own."""
 
 import asyncio
 import contextlib
@@ -1336,7 +1336,7 @@ async def test_a_start_code_lasts_a_minute(fake_claude, tmp_path, monkeypatch):
 async def test_pages_need_the_windows_cookie(fake_claude, tmp_path):
     server, url = await started(fake_claude, tmp_path, EVENTS)
     try:
-        for path in ("/app", "/home", "/mission", "/settings", "/link.js", "/home.js", "/home.css", "/app.js",
+        for path in ("/app", "/mission", "/settings", "/link.js", "/mission.js", "/settings.css", "/app.js",
                      "/app.css"):
             answer = await fetch("GET", url + path)
             assert answer.status_code == 403, path
@@ -1344,19 +1344,22 @@ async def test_pages_need_the_windows_cookie(fake_claude, tmp_path):
         shell = await fetch("GET", url + "/app", headers=ui_cookie(server))  # the tab menu: the window's own page
         assert shell.status_code == 200 and shell.headers["content-type"] == "text/html; charset=utf-8"
         assert '<script type="module" src="app.js"></script>' in shell.text
-        home = await fetch("GET", url + "/home", headers=ui_cookie(server))
-        assert home.status_code == 200 and home.headers["content-type"] == "text/html; charset=utf-8"
-        assert '<script type="module" src="home.js"></script>' in home.text
-        assert (await fetch("GET", url + "/mission", headers=ui_cookie(server))).status_code == 200
+        mission = await fetch("GET", url + "/mission", headers=ui_cookie(server))
+        assert mission.status_code == 200 and mission.headers["content-type"] == "text/html; charset=utf-8"
+        assert '<script type="module" src="mission.js"></script>' in mission.text
+        for cookie in (ui_cookie(server), {}):  # AI Home's old address: Mission Control, which asks for the cookie
+            home = await fetch("GET", url + "/home", headers=cookie)
+            assert home.status_code == 303 and home.headers["location"] == "/mission"
         script = await fetch("GET", url + "/link.js", headers=ui_cookie(server))
         assert script.status_code == 200 and script.headers["content-type"] == "text/javascript; charset=utf-8"
-        style = await fetch("GET", url + "/home.css", headers=ui_cookie(server))
+        style = await fetch("GET", url + "/settings.css", headers=ui_cookie(server))
         assert style.headers["content-type"] == "text/css; charset=utf-8"
         icon = await fetch("GET", url + "/icon.png")  # no cookie: the setup page opens anywhere and shows it
         assert icon.status_code == 200 and icon.headers["content-type"] == "image/png"
         assert icon.content[:4] == b"\x89PNG"
-        for path in ("/%2e%2e%2fserver.py", "/..%2Fserver.py", "/server.py", "/home.html", "/setup.html",
-                     "/app.html", "/panel.js", "/manifest.json", "/worker.js", "/ui/home.js", "/config.json"):
+        for path in ("/%2e%2e%2fserver.py", "/..%2Fserver.py", "/server.py", "/home.html", "/home.js", "/home.css",
+                     "/setup.html", "/app.html", "/panel.js", "/manifest.json", "/worker.js", "/ui/home.js",
+                     "/config.json"):  # AI Home's files have gone
             assert (await fetch("GET", url + path, headers=ui_cookie(server))).status_code == 404, path
     finally:
         await server.stop()
@@ -1402,9 +1405,9 @@ async def test_every_answer_carries_the_strict_headers(fake_claude, tmp_path):
     try:
         for path, headers, csp in (
                 ("/app", ui_cookie(server), shell), ("/app", {}, shell),
-                ("/home", ui_cookie(server), framed), ("/home", {}, framed), ("/mission", ui_cookie(server), framed),
-                ("/settings", ui_cookie(server), framed), ("/setup", {}, framed),
-                ("/home.js", ui_cookie(server), strict), ("/app.js", ui_cookie(server), strict),
+                ("/home", ui_cookie(server), strict), ("/home", {}, strict), ("/mission", ui_cookie(server), framed),
+                ("/mission", {}, framed), ("/settings", ui_cookie(server), framed), ("/setup", {}, framed),
+                ("/mission.js", ui_cookie(server), strict), ("/app.js", ui_cookie(server), strict),
                 ("/health", {}, strict), ("/nothing-here.js", {}, strict), ("/setup/status", {}, strict),
                 ("/open", {}, strict), ("/", {}, strict),
                 ("/setup", {"Host": f"rebind.example:{port}"}, strict),

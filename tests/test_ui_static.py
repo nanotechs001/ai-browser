@@ -8,9 +8,11 @@ UI = APP / "ui"
 
 
 def test_the_pages_live_in_app_ui():
-    for name in ("home.html", "mission.html", "home.js", "mission.js", "link.js", "brainui.js", "brainui.css",
-                 "check.js", "mic.js", "mic-worklet.js", "talk.js", "tablist.js", "chat.js", "permission.js"):
+    for name in ("mission.html", "mission.js", "link.js", "brainui.js", "brainui.css", "check.js", "mic.js",
+                 "mic-worklet.js", "talk.js", "tablist.js", "chat.js", "permission.js"):
         assert (UI / name).is_file(), name
+    for name in ("home.html", "home.js", "home.css"):
+        assert not (UI / name).exists(), name  # AI Home has gone: Mission Control has all it had
     assert not (APP / "extension").exists()  # the old side panel retired: the floating chat (/chat) took its place
     for name in ("chat.html", "chatpage.js", "chatpage.css", "pagebar.js"):
         assert (UI / name).is_file(), name
@@ -20,8 +22,7 @@ INLINE_SCRIPT = re.compile(r"<script(?![^>]*\ssrc=)[^>]*>", re.IGNORECASE)
 
 
 def test_the_window_pages_are_all_there():
-    for name in ("app.html", "app.js", "app.css", "home.html", "mission.html", "settings.html", "setup.html",
-                 "nav.js"):
+    for name in ("app.html", "app.js", "app.css", "mission.html", "settings.html", "setup.html", "nav.js"):
         assert (UI / name).is_file(), name
 
 
@@ -57,13 +58,13 @@ def test_no_page_of_ours_opens_a_window():
         assert not re.search(r"\starget\s*=", path.read_text(encoding="utf-8"), re.IGNORECASE), path.name
     nav = (UI / "nav.js").read_text(encoding="utf-8")
     assert "export function openTab(" in nav and "WINDOWS" not in nav and "focusHome" not in nav
-    for name in ("home.js", "mission.js", "settings.js"):
+    for name in ("mission.js", "settings.js"):
         text = (UI / name).read_text(encoding="utf-8")
         assert "openWindow" not in text and "focusHome" not in text and "openTab" in text, name
 
 
 def test_ai_browser_mode_is_gone_from_the_pages():
-    assert "Agents browse in AI Browser" not in (UI / "home.js").read_text(encoding="utf-8")
+    assert "Agents browse in AI Browser" not in (UI / "placesettings.js").read_text(encoding="utf-8")
     assert "No tabs open besides AI Home" not in (UI / "tablist.js").read_text(encoding="utf-8")
 
 
@@ -76,7 +77,7 @@ def test_every_page_in_the_window_keeps_the_close_tab_key():
     keeps that key and asks the menu to close its tab instead (the browser tests show what each does with it)."""
     nav = (UI / "nav.js").read_text(encoding="utf-8")
     assert "export function closeTabKey(" in nav and "export function guardCloseKey(" in nav
-    for name in ("home.js", "mission.js", "settings.js"):
+    for name in ("mission.js", "settings.js"):
         assert "guardCloseKey();" in (UI / name).read_text(encoding="utf-8"), name
     assert "closeTabKey" in (UI / "app.js").read_text(encoding="utf-8")
     assert '"close-tab"' in (UI / "setup.js").read_text(encoding="utf-8")  # setup.js imports nothing: it opens in Brave

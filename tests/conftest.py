@@ -159,6 +159,15 @@ def _never_the_users_app_port(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _docker_answers_load_at_start(monkeypatch):
+    """Load at start asks whether Docker answers, as load_skill does (app/agents.py's docker_answers): in tests it does,
+    unless a test says otherwise. No test asks the real Docker for it."""
+    import ai_browser.app.agents as agents
+
+    monkeypatch.setattr(agents, "docker_answers", lambda home: True, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_setup_outside_the_test(monkeypatch, tmp_path_factory):
     """No test reads or writes the user's own ~/.ai-browser (AIB_HOME is a throwaway unless a test sets its own), no
     test downloads Electron, and no doctor --setup waits for a typed answer or binds 8792 to see if it is free. The
@@ -190,7 +199,8 @@ def throwaway_chrome(tmp_path):
     process.wait(timeout=15)
 
 
-RELAYED_MODULES = {"test_chrome", "test_checks_browser", "test_isolation"}  # their own-mode tests run both ways
+RELAYED_MODULES = {"test_chrome", "test_checks_browser", "test_isolation",
+                   "test_frames"}  # their own-mode tests run both ways
 
 
 def pytest_generate_tests(metafunc):
@@ -208,9 +218,10 @@ def route(request):
 
 
 @contextlib.asynccontextmanager
-async def browser_connection(folder, route, home):
+async def browser_connection(folder, route, home, fake_claude):
     """The Browser's CDP connection to a throwaway Chrome: direct, or through an app's relay (an AppServer in brave
-    mode with a BraveLink on that Chrome, and agent a1's token), as an app agent connects."""
+    mode with a BraveLink on that Chrome, and the token of a1, a one-off run on the fake claude), as an app agent
+    connects. a1 is created first, as in the app: the relay refuses a tab to an agent id the app doesn't know."""
     from ai_browser.app.agents import AgentManager
     from ai_browser.app.bravelink import BraveLink
     from ai_browser.app.server import AppServer
@@ -224,8 +235,9 @@ async def browser_connection(folder, route, home):
         finally:
             await cdp.close()
         return
-    server = AppServer(home, AgentManager(home))
+    server = AppServer(home, AgentManager(home, claude=fake_claude[0]))
     url = await server.start()
+    assert (await server.agents.create("Browse the test pages")).id == "a1"  # no profile of its own
     brave = BraveLink(folder, tokens=server.tokens)
     server.attach_brave(brave)
     await brave.start()
@@ -241,7 +253,7 @@ async def browser_connection(folder, route, home):
 
 
 @pytest.fixture
-async def chrome_browser(throwaway_chrome, tmp_path, route):
+async def chrome_browser(throwaway_chrome, tmp_path, route, fake_claude):
     """(Browser in chrome mode, base URL of the host-served test pages, the Chrome's page targets before). The
     Browser's connection is direct, or through the app's relay (`route`)."""
     from ai_browser import testpages
@@ -255,7 +267,7 @@ async def chrome_browser(throwaway_chrome, tmp_path, route):
     own = await CDP.connect(find_ws_url(throwaway_chrome, timeout=20))
     before = {t["targetId"] for t in (await own.send("Target.getTargets"))["targetInfos"] if t["type"] == "page"}
     await own.close()
-    async with browser_connection(throwaway_chrome, route, tmp_path / "relay-home") as cdp:
+    async with browser_connection(throwaway_chrome, route, tmp_path / "relay-home", fake_claude) as cdp:
         browser = Browser(cdp, WorkDir(tmp_path / "work", "chrome-task"), Config(), mode="chrome")
         await browser.start()
         yield browser, base, before

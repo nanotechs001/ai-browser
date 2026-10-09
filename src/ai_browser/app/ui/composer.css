@@ -12,8 +12,9 @@
                 color: var(--text-2); cursor: pointer; }
 .auto-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2);
                cursor: pointer; white-space: nowrap; }  /* Auto-approve in its folder, beside Folder */
-/* Build a Mission's Name and What it works on: in the modes' row, above the box, so the office keeps its height */
-.mission-words { display: flex; gap: 8px; flex: 1 1 260px; min-width: 0; margin: 0 4px; }
+/* Build a Mission's Agent ▾, Name and What it works on: in the modes' row, above the box, so the office keeps its
+   height (one row at 1024); Agent ▾ stays there on a narrow window too, never folded into ⋯ Options */
+.mission-words { display: flex; gap: 8px; flex: 1 1 200px; min-width: 0; margin: 0 4px; }
 .mission-words input { flex: 2 1 0; min-width: 0; width: 100%; padding: 6px 10px; }
 .mission-words #task-name { flex: 1 1 0; }
 .box { border-radius: 12px; background: var(--field); border: 1px solid var(--line-strong); padding: 10px 12px; }
@@ -32,8 +33,10 @@
 .dropping { outline: 2px dashed var(--accent-2); outline-offset: 2px; } /* files dragged over a box (paste.js) */
 .controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .pickers { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
-.pickers select { max-width: 190px; height: 31px; } /* a select's line is the system font's own (Segoe UI's is taller):
+.pickers select, #task-agent { height: 31px; } /* a select's line is the system font's own (Segoe UI's is taller):
    its height is set, so the composer and the room above it stand the same on every computer */
+.pickers select { max-width: 190px; }
+#task-agent { width: 120px; margin: 0 0 0 4px; text-overflow: ellipsis; } /* never as wide as its longest name */
 .icon-button { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }
 .options { display: none; }
 .mic { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }
@@ -83,6 +86,18 @@
 .talk-card .talk-state, .talk-card .talk-hint { font-size: 13px; }
 .talk-card .row { margin-top: 0; }
 .talk-note { margin: 0; font-size: 12px; }
+.handing { margin: 4px 0 0; display: flex; align-items: center; gap: 6px; } /* Starts in your tab: … (the Tabs page) */
+.handing button { padding: 0 6px; }
+/* Build a Mission's Skills (loaded at start): a list over the box, with a search */
+.skills-menu { position: relative; }
+.skills-menu summary { cursor: pointer; list-style: none; white-space: nowrap; border: 1px solid var(--line);
+                       border-radius: var(--radius-sm); padding: 5px 10px; background: var(--field); }
+.skills-pick { position: absolute; z-index: 6; bottom: calc(100% + 6px); left: 0; width: min(360px, 80vw);
+               max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px;
+               border-radius: 12px; background: var(--card); border: 1px solid var(--line-strong);
+               box-shadow: var(--shadow); }
+.skills-pick .check { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.skills-pick p { margin: 4px 0 0; font-size: 12px; }
 @media (max-width: 899px) {
   .composer { padding: 0 12px 12px; }
   .options { display: inline-flex; }

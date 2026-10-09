@@ -6,7 +6,8 @@
 "use strict";
 
 const SITES = new Set(["gmail", "slack", "asana"]);
-const STATES = { on: "Reading your open tabs in Brave.", waiting: "Waiting for Brave: connect it in AI Home.",
+const STATES = { on: "Reading your open tabs in Brave.",
+                 waiting: "Waiting for Brave: connect it at the top of Mission Control.",
                  off: "Off: AI Browser reads none of your tabs." };
 
 function el(tag, className, text) {

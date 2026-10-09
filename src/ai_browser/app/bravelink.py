@@ -2,17 +2,17 @@
 tabs, and closing an agent's tabs. Its relay (app/cdprelay.py) holds the one connection to Brave that the app, every
 agent and every Claude Code session share, so Brave asks "Allow remote debugging?" once per app run.
 
-That connection opens only right after something the user did (the app starting, Connect or Try again in AI Home, an
-agent starting a turn, a session's browser call). While it isn't connected the relay looks at the switch every few
-seconds with a TCP check alone, which never opens a debugging session. The app never attaches to, reads or pictures a
-tab of the user's: only the AI's tabs, a tab handed over, the page the user picked in the Train form, or the one they
-asked about in the floating chat; and, while
-Settings → Brain's switch is on, the user's Gmail, Slack and Asana tabs and the parts of pages they picked to watch,
-where the Brain's readers run in an isolated world (may_run decides; app/inworld.py runs).
+That connection opens only right after something the user did (the app starting, Connect or Try again at the top of
+Mission Control, an agent starting a turn, a session's browser call). While it isn't connected the relay looks at the
+switch every few seconds with a TCP check alone, which never opens a debugging session. The app never attaches to, reads
+or pictures a tab of the user's: only the AI's tabs, a tab handed over, the page the user picked in the Train form, or
+the one they asked about in the floating chat; and, while Settings → Brain's switch is on, the user's Gmail, Slack and
+Asana tabs and the parts of pages they picked to watch, where the Brain's readers run in an isolated world (may_run
+decides; app/inworld.py runs).
 
-AI Home lists the user's web tabs of one profile only, the agents' (the one chosen in Settings → Where agents browse,
-app/place.py; else the one Brave used last): other profiles and private windows are only counted. The AI's tabs are
-listed wherever they are. Context ids never leave this class."""
+The Tabs page lists the user's web tabs of one profile only, the agents' (the one chosen in Settings → Where agents
+browse, app/place.py; else the one Brave used last): other profiles and private windows are only counted. The AI's tabs
+are listed wherever they are. Context ids never leave this class."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ USERS = ("you", "brain")  # the user's own tabs (a Brain row is theirs): listed 
 WEB = ("http://", "https://")
 BRAIN = {"kind": "brain", "name": "Brain", "color": "purple"}  # a tab AI Browser opened for the Brain: still the user's
 OPEN_WAIT = 10.0  # seconds for a tab AI Browser opened to show in the tab list
-NOT_CONNECTED = "Brave isn't connected: connect it in AI Home"
+NOT_CONNECTED = "Brave isn't connected: connect it at the top of Mission Control"
 DIDNT_OPEN = "Brave didn't open the tab"
 OTHER_PROFILE = ("Brave's last window is in another profile: click a window of the profile where agents browse, then "
                  "try again")
@@ -86,7 +86,7 @@ class BraveLink:
 
     async def connect(self, why: str = "connect", identity: str = "") -> None:
         """Ask Brave for the one connection: Brave asks the user once, and the question stays until they answer.
-        `why` is "start", "connect" (AI Home's Connect or Try again) or "turn" (an agent's turn, its id in
+        `why` is "start", "connect" (Mission Control's Connect or Try again) or "turn" (an agent's turn, its id in
         `identity`)."""
         if await self.relay.open(why, identity):
             await asyncio.shield(self._ensure_watch())
@@ -177,14 +177,14 @@ class BraveLink:
             with contextlib.suppress(Exception):
                 callback(tabs)
 
-    def agents_context(self) -> tuple[str | None, str]:
-        """(context, source) of the profile where agents browse: the one chosen in Settings, once Brave has shown it
-        on this connection ("chosen"), else none ("not_open"); with none chosen, the one Brave used last
-        ("last_used"), or none yet ("none")."""
+    def agents_context(self, profile: str | None = None) -> tuple[str | None, str]:
+        """(context, source) of the profile where agents browse: a saved agent's own `profile`, else the one chosen in
+        Settings, once Brave has shown it on this connection ("chosen"), else none ("not_open"); with none chosen,
+        the one Brave used last ("last_used"), or none yet ("none")."""
         watch = self._watch
         if watch is None:
             return None, "none"
-        return self.place.context(watch.default_context)
+        return self.place.context(watch.default_context, profile)
 
     def _shown(self, page: dict, context: str | None) -> bool:
         owner = self._owners.get(page["target"], YOU)
@@ -194,8 +194,8 @@ class BraveLink:
         return web and context is not None and page["context"] == context
 
     def tabs(self) -> list[dict]:
-        """The rows AI Home may show: the user's web pages (http and https) in the agents' profile, and the AI's tabs
-        anywhere (its own blank tabs too), each with its owner. No row carries its context."""
+        """The rows the Tabs page may show: the user's web pages (http and https) in the agents' profile, and the AI's
+        tabs anywhere (its own blank tabs too), each with its owner. No row carries its context."""
         if self._watch is None:
             return []
         context, _ = self.agents_context()
@@ -289,15 +289,16 @@ class BraveLink:
             await asyncio.sleep(0.1)
         return target
 
-    async def open_ai_tab(self, identity: str) -> str:
+    async def open_ai_tab(self, identity: str, profile: str | None = None) -> str:
         """A new blank tab for an agent or a Claude Code session (POST /agent-tab): opened by the app's own client in
-        the profile where agents browse (read just before, and checked where the tab landed), in a window of its own
-        (never one of the user's windows), and theirs at once (Relay.assign), before any other client can see it.
-        PlaceError says why not, in words that name no profile: they reach Claude."""
+        the profile where agents browse, or a saved agent's own `profile` (read just before, and checked where the
+        tab landed), in a window of its own (never one of the user's windows), and theirs at once (Relay.assign),
+        before any other client can see it. PlaceError says why not, in words that name no profile: they reach
+        Claude."""
         watch = self._watch
         if watch is None or watch.closed:
             raise PlaceError(NOT_CONNECTED)
-        context, source = self.agents_context()
+        context, source = self.agents_context(profile)
         if context is None:
             raise PlaceError(NOT_OPEN if source == "not_open" else NOT_CONNECTED)
         expected = await self._expected(watch, context, source)

@@ -13,7 +13,7 @@ from test_app_server import until as told_until
 from test_brain_sources import Ask
 from test_brain_talk import Recorder
 from test_bridge import EVENTS
-from test_home import CHROME, home, stack  # noqa: F401  (fixtures)
+from test_home import CHROME, page, stack  # noqa: F401  (fixtures)
 from test_home import until as page_until
 from test_tab_menu import connected, pick, shell  # noqa: F401  (fixture)
 from ui_socket import ui_socket
@@ -386,12 +386,12 @@ async def test_another_page_in_front_at_once_holds_nothing(fake_claude, tmp_path
 
     brain, agents, server, url = await visible_page(fake_claude, tmp_path)
     try:
-        async with ui_socket(server, url) as home, ui_socket(server, url) as mission:
-            await hello(home, "home", True)
+        async with ui_socket(server, url) as chat, ui_socket(server, url) as mission:
+            await hello(chat, "chat", True)
             await hello(mission, "mission", False)
             handoff = brain.give(row(), "Check the prices", "you")
-            await home.send(json.dumps({"type": "visibility", "visible": False}))  # a tab switch: AI Home first
-            await hello(home, "home", False)  # the app has read it: for a moment no page can be seen
+            await chat.send(json.dumps({"type": "visibility", "visible": False}))  # the floating chat hides first
+            await hello(chat, "chat", False)  # the app has read it: for a moment no page can be seen
             assert brain.visible() is False
             await mission.send(json.dumps({"type": "visibility", "visible": True}))  # then Mission Control
             await asyncio.sleep(HOLD_AFTER + 0.3)
@@ -411,7 +411,7 @@ async def test_the_switch_off_holds_a_counting_handoff_at_once(fake_claude, tmp_
     brain, agents, server, url = await visible_page(fake_claude, tmp_path)
     try:
         async with ui_socket(server, url) as ws:
-            await hello(ws, "home", True)
+            await hello(ws, "mission", True)
             handoff = brain.give(row(), "Check the prices", "you")
             assert handoff.state == "counting"
             await ws.send(json.dumps({"type": "settings_set", "key": "auto_hand", "value": False, "request": "s"}))
@@ -423,10 +423,10 @@ async def test_the_switch_off_holds_a_counting_handoff_at_once(fake_claude, tmp_
 
 
 @CHROME
-async def test_a_page_says_when_it_is_hidden_and_shown(home):
-    js, stack = home
+async def test_a_page_says_when_it_is_hidden_and_shown(page):
+    js, stack = page
     brain = stack["brain"]
-    assert await eventually(brain.visible)  # AI Home, seen: its hello says so
+    assert await eventually(brain.visible)  # Mission Control, seen: its hello says so
     hide = ("Object.defineProperty(document, 'hidden', { value: %s, configurable: true });"
             "document.dispatchEvent(new Event('visibilitychange')); true")
     await js(hide % "true")  # the window hidden (the desktop app hides it on close)
@@ -439,37 +439,20 @@ async def test_a_page_says_when_it_is_hidden_and_shown(home):
 async def test_a_tab_behind_another_in_the_window_counts_as_unseen(shell):
     from ai_browser.brain.handoffs import HELD
 
-    js, stack = shell  # the window's tab menu (app.js), AI Home's tab in front
+    js, stack = shell  # the window's tab menu (app.js), Mission Control's tab in front
     brain = stack["brain"]
     brain.countdown = Clock()
-    assert await eventually(brain.visible)  # AI Home's tab, shown: the tab menu says so as its page loads
+    assert await eventually(brain.visible)  # Mission Control's tab, shown: the tab menu says so as its page loads
     handoff = brain.give(row(), "Check the prices", "you")
     assert handoff.state == "counting"
-    await pick(js, "/settings")  # Settings in front: AI Home's tab is hidden, and Settings shows no card
+    await pick(js, "/settings")  # Settings in front: Mission Control's tab is hidden, and Settings shows no card
     assert await eventually(lambda: handoff.state != "counting")
     assert brain.visible() is False and (handoff.state, handoff.note) == ("waiting", HELD)
-    await pick(js, "/mission")  # Mission Control's first load, in front
+    await pick(js, "/mission")
     assert await page_until(js, connected("/mission"))
     assert await eventually(brain.visible)
     await pick(js, "/settings")
     assert await eventually(lambda: not brain.visible())
-    await pick(js, "/home")
-    assert await eventually(brain.visible)
-
-
-@CHROME
-async def test_switching_between_two_tabs_that_show_cards_holds_nothing(shell):
-    js, stack = shell
-    brain = stack["brain"]
-    brain.countdown = Clock()
-    await pick(js, "/mission")  # both pages loaded: AI Home and Mission Control
-    assert await page_until(js, connected("/mission"))
-    await pick(js, "/home")
-    assert await eventually(brain.visible)
-    handoff = brain.give(row(), "Check the prices", "you")
-    await pick(js, "/mission")  # the tab in front hears it first: a card can be seen all along
-    await asyncio.sleep(0.5)
-    assert handoff.state == "counting" and brain.visible() is True
 
 
 # ---- from the user's own words: Ask AI and the floating chat (talk.py, service.py's _send_card) ---------------------

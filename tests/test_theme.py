@@ -13,7 +13,7 @@ from test_home import open_page, stack, until  # noqa: F401  (fixture)
 ROOT = Path(__file__).parents[1]
 UI = ROOT / "src" / "ai_browser" / "app" / "ui"
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
-PAGES = ("app.html", "home.html", "mission.html", "settings.html", "setup.html", "chat.html")
+PAGES = ("app.html", "mission.html", "settings.html", "setup.html", "chat.html")
 OLD = ("#faf9f5", "#c96442", "#d97757", "#f2f0e8", "#e6e3da", "#1f1e1d", "#262624", "#30302d", "#3a3936",
        "#ecebe6", "#a3a29c", "#6b6a66")  # the old palette: its backgrounds, accents, lines and words
 TOKENS = ("--bg", "--bg-deep", "--bar", "--card", "--panel", "--code", "--soft", "--field", "--selected", "--line",
@@ -66,7 +66,7 @@ def test_the_theme_opens_anywhere_like_the_setup_page():
 
 @CHROME
 async def test_every_page_is_drawn_in_the_theme(stack):
-    for path in ("/app", "/home", "/mission", "/settings", "/chat", "/setup"):
+    for path in ("/app", "/mission", "/settings", "/chat", "/setup"):
         _, js = await open_page(stack["cdp"], stack["url"] + path)
         assert await until(js, "document.readyState === 'complete'"), path
         assert await js("getComputedStyle(document.body).backgroundColor") == "rgb(7, 15, 35)", path  # --bg

@@ -49,6 +49,22 @@ def user_config(tmp_path):
     return claude_home
 
 
+def ask_for_clickup(stack, tmp_path):
+    """The agents' tools: ClickUp switched on; the fake claude asks for one of its tools (the `stack` fixture's app)."""
+    user_config(tmp_path)
+    stack["tools"].set_enabled("clickup", True)
+    stack["script"].write_text(json.dumps(asking()), encoding="utf-8")
+
+
+async def answered(log):
+    """The permission answers the app wrote, once there are any (5 s at most)."""
+    for _ in range(50):
+        if answers(log):
+            break
+        await asyncio.sleep(0.1)
+    return answers(log)
+
+
 def manager(fake_claude, tmp_path, script):
     from ai_browser.app.agents import AgentManager
     from ai_browser.brain.tools import ToolsConfig

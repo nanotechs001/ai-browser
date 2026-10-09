@@ -113,7 +113,7 @@ def test_the_app_texts_say_how_to_stop_on_each_computer(tmp_path):
     from ai_browser.app.run import app_text, setup_hint
 
     mac, windows = app_text("darwin"), app_text("win32")
-    assert mac == ("AI Browser is open as its own app: AI Home shows every agent, tab and skill.\n"
+    assert mac == ("AI Browser is open as its own app: Mission Control shows every agent, tab and skill.\n"
                    "Closing its window keeps it running in the menu bar. To stop it, press ⌘Q or choose Quit from its "
                    "menu-bar icon, or press Ctrl-C here.")
     assert "by the clock" in windows and "⌘" not in windows and "Ctrl-C here" in windows

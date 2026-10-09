@@ -9,14 +9,14 @@ import os
 import pytest
 
 from ai_browser.chrome import chrome_binary
-from test_ai_home_phase2 import answered
+from test_tools import answered
 from test_bridge_powers import INIT, PLAN, RESULT, ask, use
-from test_home import home, open_page, stack, until  # noqa: F401  (fixtures)
+from test_home import open_page, stack, until  # noqa: F401  (fixtures)
+from test_mission import mission, open_drawer, station  # noqa: F401  (mission is a fixture)
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 HOSTILE = "echo '<img src=x onerror=\"document.title=1\">' > out.html"
-ROW = "document.querySelector('#agents .agent[data-id=\"a1\"]')"
-CARD = f"{ROW}?.querySelector('.permission')"
+CARD = "document.querySelector('#drawer:not([hidden]) .permission')"
 
 
 async def settled(check, seconds=8.0):
@@ -27,17 +27,24 @@ async def settled(check, seconds=8.0):
     return bool(check())
 
 
+async def drawer_of(js, agent_id="a1"):
+    """Mission Control's drawer for an agent: where its card shows."""
+    assert await until(js, f"{station(agent_id)} != null")
+    await js(open_drawer(agent_id))
+
+
 @CHROME
-async def test_a_command_card_shows_the_command_as_text_and_denies_with_a_note(home):  # Decision 2
-    js, stack = home
+async def test_a_command_card_shows_the_command_as_text_and_denies_with_a_note(mission):  # Decision 2
+    js, stack = mission
     stack["script"].write_text(json.dumps([INIT, ask("Bash", {"command": HOSTILE}), {"sleep": 1}, RESULT]),
                                encoding="utf-8")
     await stack["server"].agents.create("make the page")
+    await drawer_of(js)
     assert await until(js, f"{CARD} != null")
     assert await js(f"{CARD}.querySelector('.permission-text').textContent") == HOSTILE
     assert await js(f"{CARD}.querySelectorAll('img').length") == 0 and await js("document.title") != "1"
     text = await js(f"{CARD}.textContent")
-    assert "make the page wants to run a command" in text and "Asked every time: " in text  # AI Home: by name
+    assert "make the page wants to run a command" in text and "Asked every time: " in text  # by name
     assert (await js(f"{CARD}.querySelector('.permission-where').textContent")).startswith("In ")
     assert await js(f"{CARD}.querySelector('.allow-always')") is None  # never for a redirect (Decision 4)
     await js(f"(() => {{ const card = {CARD}; card.querySelector('.deny-note').value = 'write it in the docs folder';"
@@ -48,12 +55,13 @@ async def test_a_command_card_shows_the_command_as_text_and_denies_with_a_note(h
 
 
 @CHROME
-async def test_an_edit_card_shows_red_and_green_lines_and_always_for_this_agent(home):  # Decision 2
-    js, stack = home
+async def test_an_edit_card_shows_red_and_green_lines_and_always_for_this_agent(mission):  # Decision 2
+    js, stack = mission
     work = stack["home"] / "app" / "agents" / "a1" / "work"
     edit = {"file_path": str(work / "app.py"), "old_string": "a\nb\nc", "new_string": "a\n<b>B</b>\nc"}
     stack["script"].write_text(json.dumps([INIT, ask("Edit", edit), {"sleep": 1}, RESULT]), encoding="utf-8")
     await stack["server"].agents.create("fix it")
+    await drawer_of(js)
     assert await until(js, f"{CARD} != null")
     lines = await js(f"[...{CARD}.querySelectorAll('.diff > div')].map((line) => [line.className, line.textContent])")
     assert lines == [["ctx", "  a"], ["del", "- b"], ["add", "+ <b>B</b>"], ["ctx", "  c"]]
@@ -64,8 +72,8 @@ async def test_an_edit_card_shows_red_and_green_lines_and_always_for_this_agent(
 
 
 @CHROME
-async def test_a_huge_or_binary_file_shows_a_clipped_card_with_its_size(home):  # Review Focus 5
-    js, stack = home
+async def test_a_huge_or_binary_file_shows_a_clipped_card_with_its_size(mission):  # Review Focus 5
+    js, stack = mission
     work = stack["home"] / "app" / "agents" / "a1" / "work"
     big = "".join(f"row {n}\n" for n in range(50_000))
     png = "\x89PNG\x00\x00" + "x" * 3000
@@ -74,6 +82,7 @@ async def test_a_huge_or_binary_file_shows_a_clipped_card_with_its_size(home):  
                                                                          "content": png}),
                                            {"sleep": 1}, RESULT]), encoding="utf-8")
     await stack["server"].agents.create("write them")
+    await drawer_of(js)
     assert await until(js, f"{CARD} != null")
     assert await js(f"{CARD}.querySelectorAll('.diff > div').length") == 300
     size = await js(f"{CARD}.querySelector('.permission-size').textContent")
@@ -86,7 +95,7 @@ async def test_a_huge_or_binary_file_shows_a_clipped_card_with_its_size(home):  
 @CHROME
 async def test_mission_control_and_the_chat_show_the_same_card(stack):  # the spec's Interfaces: every page
     from test_chat_page import open_chat
-    from test_mission import open_mission, station
+    from test_mission import open_mission
 
     stack["script"].write_text(json.dumps([INIT, ask("Bash", {"command": "npm test"}), {"sleep": 5}, RESULT]),
                                encoding="utf-8")
@@ -118,15 +127,13 @@ def planned():
 
 
 @CHROME
-async def test_ai_homes_row_and_chat_show_the_folder_the_plan_the_sub_agents_and_badges(home):  # Decisions 6, 8-10
-    js, stack = home
+async def test_the_drawers_chat_shows_the_badges_and_the_sub_agents_lines(mission):  # Decisions 8-10
+    js, stack = mission
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
-    await stack["server"].agents.create("fix the footer")
-    assert await until(js, f"{ROW}?.querySelector('.subagents')?.textContent === '1 sub-agent working'")
-    assert await js(f"{ROW}.querySelector('.plan').textContent") == "1 / 3 steps · 33%"
-    assert await js(f"{ROW}.querySelector('.folder').textContent") == "No folder"
-    await js(f"{ROW}.querySelector('.chat').click(); true")
-    rows = "[...document.querySelectorAll('#chat-messages .action')]"
+    agent = await stack["server"].agents.create("fix the footer")
+    assert await settled(lambda: bool(agent.subagents) and bool(agent.subagents[0]["action"]))
+    await drawer_of(js)
+    rows = "[...document.querySelectorAll('#drawer .messages .action')]"
     assert await until(js, f"{rows}.length === 3")  # TodoWrite is the plan, not a line
     assert await js(f"{rows}.map((row) => [row.querySelector('.badge').textContent, row.classList.contains('sub')])"
                     ) == [["Browser Agent", False], ["Sub-agent", False], ["Bash", True]]
@@ -135,7 +142,7 @@ async def test_ai_homes_row_and_chat_show_the_folder_the_plan_the_sub_agents_and
 
 @CHROME
 async def test_mission_controls_drawer_lists_the_plan_and_the_sub_agents(stack):  # Decisions 8 and 9, Review Focus 3
-    from test_mission import open_drawer, open_mission, station
+    from test_mission import open_mission
 
     stack["script"].write_text(json.dumps(planned()), encoding="utf-8")
     agent = await stack["server"].agents.create("fix the footer")
@@ -160,8 +167,8 @@ CHOOSE_LAST = ("(() => { const pick = document.getElementById('task-folder');"
 
 
 @CHROME
-async def test_ai_home_asks_trust_once_and_starts_the_task_in_the_folder(home, user_home, tmp_path):  # Decisions 6, 7
-    js, stack = home
+async def test_build_a_mission_asks_trust_once_and_starts_the_task_in_the_folder(mission, user_home, tmp_path):  # 6, 7
+    js, stack = mission
     project = tmp_path / "project"
     project.mkdir()
     box = "document.getElementById('folder-ask')"
@@ -175,7 +182,7 @@ async def test_ai_home_asks_trust_once_and_starts_the_task_in_the_folder(home, u
     assert "Trust project?" in await js(f"{box}.textContent")
     await js("document.getElementById('task').value = 'fix the footer';"
              "document.getElementById('start').click(); true")
-    assert await until(js, "document.getElementById('hint').textContent.includes('Trust this folder')")
+    assert await until(js, "document.getElementById('task-note').textContent.includes('Trust this folder')")
     assert stack["server"].agents.agents == {}  # Start waits for the answer
     await js(f"{box}.querySelector('.trust').click(); true")
     assert await until(js, f"{box}.textContent.startsWith('Trusted: ')")
@@ -189,8 +196,8 @@ async def test_ai_home_asks_trust_once_and_starts_the_task_in_the_folder(home, u
 
 
 @CHROME
-async def test_a_refused_folder_is_said_and_the_typed_path_stays(home, user_home):  # Decision 6
-    js, stack = home
+async def test_a_refused_folder_is_said_and_the_typed_path_stays(mission, user_home):  # Decision 6
+    js, stack = mission
     box = "document.getElementById('folder-ask')"
     await js(CHOOSE_LAST)
     assert await until(js, f"{box}.querySelector('.folder-typed') != null")
@@ -202,17 +209,34 @@ async def test_a_refused_folder_is_said_and_the_typed_path_stays(home, user_home
 
 
 @CHROME
-async def test_the_tab_menu_opens_the_folder_dialog_for_ai_home(stack, user_home, tmp_path):  # plan decision 13
+async def test_no_folder_holds_when_a_late_check_answers(mission):  # final review: a saved agent's folder persists
+    js, _ = mission
+    shown = await js("""import('/folderpick.js').then(({ mountFolderPicker }) => {
+      const select = document.createElement('select'), box = document.createElement('div'), sent = [];
+      document.body.append(select, box);
+      const picker = mountFolderPicker({ select, box, prefix: 'late' }, (message) => sent.push(message) || true);
+      picker.set('/work/site'); // a saved agent's folder: the app checks it
+      select.value = ''; // the user picks No folder before the check answers
+      select.dispatchEvent(new Event('change'));
+      picker.onMessage({ type: 'folder', request: sent[0].request,
+                         folder: { path: '/work/site', name: 'site', trusted: true } });
+      return [sent.length, picker.value(), select.value];
+    })""")
+    assert shown == [1, None, ""]
+
+
+@CHROME
+async def test_the_tab_menu_opens_the_folder_dialog_for_mission_control(stack, user_home, tmp_path):  # decision 13
     from test_tab_menu import frame, in_frame, window_page
 
     project = tmp_path / "project"
     project.mkdir()
     js = await window_page(stack)
     await js(f"window.aib = {{ chooseFolder: async () => {json.dumps(str(project))} }}; true")  # the app's bridge
-    assert await until(js, f"{frame('/home')}.document.getElementById('task-folder')?.options.length === 2")
-    await in_frame(js, "/home", CHOOSE_LAST)
-    assert await until(js, f"{frame('/home')}.document.querySelector('#folder-ask .trust') != null")
-    await in_frame(js, "/home", "document.querySelector('#folder-ask .trust').click(); true")
+    assert await until(js, f"{frame('/mission')}.document.getElementById('task-folder')?.options.length === 2")
+    await in_frame(js, "/mission", CHOOSE_LAST)
+    assert await until(js, f"{frame('/mission')}.document.querySelector('#folder-ask .trust') != null")
+    await in_frame(js, "/mission", "document.querySelector('#folder-ask .trust').click(); true")
     assert await settled(lambda: stack["server"].agents.rules.trusted(project) is True)
 
 

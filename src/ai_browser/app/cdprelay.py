@@ -47,6 +47,7 @@ ALLOW_WAIT = 60  # seconds a client waits for the user's answer; the question it
 SWITCH_EVERY = 2.0  # seconds between two looks at the switch while not connected
 BIND_WAIT = 2.0  # seconds a new session's first events wait for its attach answer
 BIND_BUFFER = 256  # ...at most this many of them per session
+SHOT_WAIT = 60  # seconds a tab's next screenshot waits for the one before it at most
 QUEUE_BYTES = 64 * 1024 * 1024  # what one client may have waiting before it counts as too slow
 QUEUE_MESSAGES = 10_000
 TOKEN_HEADER = "x-aib-agent-token"
@@ -64,7 +65,11 @@ SESSION_METHODS = frozenset({
     "Page.navigate", "Page.getNavigationHistory", "Page.navigateToHistoryEntry", "Page.reload",
     "Page.createIsolatedWorld", "Page.getLayoutMetrics", "Page.captureScreenshot", "Page.handleJavaScriptDialog",
     "Page.startScreencast", "Page.stopScreencast", "Page.screencastFrameAck", "Network.enable",
-    "Emulation.setFocusEmulationEnabled", "Emulation.setDeviceMetricsOverride", "Emulation.clearDeviceMetricsOverride"})
+    "Emulation.setFocusEmulationEnabled", "Emulation.setDeviceMetricsOverride", "Emulation.clearDeviceMetricsOverride",
+    "Target.setAutoAttach", "Target.detachFromTarget"})  # on a tab's session: its frames (the frames spec, 3)
+# Target.setAutoAttach always gets these, whatever a client asks: frames only (never a worker, never another tab),
+# flattened, and never paused at their start.
+FRAMES_ONLY = {"waitForDebuggerOnStart": False, "flatten": True, "filter": [{"type": "iframe"}]}
 WEB_ONLY = "only web pages (http, https, data:, about:blank) open through AI Browser's connection"
 APP_PAGE = "AI Browser's own pages don't open in your browser through its connection"
 UNREADABLE = "not an address the browser could read"
@@ -226,8 +231,9 @@ NO_DOWNLOAD = (-32602, "No download with given guid found")
 NO_CONTEXT = (-32602, "Failed to find browser context with given id")
 SPECIAL_TAB = (-32000, "hidden, focused or special tabs don't open through AI Browser's connection")
 NOT_FLAT = (-32000, "AI Browser's connection needs flatten: true")
+OWN_PROFILE = (-32000, "AI Browser opens this agent's tabs, in its own Brave profile")  # a saved agent's profile
 CREATE_PARAMS = frozenset({"url", "newWindow", "background", "browserContextId"})  # what an engine sends
-CUT_OFF_TEXT = "The user disconnected this client in AI Home."
+CUT_OFF_TEXT = "The user disconnected this client in Settings → Brave."
 _SESSION_ID = re.compile(r"^cc-[0-9a-z-]{1,40}$")
 _AGENT_ID = re.compile(r"^a[0-9]{1,9}$")
 _HANDSHAKE_NOISE = "ASGI callable returned without completing handshake."
@@ -282,6 +288,8 @@ class _Session:
     client: object | None  # the client that attached; None once it left (its events are dropped)
     target: str
     cut: bool = False  # Take back: refused at once, until the browser's detach note drops it
+    parent: str | None = None  # a frame's session: the session the browser attached it under (auto-attach)
+    page: str = ""  # the tab it belongs to: its own target, or for a frame its parent's tab
 
 
 class _Socket:
@@ -391,6 +399,9 @@ class Relay:
         self.upstream_opens = 0  # handshakes started to the browser: each one is a question the user is asked
         self.handed: Callable[[str], set[str]] = lambda identity: set()  # set by the server: agent.adopted, live
         self.may_open: Callable[[str], bool] = lambda identity: bool(_SESSION_ID.match(identity))  # by the server
+        # by the server: a run of a saved agent with a Brave profile of its own. Only the app's client opens its tabs
+        # (POST /agent-tab, in that profile's context): a tab it made itself would open in the profile used last
+        self.placed_only: Callable[[str], bool] = lambda identity: False
         self._ws = None
         self._reader: asyncio.Task | None = None
         self._ids = itertools.count(1)
@@ -405,6 +416,9 @@ class Relay:
         self._sessions: dict[str, _Session] = {}
         self._pending: dict[int, tuple] = {}  # upstream id -> (client | None, client id, method, params, session)
         self._waiting: dict[int, asyncio.Future] = {}  # upstream id -> the relay's own command's future
+        # ponytail: one lock per tab ever shot, kept for the run (a few bytes each)
+        self._shooting: dict[str, asyncio.Lock] = {}  # target id -> its screenshots' turn
+        self._shot: dict[int, asyncio.Future] = {}  # upstream id -> set when that screenshot's answer came
         self._unbound: dict[str, list] = {}  # session id -> [(message, raw)] that came before its attach answer
         self._cut_off: set[str] = set()
         self._forgotten: set[str] = set()  # closed agents and ended sessions, until they connect again
@@ -420,7 +434,7 @@ class Relay:
         self._states.append(callback)
 
     def on_change(self, callback: Callable[[], None]) -> None:
-        """callback() when the list of clients (AI Home's rows) may have changed."""
+        """callback() when the list of clients (Settings → Brave's rows) may have changed."""
         self._changes.append(callback)
 
     def on_grant(self, callback: Callable[[str, str], None]) -> None:
@@ -646,11 +660,12 @@ class Relay:
             return (f"{self.name}'s remote-debugging switch is off: the user turns it on at "
                     f"{inspect_address(self.folder)}")
         if self.state == "refused":
-            return f"{self.name} said no to AI Browser's connection: ask the user to click Try again in AI Home"
+            return (f"{self.name} said no to AI Browser's connection: ask the user to click Try again at the top of "
+                    "Mission Control")
         if self.state == "asking":
             return (f"{self.name} is asking \"Allow remote debugging?\" for AI Browser: ask the user to click Allow "
                     f"there, then try again (it is the one question, for everyone)")
-        return f"AI Browser isn't connected to {self.name}: ask the user to click Connect in AI Home"
+        return f"AI Browser isn't connected to {self.name}: ask the user to click Connect at the top of Mission Control"
 
     async def _listen(self, client: _Socket) -> None:
         while True:
@@ -687,6 +702,15 @@ class Relay:
                 problem = address_problem(params.get("url"), self.port)
                 if problem:
                     return self._error(client, client_id, (-32000, problem), session_id)
+            if method == "Target.setAutoAttach":
+                params = {"autoAttach": params.get("autoAttach") is True, **FRAMES_ONLY}
+            if method == "Target.detachFromTarget":  # only a frame attached under this very session
+                child = self._sessions.get(params.get("sessionId"))
+                if child is None or child.parent != session_id or child.client is not client:
+                    return self._error(client, client_id, NO_SESSION, session_id)
+                params = {"sessionId": params["sessionId"]}
+            if method == "Page.captureScreenshot":  # waits its turn on its own: the client's other commands go on
+                return self._job(self._one_shot(session.page, client, client_id, params, session_id))
             return await self._forward(client, client_id, method, params, session_id)
         if not allowed(method, "browser", client.app):
             return self._refuse(client, client_id, method)
@@ -707,6 +731,8 @@ class Relay:
                 return -32000, problem
             if set(params) - CREATE_PARAMS:  # hidden, focused, minimized, off-screen or special: never
                 return SPECIAL_TAB
+            if not client.app and self.placed_only(identity):
+                return OWN_PROFILE
             context = params.get("browserContextId")
             if context is not None and context not in self._contexts_of(identity):
                 return NO_CONTEXT  # never a private window or another profile it learned of
@@ -750,8 +776,20 @@ class Relay:
             client.announced.add(target)
             self._to(client, {"method": "Target.targetCreated", "params": {"targetInfo": dict(info)}})
 
-    async def _forward(self, client, client_id, method: str, params: dict, session_id: str | None = None) -> None:
+    async def _one_shot(self, page: str, client, client_id, params: dict, session_id: str) -> None:
+        """A tab's screenshots take turns. Chrome draws a scaled shot by shrinking the tab for a moment, and two at once
+        (an agent's and Mission Control's thumbnail) put back each other's shrunk size: the tab stayed tiny until reloaded."""
+        async with self._shooting.setdefault(page, asyncio.Lock()):
+            done = asyncio.get_running_loop().create_future()
+            await self._forward(client, client_id, "Page.captureScreenshot", params, session_id, done)
+            with contextlib.suppress(TimeoutError):  # a shot dropped by Take back or a lost browser: not forever
+                await asyncio.wait_for(done, SHOT_WAIT)
+
+    async def _forward(self, client, client_id, method: str, params: dict, session_id: str | None = None,
+                       done: asyncio.Future | None = None) -> None:
         upstream_id = next(self._ids)
+        if done is not None:
+            self._shot[upstream_id] = done
         self._pending[upstream_id] = (client, client_id, method, params, session_id)
         message = {"id": upstream_id, "method": method, "params": params}
         if session_id is not None:
@@ -769,6 +807,13 @@ class Relay:
             sent, why = False, LOST
         if not sent and self._pending.pop(upstream_id, None) is not None:
             self._error(client, client_id, why, session_id)
+        if not sent:
+            self._shot_done(upstream_id)
+
+    def _shot_done(self, upstream_id) -> None:
+        done = self._shot.pop(upstream_id, None)
+        if done is not None and not done.done():
+            done.set_result(None)
 
     def _answer_to(self, client, client_id, result: dict, session_id: str | None = None) -> None:
         reply = {"id": client_id, "result": result}
@@ -842,6 +887,7 @@ class Relay:
     def _answer(self, message: dict) -> None:
         upstream_id = message.get("id")
         entry = self._pending.pop(upstream_id, None) if isinstance(upstream_id, int) else None
+        self._shot_done(upstream_id)
         if entry is None:
             return
         client, client_id, method, params, session_id = entry
@@ -893,7 +939,7 @@ class Relay:
                 self._job(self._quietly("Target.detachFromTarget", {"sessionId": session_id}))
                 self._error(client, client_id, NOT_FOUND)
                 return None
-            self._sessions[session_id] = _Session(client, str(target))
+            self._sessions[session_id] = _Session(client, str(target), page=str(target))
             client.sessions.add(session_id)
             if not client.app and isinstance(target, str):
                 self._take_popup(client.identity, target)
@@ -915,9 +961,40 @@ class Relay:
         client = session.client
         if client is None or session.cut:
             return
+        if method == "Target.attachedToTarget":
+            return self._frame_attached(session_id, session, params, message, raw)
+        if method == "Target.detachedFromTarget":
+            gone = self._sessions.get(params.get("sessionId"))
+            if gone is None or gone.parent != session_id:
+                return  # only a frame attached under this very session, and only one it was handed
+            self._drop(params.get("sessionId"))
         if method == "Page.downloadWillBegin" and isinstance(params.get("guid"), str):
             client.downloads.add(params["guid"])  # Browser.cancelDownload may name it now
         self._to(client, message, raw)
+
+    def _frame_attached(self, parent_id: str, parent: _Session, params: dict, message: dict, raw: str | None) -> None:
+        """The browser attached a frame of a client's tab under one of its sessions (auto-attach): the frame's session
+        is that client's, with the page's policy. Anything but a frame is never handed on."""
+        child, info = params.get("sessionId"), params.get("targetInfo")
+        if not isinstance(child, str) or not isinstance(info, dict) or info.get("type") != "iframe":
+            log.info("relay: a %s attached under %s's tab was not handed on", str((info or {}).get("type"))[:20],
+                     parent.client.identity)
+            return
+        self._sessions[child] = _Session(parent.client, str(info.get("targetId")), parent=parent_id, page=parent.page)
+        parent.client.sessions.add(child)
+        self._to(parent.client, message, raw)
+        for event, held in self._unbound.pop(child, []):  # anything of its own that came first
+            self._to(parent.client, event, held)
+
+    def _drop(self, session_id) -> None:
+        """A session ended in the browser: it goes, with the frames' sessions under it (the browser ends those too)."""
+        session = self._sessions.pop(session_id, None) if isinstance(session_id, str) else None
+        if session is None:
+            return
+        if session.client is not None:
+            session.client.sessions.discard(session_id)
+        for child in [sid for sid, other in self._sessions.items() if other.parent == session_id]:
+            self._drop(child)
 
     def _hold(self, session_id: str, message: dict, raw: str | None) -> None:
         held = self._unbound.get(session_id)
@@ -942,9 +1019,8 @@ class Relay:
         self._unbound.pop(session_id, None)
         if session is None:
             return
-        del self._sessions[session_id]
+        self._drop(session_id)
         if session.client is not None:
-            session.client.sessions.discard(session_id)
             self._to(session.client, message, raw)
 
     def _target_event(self, method: str, params: dict, message: dict, raw: str | None) -> None:
@@ -1094,6 +1170,7 @@ class Relay:
         self._ws = None
         for upstream_id, (client, client_id, method, _params, session_id) in list(self._pending.items()):
             del self._pending[upstream_id]
+            self._shot_done(upstream_id)
             future = self._waiting.pop(upstream_id, None)
             if future is not None:
                 if not future.done():
@@ -1121,20 +1198,21 @@ class Relay:
         doomed = []
         for session_id, session in list(self._sessions.items()):  # all of them first, before any await
             client = session.client
-            if session.target != target or session.cut or client is None or client.identity != identity:
+            if session.page != target or session.cut or client is None or client.identity != identity:
                 continue
             session.cut = True
             doomed.append(session_id)
             for upstream_id, entry in list(self._pending.items()):
                 if entry[0] is client and entry[4] == session_id:
                     del self._pending[upstream_id]
+                    self._shot_done(upstream_id)
                     self._error(client, entry[1], NO_SESSION, session_id)
         for session_id in doomed:
             with contextlib.suppress(CDPError):
                 await self._call("Target.detachFromTarget", {"sessionId": session_id}, timeout=5)
 
     async def disconnect(self, identity: str) -> None:
-        """AI Home's Disconnect (Decision 14): cut off for the rest of this run; its tabs stay open."""
+        """Settings → Brave's Disconnect (Decision 14): cut off for the rest of this run; its tabs stay open."""
         if identity == APP:
             return
         self._cut_off.add(identity)
@@ -1159,8 +1237,8 @@ class Relay:
         self._changed()
 
     def clients(self) -> list[dict]:
-        """AI Home's list (Decision 14): the app while connected, then each agent and session with an open socket or
-        own tabs. The server adds names and colours."""
+        """Settings → Brave's list (Decision 14): the app while connected, then each agent and session with an open
+        socket or own tabs. The server adds names and colours."""
         rows = []
         if self.state == "connected":
             rows.append({"id": APP, "kind": "app", "number": None, "tabs": 0, "connected": True, "cut_off": False})

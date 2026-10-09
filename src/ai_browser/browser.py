@@ -18,7 +18,7 @@ from urllib.parse import unquote, urlsplit
 
 from . import platforms
 from .cdp import CDP, CDPError
-from .checks import Check, box_frames, detect
+from .checks import CHECK_FRAME, Check, box_frames, detect
 from .config import JS_LIMIT, MAX_ROWS, NAME_LIMIT, SHOT_MAX_HEIGHT, SHOT_MAX_WIDTH, SIZES, TEXT_LIMIT, Config
 from .keys import key_event
 from .render import diff_rows, render_check, render_diff, render_page, risky_regex
@@ -46,6 +46,13 @@ CF_POLL = 0.5
 # these reuses the oldest. Tabs the user handed over never count; tabs its pages opened do.
 MAX_OWN_TABS = 2
 REUSED = "(opened in your oldest tab {key}: at most {limit} tabs of your own)\n"
+# Frames from another site (the frames spec): Chrome attaches each frame of our tabs that runs in a process of its own,
+# and nothing else, flattened and never paused at its start. The relay sends exactly this too, whatever it is asked.
+AUTO_ATTACH = {"autoAttach": True, "waitForDebuggerOnStart": False, "flatten": True, "filter": [{"type": "iframe"}]}
+MAX_DEPTH = 5  # frames inside frames: deeper ones are never attached
+MAX_FRAMES = 20  # frames read per observe; the rest stay "(not readable)" in it
+FRAME_TIME = 2.0  # seconds the frames of one read share, so a page with many frames can't stall observe
+PAGE = {"x": 0.0, "y": 0.0, "sx": 1.0, "sy": 1.0}  # where the page itself is drawn: a frame's place is relative to it
 TRIED = "(tried your oldest tab {key}: at most {limit} tabs of your own) "  # before the error when it couldn't
 
 
@@ -79,10 +86,27 @@ class Tab:
     dialogs: list = field(default_factory=list)  # (kind, message, accepted), answered automatically
     reported: int = 0  # dialogs already shown to the caller
     adopted: bool = False  # a tab the user handed over: left open when the session ends
-    handed: bool = False  # a tab the user handed this agent in AI Home: let go of when they take it back
+    handed: bool = False  # a tab the user handed this agent in Mission Control: let go of when they take it back
     detached: bool = False  # the relay cut our session on this handed tab (Take back): let go of at the next call
     world: int | None = None  # the reader's isolated-world context in the current document (dropped on navigation)
+    inside: dict = field(default_factory=dict)  # row id -> the Frame it was read in (the page's own rows: not listed)
+    next: int = 1  # the next row number: the page and its frames number their rows from one count
     used: int = 0  # when the session last switched to it (0: never): the lowest is the oldest, reused past MAX_OWN_TABS
+    frames: dict = field(default_factory=dict)  # frame id -> Frame: its frames from another site
+
+
+@dataclass
+class Frame:
+    """A frame from another site in one of our tabs, read by a reader of its own (the frames spec). `session` reaches
+    its document: its own session (a frame in a process of its own), or its parent's (another origin on the same site,
+    in the parent's process). Its <iframe> element is in the document `host` is the session of."""
+    frame: str  # its frame id; for a frame of its own process, its target id
+    session: str
+    host: str
+    url: str = ""  # "" until the browser says (a new frame's address comes a moment after it is attached)
+    depth: int = 1  # 1: in the tab's page; 2: in a frame of it; at most MAX_DEPTH
+    world: int | None = None  # the reader's isolated world in its document (as Tab.world)
+    followed: bool = False  # its address is known and isn't a check's: its downloads are caught, its frames attached
 
 
 @dataclass
@@ -130,6 +154,12 @@ def _same_origin(parts, origin: str) -> bool:
                                                                             own.port)
     except ValueError:
         return False
+
+
+def on_page(placed: dict, box: dict) -> dict:
+    """Where a frame is drawn on the page: its <iframe> draws it at `box` in a document drawn at `placed`."""
+    return {"x": placed["x"] + box["x"] * placed["sx"], "y": placed["y"] + box["y"] * placed["sy"],
+            "sx": placed["sx"] * box["sx"], "sy": placed["sy"] * box["sy"]}
 
 
 def url_problem(url: str, mode: str, app_origin: str = "") -> str | None:
@@ -195,6 +225,8 @@ class Browser:
         cdp.on("Target.targetCreated", self._on_target_created)
         cdp.on("Target.targetDestroyed", self._on_target_destroyed)
         cdp.on("Target.detachedFromTarget", self._on_detached)
+        cdp.on("Target.attachedToTarget", self._on_frame_attached)
+        cdp.on("Target.targetInfoChanged", self._on_frame_changed)
         cdp.on("Page.frameStartedLoading", self._on_started)
         cdp.on("Page.frameStoppedLoading", self._on_stopped)
         cdp.on("Page.domContentEventFired", self._on_stopped_any)
@@ -251,6 +283,11 @@ class Browser:
         if tab and not frame.get("parentId"):
             tab.frame = frame.get("id", tab.frame)
             tab.world = None  # a new document: the reader's world there is a new context
+            tab.inside.clear()  # its frames went with the old one
+        elif tab and (known := tab.frames.get(frame.get("id"))) is not None:
+            known.url = frame.get("url") or known.url  # a frame of the page's own process: no targetInfoChanged
+            if CHECK_FRAME.search(known.url):
+                tab.frames.pop(known.frame, None)  # _where refuses its rows as a bot check's
 
     def _on_context_destroyed(self, params: dict, session: str | None) -> None:
         tab = self._tab_for(session)
@@ -360,7 +397,7 @@ class Browser:
         """A download started in one of our tabs. Outside a step the user confirmed it is cancelled at once: in the
         user's own browser it would land in their Downloads folder (Decision 15). The agent hears of it when it was
         its working tab (or a tab its step just opened)."""
-        tab = self._tab_for(session)
+        tab, _ = self._session_root(session)  # a frame's download is told on the frame's own session
         if tab is None or self._allow_dialogs or not params.get("guid"):
             return
         if tab is self.current or tab in self._opened:
@@ -505,6 +542,68 @@ class Browser:
         tab = self._tab_for(params.get("sessionId"))
         if tab is not None and tab.handed:
             tab.detached = True
+        gone = {params.get("sessionId")}
+        for owned in self.owned.values():  # a frame that went (removed, or its page moved on), and the frames inside
+            for frame in sorted(owned.frames.values(), key=lambda frame: frame.depth):
+                if frame.session in gone or frame.host in gone:
+                    gone.add(frame.session)
+                    owned.frames.pop(frame.frame, None)
+
+    # ---- frames from another site: followed with their tab, a bot check's never (the frames spec) -------------------
+
+    def _session_root(self, session: str | None) -> tuple[Tab | None, Frame | None]:
+        """(the tab, and the frame of its own process or None for the tab's page) that `session` is the session of."""
+        for tab in self.owned.values():
+            if tab.session == session:
+                return tab, None
+            for frame in tab.frames.values():
+                if frame.session == session and frame.session != frame.host:
+                    return tab, frame
+        return None, None
+
+    def _on_frame_attached(self, params: dict, session: str | None) -> None:
+        """Chrome attached a frame of one of our tabs, or of a frame of one (auto-attach). It is followed, and read only
+        once its address is known and isn't a check's."""
+        info = params.get("targetInfo") or {}
+        tab, parent = self._session_root(session)
+        if tab is None or info.get("type") != "iframe" or not isinstance(params.get("sessionId"), str):
+            return
+        depth = (parent.depth if parent else 0) + 1
+        frame = Frame(str(info.get("targetId")), params["sessionId"], session, depth=depth)
+        tab.frames[frame.frame] = frame
+        self._frame_address(tab, frame, str(info.get("url") or ""))
+
+    def _on_frame_changed(self, params: dict, session: str | None) -> None:
+        """A frame's address came or changed (Chrome tells the session it was attached under)."""
+        info = params.get("targetInfo") or {}
+        for tab in list(self.owned.values()):
+            frame = tab.frames.get(info.get("targetId"))
+            if frame is not None and frame.session != frame.host:
+                self._frame_address(tab, frame, str(info.get("url") or ""))
+
+    def _frame_address(self, tab: Tab, frame: Frame, url: str) -> None:
+        """A bot check's frame is let go of at once: nothing is ever sent to it, only the let-go on its parent's
+        session. Any other frame is followed: its downloads are caught as the page's are, and its own frames are
+        attached too, MAX_DEPTH deep."""
+        frame.url = url
+        if CHECK_FRAME.search(url):
+            tab.frames.pop(frame.frame, None)
+            self._later("Target.detachFromTarget", {"sessionId": frame.session}, frame.host)
+        elif url and not frame.followed:
+            frame.followed = True
+            self._later("Page.enable", {}, frame.session)  # a download it starts is told on its own session only
+            if frame.depth < MAX_DEPTH:
+                self._later("Target.setAutoAttach", AUTO_ATTACH, frame.session)
+
+    def _later(self, method: str, params: dict, session: str) -> None:
+        """Send a command from an event handler, without waiting for it: a frame gone meanwhile is no error."""
+        async def send() -> None:
+            with contextlib.suppress(CDPError):
+                await self.cdp.send(method, params, session_id=session)
+
+        job = asyncio.ensure_future(send())
+        self._cancels.add(job)  # kept until done, as a download's cancel is
+        job.add_done_callback(self._cancels.discard)
 
     async def ensure_tab(self) -> str:
         """Carry on after the tab in use was closed (in another of ours, or a new one); returns a note."""
@@ -575,6 +674,7 @@ class Browser:
             # when the window is minimized), frames stop and timers run once a second, so a click took 6 s, not 20 ms.
             send("Emulation.setFocusEmulationEnabled", {"enabled": True}),
             send("Page.addScriptToEvaluateOnNewDocument", {"source": READER_JS, "worldName": WORLD}),
+            send("Target.setAutoAttach", AUTO_ATTACH),  # its frames from another site, each with a session of its own
         ]
         if self.mode == "sandbox":  # the user's own Chrome keeps its real window size
             setup.append(send("Emulation.setDeviceMetricsOverride",
@@ -588,10 +688,10 @@ class Browser:
 
     async def adopt(self, target: str) -> Tab:
         """Work in one of the user's tabs: it stays theirs (released, never closed, by this session). In the user's
-        own browser only a tab they handed over in AI Home can be taken on."""
+        own browser only a tab they handed over in Mission Control can be taken on."""
         if self.mode == "chrome" and target not in {item["target"] for item in await self._handed_now()}:
             raise BrowserError("that tab isn't a tab the user handed you: only tabs you open, and tabs the user hands "
-                               "you in AI Home (tabs list shows them as h1…), can be used")
+                               "you in Mission Control (tabs list shows them as h1…), can be used")
         tab = await self._setup_tab(target, adopted=True)
         tab.handed = self.mode == "chrome"
         await self._switch(tab)
@@ -607,8 +707,8 @@ class Browser:
             return []
 
     async def let_go_of_taken_back(self) -> str:
-        """Let go of handed tabs the user took back (AI Home's Take back): detached, never closed. Returns the notes;
-        the session carries on in its newest own tab."""
+        """Let go of handed tabs the user took back (the Tabs page's Take back): detached, never closed. Returns the
+        notes; the session carries on in its newest own tab."""
         mine = [tab for tab in self.owned.values() if tab.handed]
         if not mine:
             return ""
@@ -750,8 +850,11 @@ class Browser:
         """The reader's page state, plus `check` (a bot check, or None) and `boxes` (checkbox frames, each also
         marked `box` among the frames), decided here from its signals."""
         opts = {"find": find, "maxRows": MAX_ROWS, "textLimit": TEXT_LIMIT, "nameLimit": NAME_LIMIT,
-                "risky": self._risky, "downloads": self._downloads}
+                "risky": self._risky, "downloads": self._downloads, "next": self.current.next if self.current else 1}
         state = await self._reader(f"observe({json.dumps(opts)})")
+        for item in state["rows"]:  # the page's own numbers win over any frame entry left with the same number
+            self.current.inside.pop(item["id"], None)
+        await self._read_frames(self.current, state, opts)
         signals = state.get("signals") or {}
         state["check"] = detect(state.get("url", ""), signals)
         state["boxes"] = box_frames(signals)
@@ -762,6 +865,132 @@ class Browser:
         if find is None and self.current:
             self.current.last = state
         return state
+
+    async def _read_frames(self, tab: Tab, page: dict, opts: dict) -> None:
+        """Read the tab's frames from another site into `page`, its page's state (the frames spec, 1). Their rows follow
+        the page's, numbered on from them and labelled with their frame; their frames, text, check signals and counts
+        join the page's. Parents before children, MAX_FRAMES at most, in FRAME_TIME together. A frame that can't be
+        read (no address yet, gone, crashed, out of time) stays "(not readable)" in the frames line."""
+        loop = asyncio.get_running_loop()
+        deadline, count = loop.time() + FRAME_TIME, 0
+        tab.next = max(tab.next, page.get("next") or 1)
+        roots = [(tab, PAGE, page)]
+        for root, placed, state in roots:  # grows as frames of their own process are read
+            try:
+                frames = await self._frames_in(tab, root)
+            except (BrowserError, CDPError):
+                continue  # root went meanwhile
+            for frame in frames:
+                if count >= MAX_FRAMES or loop.time() >= deadline:
+                    return
+                count += 1
+                try:
+                    read = await asyncio.wait_for(self._read_frame(tab, frame, root, placed, state, page, opts),
+                                                  deadline - loop.time())
+                except (BrowserError, CDPError, TimeoutError):
+                    # its reader may have numbered rows before the result was dropped: keep those numbers taken
+                    with contextlib.suppress(BrowserError, CDPError, TimeoutError):
+                        tab.next = max(tab.next, await asyncio.wait_for(self._reader_in(frame, "nextId()"),
+                                                                     max(deadline - loop.time(), 0.1)))
+                    continue
+                if read is not None and frame.session != frame.host:
+                    roots.append(read)
+
+    async def _frames_in(self, tab: Tab, root) -> list[Frame]:
+        """The frames whose <iframe> element is in the document of `root` (the tab, or a frame of its own process): the
+        frames of their own process attached under its session (with an address, never a check's), then the frames of
+        another origin in its process."""
+        own = [frame for frame in tab.frames.values() if frame.host == root.session and frame.session != frame.host
+               and frame.url and not CHECK_FRAME.search(frame.url)]
+        return own + await self._same_site(tab, root)
+
+    async def _same_site(self, tab: Tab, root) -> list[Frame]:
+        """The frames of another origin on root's own site: they run in root's process, so root's session reaches them
+        (Page.createIsolatedWorld with their frame id). Frames of root's own origin are left to root's reader, which
+        reads them as today; frames inside these are not looked for."""
+        tree = (await self.cdp.send("Page.getFrameTree", session_id=root.session))["frameTree"]
+        found, todo = [], [(tree, tree["frame"].get("securityOrigin"))]
+        while todo:
+            node, origin = todo.pop()
+            for child in node.get("childFrames") or []:
+                info = child["frame"]
+                url = str(info.get("url") or "")
+                if url.startswith("about:") or info.get("securityOrigin") == origin:
+                    todo.append((child, origin))  # root's reader reads it (about:blank has its parent's origin)
+                elif not CHECK_FRAME.search(url):
+                    frame = tab.frames.get(info["id"]) or Frame(info["id"], root.session, root.session,
+                                                                depth=getattr(root, "depth", 0) + 1)
+                    frame.url = url
+                    tab.frames[frame.frame] = frame
+                    found.append(frame)
+        kept = {frame.frame for frame in found}
+        for key, frame in list(tab.frames.items()):  # gone from root's process since the last read
+            if frame.session == frame.host == root.session and key not in kept:
+                del tab.frames[key]
+        return found
+
+    async def _frame_box(self, frame: Frame, root) -> dict | None:
+        """Where frame's <iframe> element draws it in root's document (reader.js's frameAt, asked of root's reader with
+        that element), or None when it shows nowhere."""
+        return await self._on_owner(frame, root, "frameAt(this)")
+
+    async def _on_owner(self, frame: Frame, root, call: str):
+        """`window.__aib.<call>` in root's reader, with `this` the <iframe> element that draws frame in root."""
+        owner = await self.cdp.send("DOM.getFrameOwner", {"frameId": frame.frame}, session_id=root.session)
+        node = await self.cdp.send("DOM.resolveNode", {"backendNodeId": owner.get("backendNodeId"),
+                                                       "executionContextId": await self.isolated(root)},
+                                   session_id=root.session)
+        handle = (node.get("object") or {}).get("objectId")
+        if handle is None:
+            return None
+        try:
+            result = await self.cdp.send("Runtime.callFunctionOn", {
+                "objectId": handle, "returnByValue": True,
+                "functionDeclaration": f"function () {{ return window.__aib ? window.__aib.{call} : null; }}"},
+                session_id=root.session)
+        finally:
+            with contextlib.suppress(CDPError):
+                await self.cdp.send("Runtime.releaseObject", {"objectId": handle}, session_id=root.session)
+        return (result.get("result") or {}).get("value")
+
+    async def _read_frame(self, tab: Tab, frame: Frame, root, placed: dict, state: dict, page: dict,
+                          opts: dict) -> tuple | None:
+        """Read one frame into `page`. Returns (frame, where it is drawn, its state), to read the frames inside it, or
+        None when it shows nowhere or not in view (left for when it shows, or for a find)."""
+        box = await self._frame_box(frame, root)
+        if not box or box.get("slot", -1) < 0:  # not drawn, or too small to list: skipped, as today
+            return None
+        line = state["frames"][box["slot"]]  # its place in the frames line
+        here = on_page(placed, box)
+        right, bottom = placed["x"] + box["right"] * placed["sx"], placed["y"] + box["bottom"] * placed["sy"]
+        if not opts.get("find") and not (right > 0 and bottom > 0 and here["x"] < page["w"] and here["y"] < page["h"]):
+            line["readable"] = True  # nothing of it in view: left for when it shows, or for a find
+            return None
+        call = {**opts, "at": {**here, "w": page["w"], "h": page["h"], "label": line["label"]},
+                "maxRows": max(0, opts["maxRows"] - len(page["rows"])),
+                "textLimit": max(0, opts["textLimit"] - len(page["text"]) - 1)}
+        part = await self._reader_in(frame, "observe(" + json.dumps({**call, "next": tab.next}) + ")")
+        taken = {item["id"] for item in page["rows"]}
+        if any(item["id"] in taken or tab.inside.get(item["id"], frame) is not frame for item in part["rows"]):
+            # an earlier read of this frame was dropped after it numbered rows (its counter never learned): its
+            # numbers clash with ones given since. It numbers again, once, from the page's count.
+            tab.next = max(tab.next, part.get("next") or 1)
+            for key in [key for key, owner in tab.inside.items() if owner is frame]:
+                del tab.inside[key]
+            part = await self._reader_in(frame, "observe(" + json.dumps({**call, "next": tab.next,
+                                                                         "renumber": True}) + ")")
+        line["readable"] = True
+        tab.next = max(tab.next, part.get("next") or 1)
+        for row in part["rows"]:
+            tab.inside[row["id"]] = frame
+        page["rows"] += part["rows"]
+        page["frames"] += part["frames"]
+        page["text"] = "\n".join(text for text in (page["text"], part["text"]) if text)
+        page["signals"]["frames"] += part["signals"]["frames"]  # a check box inside a frame is marked too
+        page["canvas"] = bool(page.get("canvas") or part.get("canvas"))
+        for key in ("above", "below", "truncated"):
+            page[key] += part[key]
+        return frame, here, part
 
     async def _settled_state(self, find: str | None = None) -> dict:
         """The state; on Cloudflare's own check, read again once it moved on by itself (CF_WAIT at most)."""
@@ -906,6 +1135,8 @@ class Browser:
     async def _capture(self, label: str, full_page: bool, element: str | None) -> Shot:
         metrics = await self._call("Page.getLayoutMetrics")
         if element:
+            if self.current is not None and element in self.current.inside:
+                raise BrowserError(f"{element} is in a frame from another site: take a screenshot of the page instead")
             rect = await self._reader(f"rect({json.dumps(element)})")
             if not rect:
                 raise StepStale(f"{element} gone; observe again")
@@ -1196,9 +1427,73 @@ class Browser:
         await self._ready()
         return True
 
+    def _where(self, element: str | None):
+        """Where a row's element is: the frame from another site it was read in, or else the working tab. A row in a
+        frame that has since become a bot check's is refused; one whose frame went is stale."""
+        tab = self.current
+        frame = tab.inside.get(element) if tab is not None and element else None
+        if frame is None:
+            return tab
+        if CHECK_FRAME.search(frame.url):
+            raise StepBlocked(f"{element} is in a bot check box: the user ticks it, never you")
+        if tab.frames.get(frame.frame) is not frame:
+            raise StepStale(f"{element} gone (its frame went); the current page is below")
+        return frame
+
+    async def _placed(self, tab: Tab, frame: Frame) -> dict | None:
+        """Where `frame` is drawn on the page now ({x, y, sx, sy}), its parent frames placed first; None when it shows
+        nowhere."""
+        found, parent = self._session_root(frame.host)
+        if found is not tab:
+            return None
+        placed = PAGE if parent is None else await self._placed(tab, parent)
+        box = await self._frame_box(frame, parent or tab) if placed else None
+        return on_page(placed, box) if box else None
+
+    async def _frame_target(self, frame: Frame, call: str) -> dict:
+        """target() in a frame's own reader, with where the frame is drawn now: its element's position is read again
+        there, as a same-site frame's is. Once more when scrolling to the element moved the frame too."""
+        tab = self.current
+        for _ in range(2):
+            placed = await self._placed(tab, frame)
+            if placed is None:
+                return {"ok": False, "reason": "hidden"}
+            place = {**placed, "w": (tab.last or {}).get("w", 0), "h": (tab.last or {}).get("h", 0)}
+            result = await self._reader_in(frame, f"{call}, {json.dumps(place)})")
+            if result.get("reason") != "moved":
+                return result if '"upload"' in call else await self._uncovered(tab, frame, result)  # no input lands
+            await self._settle(None)  # the page scrolled too: a frame of its own process is hit where it is drawn
+        return {"ok": False, "reason": "offscreen"}
+
+    async def _uncovered(self, tab: Tab, frame: Frame, result: dict) -> dict:
+        """`result` (an ok target in `frame`), unless something on the page (or in a frame above) covers the frame
+        where the input would land: then the same answer as a covered element on the page."""
+        if not result.get("ok"):
+            return result
+        x, y, f = result["x"], result["y"], frame
+        while True:
+            root = self._session_root(f.host)[1]
+            if root is None:
+                root_tab, scale = tab, None
+            else:
+                scale = await self._placed(tab, root)
+                if scale is None:
+                    return {"ok": False, "reason": "hidden"}
+                root_tab = root
+            rx, ry = (x, y) if scale is None else ((x - scale["x"]) / scale["sx"], (y - scale["y"]) / scale["sy"])
+            by = await self._on_owner(f, root_tab, f"coveredAt(this, {rx}, {ry})")
+            if by:
+                return {"ok": False, "reason": "covered", "by": by}
+            if root is None:
+                return result
+            f = root
+
     async def _target(self, element: str, kind: str, confirmed: bool) -> dict:
-        result = await self._reader(f"target({json.dumps(element)}, {json.dumps(kind)}, "
-                                    f"{json.dumps(self._risky)}, {json.dumps(self._downloads)})")
+        where = self._where(element)
+        call = (f"target({json.dumps(element)}, {json.dumps(kind)}, "
+                f"{json.dumps(self._risky)}, {json.dumps(self._downloads)}")
+        result = await (self._frame_target(where, call) if isinstance(where, Frame) else
+                        self._reader_in(where, call + ")"))
         if not result.get("ok"):
             reason = result.get("reason", "unavailable")
             if reason in {"disabled", "not editable", "not a file input"}:
@@ -1212,9 +1507,10 @@ class Browser:
 
     async def _settle(self, element: str | None) -> None:
         try:
-            await self._reader(f"settle({json.dumps(element)})", await_promise=True, timeout=5)
+            await self._reader_in(self._where(element), f"settle({json.dumps(element)})", await_promise=True,
+                                  timeout=5)
         except (BrowserError, CDPError):
-            pass  # the page is navigating away; _finish_navigation handles it
+            pass  # the page (or the frame) is navigating away; _finish_navigation handles it
 
     async def _mouse(self, kind: str, x: float, y: float, **extra) -> None:
         await self._call("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y, **extra})
@@ -1273,8 +1569,8 @@ class Browser:
         raise BrowserError(f'"{text}" did not appear within {WAIT_TEXT_CAP:g}s')
 
     async def _scroll(self, step: Step) -> None:
-        if step.target:
-            if not await self._reader(f"scrollIntoView({json.dumps(step.target)})"):
+        if step.target:  # in its own frame, if it is in one: scrolled there, never guessed with the wheel
+            if not await self._reader_in(self._where(step.target), f"scrollIntoView({json.dumps(step.target)})"):
                 raise StepStale(f"{step.target} gone; the current page is below")
         elif step.value in {"top", "bottom"}:
             await self._eval("window.scrollTo(0, " +
@@ -1310,9 +1606,9 @@ class Browser:
         elif op in {"type", "append"}:
             if element:
                 await self._click(await self._target(element, op, confirmed=True))
-                if op == "type":
-                    await self._reader(f"selectContents({json.dumps(element)})")
-                elif await self._reader(f"caretEnd({json.dumps(element)})") == "end-key":
+                if op == "type":  # focused in its own frame: the typing below follows the focus there
+                    await self._reader_in(self._where(element), f"selectContents({json.dumps(element)})")
+                elif await self._reader_in(self._where(element), f"caretEnd({json.dumps(element)})") == "end-key":
                     await self._press("End")
             if step.value:
                 await self._call("Input.insertText", {"text": step.value})
@@ -1324,14 +1620,15 @@ class Browser:
             await self._settle(None)
         elif op == "select":
             await self._target(element, "select", confirmed=True)
-            result = await self._reader(f"selectOption({json.dumps(element)}, {json.dumps(step.value)})")
+            result = await self._reader_in(self._where(element),
+                                           f"selectOption({json.dumps(element)}, {json.dumps(step.value)})")
             if not result.get("ok"):
                 options = ", ".join(result.get("options") or [])
                 raise BrowserError(result.get("reason", "cannot select") + (f"; options: {options}" if options else ""))
             await self._settle(element)
         elif op in {"check", "uncheck"}:
             target = await self._target(element, "click", confirmed)  # identity first, then state
-            row = await self._reader(f"state({json.dumps(element)})")
+            row = await self._reader_in(self._where(element), f"state({json.dumps(element)})")
             if row is None:
                 raise StepStale(f"{element} gone; the current page is below")
             want = op == "check"
@@ -1347,12 +1644,13 @@ class Browser:
         elif op == "upload":
             await self._target(element, "upload", confirmed=True)
             path = self._upload_path(step.value)
-            node = await self._evaluate(self.current, {"expression": f"window.__aib.node({json.dumps(element)})"})
+            where = self._where(element)
+            node = await self._evaluate(where, {"expression": f"window.__aib.node({json.dumps(element)})"})
             object_id = node.get("result", {}).get("objectId")
             if not object_id:
                 raise StepStale(f"{element} gone; the current page is below")
-            await self._call("DOM.setFileInputFiles", {"files": [path],
-                                                        "objectId": object_id})
+            await self.cdp.send("DOM.setFileInputFiles", {"files": [path], "objectId": object_id},
+                                session_id=where.session)
             await self._settle(None)
         elif op == "scroll":
             await self._scroll(step)

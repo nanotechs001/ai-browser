@@ -72,7 +72,8 @@ async def test_the_icon_only_menu_still_names_each_button(stack):  # the final r
         tree = await cdp.send("Accessibility.getPartialAXTree", {"nodeId": node, "fetchRelatives": False},
                               session_id=session)
         names.append(tree["nodes"][0].get("name", {}).get("value", ""))
-    assert names == ["New Mission", "Dashboard", "My Missions", "Knowledge", "Integrations", "History"]
+    assert names == ["New Mission", "Dashboard", "My Missions", "Agents", "Knowledge", "Integrations", "Tabs",
+                     "History"]
     assert await js("[...document.querySelectorAll('#new-mission, .page-link')].map(node => node.title)") == names
 
 
@@ -86,7 +87,7 @@ async def test_the_menu_counts_and_opens_its_pages(stack):
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await agents.create("keep working")
     assert await until(js, "document.getElementById('counts').textContent === '1 active task · 1 completed'")
-    for name in ("missions", "knowledge", "integrations", "history", "dashboard"):
+    for name in ("missions", "agents", "knowledge", "integrations", "tabs", "history", "dashboard"):
         await js(f"{page_link(name)}.click(); true")
         shown = await js("[...document.querySelectorAll('.centre > .page')].filter(node => !node.hidden)"
                          ".map(node => node.id)")
@@ -240,7 +241,7 @@ async def test_long_words_clip_in_the_right_column(stack):  # Review Focus 1
 
 @CHROME
 async def test_a_click_picks_a_desk_and_a_waiting_card_opens_its_drawer(stack, tmp_path):
-    from test_ai_home_phase2 import ask_for_clickup
+    from test_tools import ask_for_clickup
 
     stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
     await stack["server"].agents.create("keep working")
@@ -941,7 +942,7 @@ async def test_a_long_run_time_stays_on_one_line_in_my_missions_and_history(stac
 # ---- Templates, Knowledge and Integrations (Task 15) -----------------------------------------------------------------
 
 @CHROME
-async def test_integrations_are_ai_homes_own(stack):
+async def test_integrations_have_their_own_page(stack):
     js = await open_mission(stack)
     await js(f"{page_link('integrations')}.click(); true")
     assert await until(js, "document.querySelector('#page-integrations .tool-servers') !== null")
@@ -1433,8 +1434,8 @@ async def test_the_calendar_shows_scheduled_templates_and_finished_agents(stack)
     assert await until(js, "document.getElementById('drawer-title').textContent === '1 · Fix the footer'")
     await js("document.getElementById('drawer-close').click();"
              "document.querySelector('#view-calendar .entry.template').click(); true")
-    assert await until(js, "location.pathname === '/home'"
-                           " && document.getElementById('workflows-section')?.open === true")  # AI Home's templates
+    assert await until(js, "!document.getElementById('page-agents').hidden && document.querySelector("
+                           "'#page-agents .workflow[data-slug=\"morning-report\"]') !== null")  # Tasks for any agent
 
 
 CALENDAR_FUNCTIONS = """import('/calendar.js').then(({ monthGrid, weekDays, everyWords, calendarItems }) => {
@@ -1606,7 +1607,7 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
                    "their chips go only once the app has placed them",
                    "Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it",
                    '"Pictures go with Build a Mission or an agent\'s chat"', "Pasted text stays text",
-                   "AI Home's **New task** and an agent's chat there take pictures and files the same way",
+                   "The floating chat's **New task** takes pictures and files the same way",
                    "Cells copied from a spreadsheet paste as text"):
         assert phrase in readme, phrase
     for gone in ("brain of glowing points", "WebGL", "no web tools at all", "a file that was not yet sent",

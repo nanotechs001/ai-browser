@@ -469,8 +469,10 @@ class BrainService:
         for item in kept:  # a workflow the user set to run right away starts now (its tools still ask first)
             workflow = next((each for each in workflows if each.slug == item.workflow), None)
             if workflow is not None and workflow.run == "auto" and self.runner is not None:
-                with contextlib.suppress(ValueError):
+                try:
                     await self._start_workflow(item, workflow)
+                except ValueError as exc:  # its agent is working (or gone): the item says so, Run tries again
+                    self._note(item, str(exc))
         for item in kept:  # a task for an agent that is working: a hand-off that waits for Send (an email's words)
             give = verdicts.get(item.id, {}).get("give")
             row = next((row for row in self._rows() if give and row["id"] == give["agent"]), None)

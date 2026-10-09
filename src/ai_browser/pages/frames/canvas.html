@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Canvas (test page)</title></head>
+<body style="margin:0;font:16px sans-serif">
+<!-- The builder's canvas, served from the other host: a button, a field, a native menu, a checkbox, a file input, a
+     download link, a panel that scrolls, and a frame from the first host inside it (another site again). -->
+<h2 style="margin:0 0 20px">Header section</h2>
+<button style="margin:40px 0 0 300px" onclick="this.textContent = 'Row added'">Add row</button>
+<p><label>Headline <input id="headline"></label></p>
+<p><label>Sticky <select id="sticky" onchange="log('change ' + this.value)" oninput="log('input ' + this.value)">
+  <option>Off</option><option>On</option></select></label></p>
+<p id="log"></p>
+<p><label><input type="checkbox" id="wide" onchange="log('wide ' + this.checked)"> Full width</label>
+  <input type="file" aria-label="Background image" onchange="log('file ' + this.files[0].name)">
+  <a href="/downloads/bigfile">Get the template</a></p>
+<div id="panel" style="height:120px;width:300px;overflow:auto;border:1px solid #888">
+  <div style="height:600px">Panel top</div>
+  <button onclick="this.textContent = 'Deep clicked'">Deep button</button>
+</div>
+<iframe name="nested" style="position:absolute;left:600px;top:300px;width:300px;height:150px;border:0"></iframe>
+<script>
+  const log = (text) => { document.getElementById("log").textContent += text + "; "; };
+  document.querySelector("[name=nested]").src = `http://localhost:${location.port}/frames/nested.html`;
+</script>
+</body>
+</html>

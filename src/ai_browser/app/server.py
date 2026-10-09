@@ -1,4 +1,4 @@
-"""The AI Browser app server: AI Home's, Mission Control's and Settings' only way to the agents.
+"""The AI Browser app server: Mission Control's, Settings' and the floating chat's only way to the agents.
 
 It listens on 127.0.0.1 only, and every route checks the Host header. AI Browser's pages are served here to its own
 window, which swaps a one-time code for an HttpOnly cookie and lands on its tab menu (/app); the menu shows our other
@@ -63,10 +63,11 @@ from . import attachments
 from . import pagematch
 from . import powers
 from .agents import CLOSED, Agent, AgentManager
-from .bravelink import NOT_CONNECTED, PlaceError
+from .bravelink import NOT_CONNECTED, NOT_OPEN, PlaceError
 from .inworld import WorldError
+from .savedagents import BAD_ACCOUNT, BAD_PROFILE, NOT_AN_AGENT, SavedAgents
 from .workspaces import GONE as WORKSPACE_GONE
-from .workspaces import Workspaces
+from .workspaces import Workspaces, one_line
 from .cdprelay import Tokens
 
 APP_PORTS = range(8792, 8812)
@@ -77,7 +78,7 @@ THUMB_EVERY = 2  # seconds between two thumbnails of one agent's tab
 TEXT_LIMIT = 20_000  # characters of a task or a message
 BRAIN_MESSAGES = {"brain", "draft", "approve", "hand", "done", "tell", "watch_set", "watch_remove", "style",
                   "tell_confirm", "tell_dismiss", "handoff_send", "handoff_cancel"}
-HANDOFF_VIEWS = frozenset({"home", "mission", "chat"})  # the pages that show the Brain's hand-off cards
+HANDOFF_VIEWS = frozenset({"mission", "chat"})  # the pages that show the Brain's hand-off cards
 HOLD_AFTER = 0.3  # seconds without a page that can show a card before every countdown holds (a tab switch is quicker)
 TOOLS_MESSAGES = {"tools", "tool_set", "tool_allow", "tool_forget", "permission"}
 WORKFLOW_MESSAGES = {"workflows", "workflow_save", "workflow_delete", "workflow_run"}
@@ -91,14 +92,15 @@ BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back", "browser_disconnect"
 CHECK_SITE = re.compile(r"[a-z0-9.-]{1,253}")  # a host name, nothing else
 CHECK_LIVE = re.compile(r"http://127\.0\.0\.1:\d{1,5}/live\?token=[A-Za-z0-9_-]{1,64}")  # an engine's live view
 WORKFLOW_FIELDS = ("slug", "name", "instructions", "trigger", "site", "when", "schedule", "run", "tools", "skills",
-                   "model")
+                   "model", "runs_as")
 WATCH_FIELDS = ("site", "label", "url_match", "selector", "instructions", "enabled")
 UI = Path(__file__).with_name("ui")  # AI Browser's pages, served to its window only
 SETUP_PAGE = UI / "setup.html"
 SHELL = "/app"  # the window's own page: the tab menu, which shows the others in frames
-PAGES = {SHELL: "app.html", "/home": "home.html", "/mission": "mission.html", "/settings": "settings.html",
+PAGES = {SHELL: "app.html", "/mission": "mission.html", "/settings": "settings.html",
          "/chat": "chat.html"}  # /chat: the floating chat, in a window of its own (nothing frames it)
-FRAMED = frozenset({"/home", "/mission", "/settings", "/setup"})  # the pages the tab menu shows: only it frames them
+FRAMED = frozenset({"/mission", "/settings", "/setup"})  # the pages the tab menu shows: only it frames them
+OLD_HOME = "/home"  # the old home page's address (the saved-agents spec, 6): a bookmark of it opens Mission Control
 LIVE_VIEWS = " ".join(f"http://127.0.0.1:{port}" for port in LIVE_PORTS)  # an engine's live view binds one of these
 FILE_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png"}
 OPEN_ANYWHERE = {"setup.js", "setup.css", "icon.png", "theme.css"}  # the setup page's own files: it opens in Brave too
@@ -106,15 +108,16 @@ CODE_TTL = 60  # seconds a one-time start code is good for
 PICK_WAIT = 120.0  # seconds a pick may take: the user points and clicks in Brave
 PICK_OFF = "Turn on Read my Gmail, Slack and Asana tabs first"
 PICK_TAB = "Pick one of your open tabs in Brave"
-# watcher_note: AI Home's Got it; read_tabs, brain_sources and auto_hand: Settings → Brain's switch, checkboxes and
-# hand-off switch
+# watcher_note: Settings → Brave's Got it; read_tabs, brain_sources and auto_hand: Settings → Brain's switch, checkboxes
+# and hand-off switch
 SETTING_KEYS = ("model", "voice", "window_browser", "shortcut", "watcher_note", "read_tabs", "agents_profile",
                 "brain_sources", "auto_hand")
 CHAT_OFF = "The Brain isn't listening to the floating chat: check it in Settings → Brain"
 NOTES_KEPT = 50  # the app's notifications whose click is still answered
 PLATFORM_WORDS = {"darwin": "mac", "win32": "windows"}  # the pages say "the menu bar" or "by the clock"
 APP_SILENT = "AI Browser's app didn't answer: try again"
-CHAT_NOT_CONNECTED = "Brave isn't connected to AI Browser, so the chat can't read that page: connect it in AI Home"
+CHAT_NOT_CONNECTED = ("Brave isn't connected to AI Browser, so the chat can't read that page: connect it at the top of "
+                      "Mission Control")
 CHAT_PAGE_CHANGED = "That tab went to another site before AI Browser read it, so nothing was sent: ask again"
 URL_LIMIT = 2000  # characters of a website address a page may ask the user's browser to open
 NOT_HERE = "AI Browser's pages open only in its own window. Start it {how}."  # not_here()
@@ -129,9 +132,14 @@ ACCOUNT_MESSAGES = {"accounts", "account_add", "account_add_existing", "account_
 POWERS_MESSAGES = {"folder_choose", "folder_trust", "permission_rules", "permission_rule_remove"}  # agent powers
 WORKSPACE_MESSAGES = {"workspaces", "workspace_save", "workspace_delete", "workspace_assign"}  # the new look
 ATTACH_MESSAGES = {"attach_start", "attach_chunk", "attach_drop"}  # the new look's Attach: a file in pieces
+SAVED_MESSAGES = {"saved_agents", "saved_agent_save", "saved_agent_delete"}  # the Agents page: our own pages only
+SAVED_FIELDS = ("slug", "name", "description", "instruction", "profile", "web", "model", "account", "folder",
+                "auto_approve", "can_use", "load_at_start")
 SIGNIN_EVERY = 5  # seconds between two looks at an account the user is signing in
 SIGNIN_WAIT = 600  # seconds the app keeps looking
 IN_USE = "{name} is in use by {label}: move or close that agent first"
+NOT_LEARNED = ("Agent {number} browses in Brave's {name} profile. Open a window of that profile once; AI Browser learns "
+               "it in about 30 seconds.")  # the user's words on the run (Claude hears bravelink's NOT_OPEN)
 EMPTY_MESSAGE = "Write a message, or attach a file"
 YOU = {"kind": "you"}
 
@@ -151,7 +159,7 @@ APP_ONLY = Rule()
 MESSAGE_RULES: dict[str, Rule] = {
     "hello": APP_ONLY,
     "visibility": APP_ONLY,  # the Brain's hand-offs (2026-10-08): a page shown or hidden (link.js)
-    # the Brain's inbox, in AI Home, Mission Control and Settings
+    # the Brain's inbox, in Mission Control and Settings
     "brain": APP_ONLY, "draft": APP_ONLY, "approve": APP_ONLY, "hand": APP_ONLY, "done": APP_ONLY,
     "tell": APP_ONLY, "watch_set": APP_ONLY, "watch_remove": APP_ONLY, "style": APP_ONLY,
     "watch_pick": APP_ONLY,  # Settings → Brain: Pick the part to watch, on the user's click
@@ -168,14 +176,14 @@ MESSAGE_RULES: dict[str, Rule] = {
     "handoff_send": APP_ONLY, "handoff_cancel": APP_ONLY,
     "check_continue": APP_ONLY, "check_skip": APP_ONLY, "check_show": APP_ONLY,
     "brave_connect": APP_ONLY, "hand_tab": APP_ONLY, "take_back": APP_ONLY,
-    "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in AI Home's list of connected clients
+    "browser_disconnect": APP_ONLY,  # cdp-relay: Disconnect in Settings → Brave's list
     "new_task": APP_ONLY,  # with or without adopt
     # send: the user's message to an agent, with the files a page staged (the drawer's chat): a file, never a right
     "send": APP_ONLY, "stop": APP_ONLY, "close": APP_ONLY, "model": APP_ONLY,
     "watch": APP_ONLY, "events": APP_ONLY, "thumbs": APP_ONLY,
-    "settings_set": APP_ONLY,  # the window's Settings, AI Home's and Mission Control's picks
+    "settings_set": APP_ONLY,  # the window's Settings and Mission Control's picks
     "open_url": APP_ONLY,  # a website link in one of our pages
-    # the floating chat (native-app part c): "This page" as AI Browser's own app read it, and Open AI Home
+    # the floating chat (native-app part c): "This page" as AI Browser's own app read it, and Open Mission Control
     "this_page": APP_ONLY, "show_app": APP_ONLY,
     # AI accounts: Settings → Accounts, the Account pickers and Continue on. The Brain and voice never add, sign in,
     # choose or move (the spec's Safety)
@@ -194,6 +202,9 @@ MESSAGE_RULES: dict[str, Rule] = {
     # Auto-approve in its folder (the user's choice, 2026-10-07): the drawer's switch, on or off, the user's click on
     # one of our pages. The Brain, templates and voice never turn it on (new_task's "auto" is the composer's switch)
     "agent_auto": APP_ONLY,
+    # Saved agents (2026-10-08): the Agents page lists, saves and deletes them, on the user's click on one of our pages.
+    # Their instruction reaches their system prompt: the Brain, templates, voice and pages' text never write one
+    "saved_agents": APP_ONLY, "saved_agent_save": APP_ONLY, "saved_agent_delete": APP_ONLY,
 }
 
 
@@ -342,6 +353,7 @@ class AppServer:
         self.home = Path(home)
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
         self.workspaces = Workspaces(self.home)  # <home>/workspaces.json: the new look's groups
+        self.saved = SavedAgents(self.home)  # <home>/agents: the saved agents (the Agents page)
         self.uploads = attachments.Uploads(self.home / "app" / "uploads")  # files on their way from a page
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
         self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
@@ -356,7 +368,7 @@ class AppServer:
         self.hearing = hearing  # push-to-talk: the user's speech becomes text on this computer (Mission Control)
         if hearing is not None:
             hearing.on_status = lambda status: self._send_all({"type": "hearing_status", **status})
-        self.tools = tools  # the user's MCP servers for the agents (AI Home → Tools)
+        self.tools = tools  # the user's MCP servers for the agents (Integrations)
         if tools is not None:
             agents.tools = tools
         self.accounts = accounts  # AI accounts (Settings → Accounts); None: Default only, as before
@@ -368,19 +380,20 @@ class AppServer:
         self.open_terminal = open_terminal
         self._signing_in: dict[str, asyncio.Task] = {}  # account id -> the look at its sign-in
         self.brain_account = brain_account  # the Brain's and its skill writer's calls, on the Brain's account
-        self.brain_limit: dict | None = None  # {"account", "resets_at"}: AI Home's Brain card, until a switch
+        self.brain_limit: dict | None = None  # {"account", "resets_at"}: the Brain's card in its inbox, until a switch
         if brain_account is not None:
             brain_account.on_limit = self._brain_limit_hit
-        self.workflows, self.runner = workflows, runner  # the user's workflows (AI Home → Workflows)
+        self.workflows, self.runner = workflows, runner  # the user's templates (the Agents page)
         if runner is not None:
             runner.on_change = self.workflows_changed
+            runner.saved = self.saved  # a template's Runs as: a saved agent
         if brain is not None:
             brain.workflows, brain.runner = workflows, runner
         self._roles: dict[WebSocket, str] = {}  # "app", stored when a socket is accepted
-        self._views: dict[WebSocket, str] = {}  # which page said hello on a socket: "home", "mission", "chat"…
+        self._views: dict[WebSocket, str] = {}  # which page said hello on a socket: "mission", "chat", "settings"…
         self._shown: set[WebSocket] = set()  # the sockets whose page says it can be seen (link.js: hello, visibility)
         self._holding: asyncio.TimerHandle | None = None  # the hold that waits HOLD_AFTER for another page in front
-        self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (AI Home…)
+        self._windows: set[WebSocket] = set()  # AI Browser's window's sockets: the pages in its tabs (Mission Control…)
         self.window_seen = False  # the window's first socket has come in
         if brain is not None:
             brain.broadcast = self._send_all
@@ -411,6 +424,7 @@ class AppServer:
         self._feed = agents.subscribe()
         self._fanout: asyncio.Task | None = None
         self._thumbs: dict[str, dict] = {}  # agent id -> {"last": monotonic time, "task", "again", "jpeg"}
+        self._told_profile: set[str] = set()  # runs told their profile isn't learned yet (once each)
         self._jobs: set[asyncio.Task] = set()
         self._server: _QuietServer | None = None
         self._task: asyncio.Task | None = None
@@ -418,6 +432,7 @@ class AppServer:
         agents.let_go = self._let_go  # a handed tab taken back, or let go when its agent closes
         agents.on_turn = lambda agent: self.connect_brave("turn", agent.id)  # right after the user's task
         agents.mint_token = self.tokens.mint
+        agents.catalog = self._skill_catalog  # Load at start: a run's first message carries its skills' text
         if brain is not None:
             brain.set_sources(self.settings.get()["brain_sources"])  # Settings → Brain's checkboxes
             brain.auto_hand = lambda: self.settings.get()["auto_hand"]  # Settings → Brain's hand-off switch
@@ -482,7 +497,7 @@ class AppServer:
 
     def _old_watcher(self) -> bool:
         """Whether an earlier AI Browser's copy of Brave's watcher is still in <home>/app/watcher, so the extension may
-        still be loaded in Brave: AI Home then says the user can remove it. AI Browser never removes either."""
+        still be loaded in Brave: Settings → Brave then says the user can remove it. AI Browser never removes either."""
         return (self.home / "app" / "watcher" / "manifest.json").is_file()
 
     def _settings_set(self, queue: asyncio.Queue, message: dict) -> None:
@@ -532,7 +547,7 @@ class AppServer:
         self.desktop = None
 
     def _desktop_payload(self) -> dict:
-        """Settings' and AI Home's view of AI Browser's own app: whether it is set up and running, what went wrong
+        """Settings' view of AI Browser's own app: whether it is set up and running, what went wrong
         last, and the shortcut with the app's word on it."""
         value = self.settings.get()["shortcut"]
         said = self.desktop.shortcut if self.desktop is not None else {}
@@ -578,7 +593,7 @@ class AppServer:
 
     def _notify_desktop(self, message: dict) -> bool:
         """A notification from AI Browser's own app, in place of Brave's, in fixed words (desktop/notes.py). False when
-        the app isn't running: AI Home shows it then."""
+        the app isn't running: Mission Control shows it then."""
         desktop = self.desktop
         note = note_for(message) if desktop is not None and not desktop.ended.is_set() else None
         if note is None:
@@ -592,7 +607,7 @@ class AppServer:
 
     async def _clicked(self, note_id: str) -> None:
         """A click on one of the app's notifications. A bot check brings the agent's tab forward, in Brave. Anything
-        else brings the app's window forward, on AI Home, at that agent's row (or the Brain)."""
+        else brings the app's window forward, on Mission Control, at that agent's drawer (or the Brain's inbox)."""
         note = self._notes.pop(note_id, None)
         if note is None or self.desktop is None:
             return
@@ -645,7 +660,8 @@ class AppServer:
         queue.put_nowait({**answer, "state": "found", "tab": tab} if tab is not None else {**answer, "state": "choose"})
 
     def _show_app(self, message: dict) -> None:
-        """The floating chat's Open AI Home (or an agent's number in it): AI Browser's window comes forward on AI Home,
+        """The floating chat's Open Mission Control (or an agent's number in it): AI Browser's window comes forward on
+        Mission Control,
         at that agent's row, or the Brain's. A view only: nothing runs."""
         agent = message.get("agent")
         if isinstance(agent, str) and AGENT_ID.match(agent):
@@ -720,7 +736,7 @@ class AppServer:
     async def start(self) -> str:
         self.uploads.clear()  # a crash's leftovers: no page is there to send them any more
         app = _Guard(Starlette(routes=[Route("/", self._root), Route("/open", self._open), Route(SHELL, self._page),
-                                       Route("/home", self._page), Route("/mission", self._page),
+                                       Route(OLD_HOME, self._old_home), Route("/mission", self._page),
                                        Route("/settings", self._page), Route("/chat", self._page),
                                        Route("/health", self._health), Route("/setup", self._setup),
                                        Route("/agent-events", self._agent_events, methods=["POST"]),
@@ -793,6 +809,10 @@ class AppServer:
 
     async def _root(self, request: Request) -> Response:
         return RedirectResponse(SHELL, status_code=303)
+
+    async def _old_home(self, request: Request) -> Response:
+        """The old home page's address: Mission Control, where everything it had now is."""
+        return RedirectResponse("/mission", status_code=303)
 
     async def _open(self, request: Request) -> Response:
         """The window's start address: a valid code becomes the cookie, and the redirect to the tab menu drops the code
@@ -903,7 +923,8 @@ class AppServer:
         return body, None
 
     def _owner_of(self, agent_id: str, handed: bool = False) -> dict | None:
-        """Who an id is, as AI Home's chips show it: an agent (or a tab handed to it), or a Claude Code session."""
+        """Who an id is, as the Tabs page's chips show it: an agent (or a tab handed to it), or a Claude Code
+        session."""
         if SESSION_ID.match(agent_id):
             session = self.sessions.get(agent_id)
             return None if session is None else {"kind": "session", "id": agent_id, "name": session["name"],
@@ -914,7 +935,7 @@ class AppServer:
         return {"kind": "handed" if handed else "agent", "id": agent.id, "name": agent.name, "color": agent.color}
 
     def _own(self, target: str, owner: dict | None) -> None:
-        """Whose a tab of the user's Brave is, for AI Home (brave mode only)."""
+        """Whose a tab of the user's Brave is, for the Tabs page (brave mode only)."""
         if self.brave is None or not target:
             return
         if owner is None:
@@ -945,7 +966,7 @@ class AppServer:
             self._own(target, None)
 
     def _after_agent_report(self, report: dict) -> None:
-        """AI Home's chips follow an agent's tabs."""
+        """The Tabs page's chips follow an agent's tabs."""
         agent_id, kind, target = report["agent"], report.get("kind"), report.get("target")
         if not isinstance(target, str) or not target or self.agents.agents.get(agent_id) is None:
             return
@@ -967,13 +988,27 @@ class AppServer:
             return Response(status_code=404)
         if self.brave is None:
             return JSONResponse({"error": NOT_CONNECTED})
+        agent = self.agents.agents.get(owner_id)
+        profile = agent.profile if agent is not None else None  # a saved agent's own Brave profile, else Settings'
         try:
-            target = await self.brave.open_ai_tab(owner_id)
+            target = await self.brave.open_ai_tab(owner_id, profile=profile)
         except PlaceError as exc:
+            if profile is not None and str(exc) == NOT_OPEN:
+                self._not_learned(agent)
             return JSONResponse({"error": str(exc)})
         self._record_tab(owner_id, target)
         self._own(target, owner)
         return JSONResponse({"target": target})
+
+    def _not_learned(self, agent: Agent) -> None:
+        """A run's profile isn't learned yet: its chat says so once, in fixed words that name the profile. Nothing
+        opens a Brave window by itself."""
+        if agent.id in self._told_profile:
+            return
+        self._told_profile.add(agent.id)
+        name = next((row["name"] for row in self._profiles() if row["folder"] == agent.profile), agent.profile)
+        name = one_line(name)[:60]  # Brave's name is the user's own: one line, as long as the other one-line fields
+        self.agents.note(agent.id, NOT_LEARNED.format(number=agent.number, name=name))
 
     async def _agent_status(self, request: Request) -> Response:
         agent_id = request.query_params.get("agent", "")
@@ -999,7 +1034,7 @@ class AppServer:
             return Response(status_code=404)
         relay = self.brave.relay if self.brave is not None else None
         if relay is not None and relay.is_cut_off(session_id):
-            return Response(status_code=410)  # the user disconnected it in AI Home: not listed again this run
+            return Response(status_code=410)  # the user disconnected it in Settings → Brave: not again this run
         known = self.sessions.get(session_id)
         self.sessions[session_id] = {"id": session_id, "name": "Claude Code", "color": "orange",
                                      "tabs": known["tabs"] if known else [], "pid": pid}
@@ -1049,6 +1084,7 @@ class AppServer:
         relay.port = self.port or 0  # 0 until the server listens (the relay's own default)
         relay.handed = self._handed_to
         relay.may_open = lambda identity: bool(SESSION_ID.match(identity)) or self.agents.working(identity)
+        relay.placed_only = self._placed_only  # a run with a Brave profile of its own: the app opens its tabs
         self.agents.own_tabs = relay.own_targets
         relay.on_grant(lambda identity, target: self._own(target, self._owner_of(identity)))
         relay.on_change(self._clients_changed)
@@ -1123,6 +1159,14 @@ class AppServer:
         else:
             answer(site=site, sample=_text(result.get("sample"))[:300])
 
+    def _placed_only(self, identity: str) -> bool:
+        """Whether only the app may open this client's tabs: a run with a Brave profile of its own, or an agent's id
+        the app no longer knows (its socket outlived AgentManager.close): fail closed, never the profile used last."""
+        agent = self.agents.agents.get(identity)
+        if agent is None:
+            return bool(AGENT_ID.match(identity))
+        return agent.profile is not None
+
     def _handed_to(self, identity: str) -> set[str]:
         """The tabs the user handed this agent now (Hand over, or a task started in a tab): read live."""
         agent = self.agents.agents.get(identity)
@@ -1143,8 +1187,8 @@ class AppServer:
         await relay.serve(ws)
 
     def _browser_clients(self) -> list[dict]:
-        """AI Home's list of what uses the user's Brave through the app (the relay's rows, with names and colours).
-        No token is in it."""
+        """Settings → Brave's list of what uses the user's Brave through the app (the relay's rows, with names and
+        colours). No token is in it."""
         if self.brave is None:
             return []
         rows = []
@@ -1302,9 +1346,9 @@ class AppServer:
         return False
 
     def _shows_handoffs(self) -> bool:
-        """Whether a page that shows the Brain's hand-off cards (AI Home, Mission Control, the floating chat) can be
-        seen: it is open and says it isn't hidden (the desktop app only hides its window on close). Only then may a
-        hand-off count down. Nothing is sent while nobody can see it."""
+        """Whether a page that shows the Brain's hand-off cards (Mission Control, the floating chat) can be seen: it is
+        open and says it isn't hidden (the desktop app only hides its window on close). Only then may a hand-off count
+        down. Nothing is sent while nobody can see it."""
         return any(self._views.get(ws) in HANDOFF_VIEWS for ws in self._shown)
 
     def _seen(self, ws: WebSocket, shown: bool) -> None:
@@ -1394,6 +1438,8 @@ class AppServer:
             self._attach_command(ws, queue, kind, message)
         elif kind in WORKSPACE_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             self._workspace_command(queue, kind, message)
+        elif kind in SAVED_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            self._saved_command(queue, kind, message)
         elif kind == "hello":
             self._views[ws] = message.get("view") if isinstance(message.get("view"), str) else ""
             self._seen(ws, message.get("visible") is True)
@@ -1408,7 +1454,7 @@ class AppServer:
             self._job(self._open_url(queue, message))
         elif kind == "this_page":  # the floating chat: which listed tab the user is on
             self._this_page(queue, message)
-        elif kind == "show_app":  # the floating chat's Open AI Home, or an agent's number in it
+        elif kind == "show_app":  # the floating chat's Open Mission Control, or an agent's number
             self._show_app(message)
         elif kind == "new_task":
             request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
@@ -1429,17 +1475,30 @@ class AppServer:
                 else None  # agent powers: the task's folder; none is the agent's own scratch folder
             listed = message.get("attachments") if isinstance(message.get("attachments"), list) else []
             web = message.get("web") if message.get("web") in powers.WEB_CHOICES else "web"
+            saved = self.saved.get(message["agent"]) if message.get("agent") is not None else None  # Agent ▾
+            if message.get("agent") is not None and saved is None:
+                queue.put_nowait({"type": "error", "text": NOT_AN_AGENT, "request": request})
+                return
+            started = True
             try:  # an account that isn't listed any more is said, never swapped for another
                 files = self.uploads.take(ws, listed)  # each attached file whole, or nothing starts
-                agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")), account=account,
-                                            folder=folder, workspace=self._workspace_of(message), files=files,
-                                            web=web, auto=message.get("auto") is True,  # the composer's switch
-                                            name=message.get("name"), description=message.get("description"))
+                if saved is not None:  # its own settings, Auto-approve too: the page's pickers don't apply
+                    agent, started = await agents.run_as(saved, text, skills, tab=_tab(message.get("tab")),
+                                                         adopt=adopt, files=files,
+                                                         workspace=self._workspace_of(message))
+                else:
+                    agent = await agents.create(text, skills, model, adopt, _tab(message.get("tab")),
+                                                account=account, folder=folder, workspace=self._workspace_of(message),
+                                                files=files, web=web,
+                                                auto=message.get("auto") is True,  # the composer's switch
+                                                name=message.get("name"), description=message.get("description"))
             except ValueError as exc:
                 queue.put_nowait({"type": "error", "text": str(exc), "request": request})
                 return
             self.uploads.done(ws, listed)
-            if handed is not None:
+            if handed is not None and not started:  # its run is at work: the tab is handed to that run
+                await self._hand(agent.id, adopt)
+            elif handed is not None:
                 self._own(adopt, self._owner_of(agent.id, handed=True))
             queue.put_nowait({"type": "created", "id": agent.id, "request": request})
         elif kind == "send":
@@ -1860,6 +1919,65 @@ class AppServer:
             return
         self._send_all(self._workspaces_message())
 
+    # ---- saved agents: the Agents page lists, saves and deletes them (AI Browser's own pages only) -------------------
+
+    def _saved_snapshot(self) -> dict:
+        """The saved agents, and Brave's profiles for their settings: each "ready" once AI Browser has learned it on
+        this connection (else the page says "open it once")."""
+        place = self.brave.place if self.brave is not None else None
+        return {"type": "saved_agents", "agents": [saved.public() for saved in self.saved.all()],
+                "profiles": [{**row, "ready": place.ready(row["folder"])} for row in self._profiles()]}
+
+    def _saved_check(self, fields: dict) -> None:
+        """What only the app can judge, before the file is written: a profile Brave lists, an account Settings lists,
+        a folder a task may use. ValueError in the words the Agents page shows."""
+        profile, account, folder = fields.get("profile"), fields.get("account"), fields.get("folder")
+        # a list, not a set: a page's ["x"] is refused, never hashed (a TypeError would drop the window's socket)
+        if profile not in (None, "") and profile not in [row["folder"] for row in self._profiles()]:
+            raise ValueError(BAD_PROFILE)
+        listed = self.accounts.get(account) if self.accounts is not None else account == "default" or None
+        if account not in (None, "") and listed is None:
+            raise ValueError(BAD_ACCOUNT)
+        why = self.agents.folder_problem(folder) if isinstance(folder, str) and folder else None
+        if why:
+            raise ValueError(why)
+
+    def _forget_tasks(self, slug: str) -> None:
+        """A saved agent was deleted: its tasks (the templates that run as it) are deleted with it."""
+        if self.workflows is None:
+            return
+        for workflow in self.workflows.all():
+            if workflow.runs_as == slug:
+                self.workflows.delete(workflow.slug)
+        self.workflows_changed()
+
+    def _saved_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        """The Agents page: the list, Save (a new agent, or an edit) and Delete agent. Every page then hears the list
+        again. Nothing but these clicks writes an agent."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        if kind == "saved_agents":
+            queue.put_nowait(self._saved_snapshot())
+            return
+        try:
+            if kind == "saved_agent_save":
+                fields = {key: message[key] for key in SAVED_FIELDS if key in message}
+                self._saved_check(fields)
+                saved = self.saved.save(fields)
+                queue.put_nowait({"type": "saved_agent_saved", "request": request, "slug": saved.slug})
+            elif kind == "saved_agent_delete":
+                if not self.saved.delete(message.get("slug")):
+                    raise ValueError(NOT_AN_AGENT)
+                self.agents.forget_saved(message["slug"])  # a run at work goes on, as a one-off run
+                self._forget_tasks(message["slug"])
+        except ValueError as exc:
+            queue.put_nowait({"type": "error", "text": str(exc), "request": request})
+            return
+        except OSError as exc:  # a read-only home, a full disk: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't save that: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._send_all(self._saved_snapshot())
+
     def _tools_snapshot(self, account: str = "default", tools=None) -> dict:
         tools = tools if tools is not None else self.tools
         return {"type": "tools_snapshot", "account": account, "servers": tools.servers(),
@@ -1886,7 +2004,7 @@ class AppServer:
         self._send_all({"type": "accounts", "accounts": self._account_rows()})
 
     def _brain_limit_hit(self, limit: dict) -> None:
-        """The Brain's account hit its usage limit: AI Home's Brain card asks to continue on another account."""
+        """The Brain's account hit its usage limit: the Brain's card asks to continue on another account."""
         self.brain_limit = {"account": str(limit.get("account", "")), "resets_at": limit.get("resets_at")}
         self._send_all({"type": "brain_limit", "limit": self.brain_limit})
         self._accounts_changed()
@@ -2002,10 +2120,13 @@ class AppServer:
 
     # ---- skills -----------------------------------------------------------------------------------------------
 
-    def _skills(self) -> list:
+    def _skill_catalog(self) -> Catalog:
         if self._catalog is None:  # the same skills the agents' engines see
             self._catalog = Catalog.of_user(project_root() / "skills", set(load_config(self.home).blocked_skills))
-        return self._catalog.all()
+        return self._catalog
+
+    def _skills(self) -> list:
+        return self._skill_catalog().all()
 
     def _skills_summary(self) -> dict:
         by_source: dict[str, int] = {}

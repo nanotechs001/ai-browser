@@ -1,4 +1,4 @@
-// AI Home → Train a new agent: the Brain drafts a skill (SKILL.md) from what the user describes, or from a finished
+// Knowledge → Train a new skill: the Brain drafts a skill (SKILL.md) from what the user describes, or from a finished
 // agent's chat (Save as skill). The draft is plain text to read and edit; only Save writes it, to ~/.claude/skills,
 // never over an existing skill (Update shows the diff first). Try it starts an agent with the draft, writing nothing.
 import { el } from "./chat.js";

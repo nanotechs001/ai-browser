@@ -174,10 +174,6 @@ async def test_build_a_mission_names_the_agent_everywhere(stack):
     assert await js("document.title") != "pwned" and await js("document.querySelectorAll('img[src=x]').length") == 0
     await js("document.getElementById('mode-ask').click(); true")
     assert await js("document.getElementById('mission-words').hidden")  # Ask AI: no fields
-    home = stack["home_js"]
-    row = "document.querySelector('#agents .agent[data-id=\"a1\"] .name')"
-    assert await shows(home, f"{row}?.title === {json.dumps(tip)}")
-    assert await home(f"{row}.textContent") == "1 · " + name
 
 
 @CHROME
