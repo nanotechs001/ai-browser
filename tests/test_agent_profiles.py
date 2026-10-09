@@ -8,7 +8,7 @@ import json
 import httpx
 import pytest
 
-from fake_brave import FakeBrave, FakePort, until
+from fake_brave import FakeBrave, FakePort, relay_client, until
 from test_app_server import agent_headers, started
 from test_bravelink import PROFILES, connected, local_state
 from test_bridge import EVENTS
@@ -130,6 +130,36 @@ async def test_an_agent_shaped_client_the_app_no_longer_knows_never_opens_a_tab(
         assert len(rig.sent("Target.createTarget")) == 2
     finally:
         await server.stop()
+
+
+async def test_a_new_runs_token_opens_a_tab_as_soon_as_it_is_created(fake_claude, tmp_path):
+    """create() registers the run before anything can carry its token: the token is minted and the run listed with no
+    await between, and its Claude Code (and so its engine) starts only in the run's turn, after that. Fail closed never
+    meets a live run of no profile of its own."""
+    from ai_browser.app.bravelink import BraveLink
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    port = FakePort(folder)
+    await port.start()
+    brave = BraveLink(folder, allow_wait=2, every=0.1, tokens=server.tokens)
+    server.attach_brave(brave)
+    await brave.start()
+    await brave.connect()
+    try:
+        run = await server.agents.create("Fix the footer")
+        token = run.bridge.env["AIB_APP_AGENT_TOKEN"]  # what its engine connects with
+        assert run.profile is None and server._placed_only(run.id) is False
+        cdp = await relay_client(url.replace("http://", "ws://", 1) + "/cdp", token)
+        try:
+            assert (await cdp.send("Target.createTarget", {"url": "about:blank"}))["targetId"]
+        finally:
+            await cdp.close()
+        assert port.methods.count("Target.createTarget") == 1  # it reached Brave
+    finally:
+        await server.stop()
+        await brave.close()
+        await port.stop()
 
 
 async def test_the_not_learned_note_names_at_most_60_characters_of_the_profile(fake_claude, tmp_path):
