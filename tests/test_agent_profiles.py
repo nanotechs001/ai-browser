@@ -110,3 +110,39 @@ async def test_the_app_opens_a_runs_tab_in_its_profile_and_says_when_it_isnt_lea
         assert json.loads(json.dumps(server._settings_payload()["profiles"])) == brave.place.listed  # Settings' own
     finally:
         await server.stop()
+
+
+async def test_an_agent_shaped_client_the_app_no_longer_knows_never_opens_a_tab(fake_claude, tmp_path, rig):  # noqa: F811
+    from ai_browser.app.cdprelay import OWN_PROFILE
+    from ai_browser.cdp import CDPError
+
+    server, _ = await started(fake_claude, tmp_path, EVENTS)
+    try:
+        await rig.relay.open("start")
+        rig.relay.placed_only = server._placed_only  # the server's own rule
+        plain = await server.agents.create("Fix the footer")
+        gone = await rig.client("a7")  # a run's socket still open after AgentManager.close dropped it: fail closed
+        with pytest.raises(CDPError, match=OWN_PROFILE[1]):
+            await gone.send("Target.createTarget", {"url": "about:blank"})
+        assert "Target.createTarget" not in rig.port.methods  # nothing reached Brave
+        await (await rig.client(plain.id)).send("Target.createTarget", {"url": "about:blank"})  # a one-off: as before
+        await (await rig.client("cc-task-1")).send("Target.createTarget", {"url": "about:blank"})  # a session: too
+        assert len(rig.sent("Target.createTarget")) == 2
+    finally:
+        await server.stop()
+
+
+async def test_the_not_learned_note_names_at_most_60_characters_of_the_profile(fake_claude, tmp_path):
+    server, _ = await started(fake_claude, tmp_path, EVENTS)
+    brave = FakeBrave([])
+    brave.place.listed = [{"folder": "Profile 1", "name": "W" * 500, "color": None}]  # Brave's name: the user's own
+    server.attach_brave(brave)
+    saved = server.saved.save({**AGENT, "profile": "Profile 1", "load_at_start": []})
+    try:
+        run, _ = await server.agents.run_as(saved, "List the prices")
+        server._not_learned(run)
+        notes = [event["text"] for event in server.agents.events_of(run.id) if event["type"] == "note"]
+        assert notes == [f"Agent 1 browses in Brave's {'W' * 60} profile. Open a window of that profile once; AI "
+                         "Browser learns it in about 30 seconds."]
+    finally:
+        await server.stop()

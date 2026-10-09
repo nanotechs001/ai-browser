@@ -67,7 +67,7 @@ from .bravelink import NOT_CONNECTED, NOT_OPEN, PlaceError
 from .inworld import WorldError
 from .savedagents import BAD_ACCOUNT, BAD_PROFILE, NOT_AN_AGENT, SavedAgents
 from .workspaces import GONE as WORKSPACE_GONE
-from .workspaces import Workspaces
+from .workspaces import Workspaces, one_line
 from .cdprelay import Tokens
 
 APP_PORTS = range(8792, 8812)
@@ -999,6 +999,7 @@ class AppServer:
             return
         self._told_profile.add(agent.id)
         name = next((row["name"] for row in self._profiles() if row["folder"] == agent.profile), agent.profile)
+        name = one_line(name)[:60]  # Brave's name is the user's own: one line, as long as the other one-line fields
         self.agents.note(agent.id, NOT_LEARNED.format(number=agent.number, name=name))
 
     async def _agent_status(self, request: Request) -> Response:
@@ -1151,8 +1152,12 @@ class AppServer:
             answer(site=site, sample=_text(result.get("sample"))[:300])
 
     def _placed_only(self, identity: str) -> bool:
+        """Whether only the app may open this client's tabs: a run with a Brave profile of its own, or an agent's id
+        the app no longer knows (its socket outlived AgentManager.close): fail closed, never the profile used last."""
         agent = self.agents.agents.get(identity)
-        return agent is not None and agent.profile is not None
+        if agent is None:
+            return bool(AGENT_ID.match(identity))
+        return agent.profile is not None
 
     def _handed_to(self, identity: str) -> set[str]:
         """The tabs the user handed this agent now (Hand over, or a task started in a tab): read live."""
