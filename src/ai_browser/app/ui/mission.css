@@ -306,6 +306,14 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .agent-tasks :is(.workflow, .workflow-form) { display: flex; flex-direction: column; gap: 6px; font-size: 13px;
   background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
 .agent-note:empty { display: none; }
+button.danger { border-color: var(--fail); color: var(--fail); }
+/* a question before a step that can't be undone (confirm.js): the browser's own modal dialog */
+dialog.confirm { max-width: 460px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--card);
+                 color: var(--text); padding: 16px 18px; box-shadow: var(--shadow); }
+dialog.confirm::backdrop { background: rgba(4, 10, 24, 0.6); }
+dialog.confirm h2 { font-size: 16px; margin-bottom: 8px; overflow-wrap: anywhere; }
+dialog.confirm p { margin: 0 0 8px; color: var(--text-2); overflow-wrap: anywhere; }
+.confirm-buttons { justify-content: flex-end; }
 .page .skill .uses { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .page .skill .uses :is(button, select) { font-size: 12px; padding: 2px 8px; }
 .page .skill .in-use { display: flex; gap: 4px; flex-wrap: wrap; }

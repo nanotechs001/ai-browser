@@ -147,6 +147,9 @@ async def test_the_drawer_shows_the_chat_and_closes_an_agent(mission):
     assert await js("document.getElementById('drawer').hidden")
     await js(open_drawer("a1"))
     await js("document.querySelector('#drawer .close').click(); true")
+    confirm = "document.querySelector('dialog.confirm')"  # it still works: Close asks first (Task 17)
+    assert await until(js, f"{confirm}?.open === true")
+    await js(f"{confirm}.querySelector('.go').click(); true")
     assert await until(js, "document.querySelectorAll('.station').length === 0")
     assert await until(js, "document.getElementById('drawer').hidden")
 

@@ -10,6 +10,7 @@
 import { askBox, askKey, brainCard } from "./accountui.js";
 import { mountBrain } from "./brainui.js";
 import { checkCard } from "./check.js";
+import { confirmAction } from "./confirm.js";
 import { AUTO_EDITS_ONLY, AUTO_LABEL, AUTO_NO_SANDBOX, agentLabel, autoTitle, createChat, el } from "./chat.js";
 import { COLORS } from "./desk.js";
 import { icon } from "./icons.js";
@@ -207,7 +208,13 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
     });
     parts.watch.title = "Bring this agent's tab to the front";
     parts.stop = button("stop", "Stop", () => link.send({ type: "stop", id }));
-    parts.close = button("close ghost", "Close", () => link.send({ type: "close", id }));
+    parts.close = button("close ghost", "Close", async () => { // a run still working: asked first, Keep by default
+      const current = agentOf(id);
+      if (current && ["working", "waiting", "needs_you"].includes(stateOf(current)) && !await confirmAction({
+        title: `End agent ${current.number} while it works?`, lines: ["Its tabs close; your own tabs stay."],
+        yes: "Close" })) return;
+      link.send({ type: "close", id });
+    });
     parts.close.title = "End this agent and close the tabs it opened (your own tabs stay open)";
     parts.skill = button("save-skill ghost", "Save as skill", () => saveSkill(id, agentLabel(agentOf(id) || {})));
     parts.skill.title = "The Brain drafts a skill from this chat, for you to read and save";
