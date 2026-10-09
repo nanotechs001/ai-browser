@@ -854,3 +854,31 @@ async def test_a_command_waiting_its_turn_at_take_back_never_reaches_the_browser
     await asyncio.sleep(0.2)
     assert "Input.dispatchMouseEvent" not in rig.port.methods
 
+
+
+async def test_one_screenshot_at_a_time_per_tab(rig):
+    """Chrome draws a scaled shot by shrinking the tab for a moment; two at once on one tab (an agent's and AI Home's
+    thumbnail) left it shrunk for good (320×213 in GHL's builder). So a tab's shots wait their turn."""
+    await rig.relay.open("start")
+    a1, local = await rig.client("a1"), rig.relay.local()
+    target, session = await own_tab(a1)
+    _, other = await own_tab(a1)
+    thumb = (await local.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
+    clip = {"clip": {"x": 0, "y": 0, "width": 800, "height": 600, "scale": 0.4}}
+
+    def shots():
+        return [sid for name, sid, _, _ in rig.port.received if name == "Page.captureScreenshot"]
+
+    rig.port.hold = {"Page.captureScreenshot"}
+    first = asyncio.ensure_future(a1.send("Page.captureScreenshot", clip, session_id=session))
+    assert await until(lambda: shots() == [session])
+    second = asyncio.ensure_future(local.send("Page.captureScreenshot", clip, session_id=thumb))
+    third = asyncio.ensure_future(a1.send("Page.captureScreenshot", clip, session_id=other))
+    assert await until(lambda: shots() == [session, other])  # another tab's shot isn't held up
+    await asyncio.sleep(0.2)
+    assert shots() == [session, other]  # the thumbnail waits for the agent's shot of the same tab
+    rig.port.hold = set()
+    await rig.port.answer_held()
+    await asyncio.gather(first, third)
+    assert await until(lambda: shots() == [session, other, thumb])
+    assert "data" in await second

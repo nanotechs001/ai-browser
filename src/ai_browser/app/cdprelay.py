@@ -47,6 +47,7 @@ ALLOW_WAIT = 60  # seconds a client waits for the user's answer; the question it
 SWITCH_EVERY = 2.0  # seconds between two looks at the switch while not connected
 BIND_WAIT = 2.0  # seconds a new session's first events wait for its attach answer
 BIND_BUFFER = 256  # ...at most this many of them per session
+SHOT_WAIT = 60  # seconds a tab's next screenshot waits for the one before it at most
 QUEUE_BYTES = 64 * 1024 * 1024  # what one client may have waiting before it counts as too slow
 QUEUE_MESSAGES = 10_000
 TOKEN_HEADER = "x-aib-agent-token"
@@ -411,6 +412,9 @@ class Relay:
         self._sessions: dict[str, _Session] = {}
         self._pending: dict[int, tuple] = {}  # upstream id -> (client | None, client id, method, params, session)
         self._waiting: dict[int, asyncio.Future] = {}  # upstream id -> the relay's own command's future
+        # ponytail: one lock per tab ever shot, kept for the run (a few bytes each)
+        self._shooting: dict[str, asyncio.Lock] = {}  # target id -> its screenshots' turn
+        self._shot: dict[int, asyncio.Future] = {}  # upstream id -> set when that screenshot's answer came
         self._unbound: dict[str, list] = {}  # session id -> [(message, raw)] that came before its attach answer
         self._cut_off: set[str] = set()
         self._forgotten: set[str] = set()  # closed agents and ended sessions, until they connect again
@@ -700,6 +704,8 @@ class Relay:
                 if child is None or child.parent != session_id or child.client is not client:
                     return self._error(client, client_id, NO_SESSION, session_id)
                 params = {"sessionId": params["sessionId"]}
+            if method == "Page.captureScreenshot":  # waits its turn on its own: the client's other commands go on
+                return self._job(self._one_shot(session.page, client, client_id, params, session_id))
             return await self._forward(client, client_id, method, params, session_id)
         if not allowed(method, "browser", client.app):
             return self._refuse(client, client_id, method)
@@ -763,8 +769,20 @@ class Relay:
             client.announced.add(target)
             self._to(client, {"method": "Target.targetCreated", "params": {"targetInfo": dict(info)}})
 
-    async def _forward(self, client, client_id, method: str, params: dict, session_id: str | None = None) -> None:
+    async def _one_shot(self, page: str, client, client_id, params: dict, session_id: str) -> None:
+        """A tab's screenshots take turns. Chrome draws a scaled shot by shrinking the tab for a moment, and two at once
+        (an agent's and AI Home's thumbnail) put back each other's shrunk size: the tab stayed tiny until reloaded."""
+        async with self._shooting.setdefault(page, asyncio.Lock()):
+            done = asyncio.get_running_loop().create_future()
+            await self._forward(client, client_id, "Page.captureScreenshot", params, session_id, done)
+            with contextlib.suppress(TimeoutError):  # a shot dropped by Take back or a lost browser: not forever
+                await asyncio.wait_for(done, SHOT_WAIT)
+
+    async def _forward(self, client, client_id, method: str, params: dict, session_id: str | None = None,
+                       done: asyncio.Future | None = None) -> None:
         upstream_id = next(self._ids)
+        if done is not None:
+            self._shot[upstream_id] = done
         self._pending[upstream_id] = (client, client_id, method, params, session_id)
         message = {"id": upstream_id, "method": method, "params": params}
         if session_id is not None:
@@ -782,6 +800,13 @@ class Relay:
             sent, why = False, LOST
         if not sent and self._pending.pop(upstream_id, None) is not None:
             self._error(client, client_id, why, session_id)
+        if not sent:
+            self._shot_done(upstream_id)
+
+    def _shot_done(self, upstream_id) -> None:
+        done = self._shot.pop(upstream_id, None)
+        if done is not None and not done.done():
+            done.set_result(None)
 
     def _answer_to(self, client, client_id, result: dict, session_id: str | None = None) -> None:
         reply = {"id": client_id, "result": result}
@@ -855,6 +880,7 @@ class Relay:
     def _answer(self, message: dict) -> None:
         upstream_id = message.get("id")
         entry = self._pending.pop(upstream_id, None) if isinstance(upstream_id, int) else None
+        self._shot_done(upstream_id)
         if entry is None:
             return
         client, client_id, method, params, session_id = entry
@@ -1137,6 +1163,7 @@ class Relay:
         self._ws = None
         for upstream_id, (client, client_id, method, _params, session_id) in list(self._pending.items()):
             del self._pending[upstream_id]
+            self._shot_done(upstream_id)
             future = self._waiting.pop(upstream_id, None)
             if future is not None:
                 if not future.done():
@@ -1171,6 +1198,7 @@ class Relay:
             for upstream_id, entry in list(self._pending.items()):
                 if entry[0] is client and entry[4] == session_id:
                     del self._pending[upstream_id]
+                    self._shot_done(upstream_id)
                     self._error(client, entry[1], NO_SESSION, session_id)
         for session_id in doomed:
             with contextlib.suppress(CDPError):

@@ -229,3 +229,27 @@ async def test_a_tabs_frames_reach_its_own_agent_only(relayed, throwaway_chrome,
     finally:
         for engine in engines:
             await engine.close()
+
+
+async def test_shots_at_once_leave_the_tab_its_size(relayed):
+    """Two scaled shots of one tab at once (an agent's and AI Home's thumbnail) shrank it for good in a real Chrome:
+    320×213 in GHL's builder. Through the relay they take turns, and the tab keeps its size."""
+    _server, brave, base, own = relayed
+    target = (await own.send("Target.createTarget", {"url": base + "form.html"}))["targetId"]
+    mine = (await own.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
+
+    async def size():
+        answer = await own.send("Runtime.evaluate", {"expression": "[innerWidth, innerHeight]", "returnByValue": True},
+                                session_id=mine)
+        return answer["result"]["value"]
+
+    before = await size()
+    clients = [brave.relay.local(), brave.relay.local()]
+    sessions = [(await c.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
+                for c in clients]
+    clip = {"x": 0, "y": 0, "width": before[0], "height": before[1]}
+    for _ in range(4):
+        await asyncio.gather(*(c.send("Page.captureScreenshot", {"format": "jpeg", "clip": {**clip, "scale": scale}},
+                                      session_id=s)
+                               for c, s, scale in zip(clients, sessions, (0.83, 320 / before[0]))))
+    assert await size() == before
