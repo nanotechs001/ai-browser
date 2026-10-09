@@ -1,6 +1,6 @@
 // A tool request waiting for the user, shown as text. Two kinds:
 // - one of the user's MCP tools: which agent, the server, the tool and its exact input. Allow once, Always allow
-//   (remembered in AI Home's Tools), Deny;
+//   (remembered in Integrations), Deny;
 // - one of Claude Code's own tools (agent powers): what will happen, as the app read it from the request: the command
 //   and its folder, a clipped diff (removed lines red, added green) or the new file, and the size; the path, the site
 //   or the query. A sub-agent's request names the sub-agent. Allow once, Always allow for this folder (only where the

@@ -6,7 +6,7 @@
 // - thisPage(): which Brave tab the user is on, as {state, url, title}. main.js answers only the chat's own page, and
 //   only while the chat shows.
 // - chooseFolder(): the system's folder dialog, for a task's folder (agent powers): the path picked, or null. main.js
-//   answers AI Browser's own top-level pages only: the tab menu (for AI Home and Mission Control in its frames) and
+//   answers AI Browser's own top-level pages only: the tab menu (for Mission Control and Settings in its frames) and
 //   the chat.
 "use strict";
 

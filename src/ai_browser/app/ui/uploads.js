@@ -150,7 +150,7 @@ export function mountUploads({ list, send, note }) {
   };
 }
 
-// A box for messages to an agent that takes files (the drawer's chat, AI Home's chat): pasted or dropped on `area`
+// A box for messages to an agent that takes files (the drawer's chat): pasted or dropped on `area`
 // (paste.js), or picked with `attach` (a button) and `picker` (its file input) where there are. Words alone go as
 // before, out of the box at once. Words with files go with a request id, and the box keeps both until the app answers:
 // "sent" (the app placed them) empties it, an error says why. No timer: the files may still be on their way, and a

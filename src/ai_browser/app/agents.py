@@ -491,8 +491,8 @@ class AgentManager:
         return self.accounts.env_for(account_id) if self.accounts is not None else clean_env()
 
     def tools_for(self, account_id: str):
-        """An account's tools (AI Home → Tools, one account at a time): its own servers, switches and always-allowed
-        tools. Default's are `self.tools`; None without Tools."""
+        """An account's tools (Mission Control → Integrations, one account at a time): its own servers, switches and
+        always-allowed tools. Default's are `self.tools`; None without Tools."""
         if self.tools is None or self.accounts is None or account_id == DEFAULT:
             return self.tools
         return self.tools.for_account(account_id, self.accounts.claude_home(account_id),
@@ -681,8 +681,8 @@ class AgentManager:
         self._changed(agent)
 
     async def hand_tab(self, agent_id: str, target: str, tab: dict) -> bool:
-        """The user handed one of their tabs to this agent (AI Home's Hand over): it is the agent's to use, and stays
-        the user's. The note reaches the agent now, or when its turn ends; the tab's title and address go as page
+        """The user handed one of their tabs to this agent (the Tabs page's Hand over): it is the agent's to use, and
+        stays the user's. The note reaches the agent now, or when its turn ends; the tab's title and address go as page
         data."""
         agent = self.agents.get(agent_id)
         if agent is None or not target:
@@ -695,7 +695,7 @@ class AgentManager:
         return True
 
     def take_back(self, target: str) -> str | None:
-        """The user took a handed tab back (AI Home's Take back): the id of the agent that had it, or None. The
+        """The user took a handed tab back (the Tabs page's Take back): the id of the agent that had it, or None. The
         agent's engine lets go of it at its next action."""
         for agent in self.agents.values():
             if target in agent.adopted:
@@ -981,7 +981,7 @@ class AgentManager:
                 self.on_usage(account)
 
     async def move(self, agent_id: str, account_id: str, tabs=()) -> str:
-        """Continue on another account (a click in AI Home or Mission Control; app-only in MESSAGE_RULES). One move
+        """Continue on another account (a click in Mission Control; app-only in MESSAGE_RULES). One move
         per agent at a time, and only while it isn't working:
         1. its Claude Code process ends (it ended its turn already);
         2. its conversation is copied to the other account's folder;

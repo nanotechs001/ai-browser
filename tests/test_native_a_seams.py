@@ -36,8 +36,8 @@ def test_the_merged_code_has_the_names_this_plan_uses():
     assert callable(syncdir.write_atomic) and callable(home) and LIVE_PORTS == range(8770, 8791)
     # the tab menu: the window's own page (/app) shows ours in frames; a page asks it for a tab
     assert server.SHELL == "/app" and callable(server._page_headers)
-    for name in ("app.html", "app.js", "nav.js", "talk.js", "settings.html", "settings.js", "home.html", "home.js",
-                 "home.css"):
+    for name in ("app.html", "app.js", "nav.js", "talk.js", "settings.html", "settings.js", "mission.html",
+                 "mission.js"):
         assert (UI / name).is_file(), name
     assert "export function openTab(" in (UI / "nav.js").read_text(encoding="utf-8")
     assert "export function browserName(" in (UI / "talk.js").read_text(encoding="utf-8")
@@ -60,7 +60,7 @@ def test_the_tests_have_the_helpers_this_plan_uses():
 
     for module, names in (
             (conftest, ("fake_python", "symlink_or_skip", "file_mode", "_no_real_window", "_never_the_users_app_port")),
-            (test_home, ("stack", "home", "until", "page_js", "open_page")),
+            (test_home, ("stack", "page", "until", "page_js", "open_page")),
             (test_tab_menu, ("connected", "frame", "tab", "active_is")),
             (test_app_run, ("servers", "quiet")), (test_app_server, ("started", "recv", "until")),
             (test_cli, ("_setup_env", "_browser_port_stand_in")), (fake_brave, ("add_agent",)),

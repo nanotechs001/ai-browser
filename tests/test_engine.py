@@ -435,7 +435,8 @@ async def test_an_app_agent_always_uses_the_relay(monkeypatch, tmp_path):
     engine = Engine(home=tmp_path / "engine2", catalog=Catalog([], set()))
     try:
         text = (await engine.tabs("list")).text
-        assert text.startswith("error: AI Browser isn't connected to Brave: ask the user to click Connect in AI Home")
+        assert text.startswith("error: AI Browser isn't connected to Brave: ask the user to click Connect at the top "
+                               "of Mission Control")
         assert idle.port.sessions == 0
     finally:
         await engine.close()
@@ -477,9 +478,9 @@ async def test_a_session_never_falls_back_while_the_app_is_up(monkeypatch, tmp_p
         text = (await engine.tabs("list")).text
         assert text.startswith("error: AI Browser didn't answer, so this session can't use your Brave through it")
         link.write_text(json.dumps(data), encoding="utf-8")
-        await app.brave.relay.disconnect(f"cc-{engine.task_id}")  # AI Home's Disconnect
+        await app.brave.relay.disconnect(f"cc-{engine.task_id}")  # Settings → Brave's Disconnect
         text = (await engine.tabs("list")).text
-        assert text.startswith("error: The user disconnected this Claude Code session from Brave in AI Home")
+        assert text.startswith("error: The user disconnected this Claude Code session from Brave in Settings → Brave")
         assert app.port.sessions == 1  # the app's own attempt only
     finally:
         await engine.close()

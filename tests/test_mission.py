@@ -10,7 +10,7 @@ import pytest
 
 from ai_browser.chrome import chrome_binary
 from test_bridge import EVENTS
-from test_home import HOSTILE, evaluate, home, open_page, stack, until  # noqa: F401  (fixtures)
+from test_home import HOSTILE, evaluate, page, open_page, stack, until  # noqa: F401  (fixtures)
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 WORKING = [EVENTS[0], {"sleep": 30}]  # an agent that stays at work
@@ -110,7 +110,7 @@ async def test_many_agents_fill_the_rings_without_overlap(mission):
 
 @CHROME
 async def test_a_waiting_permission_is_answered_from_mission_control(stack, tmp_path):
-    from test_ai_home_phase2 import answered, ask_for_clickup
+    from test_tools import answered, ask_for_clickup
 
     ask_for_clickup(stack, tmp_path)
     agents = stack["server"].agents
@@ -356,9 +356,7 @@ async def test_an_open_room_does_no_layout_while_agents_work(mission):
     for name in ("one", "two", "three"):
         await stack["server"].agents.create(name)
     assert await until(js, "document.querySelectorAll('.station[data-state=\"working\"]').length === 3")
-    targets = (await cdp.send("Target.getTargets"))["targetInfos"]
-    page = next(t for t in targets if t["type"] == "page" and t["url"].endswith("/mission"))
-    session = (await cdp.send("Target.attachToTarget", {"targetId": page["targetId"], "flatten": True}))["sessionId"]
+    session = js.session  # this test's own page (the window's first page is Mission Control too)
     await cdp.send("Page.bringToFront", session_id=session)  # a hidden tab runs no animations
     await cdp.send("Performance.enable", session_id=session)
     assert await until(js, "document.visibilityState === 'visible'")
@@ -508,10 +506,10 @@ async def test_watch_says_it_brings_the_agents_tab_to_the_front(mission):
 
 
 @CHROME
-async def test_the_model_is_the_apps_choice_in_every_window(home):
+async def test_the_model_is_the_apps_choice_in_every_window(page):
     from ai_browser.settings import read_settings
 
-    js, stack = home
+    js, stack = page
     mission = await open_mission(stack)
     assert await mission("document.getElementById('task-model').value") == "sonnet"  # ai-browser app --model
     await js("const picker = document.getElementById('task-model'); picker.value = 'opus';"

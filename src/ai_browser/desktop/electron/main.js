@@ -302,7 +302,7 @@ function thisPageAction(sender) {
 
 // The bridge's "chooseFolder": the system's folder dialog, over the window that asked, for a task's folder (agent
 // powers). The user's pick as a path, or null when they cancel. answerActions has checked that the page is one of AI
-// Browser's own top-level pages; only the tab menu (which asks for AI Home and Mission Control in its frames) and the
+// Browser's own top-level pages; only the tab menu (which asks for Mission Control and Settings in its frames) and the
 // floating chat get a dialog. One at a time: an ask while one is open gets its answer.
 function chooseFolderAction(sender) {
   const win = BrowserWindow.fromWebContents(sender);

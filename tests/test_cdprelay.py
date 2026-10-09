@@ -599,7 +599,7 @@ async def test_handshake_refusals(rig):
     with pytest.raises(InvalidStatus) as refused:
         await connect(rig.url, additional_headers={"X-AIB-Agent-Token": token}, proxy=None)
     assert refused.value.response.status_code == 410
-    assert b"The user disconnected this client in AI Home." in bytes(refused.value.response.body)
+    assert "The user disconnected this client in Settings → Brave.".encode() in bytes(refused.value.response.body)
 
 
 async def test_the_relay_logs_no_page_text(rig, caplog):
@@ -857,7 +857,7 @@ async def test_a_command_waiting_its_turn_at_take_back_never_reaches_the_browser
 
 
 async def test_one_screenshot_at_a_time_per_tab(rig):
-    """Chrome draws a scaled shot by shrinking the tab for a moment; two at once on one tab (an agent's and AI Home's
+    """Chrome draws a scaled shot by shrinking the tab for a moment; two at once on one tab (an agent's and Mission Control's
     thumbnail) left it shrunk for good (320×213 in GHL's builder). So a tab's shots wait their turn."""
     await rig.relay.open("start")
     a1, local = await rig.client("a1"), rig.relay.local()

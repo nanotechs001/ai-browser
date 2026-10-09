@@ -1,4 +1,4 @@
-// Mission Control's Tabs page (the saved-agents spec, 6: AI Home's tab list, moved): the user's web tabs in the profile
+// Mission Control's Tabs page (the saved-agents spec, 6): the user's web tabs in the profile
 // where agents browse, and the AI's tabs wherever they are, each with whose it is. Hand over (New agent… or Give to …)
 // and Take back; a click on a row brings that tab to the front. Titles, addresses and names are set as text.
 "use strict";

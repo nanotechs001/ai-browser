@@ -1,4 +1,4 @@
-/* Settings: its own styles (it borrowed AI Home's until AI Home went, the saved-agents spec, 6). Colours, type and
+/* Settings: its own styles (the saved-agents spec, 6). Colours, type and
    radii: theme.css. */
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--font); }

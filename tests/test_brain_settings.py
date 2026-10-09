@@ -14,7 +14,7 @@ from fake_brave import until
 from fake_reading import ReadingBrave
 from test_app_server import recv, with_brain
 from test_app_server import until as told
-from test_home import home, open_page, open_settings, stack  # noqa: F401  (fixtures)
+from test_home import page, open_page, open_settings, stack  # noqa: F401  (fixtures)
 from test_home import until as page_until
 from ui_socket import ui_socket
 
@@ -137,15 +137,16 @@ async def test_the_picker_picks_in_the_users_tab_through_the_relay(fake_claude, 
 
 
 @CHROME
-async def test_settings_brain_has_the_switch_and_ai_home_says_when_reading_is_off(home):
-    js, stack = home
+async def test_settings_brain_has_the_switch_and_the_brains_inbox_says_when_reading_is_off(page):
+    js, stack = page
+    await js("document.getElementById('bubble').click(); true")  # Mission Control's globe: the Brain's inbox
     settings = await open_settings(stack)
     assert await settings("document.getElementById('read-tabs').checked") is False  # off until the user turns it on
     assert await page_until(settings, "document.getElementById('reading-state').textContent.startsWith('Off')")
     assert await settings("document.getElementById('pick-start').disabled") is True
-    assert await page_until(js, "document.querySelector('#brain .brain-reading').textContent === "
+    assert await page_until(js, "document.querySelector('#drawer-body .brain-reading')?.textContent === "
                                 "'Reading your tabs is off'")
-    assert await js("document.querySelector('#brain .brain-turn-on').hidden") is False
+    assert await js("document.querySelector('#drawer-body .brain-turn-on').hidden") is False
     await settings("document.getElementById('read-tabs').click()")
     assert await page_until(settings, "document.getElementById('read-tabs').checked === true")
     for _ in range(50):
@@ -153,6 +154,6 @@ async def test_settings_brain_has_the_switch_and_ai_home_says_when_reading_is_of
             break
         await asyncio.sleep(0.1)
     assert stack["server"].settings.get()["read_tabs"] is True
-    assert await page_until(js, "document.querySelector('#brain .brain-turn-on').hidden === true")
+    assert await page_until(js, "document.querySelector('#drawer-body .brain-turn-on').hidden === true")
     names = "[...document.querySelectorAll('#brain-sites .brain-site strong')].map((n) => n.textContent)"
     assert await page_until(settings, f"{names}.join() === 'Gmail,Slack,Asana'")

@@ -1,10 +1,10 @@
 """The user's workflows: named recipes in plain words, run as AI Browser agents.
 
-Each is a file, <home>/workflows/<slug>.md (mode 0600): YAML front matter, then the instructions. The user writes it
-with AI Home's form or in a text editor. A workflow runs by hand (AI Home's Run, or `ai <name>` in the address bar),
-from a matching message (the Brain's sorting offers it, or starts it when it is set to run right away), or on a
-schedule while `ai-browser app` runs: never two runs of one workflow at once, and runs missed while the app was off
-are not caught up. Its agent loads the workflow's skills first and may use only its tools (still asking for each)."""
+Each is a file, <home>/workflows/<slug>.md (mode 0600): YAML front matter, then the instructions. The user writes it on
+the Agents page or in a text editor. A workflow runs by hand (its Run on the Agents page, or `ai <name>` in the address
+bar), from a matching message (the Brain's sorting offers it, or starts it when it is set to run right away), or on a
+schedule while `ai-browser app` runs: never two runs of one workflow at once, and runs missed while the app was off are
+not caught up. Its agent loads the workflow's skills first and may use only its tools (still asking for each)."""
 
 from __future__ import annotations
 
@@ -224,7 +224,8 @@ class WorkflowStore:
             return None
 
     def save(self, fields: dict) -> Workflow:
-        """Write a workflow: a new one gets a slug of its own; one with a slug (edited in AI Home) keeps its file."""
+        """Write a workflow: a new one gets a slug of its own; one with a slug (edited on the Agents page) keeps its
+        file."""
         slug = fields.get("slug")
         workflow = check(fields, "")
         if slug:

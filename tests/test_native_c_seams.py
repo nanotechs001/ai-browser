@@ -72,7 +72,6 @@ def test_the_brain_and_the_pages_have_what_the_chat_reuses():
 def test_the_tests_have_the_helpers_this_plan_uses():
     import fake_brave
     import fake_desktop
-    import test_ai_home_phase2
     import test_app_server
     import test_brain_talk
     import test_check_card
@@ -81,11 +80,11 @@ def test_the_tests_have_the_helpers_this_plan_uses():
     import test_home
     import test_inworld
     import test_talk
+    import test_tools
     import ui_socket
 
     for module, names in ((fake_brave, ("FakePort", "FakeBrave", "add_agent", "until")),
                           (fake_desktop, ("FakeDesktop",)),
-                          (test_ai_home_phase2, ("ask_for_clickup", "answered")),
                           (test_app_server, ("started", "recv", "until", "with_brain", "quiet")),
                           (test_brain_talk, ("brain_for", "talk_calls")),
                           (test_check_card, ("checked", "recorded", "heard")),
@@ -94,6 +93,7 @@ def test_the_tests_have_the_helpers_this_plan_uses():
                           (test_home, ("stack", "until", "open_page", "page_js", "evaluate")),
                           (test_inworld, ("linked",)),
                           (test_talk, ("talk_script", "talk_calls", "ask_typed")),
+                          (test_tools, ("ask_for_clickup", "answered")),
                           (ui_socket, ("ui_socket", "ui_cookie"))):
         for name in names:
             assert callable(getattr(module, name)), (module.__name__, name)

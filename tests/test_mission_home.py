@@ -320,3 +320,109 @@ async def test_mission_controls_title_counts_the_working_agents(stack):
     assert await until(js, "document.title === '(1) Mission Control'")  # the window's title and badge read it
     await stack["server"].agents.stop(agent.id)
     assert await until(js, "document.title === 'Mission Control'")
+
+
+# ---- the words: none the user or Claude reads names AI Home (Task 19) ------------------------------------------------
+
+WORDS = ("agentlink.py", "browser.py", "cli.py", "engine.py", "settings.py", "app/__init__.py", "app/agents.py",
+         "app/bravelink.py", "app/bridge.py", "app/cdprelay.py", "app/run.py", "app/tabs.py", "app/window.py",
+         "brain/account.py", "brain/workflows.py", "desktop/notes.py", "desktop/electron/main.js",
+         "desktop/electron/preload.js", "app/ui/setup.html", "app/ui/accountui.js", "app/ui/brainui.css",
+         "app/ui/brainui.js", "app/ui/permission.js", "app/ui/plan.js", "app/ui/settings.css", "app/ui/tabspage.js",
+         "app/ui/tools.js", "app/ui/train.js", "app/ui/uploads.js")
+
+
+def test_no_word_the_user_or_claude_reads_names_ai_home():
+    from pathlib import Path
+
+    from ai_browser import engine
+
+    root = Path(__file__).parents[1] / "src" / "ai_browser"
+    for name in WORDS:
+        assert "AI Home" not in (root / name).read_text(encoding="utf-8"), name
+    for text in (engine.ASK_AGENT, engine.CUT_OFF_AGENT, engine.CUT_OFF_SESSION):
+        assert "AI Home" not in text
+    assert "the top of Mission Control" in engine.ASK_AGENT
+
+
+# ---- AI Home's last sections, now Mission Control's: Integrations, Tasks for any agent, Train (Task 20) ----------------
+
+@CHROME
+async def test_integrations_switch_a_server_on_and_forget_an_always_allowed_tool(stack, tmp_path):
+    from test_tools import user_config
+
+    user_config(tmp_path)
+    stack["tools"].allow_always("mcp__figma__get_file")
+    js = await open_mission(stack)
+    await js(f"{page_link('integrations')}.click(); true")
+    server = "document.querySelector('#page-integrations .tool-server[data-name=\"figma\"]')"
+    assert await until(js, f"{server} !== null")
+    await js(f"{server}.querySelector('.on').click(); true")
+    await wait_for(lambda: stack["tools"].enabled() == {"figma"})
+    forget = "document.querySelector('#page-integrations .always-tool[data-tool=\"mcp__figma__get_file\"] .forget')"
+    assert await until(js, f"{forget} !== null")
+    await js(f"{forget}.click(); true")
+    await wait_for(lambda: stack["tools"].always() == set())
+
+
+@CHROME
+async def test_a_task_for_any_agent_is_saved_from_the_form_and_runs_once(stack):
+    import asyncio
+
+    js = await open_mission(stack)
+    await js(f"{page_link('agents')}.click(); true")
+    form = "document.querySelector('#page-agents .any-tasks .workflow-form')"
+    assert await until(js, f"{form} !== null")
+    await js(f"const form = {form};"
+             "form.querySelector('[name=name]').value = 'Morning report';"
+             "form.querySelector('[name=instructions]').value = 'Check the sites and tell me what changed';"
+             "form.querySelector('[name=trigger]').value = 'schedule';"
+             "form.querySelector('[name=trigger]').dispatchEvent(new Event('change'));"
+             "form.querySelector('[name=schedule]').value = 'weekdays 09:00';"
+             "form.querySelector('.save').click(); true")
+    task = "document.querySelector('#page-agents .any-tasks .workflow[data-slug=\"morning-report\"]')"
+    assert await until(js, f"{task} !== null")
+    path = stack["home"] / "workflows" / "morning-report.md"
+    assert path.exists() and "weekdays 09:00" in path.read_text(encoding="utf-8")
+    assert str(path) in await js(f"{form}.querySelector('.saved').textContent")  # it says where the file is
+    await js(f"const run = {task}.querySelector('.run'); run.click(); run.click(); true")  # a double click: one run
+    await wait_for(lambda: len(stack["server"].agents.agents) == 1)
+    await asyncio.sleep(1)
+    assert len(stack["server"].agents.agents) == 1
+
+
+DRAFT = f"""---
+name: elementor-landing
+description: Build landing pages {HOSTILE}
+---
+# Elementor landing pages
+
+1. Start from the Landing template.
+"""
+
+
+@CHROME
+async def test_knowledge_trains_a_skill_and_saves_it_after_review(stack, monkeypatch):
+    from ai_browser import skills
+    from test_bridge import EVENTS
+
+    monkeypatch.setattr(skills, "user_folders", lambda: (stack["user"] / ".claude", stack["user"] / "Claude"))
+    stack["script"].write_text(json.dumps({"default": EVENTS, "You write a skill": [{"result": DRAFT}]}),
+                               encoding="utf-8")
+    js = await open_mission(stack)
+    await js(f"{page_link('knowledge')}.click(); true")
+    train = "document.querySelector('#page-knowledge .train-body')"
+    assert await until(js, f"{train}?.querySelector('.job') != null")
+    await js(f"{train}.querySelector('.job').value = 'build Elementor landing pages the way I like';"
+             f"{train}.querySelector('.draft').click(); true")
+    assert await until(js, f"{train}.querySelector('.skill-text').value.includes('elementor-landing')")
+    assert await js(f"{train}.querySelectorAll('img').length") == 0 and await js("document.title") != "pwned"
+    assert await js(f"{train}.querySelector('.skill-name').textContent") == "elementor-landing"
+    await js(f"const text = {train}.querySelector('.skill-text');"
+             "text.value = text.value.replace('Start from the Landing template.', 'Start from the Hero template.');"
+             f"{train}.querySelector('.save').click(); true")
+    skill = stack["user"] / ".claude" / "skills" / "elementor-landing" / "SKILL.md"
+    await wait_for(skill.exists)
+    assert "Hero template" in skill.read_text(encoding="utf-8")
+    assert await until(js, "document.querySelector('#page-knowledge .skill[data-ref=\"personal:elementor-landing\"]')"
+                           " !== null")  # the list reads it again
