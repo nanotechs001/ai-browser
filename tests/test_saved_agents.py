@@ -534,6 +534,22 @@ async def test_deleting_an_agent_deletes_its_tasks(fake_claude, tmp_path):
         await server.stop()
 
 
+def test_the_readme_explains_saved_agents():  # what the user reads first
+    from pathlib import Path
+
+    from ai_browser.app.bridge import INSTRUCTION_LINE
+    from ai_browser.skills import NOT_ALLOWED
+
+    text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for words in ("### Saved agents (Mission Control → Agents)", "**Save as agent**", f'under "{INSTRUCTION_LINE}"',
+                  "**Instruction** (at most 8,000 characters)", "its tabs open only in that profile of your Brave",
+                  "every run of it starts with them, scheduled ones too. The Brain and workflows never change them.",
+                  f'"{NOT_ALLOWED}"', "at most 60,000 characters in all", "**Delete agent** asks first",
+                  "**Keep** is the default (Escape keeps it too)", "`~/.ai-browser/agents/<name>.md`", "**Runs as:**",
+                  "**Agent ▾:**", "a saved agent's runs follow its own setting"):
+        assert words in text, words
+
+
 def test_a_narrowed_runs_bash_treats_skills_outside_can_use_like_blocked_ones(tmp_path, monkeypatch):
     import json
 

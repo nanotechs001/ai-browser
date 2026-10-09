@@ -232,8 +232,8 @@ async def test_a_tabs_frames_reach_its_own_agent_only(relayed, throwaway_chrome,
 
 
 async def test_shots_at_once_leave_the_tab_its_size(relayed):
-    """Two scaled shots of one tab at once (an agent's and AI Home's thumbnail) shrank it for good in a real Chrome:
-    320×213 in GHL's builder. Through the relay they take turns, and the tab keeps its size."""
+    """Two scaled shots of one tab at once (an agent's and Mission Control's thumbnail) shrank it for good in a real
+    Chrome: 320×213 in GHL's builder. Through the relay they take turns, and the tab keeps its size."""
     _server, brave, base, own = relayed
     target = (await own.send("Target.createTarget", {"url": base + "form.html"}))["targetId"]
     mine = (await own.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]

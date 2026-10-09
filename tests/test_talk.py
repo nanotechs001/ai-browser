@@ -850,8 +850,8 @@ def test_the_readme_says_how_to_talk_and_the_zero_setup_way():
 
 def test_the_readme_says_the_brain_can_send_to_an_open_agent():
     text = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
-    for words in ('"give this to agent 2"', "Press **Start** or **Send** on it (or type yes) in AI Home or Mission "
-                  "Control.", '"1 · Fix the footer"', "**Your tabs**",
+    for words in ('"give this to agent 2"', "Press **Start** or **Send** on it (or type yes) in Mission Control or "
+                  "the floating chat.", '"1 · Fix the footer"', "**Your tabs**",
                   "**Give to this agent**", "**send your words to an agent that's already open**",
                   'a "yes" with no card open does nothing', "hands over or takes back a tab"):
         assert words in text, words

@@ -1605,7 +1605,7 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
                    "their chips go only once the app has placed them",
                    "Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it",
                    '"Pictures go with Build a Mission or an agent\'s chat"', "Pasted text stays text",
-                   "AI Home's **New task** and an agent's chat there take pictures and files the same way",
+                   "The floating chat's **New task** takes pictures and files the same way",
                    "Cells copied from a spreadsheet paste as text"):
         assert phrase in readme, phrase
     for gone in ("brain of glowing points", "WebGL", "no web tools at all", "a file that was not yet sent",

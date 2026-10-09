@@ -426,3 +426,17 @@ async def test_knowledge_trains_a_skill_and_saves_it_after_review(stack, monkeyp
     assert "Hero template" in skill.read_text(encoding="utf-8")
     assert await until(js, "document.querySelector('#page-knowledge .skill[data-ref=\"personal:elementor-landing\"]')"
                            " !== null")  # the list reads it again
+
+
+# ---- nothing the user reads names AI Home (Task 21) -----------------------------------------------------------------
+
+def test_no_page_the_app_or_the_readme_names_ai_home():  # the saved-agents spec, 6: AI Home has gone
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    app = root / "src" / "ai_browser" / "app"
+    pages = [path for path in sorted((app / "ui").iterdir()) if path.suffix in (".html", ".js", ".css")]
+    electron = sorted((root / "src" / "ai_browser" / "desktop" / "electron").glob("*.js"))
+    assert pages and electron
+    for path in [*pages, *electron, app / "server.py", root / "README.md"]:
+        assert "AI Home" not in path.read_text(encoding="utf-8"), path.name

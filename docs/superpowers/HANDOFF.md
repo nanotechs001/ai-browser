@@ -18,7 +18,8 @@ and what only the user can check on their own machines. The work ledgers (`.supe
   - **wave A:** brain delegation, watcher safety and browser detection. Reports
     `docs/superpowers/reports/2026-10-04-{brain-delegation,watcher-safety,browser-detection}.md`;
   - **wave B, the app window:** report `docs/superpowers/reports/2026-10-04-app-window.md`;
-  - **the tab menu:** one window with AI Home, Mission Control and Settings tabs, and no popups. Report
+  - **the tab menu:** one window with AI Home, Mission Control and Settings tabs (AI Home was removed by the
+    saved-agents build; Mission Control is the first tab), and no popups. Report
     `docs/superpowers/reports/2026-10-04-tab-menu.md`.
   - **Replaced, not built:** waves C (`browser-profile-choice`) and D (`side-chat`). The native app took their place,
     and their specs and plans stay as history.

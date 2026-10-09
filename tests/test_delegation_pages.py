@@ -473,7 +473,7 @@ def test_the_readme_explains_names_handoffs_sources_and_the_history():
                    "**Hand tasks to working agents by itself (15 s to cancel):**", "**Hand-offs:**",
                    "it sends after **15 seconds** unless you press **Cancel**",
                    "it never counts down: it waits for your **Send**", "A **new agent** is only ever a suggestion",
-                   '"From the Brain: …"', "A click on a template opens AI Home at its templates",
+                   '"From the Brain: …"', "A click on a template opens it on the Agents page",
                    "**Current Task:** its name and what it works on",
                    "the card counts down 15 seconds and then sends, unless you press **Cancel**",
                    # the build's rulings (2026-10-08): who counts down, what cancels and pauses, where it runs
