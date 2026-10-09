@@ -111,6 +111,11 @@
               <select id="task-folder" aria-label="Folder" title="The folder the agent works in"></select>
               <label id="task-auto-switch" class="auto-switch"><input id="task-auto"
                 type="checkbox"> Auto-approve in its folder</label>
+              <details id="task-skills" class="skills-menu"><summary>Skills <span id="skills-count"
+                class="muted"></span></summary>
+                <div class="skills-pick"><input id="skills-find" type="search" autocomplete="off"
+                  placeholder="Find a skill" aria-label="Find a skill"><div id="skills-pick"></div>
+                  <p class="muted">Loaded at start: their text goes in the agent's first message.</p></div></details>
               <select id="task-workspace" aria-label="Workspace"></select>
             </div>
             <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"

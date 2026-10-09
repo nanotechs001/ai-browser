@@ -202,3 +202,63 @@ async def test_the_tabs_page_counts_what_it_doesnt_show_and_claims_nothing_uncon
     assert await js(source) is None and await js(count) is None
     brave.changed()  # the new connection's first list brings its own scope
     assert await shows(source, NO_PROFILE)
+
+
+# ---- a one-off run's skills: Build a Mission's Skills, and Knowledge's uses (Task 12) ---------------------------------
+
+def user_skills(stack, monkeypatch):
+    """A skill of the user's in the stack's throwaway folder: the catalog reads it there, never ~/.claude."""
+    from ai_browser import skills
+    from test_skills import make_skill
+
+    make_skill(stack["user"] / ".claude" / "skills", "prices", desc="Read price pages")
+    monkeypatch.setattr(skills, "user_folders", lambda: (stack["user"] / ".claude", stack["user"] / "Claude"))
+    stack["server"].skills_changed()  # read again: every page hears the list
+
+
+@CHROME
+async def test_build_a_mission_loads_the_skills_picked_at_start(stack, monkeypatch):
+    server = stack["server"]
+    user_skills(stack, monkeypatch)
+    asked = []
+    create = server.agents.create
+
+    async def recording(text, skills=(), *args, **options):  # what the page asked the app for
+        asked.append(list(skills))
+        return await create(text, skills, *args, **options)
+
+    monkeypatch.setattr(server.agents, "create", recording)
+    js = await open_mission(stack)
+    box = "document.querySelector('#skills-pick input[value=\"personal:prices\"]')"
+    assert await until(js, f"{box} !== null")
+    await js("document.getElementById('task-skills').open = true;"
+             f"{box}.click(); true")
+    assert await js("document.getElementById('skills-count').textContent") == "(1)"
+    await js("document.getElementById('task').value = 'List the prices';"
+             "document.getElementById('start').click(); true")
+    await wait_for(lambda: asked == [["personal:prices"]])
+    assert await until(js, f"!{box}.checked && document.getElementById('skills-count').textContent === ''")
+    await js("document.getElementById('mode-ask').click(); true")
+    assert await js("document.getElementById('task-skills').hidden") is True  # Build a Mission's only
+
+
+@CHROME
+async def test_knowledge_says_who_uses_a_skill_and_hands_it_on(stack, monkeypatch):
+    server = stack["server"]
+    stack["script"].write_text(json.dumps([{"sleep": 30}]), encoding="utf-8")  # it stays at work
+    agent = await server.agents.create("Fix the footer")
+    user_skills(stack, monkeypatch)
+    js = await open_mission(stack)
+    await js(f"{page_link('knowledge')}.click(); true")
+    row = "document.querySelector('#page-knowledge .skill[data-ref=\"personal:prices\"]')"
+    assert await until(js, f"{row} !== null")
+    agent.loaded_skills = ["personal:prices"]
+    server.agents._changed(agent)
+    assert await until(js, f"{row}.querySelector('.in-use').textContent === 'in use by Fix the footer'")
+    await js(f"{row}.querySelector('select.ask-who').value = 'a1'; {row}.querySelector('.ask').click(); true")
+    await wait_for(lambda: any(event.get("text") == "Load and use the skill personal:prices with load_skill"
+                               for event in server.agents.events_of("a1")))
+    await js(f"{row}.querySelector('.use').click(); true")  # Use in new mission
+    assert await until(js, "!document.getElementById('page-dashboard').hidden && document.querySelector("
+                           "'#skills-pick input[value=\"personal:prices\"]').checked")
+    assert await js("document.activeElement.id") == "task"

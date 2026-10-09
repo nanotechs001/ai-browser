@@ -109,7 +109,11 @@ const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible
                                                                                        agent.workspace) });
 const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: inWorkspace });
 parts.push(missions, history);
-parts.push(mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value }),
+parts.push(mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value,
+                                                      useSkill: (ref) => { // Use in new mission
+                                                        showPage("dashboard");
+                                                        composer.pickSkill(ref);
+                                                      } }),
            mountIntegrations($("page-integrations"), link));
 parts.push(mountTabsPage($("page-tabs"), { // the user's tabs: Hand over, Take back, and a click brings one forward
   send,
@@ -409,8 +413,8 @@ function handle(message) {
       if (drawer.id) link.send({ type: "events", id: drawer.id });
       eventsFor = null; // and the right column asks for its agent's actions again
       renderAll();
-      for (const kind of ["accounts", "thumbs", "brain", "hearing", "permission_rules", "workflows"]) { // workflows:
-        link.send({ type: kind }); // the Calendar's scheduled templates, and each workspace's count of them
+      for (const kind of ["accounts", "thumbs", "brain", "hearing", "permission_rules", "workflows", "skills"]) {
+        link.send({ type: kind }); // workflows: the Calendar's templates and each workspace's count; skills: Skills
       }
       break;
     }

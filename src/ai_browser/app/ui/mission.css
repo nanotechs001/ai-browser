@@ -283,6 +283,9 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .removed-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .removed-list li { display: flex; gap: 8px; align-items: center; }
 .knowledge-note:empty { display: none; }
+.page .skill .uses { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.page .skill .uses :is(button, select) { font-size: 12px; padding: 2px 8px; }
+.page .skill .in-use { display: flex; gap: 4px; flex-wrap: wrap; }
 /* the Tabs page (tablist.js): each tab of the user's, and whose it is */
 .page .tab { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 12px;
              background: var(--card); border: 1px solid var(--line); cursor: pointer; font-size: 13px; }
