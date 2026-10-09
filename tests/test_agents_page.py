@@ -260,6 +260,17 @@ async def test_close_asks_only_while_the_run_still_works(stack):
     assert await until(js, f"{DIALOG} === null") and "a1" in server.agents.agents
     await js(f"{close}.click(); true")
     assert await until(js, f"{DIALOG}?.open === true")
+    x, y = await js("(() => { const r = document.querySelector('dialog.confirm p').getBoundingClientRect();"
+                    " return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+    for kind in ("mousePressed", "mouseReleased"):  # a right-click on its words (no click event): Keep keeps the focus
+        await stack["cdp"].send("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y, "button": "right",
+                                                             "clickCount": 1}, session_id=js.session)
+    assert await js(f"document.activeElement === {DIALOG}.querySelector('.keep')"), "right-click moved the focus off Keep"
+    await tap(stack, js, ESCAPE)  # so Escape still keeps, and the drawer stays
+    assert await until(js, f"{DIALOG} === null")
+    assert await js("!document.getElementById('drawer').hidden") and "a1" in server.agents.agents
+    await js(f"{close}.click(); true")
+    assert await until(js, f"{DIALOG}?.open === true")
     await js(f"{DIALOG}.querySelector('.go').click(); true")
     await wait_for(lambda: "a1" not in server.agents.agents)
     stack["script"].write_text(json.dumps(EVENTS), encoding="utf-8")  # done at once

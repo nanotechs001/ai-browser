@@ -659,6 +659,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
 
   document.addEventListener("pointerdown", (event) => { // a click on the room gives the keys back to the page
     if (!(event.target instanceof Element) || event.target.closest(CONTROLS)) return;
+    if (event.target.closest("dialog")) return; // a question is open (confirm.js): its focus stays on it
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
       document.activeElement.blur();
     }

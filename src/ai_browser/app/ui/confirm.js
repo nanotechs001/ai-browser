@@ -32,6 +32,9 @@ export function confirmAction({ title, lines = [], yes, no = "Keep" }) {
     keep.addEventListener("click", () => done(false));
     go.addEventListener("click", () => done(true));
     dialog.addEventListener("keydown", (event) => event.stopPropagation()); // keys never reach the page behind
+    dialog.addEventListener("mousedown", (event) => { // any press off its buttons (a right-click too) leaves focus be
+      if (!(event.target instanceof Element) || !event.target.closest("button")) event.preventDefault();
+    });
     dialog.addEventListener("click", (event) => { // a stray click on its words or the backdrop: Keep keeps the focus
       if (!(event.target instanceof Element) || !event.target.closest("button")) keep.focus();
     });
