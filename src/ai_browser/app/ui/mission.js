@@ -17,13 +17,14 @@ import { mountHistory, mountList, mountMissions } from "./pages.js";
 import { createScene } from "./scene.js";
 import { mountSide } from "./side.js";
 import { stateOf, toolLabel } from "./step.js";
+import { mountTabsPage } from "./tabspage.js";
 import { mountTalk } from "./talk.js";
 import { mountUsage } from "./usage.js";
 import { createVoice } from "./voice.js";
 import { fillMove, mountWorkspaces } from "./workspaces.js";
 
 const $ = (id) => document.getElementById(id);
-const PAGES = ["dashboard", "missions", "knowledge", "integrations", "history"];
+const PAGES = ["dashboard", "missions", "knowledge", "integrations", "tabs", "history"];
 const VIEWS = ["flow", "list", "calendar"];
 const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
 const agents = new Map(); // id -> the agent, as the app describes it
@@ -110,6 +111,14 @@ const history = mountHistory($("page-history"), { onOpen: openDrawer, visible: i
 parts.push(missions, history);
 parts.push(mountKnowledge($("page-knowledge"), link, { tabs: () => tabs, model: () => $("task-model").value }),
            mountIntegrations($("page-integrations"), link));
+parts.push(mountTabsPage($("page-tabs"), { // the user's tabs: Hand over, Take back, and a click brings one forward
+  send,
+  agents: () => [...agents.values()].sort((one, two) => (two.number || 0) - (one.number || 0)),
+  newAgent: (tab) => { // Hand over → New agent…: Build a Mission, starting in that tab
+    showPage("dashboard");
+    composer.startIn(tab);
+  },
+}));
 
 const spaces = mountWorkspaces($("workspaces"), { send, onFilter: setWorkspace });
 const usage = mountUsage($("usage"));

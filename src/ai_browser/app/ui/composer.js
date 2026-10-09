@@ -32,6 +32,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   let rows = []; // the accounts
   let workspaces = [];
   let workspacePicked = false; // the user chose one here: the menu's filter no longer sets it
+  let handing = null; // one of the user's tabs the next Start begins in (the Tabs page's Hand over → New agent…)
   const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") }, send);
   const uploads = mountUploads({ list: $("attached"), send, note });
 
@@ -56,6 +57,12 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     $("task-account").hidden = !build || rows.length < 2;
     $("task-workspace").hidden = mode === "ask";
     $("attached").hidden = !build || uploads.count() === 0;
+  }
+
+  function setHanding(tab) {
+    handing = tab || null;
+    $("handing").hidden = !handing;
+    $("handing-text").textContent = handing ? `Starts in your tab: ${handing.title || handing.url}` : "";
   }
 
   function finish() {
@@ -111,7 +118,8 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     const description = $("task-about").value.trim();
     begin({ type: "new_task", text, skills: [], model: $("task-model").value, web: $("task-web").value, ...account,
             ...(name ? { name } : {}), ...(description ? { description } : {}),
-            ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...auto, ...workspace() });
+            ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...auto, ...workspace(),
+            ...(handing ? { adopt: handing.target } : {}) });
   }
 
   function option(value, label) {
@@ -161,6 +169,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   $("task-workspace").addEventListener("change", () => {
     workspacePicked = true;
   });
+  $("handing-clear").addEventListener("click", () => setHanding(null));
   $("start-key").textContent = MAC ? "⌘ ↵" : "Ctrl ↵";
   $("task-auto-switch").title = autoTitle(false, false); // until the app says this computer runs commands
   setMode("build");
@@ -168,6 +177,11 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   return {
     note,
     focus() { // Command-K (Ctrl+K) and New Mission: Build a Mission, the cursor in the box
+      setMode("build");
+      $("task").focus();
+    },
+    startIn(tab) { // the Tabs page's Hand over → New agent…: the next Start begins in that tab of the user's
+      setHanding(tab);
       setMode("build");
       $("task").focus();
     },
@@ -210,6 +224,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
             $("task-name").value = "";
             $("task-about").value = "";
             $("task-auto").checked = false; // each task is its own choice: the next one starts off
+            setHanding(null);
             uploads.taken(took); // the app moved those into the agent's folder
             setMode(mode); // the chips show in Build a Mission only
             pickDefault($("task-account"), rows);

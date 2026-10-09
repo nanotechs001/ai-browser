@@ -283,6 +283,17 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .removed-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .removed-list li { display: flex; gap: 8px; align-items: center; }
 .knowledge-note:empty { display: none; }
+/* the Tabs page (tablist.js): each tab of the user's, and whose it is */
+.page .tab { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 12px;
+             background: var(--card); border: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+.page .tab .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page .tab .host { color: var(--muted); font-size: 12px; }
+.page .tab .chip { max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
+.page .tab .actions { display: flex; gap: 4px; }
+.page .tab .menu { position: static; height: auto; overflow: visible; background: none; border: 0; flex-basis: 100%;
+                   display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 6px 0 2px; }
+.page .tab .menu button { justify-content: flex-start; }
+.page .tab .menu .note { margin: 2px 0 0; font-size: 12px; }
 
 /* ---- the menu's workspaces, and the Usage card ---------------------------------------------------------------- */
 .workspace-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }

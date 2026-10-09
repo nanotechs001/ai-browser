@@ -961,7 +961,8 @@ async def test_hand_over_hint_opens_this_agents_tab_list(stack):
     await js(f"{yours}.querySelector('.give-here').click(); true")  # the user's click
     assert await eventually(lambda: "U1" in agents.agents["a1"].adopted)
     brave.set_state("ready")
-    assert await until(js, f"{yours}.textContent.includes(\"Brave isn't connected yet: connect it in AI Home.\")")
+    assert await until(js, f"{yours}.textContent.includes(\"Brave isn't connected yet: connect it at the top of "
+                           "Mission Control.\")")
     assert await js(f"{yours}.querySelectorAll('.your-tab').length") == 0
 
 

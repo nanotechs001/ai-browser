@@ -3,15 +3,26 @@ Brave, the Tabs page, a one-off run's skills, the drawer's run pieces, the Brain
 and the window's count. Against a real app server (agents on the fake claude) in a throwaway headless Chrome; every
 word stays text."""
 
+import json
+
 import pytest
 
 from ai_browser.chrome import chrome_binary
 from test_app_server import wait_for
-from test_home import open_settings, stack, until  # noqa: F401  (fixtures)
+from test_home import HOSTILE, open_settings, stack, until  # noqa: F401  (fixtures)
 from test_mission import open_mission
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 BAR = "document.getElementById('brave-bar')"
+CHIP = "(target => document.querySelector(`#tabs .tab[data-target='${target}'] .chip`)?.textContent)"
+
+
+def page_link(name):
+    return f"document.querySelector('.page-link[data-page={json.dumps(name)}]')"
+
+
+def in_row(target, selector):
+    return f"document.querySelector(\"#tabs .tab[data-target='{target}'] {selector}\")"
 
 
 # ---- Brave's connection, at the top of Mission Control (Task 9) ------------------------------------------------------
@@ -105,3 +116,89 @@ async def test_settings_says_the_old_extension_can_be_removed_until_got_it(stack
     assert (folder / "manifest.json").is_file()  # AI Browser never removes it
     server._send_all({"type": "settings", **server._settings_payload()})
     assert await until(settings, f"{note}.hidden")
+
+
+# ---- the Tabs page: the user's tabs, whose each one is, Hand over and Take back (Task 11) ---------------------------
+
+@CHROME
+async def test_the_tabs_page_marks_owners_and_hands_tabs_over(stack):
+    from fake_brave import FakeBrave
+
+    server = stack["server"]
+    agent = await server.agents.create("Fix the footer")
+    brave = FakeBrave([{"target": "T1", "url": "https://shop.example/cart", "title": "Agent page"},
+                       {"target": "U1", "url": "https://mail.example/", "title": HOSTILE},
+                       {"target": "U2", "url": "https://docs.example/", "title": "Docs"},
+                       {"target": "S1", "url": "https://s.example/", "title": "Session page"},
+                       {"target": "B1", "url": "https://mail.example/#t1", "title": "Thread"}])
+    mine = {"id": agent.id, "name": agent.name, "color": agent.color}
+    brave.owners.update({"T1": {"kind": "agent", **mine}, "U2": {"kind": "handed", **mine},
+                         "S1": {"kind": "session", "id": "cc-x", "name": "Claude Code", "color": "orange"},
+                         "B1": {"kind": "brain", "name": "Brain", "color": "purple"}})
+    agent.adopted.append("U2")  # handed to it, as Hand over leaves it: only a handed tab can be taken back
+    server.attach_brave(brave)
+    js = await open_mission(stack)
+    await js(f"{page_link('tabs')}.click(); true")
+    assert await until(js, f"{CHIP}('T1') === '1 · Fix the footer'")
+    assert await js(f"['S1', 'B1', 'U2', 'U1'].map({CHIP})") == ["Claude Code", "Brain",
+                                                                 "handed to 1 · Fix the footer", "you"]
+    assert "<img" in await js(f"{in_row('U1', '.title')}.textContent")  # a hostile title stays text
+    assert await js("document.querySelectorAll('#tabs img').length") == 0 and await js("document.title") != "pwned"
+    assert await js(f"[{in_row('U1', '.hand')}.hidden, {in_row('T1', '.hand')}.hidden, {in_row('B1', '.hand')}.hidden,"
+                    f" {in_row('U2', '.take')}.hidden]") == [False, True, False, False]
+    await js(f"{in_row('U1', '.title')}.click(); true")  # a click on a row brings that tab to the front
+    await wait_for(lambda: brave.watched == ["U1"])
+    await js(f"{in_row('U1', '.hand')}.click(); true")
+    assert "The agent will read this tab and act in it." in await js(f"{in_row('U1', '.menu')}.textContent")
+    assert await js(f"{in_row('U1', '.menu')}.getBoundingClientRect().height < 200")  # never the left menu's look
+    await js(f"{in_row('U1', f'.give[data-id={agent.id}]')}.click(); true")
+    await wait_for(lambda: "U1" in agent.adopted)
+    await js(f"{in_row('U2', '.take')}.click(); true")
+    assert await until(js, f"{CHIP}('U2') === 'you'")
+    await js(f"{in_row('B1', '.hand')}.click(); true")
+    await js(f"{in_row('B1', '.new')}.click(); true")  # New agent…: Build a Mission, starting in that tab
+    assert await until(js, "!document.getElementById('page-dashboard').hidden && document.getElementById("
+                           "'handing-text').textContent === 'Starts in your tab: Thread'")
+    await js("document.getElementById('task').value = 'reply to it'; document.getElementById('start').click(); true")
+    await wait_for(lambda: len(server.agents.agents) == 2)
+    assert server.agents.agents["a2"].adopted == ["B1"]
+    assert await until(js, "document.getElementById('handing').hidden")  # the next Start begins anywhere again
+
+
+LAST_USED = "Showing the Brave profile you used last. Pick the one agents use in Settings → Where agents browse."
+NO_PROFILE = "Your tabs aren't listed: AI Browser can't tell which Brave profile is yours yet."
+
+
+@CHROME
+async def test_the_tabs_page_counts_what_it_doesnt_show_and_claims_nothing_unconnected(stack):
+    from fake_brave import FakeBrave
+
+    brave = FakeBrave([{"target": "U1", "url": "https://mail.example/", "title": "Mail"}])
+    brave.set_scope("chosen", 3)
+    stack["server"].attach_brave(brave)
+    js = await open_mission(stack)
+    await js(f"{page_link('tabs')}.click(); true")
+    source = "document.querySelector('#tabs p.scope-source')?.textContent ?? null"
+    count = "document.querySelector('#tabs p.elsewhere')?.textContent ?? null"
+    empty = "document.querySelector('#tabs .empty')?.textContent ?? null"
+
+    async def shows(expression, text):
+        return await until(js, f"({expression}) === {json.dumps(text)}")
+
+    assert await shows(count, "3 more tabs in other profiles or private windows: not shown here.")
+    brave.set_scope("last_used", 0)
+    assert await shows(source, LAST_USED) and await js(count) is None
+    brave.set_scope("none", 2)
+    assert await shows(source, NO_PROFILE)
+    brave.pages = []
+    brave.set_scope("chosen", 0)
+    assert await shows(empty, "No web pages open in this profile.")
+    brave.set_scope("none", 4)
+    brave.set_state("ready")  # while Brave isn't connected, the list claims nothing about profiles
+    assert await shows(empty, "No web pages open in your browser.")
+    assert await js(source) is None and await js(count) is None
+    brave.set_state("connected")  # connected again: the scope sent before is stale until the new connection's list
+    assert await until(js, f"{BAR}.hidden")
+    assert await js(source) is None and await js(count) is None
+    brave.changed()  # the new connection's first list brings its own scope
+    assert await shows(source, NO_PROFILE)

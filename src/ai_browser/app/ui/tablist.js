@@ -1,6 +1,6 @@
-// AI Home's tab list: every web tab of the user's Brave (or of AI Browser), its title and site, and whose it is: an
-// agent's (its name and colour), Claude Code's, the Brain's, handed to an agent, or yours. Hand over gives one of
-// your tabs to an agent; Take back ends that. Titles, addresses and names are set as text, never as HTML.
+// Mission Control's Tabs page: every web tab of the user's Brave (or of AI Browser), its title and site, and whose it
+// is: an agent's (its name and colour), Claude Code's, the Brain's, handed to an agent, or yours. Hand over gives one
+// of your tabs to an agent; Take back ends that. Titles, addresses and names are set as text, never as HTML.
 import { agentLabel, el } from "./chat.js";
 
 export const COLORS = { grey: "#5f6368", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038",
@@ -153,21 +153,21 @@ export function mountTabList(root, { send, agents, newAgent }) {
 }
 
 // Mission Control's Your tabs, in an agent's drawer: the user's own tabs (theirs, or a Brain thread's), each with Give
-// to this agent. That button is the existing hand_tab, the same click as AI Home's Hand over; the Brain never sends
-// it. root is a <details>; every text is set with textContent.
+// to this agent. That button is the existing hand_tab, the same click as the Tabs page's Hand over; the Brain never
+// sends it. root is a <details>; every text is set with textContent.
 export function mountYourTabs(root, { send, agentId }) {
   const summary = el("summary", "", "Your tabs");
   const list = el("div", "your-tab-list");
   root.replaceChildren(summary, list);
 
-  // scope: the server's tab_scope (brave mode lists one profile), said here as AI Home's list says it
+  // scope: the server's tab_scope (brave mode lists one profile), said here as the Tabs page says it
   function render(tabs, { brave = false, connected = false, name = "Brave", scope = null } = {}) {
     root.hidden = !brave; // agents in AI Browser itself can't take the user's tabs
     list.textContent = "";
     if (!brave) return;
     if (!connected) {
       summary.textContent = "Your tabs";
-      list.append(el("p", "muted", `${name} isn't connected yet: connect it in AI Home.`));
+      list.append(el("p", "muted", `${name} isn't connected yet: connect it at the top of Mission Control.`));
       return;
     }
     const mine = tabs.filter((tab) => ["you", "brain"].includes(tab.owner?.kind || "you"));
