@@ -112,6 +112,8 @@ def _sent_methods(path: Path) -> set[str]:
 
 
 def _level(method: str) -> str:
+    if method == "Target.setAutoAttach":  # sent on a tab's session (the frames spec), never at the browser's level
+        return "session"
     return "browser" if method.startswith(("Target.", "Browser.")) else "session"
 
 

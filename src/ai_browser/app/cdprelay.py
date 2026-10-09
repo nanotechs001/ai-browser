@@ -64,7 +64,11 @@ SESSION_METHODS = frozenset({
     "Page.navigate", "Page.getNavigationHistory", "Page.navigateToHistoryEntry", "Page.reload",
     "Page.createIsolatedWorld", "Page.getLayoutMetrics", "Page.captureScreenshot", "Page.handleJavaScriptDialog",
     "Page.startScreencast", "Page.stopScreencast", "Page.screencastFrameAck", "Network.enable",
-    "Emulation.setFocusEmulationEnabled", "Emulation.setDeviceMetricsOverride", "Emulation.clearDeviceMetricsOverride"})
+    "Emulation.setFocusEmulationEnabled", "Emulation.setDeviceMetricsOverride", "Emulation.clearDeviceMetricsOverride",
+    "Target.setAutoAttach", "Target.detachFromTarget"})  # on a tab's session: its frames (the frames spec, 3)
+# Target.setAutoAttach always gets these, whatever a client asks: frames only (never a worker, never another tab),
+# flattened, and never paused at their start.
+FRAMES_ONLY = {"waitForDebuggerOnStart": False, "flatten": True, "filter": [{"type": "iframe"}]}
 WEB_ONLY = "only web pages (http, https, data:, about:blank) open through AI Browser's connection"
 APP_PAGE = "AI Browser's own pages don't open in your browser through its connection"
 UNREADABLE = "not an address the browser could read"
@@ -282,6 +286,8 @@ class _Session:
     client: object | None  # the client that attached; None once it left (its events are dropped)
     target: str
     cut: bool = False  # Take back: refused at once, until the browser's detach note drops it
+    parent: str | None = None  # a frame's session: the session the browser attached it under (auto-attach)
+    page: str = ""  # the tab it belongs to: its own target, or for a frame its parent's tab
 
 
 class _Socket:
@@ -687,6 +693,13 @@ class Relay:
                 problem = address_problem(params.get("url"), self.port)
                 if problem:
                     return self._error(client, client_id, (-32000, problem), session_id)
+            if method == "Target.setAutoAttach":
+                params = {"autoAttach": params.get("autoAttach") is True, **FRAMES_ONLY}
+            if method == "Target.detachFromTarget":  # only a frame attached under this very session
+                child = self._sessions.get(params.get("sessionId"))
+                if child is None or child.parent != session_id or child.client is not client:
+                    return self._error(client, client_id, NO_SESSION, session_id)
+                params = {"sessionId": params["sessionId"]}
             return await self._forward(client, client_id, method, params, session_id)
         if not allowed(method, "browser", client.app):
             return self._refuse(client, client_id, method)
@@ -893,7 +906,7 @@ class Relay:
                 self._job(self._quietly("Target.detachFromTarget", {"sessionId": session_id}))
                 self._error(client, client_id, NOT_FOUND)
                 return None
-            self._sessions[session_id] = _Session(client, str(target))
+            self._sessions[session_id] = _Session(client, str(target), page=str(target))
             client.sessions.add(session_id)
             if not client.app and isinstance(target, str):
                 self._take_popup(client.identity, target)
@@ -915,9 +928,40 @@ class Relay:
         client = session.client
         if client is None or session.cut:
             return
+        if method == "Target.attachedToTarget":
+            return self._frame_attached(session_id, session, params, message, raw)
+        if method == "Target.detachedFromTarget":
+            gone = self._sessions.get(params.get("sessionId"))
+            if gone is None or gone.parent != session_id:
+                return  # only a frame attached under this very session, and only one it was handed
+            self._drop(params.get("sessionId"))
         if method == "Page.downloadWillBegin" and isinstance(params.get("guid"), str):
             client.downloads.add(params["guid"])  # Browser.cancelDownload may name it now
         self._to(client, message, raw)
+
+    def _frame_attached(self, parent_id: str, parent: _Session, params: dict, message: dict, raw: str | None) -> None:
+        """The browser attached a frame of a client's tab under one of its sessions (auto-attach): the frame's session
+        is that client's, with the page's policy. Anything but a frame is never handed on."""
+        child, info = params.get("sessionId"), params.get("targetInfo")
+        if not isinstance(child, str) or not isinstance(info, dict) or info.get("type") != "iframe":
+            log.info("relay: a %s attached under %s's tab was not handed on", str((info or {}).get("type"))[:20],
+                     parent.client.identity)
+            return
+        self._sessions[child] = _Session(parent.client, str(info.get("targetId")), parent=parent_id, page=parent.page)
+        parent.client.sessions.add(child)
+        self._to(parent.client, message, raw)
+        for event, held in self._unbound.pop(child, []):  # anything of its own that came first
+            self._to(parent.client, event, held)
+
+    def _drop(self, session_id) -> None:
+        """A session ended in the browser: it goes, with the frames' sessions under it (the browser ends those too)."""
+        session = self._sessions.pop(session_id, None) if isinstance(session_id, str) else None
+        if session is None:
+            return
+        if session.client is not None:
+            session.client.sessions.discard(session_id)
+        for child in [sid for sid, other in self._sessions.items() if other.parent == session_id]:
+            self._drop(child)
 
     def _hold(self, session_id: str, message: dict, raw: str | None) -> None:
         held = self._unbound.get(session_id)
@@ -942,9 +986,8 @@ class Relay:
         self._unbound.pop(session_id, None)
         if session is None:
             return
-        del self._sessions[session_id]
+        self._drop(session_id)
         if session.client is not None:
-            session.client.sessions.discard(session_id)
             self._to(session.client, message, raw)
 
     def _target_event(self, method: str, params: dict, message: dict, raw: str | None) -> None:
@@ -1121,7 +1164,7 @@ class Relay:
         doomed = []
         for session_id, session in list(self._sessions.items()):  # all of them first, before any await
             client = session.client
-            if session.target != target or session.cut or client is None or client.identity != identity:
+            if session.page != target or session.cut or client is None or client.identity != identity:
                 continue
             session.cut = True
             doomed.append(session_id)
