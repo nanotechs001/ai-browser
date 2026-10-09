@@ -141,7 +141,8 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
   function fillAccounts(chosen) {
     const rows = accounts();
     account.replaceChildren(option("", "The default account"), ...rows.map((row) => option(row.id, row.name)));
-    account.value = chosen && rows.some((row) => row.id === chosen) ? chosen : "";
+    if (chosen && !rows.some((row) => row.id === chosen)) account.append(option(chosen, chosen)); // kept: Save asks
+    account.value = chosen || "";
     accountField.hidden = rows.length < 2 && !chosen;
   }
 

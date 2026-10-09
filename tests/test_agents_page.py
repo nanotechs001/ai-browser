@@ -137,6 +137,29 @@ async def test_an_agents_tasks_run_as_it_and_runs_as_moves_one_there(stack):
     assert await until(js, f"{any_task} === null")
 
 
+@CHROME
+async def test_save_keeps_an_agents_folder_and_account_or_refuses_them_with_words(stack):
+    server = stack["server"]
+    place = stack["user"] / "Project"
+    place.mkdir(parents=True)
+    kept = server.saved.save({**AGENT, "name": "Kept", "folder": str(place)})
+    gone = server.saved.save({**AGENT, "name": "Gone", "folder": str(stack["user"] / "Gone"), "account": "old"})
+    js = await open_agents(stack)
+    assert await until(js, f"{card(kept.slug)} !== null")
+    await js(f"{card(kept.slug)}.click(); {PANEL}.querySelector('.save-agent').click(); true")  # before the check
+    assert await until(js, f"{PANEL}.querySelector('.agent-note').textContent === 'Saved.'")
+    assert server.saved.get(kept.slug).folder == str(place)  # never folder: null
+    await js(f"{PANEL}.querySelector('header button').click(); {card(gone.slug)}.click(); true")
+    assert await until(js, f"{in_panel('agent-account')}.value === 'old'")  # an account no longer listed stays
+    assert await until(js, f"{PANEL}.querySelector('.folder-note')?.textContent.startsWith(\"That folder isn't\")")
+    await js(f"{PANEL}.querySelector('.save-agent').click(); true")
+    assert await until(js, f"{PANEL}.querySelector('.agent-note').textContent === 'Pick one of the accounts listed'")
+    await js(f"{in_panel('agent-account')}.value = ''; {PANEL}.querySelector('.save-agent').click(); true")
+    assert await until(js, f"{PANEL}.querySelector('.agent-note').textContent.startsWith(\"That folder isn't\")")
+    assert (server.saved.get(gone.slug).folder, server.saved.get(gone.slug).account) == (
+        str(stack["user"] / "Gone"), "old")  # refused: nothing written
+
+
 # ---- Build a Mission's Agent ▾: a saved agent's settings apply, one run at a time (Task 16) -------------------------
 
 @CHROME

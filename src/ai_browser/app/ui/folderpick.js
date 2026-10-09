@@ -60,6 +60,7 @@ async function pickPath() { // a path, null (cancelled), or undefined (no dialog
 export function mountFolderPicker({ select, box, prefix = "fold" }, send) {
   let recent = []; // the folders the app lists, newest first: {path, name, trusted, missing}
   let chosen = null; // the folder picked and checked by the app: {path, name, trusted}
+  let kept = null; // set(path)'s folder, until the app's check answers or the user picks again: never dropped
   let waiting = null; // the request id of the check or the trust answer under way
   let requests = 0;
 
@@ -88,14 +89,17 @@ export function mountFolderPicker({ select, box, prefix = "fold" }, send) {
     return node;
   }
 
+  const current = () => chosen?.path || kept || NONE; // the folder in use
+
   function fill() { // rebuilt only when what it lists changes, and never while it's open
     const rows = recent.filter((row) => !row.missing).slice(0, RECENT);
-    if (chosen && !rows.some((row) => row.path === chosen.path)) rows.unshift(chosen);
-    const signature = JSON.stringify([rows.map((row) => row.path), chosen?.path || NONE]);
+    const shown = chosen || (kept && { path: kept });
+    if (shown && !rows.some((row) => row.path === shown.path)) rows.unshift(shown);
+    const signature = JSON.stringify([rows.map((row) => row.path), current()]);
     if (select.dataset.rows === signature || document.activeElement === select) return;
     select.replaceChildren(option("No folder", NONE, "The agent's own scratch folder"),
       ...rows.map((row) => option(row.name || folderName(row.path), row.path, row.path)), option("Choose…", CHOOSE));
-    select.value = chosen?.path || NONE;
+    select.value = current();
     select.dataset.rows = signature;
   }
 
@@ -142,7 +146,7 @@ export function mountFolderPicker({ select, box, prefix = "fold" }, send) {
   }
 
   async function choose() {
-    select.value = chosen?.path || NONE; // the list shows the folder in use until another is checked
+    select.value = current(); // the list shows the folder in use until another is checked
     const path = await pickPath();
     if (typeof path === "string") ask({ type: "folder_choose", path });
     else if (path === undefined) showTyped();
@@ -153,6 +157,7 @@ export function mountFolderPicker({ select, box, prefix = "fold" }, send) {
       choose();
     } else if (select.value === NONE) {
       chosen = null;
+      kept = null;
       showChosen();
     } else {
       ask({ type: "folder_choose", path: select.value });
@@ -173,6 +178,7 @@ export function mountFolderPicker({ select, box, prefix = "fold" }, send) {
       } else if (message.type === "folder" && message.request && message.request === waiting) {
         waiting = null;
         chosen = message.folder || null;
+        if (chosen) kept = null;
         if (document.activeElement === select) select.blur(); // the pick is made: the list may show it now
         fill();
         showChosen();
@@ -182,12 +188,13 @@ export function mountFolderPicker({ select, box, prefix = "fold" }, send) {
         const why = el("p", "muted folder-note", String(message.text || ""));
         if (typing) show(typing, why);
         else show(why);
-        select.value = chosen?.path || NONE;
+        select.value = current();
       }
     },
-    value() { return chosen?.path || null; }, // the task's folder; null: its own scratch folder
-    set(path) { // a saved agent's folder, shown when its settings open: the app checks it again
-      chosen = null;
+    value() { return current() || null; }, // the task's folder; null: its own scratch folder
+    set(path) { // a saved agent's folder, shown when its settings open: the app checks it again (Save sends it
+      chosen = null; // until then, or after a refusal, so the app judges it: it is never dropped)
+      kept = path || null;
       showChosen();
       fill();
       if (path) ask({ type: "folder_choose", path });
