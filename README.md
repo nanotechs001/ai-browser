@@ -717,14 +717,15 @@ in a one-off run's drawer starts one from that run. Each is a card, with its set
   shell.
 - **Load at start:** skills whose text goes into its first message, at most 60,000 characters in all. One that is no
   longer installed is skipped, and the run says so.
-- **One run at a time:** a task for it (Build a Mission's **Agent ▾**, or a workflow that **Runs as** it) starts its
-  run, or, while that run works, goes to it as a message.
+- **One run at a time:** a task for it from Build a Mission's **Agent ▾**, or a workflow that **Runs as** it that you
+  run by hand, starts its run, or, while that run works, goes to it as a message. A scheduled workflow is skipped
+  while it works, and one started by a message waits for you to run it again.
 - **Delete agent** asks first, and says what goes: its settings, its instruction and the workflows that run as it.
   Its runs and their files stay; a run of it that still works keeps going, as a one-off run. **Keep** is the default
   (Escape keeps it too).
 
-Each agent is a file, `~/.ai-browser/agents/<name>.md` (front matter, then the instruction), changed only by the
-Agents page.
+Each agent is a file, `~/.ai-browser/agents/<slug>.md` (front matter, then the instruction), written by the Agents
+page's Save; one you edit by hand is read too and checked as a Save is; a broken one is skipped.
 
 ## Talking to the Brain (push-to-talk, speech to text on this computer)
 

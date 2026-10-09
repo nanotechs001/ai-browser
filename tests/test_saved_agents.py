@@ -633,7 +633,10 @@ def test_the_readme_explains_saved_agents():  # what the user reads first
                   "A run that a message started (a workflow for an inbox item) starts with Auto-approve off, and says "
                   "so: turn it on in its drawer if you trust it.",
                   f'"{NOT_ALLOWED}"', "at most 60,000 characters in all", "**Delete agent** asks first",
-                  "**Keep** is the default (Escape keeps it too)", "`~/.ai-browser/agents/<name>.md`", "**Runs as:**",
+                  "**Keep** is the default (Escape keeps it too)", "`~/.ai-browser/agents/<slug>.md`", "**Runs as:**",
+                  "one you edit by hand is read too and checked as a Save is; a broken one is skipped",
+                  "A scheduled workflow is skipped while it works, and one started by a message waits for you to run it "
+                  "again.",
                   "**Agent ▾:**", "a saved agent's runs follow its own setting"):
         assert words in text, words
 
