@@ -202,14 +202,12 @@ async def test_our_buttons_switch_tabs_and_never_open_a_window(shell):
     assert await until(js, f"{active_is('/mission')} && {connected('/mission')}")
     await click_in(js, "/mission", "#usage")  # Mission Control's Usage card: Settings → Accounts
     assert await until(js, f"{active_is('/settings')} && {connected('/settings')}")
-    await click_in(js, "/settings", "#home-link")
-    assert await until(js, active_is("/home"))
-    await click_in(js, "/home", "#mission")  # open already: shown again, never a second one
+    await click_in(js, "/settings", "#mission-link")  # Settings' way back: Mission Control
     assert await until(js, active_is("/mission"))
-    await click_in(js, "/mission", "#usage")
+    await click_in(js, "/mission", "#usage")  # open already: shown again, never a second one
     assert await until(js, active_is("/settings"))
-    await click_in(js, "/settings", "#home-link")
-    assert await until(js, active_is("/home"))
+    await click_in(js, "/settings", "#mission-link")
+    assert await until(js, active_is("/mission"))
     await asyncio.sleep(0.5)
     assert await js(keys()) == ["/home", "/mission", "/settings"]
     assert await js("document.querySelectorAll('#views iframe').length") == 3
