@@ -143,3 +143,20 @@ def test_saving_and_deleting_an_agent_are_app_only_rows():
     for kind in ("saved_agents", "saved_agent_save", "saved_agent_delete"):
         assert MESSAGE_RULES[kind].app and may_send("app", {"type": kind})
         assert not may_send("watcher", {"type": kind}) and not may_send("none", {"type": kind})
+
+
+def test_an_edit_never_writes_over_a_file_it_cannot_read(tmp_path):
+    from ai_browser.app.savedagents import SavedAgents
+
+    folder = tmp_path / "home" / "agents"
+    folder.mkdir(parents=True)
+    (folder / "broken.md").write_bytes(b"no front matter")
+    with pytest.raises(ValueError, match="There is no such agent"):
+        SavedAgents(tmp_path / "home").save({**AGENT, "slug": "broken"})
+    assert (folder / "broken.md").read_bytes() == b"no front matter"
+
+
+def test_every_line_break_kind_becomes_a_line_break():
+    from ai_browser.app.savedagents import clean_instruction
+
+    assert clean_instruction("a\u2029b") == "a\nb" and clean_instruction("c\rd") == "c\nd"
