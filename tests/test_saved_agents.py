@@ -437,6 +437,32 @@ async def test_a_run_keeps_the_template_skills_it_may_use(fake_claude, tmp_path)
         await manager.close_all()
 
 
+async def test_a_task_given_while_its_run_closes_starts_a_new_run(fake_claude, tmp_path):  # final review, Minor 6
+    import asyncio
+    import json
+
+    from ai_browser.app.agents import AgentManager
+    from ai_browser.app.savedagents import SavedAgents
+    from test_app_server import wait_for
+    from test_bridge import EVENTS
+
+    runner, _, script = fake_claude
+    script.write_text(json.dumps([EVENTS[0], {"sleep": 30}]), encoding="utf-8")
+    saved = SavedAgents(tmp_path / "home").save({**AGENT, "load_at_start": [], "can_use": []})
+    manager = AgentManager(tmp_path / "home", claude=runner)
+    try:
+        first, _ = await manager.run_as(saved, "List the prices")
+        await wait_for(lambda: first.state == "working")
+        closing = asyncio.create_task(manager.close(first.id))
+        await asyncio.sleep(0)  # the user's Close is under way
+        second, started = await manager.run_as(saved, "Add the yearly plans")
+        assert started is True and second.id != first.id  # never sent to the run that is closing
+        await closing
+        assert manager.run_of(saved.slug) is second
+    finally:
+        await manager.close_all()
+
+
 # ---- its tasks: templates that run as it, on their schedules (Task 8) ------------------------------------------------
 
 def test_a_template_runs_as_a_saved_agent_or_a_new_one(tmp_path):
@@ -535,7 +561,7 @@ async def test_a_run_started_from_a_message_never_starts_with_auto_approve(fake_
     async def ask(prompt, **options):
         return OneShot(text=json.dumps([{"id": f"asana:{n}", "kind": "new", "summary": "A task", "why": "",
                                          "suggest": "agent", "workflow": slug}
-                                        for n, slug in ((1, "auto-fix"), (2, "ask-fix"))]))
+                                        for n, slug in ((1, "auto-fix"), (2, "ask-fix"), (3, "auto-fix"))]))
 
     brain.ask = ask
 
@@ -548,6 +574,11 @@ async def test_a_run_started_from_a_message_never_starts_with_auto_approve(fake_
         await brain.settle()
         run = agents.run_of(saved.slug)
         assert run is not None and run.auto is False and notes(run) == [off]  # run: auto
+        await brain.on_items("asana", [{"id": "3", "from": "Ana", "subject": "Task 3", "snippet": "More",
+                                        "url": "https://app.asana.com/1/1/task/3"}])
+        await brain.settle()  # its agent is working: refused, and the item says why
+        assert brain.store.get("asana:3").note == "Research is working: run it again when it is done"
+        assert list(agents.agents) == [run.id]
         await agents.close(run.id)
         clicked = agents.agents[await brain.run_workflow("asana:2", "ask-fix")]
         assert clicked.auto is False and notes(clicked) == [off]  # the item's Run

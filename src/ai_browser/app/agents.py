@@ -223,6 +223,7 @@ class Agent:
     task: str = field(default="", repr=False)  # its first words: the hand-over note (wave C's Restart in too)
     handover: str | None = field(default=None, repr=False)  # the note a resume that doesn't take falls back to
     moving: bool = field(default=False, repr=False)  # one move at a time
+    closing: bool = field(default=False, repr=False)  # the user closed it: no longer a saved agent's run at work
     # agent powers: the task's folder (its real path; None: the agent's own scratch folder) and whether the user trusts
     # it; Claude Code's to-do list, and its sub-agents ({id, task, action, state}), for the row and the drawer
     folder: str | None = None
@@ -393,9 +394,10 @@ class AgentManager:
         return agent
 
     def run_of(self, slug: str) -> Agent | None:
-        """The run of this saved agent that is still going (working, waiting in line or needing the user), if any."""
-        return next((agent for agent in self.agents.values() if slug and agent.saved == slug and agent.state in GOING),
-                    None)
+        """The run of this saved agent that is still going (working, waiting in line or needing the user), and not
+        closing, if any."""
+        return next((agent for agent in self.agents.values()
+                     if slug and agent.saved == slug and agent.state in GOING and not agent.closing), None)
 
     async def run_as(self, saved, text: str, skills=(), servers: list[str] | None = None, tab: dict | None = None,
                      adopt: str | None = None, files=(), workspace: str | None = None,
@@ -555,6 +557,7 @@ class AgentManager:
         agent = self.agents.get(agent_id)
         if agent is None:
             return
+        agent.closing = True  # a task for its saved agent starts a new run from now on
         await self.stop(agent_id)
         turn = self._turns.get(agent_id)
         if turn is not None:
