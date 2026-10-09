@@ -96,8 +96,16 @@ def test_page_header_and_rows():
 
 def test_page_lists_frames():
     out = render_page(state(frames=[{"label": "canvas", "url": "x", "cross": False},
+                                    {"label": "builder", "url": "z", "cross": True, "readable": True},
                                     {"label": "map", "url": "y", "cross": True}]))
-    assert "frames: [canvas] [map (cross-site, not readable)]" in out.splitlines()[1]
+    assert "frames: [canvas] [builder] [map (not readable)]" in out.splitlines()[1]
+
+
+def test_a_page_drawn_on_a_canvas_says_so():
+    from ai_browser.render import CANVAS_HINT
+
+    assert CANVAS_HINT in render_page(state(canvas=True))
+    assert CANVAS_HINT not in render_page(state())
 
 
 def test_page_truncation_hint():

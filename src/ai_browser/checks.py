@@ -25,6 +25,10 @@ MIN_CHALLENGE = 100  # px: a picture-challenge frame smaller than this either wa
 _GOOGLE = re.compile(r"(?:^|\.)google\.(?:com|[a-z]{2}|com\.[a-z]{2}|co\.[a-z]{2})$")
 _CF_TITLES = ("just a moment", "attention required")
 _CF_IDS = frozenset({"challenge-stage", "challenge-form", "challenge-running"})
+# A check's frame, by its address: reader.js's CHECK_FRAME, the same text (tests/test_frames.py keeps them so). The
+# engine never reads, enters or acts in a frame whose address matches.
+CHECK_FRAME = re.compile(r"\/recaptcha\/(?:api2|enterprise)\/|hcaptcha\.com|challenges\.cloudflare\.com|"
+                         r"\/cdn-cgi\/challenge-platform\/|arkoselabs\.com|funcaptcha\.com", re.IGNORECASE)
 
 
 @dataclass(frozen=True)

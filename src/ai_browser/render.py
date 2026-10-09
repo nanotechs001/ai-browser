@@ -10,6 +10,7 @@ from functools import lru_cache
 NO_ROWS_HINT = '(no interactive elements in view — scroll, use observe find="…", or take a screenshot)'
 DIFF_TEXT_LIMIT = 500
 BOX_TAG = "[bot check box: the user ticks it]"  # a reCAPTCHA, hCaptcha or Turnstile box in a form: never the agent's
+CANVAS_HINT = "(part of this page is drawn on a canvas, which has nothing to read: take a screenshot to see it)"
 TASKBAR = " (if its window didn't come up, look for it in the taskbar)"  # Windows' focus rules may only flash it
 
 
@@ -66,7 +67,8 @@ def _header(state: dict) -> list[str]:
     if frames:
         tags = [
             BOX_TAG if frame.get("box") else
-            f"[{frame['label']} (cross-site, not readable)]" if frame.get("cross") else f"[{frame['label']}]"
+            f"[{frame['label']} (not readable)]" if frame.get("cross") and not frame.get("readable") else
+            f"[{frame['label']}]"
             for frame in frames
         ]
         view += " · frames: " + " ".join(tags)
@@ -84,6 +86,8 @@ def render_page(state: dict, ms: int | None = None) -> str:
         lines.append(f'… {state["truncated"]} more rows (use observe find="…")')
     if not rows:
         lines.append(NO_ROWS_HINT)
+    if state.get("canvas"):
+        lines.append(CANVAS_HINT)
     if state.get("text"):
         lines.append("text:\n" + state["text"])
     if ms is not None:

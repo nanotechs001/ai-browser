@@ -179,3 +179,77 @@ async def test_live_view_and_thumbnails_through_the_relay(relayed, throwaway_chr
         assert picture[:2] == b"\xff\xd8"
     finally:
         await engine.close()
+
+
+@CHROME
+async def test_a_tabs_frames_reach_its_own_agent_only(relayed, throwaway_chrome, tmp_path, monkeypatch):
+    """The frames spec, 3: through the relay an agent reads the frames of its own tab. Another agent gets none of them,
+    the user's own tab with the same frames gives nobody anything, and only frames are attached (the builder runs a
+    worker too)."""
+    from urllib.parse import urlsplit
+
+    from ai_browser.cdp import CDPError
+
+    server, brave, base, own = relayed
+    users = (await own.send("Target.createTarget", {"url": base + "frames/builder.html"}))["targetId"]
+    got, dispatch = {}, CDP._dispatch
+
+    def spy(self, message):  # every message each connection gets
+        got.setdefault(id(self), []).append(json.dumps(message))
+        dispatch(self, message)
+
+    monkeypatch.setattr(CDP, "_dispatch", spy)
+    engines = []
+    try:
+        for agent, page in (("a2", "form.html"), ("a1", "frames/builder.html")):  # a2 listens before a1's frames come
+            add_agent(server.agents, agent)
+            engine = agent_engine(server, throwaway_chrome, tmp_path, monkeypatch, agent)
+            engines.append(engine)
+            ok(await engine.open(base + page))
+        two, one = engines
+        for _ in range(100):
+            if '"Add row"' in ok(await one.observe()):
+                break
+            await asyncio.sleep(0.1)
+        assert "frames: [page-builder] [side] [nested]" in ok(await one.observe())  # side: no address, so blank
+        frames = [frame for frame in one.browser.current.frames.values() if frame.session != frame.host]
+        assert {urlsplit(frame.url).path for frame in frames} == {"/frames/canvas.html", "/frames/nested.html"}
+        attached = [json.loads(message)["params"]["targetInfo"]["type"] for message in got[id(one.cdp)]
+                    if json.loads(message).get("method") == "Target.attachedToTarget"]
+        assert set(attached) == {"page", "iframe"}  # its tab, and its tab's frames: never the worker
+        children = [session for session in brave.relay._sessions.values() if session.parent]
+        assert children and all(session.page == one.browser.current.target and session.client.identity == "a1"
+                                for session in children)  # none of the user's own builder tab
+        assert users not in {session.page for session in brave.relay._sessions.values()}
+        theirs = "".join(got.get(id(two.cdp), []))  # all a2 heard
+        assert "canvas.html" not in theirs and not any(frame.session in theirs for frame in frames)
+        for frame in frames:
+            with pytest.raises(CDPError, match="Session with given id not found"):
+                await two.cdp.send("Runtime.evaluate", {"expression": "1"}, session_id=frame.session)
+    finally:
+        for engine in engines:
+            await engine.close()
+
+
+async def test_shots_at_once_leave_the_tab_its_size(relayed):
+    """Two scaled shots of one tab at once (an agent's and AI Home's thumbnail) shrank it for good in a real Chrome:
+    320×213 in GHL's builder. Through the relay they take turns, and the tab keeps its size."""
+    _server, brave, base, own = relayed
+    target = (await own.send("Target.createTarget", {"url": base + "form.html"}))["targetId"]
+    mine = (await own.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
+
+    async def size():
+        answer = await own.send("Runtime.evaluate", {"expression": "[innerWidth, innerHeight]", "returnByValue": True},
+                                session_id=mine)
+        return answer["result"]["value"]
+
+    before = await size()
+    clients = [brave.relay.local(), brave.relay.local()]
+    sessions = [(await c.send("Target.attachToTarget", {"targetId": target, "flatten": True}))["sessionId"]
+                for c in clients]
+    clip = {"x": 0, "y": 0, "width": before[0], "height": before[1]}
+    for _ in range(4):
+        await asyncio.gather(*(c.send("Page.captureScreenshot", {"format": "jpeg", "clip": {**clip, "scale": scale}},
+                                      session_id=s)
+                               for c, s, scale in zip(clients, sessions, (0.83, 320 / before[0]))))
+    assert await size() == before

@@ -1,3 +1,4 @@
+import asyncio
 import statistics
 import time
 
@@ -76,12 +77,16 @@ async def test_password_value_is_never_shown(env):
 async def test_same_origin_frame_rows_are_tagged(env):
     browser, base, _ = env
     await browser.open(base + "frames.html")
-    state = await browser.state()
-    assert by_name(state, "Inner button")["frame"] == "canvas"
+    for _ in range(50):  # the map, a frame from another site, is read once its address has come
+        state = await browser.state()
+        if any(row.get("frame") == "map" for row in state["rows"]):
+            break
+        await asyncio.sleep(0.1)
+    assert {row.get("frame") for row in state["rows"] if row["name"] == "Inner button"} == {"canvas", "map"}
     assert by_name(state, "Top button").get("frame") is None
     frames = {frame["label"]: frame["cross"] for frame in state["frames"]}
     assert frames == {"canvas": False, "map": True}
-    assert "[map (cross-site, not readable)]" in await browser.observe()
+    assert "frames: [canvas] [map]" in await browser.observe()
 
 
 async def test_shadow_dom_controls_are_found(env):

@@ -190,7 +190,8 @@ def throwaway_chrome(tmp_path):
     process.wait(timeout=15)
 
 
-RELAYED_MODULES = {"test_chrome", "test_checks_browser", "test_isolation"}  # their own-mode tests run both ways
+RELAYED_MODULES = {"test_chrome", "test_checks_browser", "test_isolation",
+                   "test_frames"}  # their own-mode tests run both ways
 
 
 def pytest_generate_tests(metafunc):
