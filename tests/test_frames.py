@@ -307,6 +307,56 @@ async def test_a_dropped_frame_read_never_makes_two_rows_share_a_number(builder,
     assert set(browser.current.inside) == framed  # only the frame's own rows
 
 
+@CHROME
+async def test_a_page_row_always_beats_a_stale_frame_entry_with_its_number(builder):
+    """A frame's row once numbered e72 (its read was dropped, so the entry outlived it) and the page later numbered its
+    own e72: the page's row wins, and an act on it reaches the page, not the frame."""
+    browser, page = builder
+    await browser.open(page)
+    state = await read_until(browser, "Add row", "Side button")
+    tab = browser.current
+    canvas = next(frame for frame in tab.frames.values() if frame.url.endswith("/frames/canvas.html"))
+    mine = row(state, "Add section")["id"]
+    tab.inside[mine] = canvas  # the stale entry
+    await browser.state()
+    assert mine not in tab.inside
+    assert browser._where(mine) is tab
+
+
+@CHROME
+async def test_a_same_process_frame_that_moves_to_a_bot_check_is_refused_before_any_act(builder):
+    from ai_browser.browser import StepBlocked
+
+    browser, page = builder
+    await browser.open(page)
+    state = await read_until(browser, "Add row", "Side button")
+    tab = browser.current
+    side = row(state, "Side button")["id"]
+    assert browser._where(side).session == tab.session  # a frame of the page's own process
+    await browser._eval("document.querySelector('[name=side]').src = location.origin.replace(/:\\d+$/, ':' + "
+                        "new URLSearchParams(location.search).get('other')) + '/checks/recaptcha/api2/anchor?k=x'")
+    for _ in range(100):
+        try:
+            browser._where(side)
+        except StepBlocked as stop:
+            assert "bot check" in str(stop)
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError("the side frame became a bot check and still counts as readable")
+
+
+@CHROME
+async def test_a_confirm_in_a_frame_is_answered_as_a_pages_is(builder):
+    browser, page = builder
+    await browser.open(page)
+    tab = browser.current
+    assert await until(lambda: ("/frames/canvas.html", 1) in own_frames(tab))
+    canvas = next(frame for frame in tab.frames.values() if frame.url.endswith("/frames/canvas.html"))
+    await browser.eval_in(canvas, "setTimeout(() => confirm('Sure?'), 0)")
+    assert await until(lambda: tab.dialogs)
+    assert tab.dialogs == [("confirm", "Sure?", False)]  # dismissed: nobody confirmed it
+    assert await browser.eval_in(canvas, "1 + 1") == 2  # the frame is not frozen by it
+
 
 async def act(browser, *steps, confirmed=False) -> str:
     from ai_browser.steps import parse_steps
@@ -479,6 +529,6 @@ def test_the_readme_says_frames_are_read_and_check_boxes_never():
     text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
     assert "listed but not read" not in text
     for words in ("**Frames from other sites**", "`select` (a native menu, without opening it)", BOX_TAG,
-                  "`(not readable)`", "at most 20 are read per observe, 5 deep",
+                  "`(not readable)`", "at most 20 are read per observe, 5 deep", "more than 5 deep",
                   "has nothing to read: observe says so"):
         assert words in text, words

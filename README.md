@@ -903,8 +903,8 @@ uv run ai-browser build                      # rebuild the image
 
 - Frames: at most 20 are read per observe, 5 deep. A frame inside a frame of another origin on the same site (one
   that runs in its parent's process) shows as `(not readable)`.
-- A download that a frame of another site starts before AI Browser has its address, or from a frame more than 5 deep,
-  isn't caught by the ask-first rule.
+- In your own browser, a download that a frame of another site starts before AI Browser knows the frame's address, or
+  from a frame more than 5 deep, saves to your Downloads folder without asking first.
 - A page drawn on a `<canvas>` (Figma, Canva) has nothing to read: observe says so, and Claude works from screenshots.
 - Pressing Enter in a form isn't ⚠-gated; only clicks on risky buttons and page dialogs are.
 - Headless Chromium can trigger more bot checks on some sites (each one is handed to you: see

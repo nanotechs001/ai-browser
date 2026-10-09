@@ -284,6 +284,10 @@ class Browser:
             tab.frame = frame.get("id", tab.frame)
             tab.world = None  # a new document: the reader's world there is a new context
             tab.inside.clear()  # its frames went with the old one
+        elif tab and (known := tab.frames.get(frame.get("id"))) is not None:
+            known.url = frame.get("url") or known.url  # a frame of the page's own process: no targetInfoChanged
+            if CHECK_FRAME.search(known.url):
+                tab.frames.pop(known.frame, None)  # _where refuses its rows as a bot check's
 
     def _on_context_destroyed(self, params: dict, session: str | None) -> None:
         tab = self._tab_for(session)
@@ -848,6 +852,8 @@ class Browser:
         opts = {"find": find, "maxRows": MAX_ROWS, "textLimit": TEXT_LIMIT, "nameLimit": NAME_LIMIT,
                 "risky": self._risky, "downloads": self._downloads, "next": self.current.next if self.current else 1}
         state = await self._reader(f"observe({json.dumps(opts)})")
+        for item in state["rows"]:  # the page's own numbers win over any frame entry left with the same number
+            self.current.inside.pop(item["id"], None)
         await self._read_frames(self.current, state, opts)
         signals = state.get("signals") or {}
         state["check"] = detect(state.get("url", ""), signals)
