@@ -15,7 +15,7 @@ from test_brain_talk import Recorder
 from test_bridge import EVENTS
 from test_home import CHROME, page, stack  # noqa: F401  (fixtures)
 from test_home import until as page_until
-from test_tab_menu import connected, pick, shell  # noqa: F401  (fixture)
+from test_tab_menu import connected, frame, pick, shell  # noqa: F401  (fixture)
 from ui_socket import ui_socket
 
 GONE = "That account isn't in Settings → Accounts any more"  # the agent manager's own words (accounts.GONE)
@@ -426,13 +426,18 @@ async def test_the_switch_off_holds_a_counting_handoff_at_once(fake_claude, tmp_
 async def test_a_page_says_when_it_is_hidden_and_shown(page):
     js, stack = page
     brain = stack["brain"]
-    assert await eventually(brain.visible)  # Mission Control, seen: its hello says so
+    await asyncio.sleep(0.5)
+    assert brain.visible() is False  # Mission Control with the Brain's chat closed: no card can be seen there
+    await js("document.getElementById('ask-ai').click(); true")
+    assert await eventually(brain.visible)  # the chat open: its cards can be seen
     hide = ("Object.defineProperty(document, 'hidden', { value: %s, configurable: true });"
             "document.dispatchEvent(new Event('visibilitychange')); true")
     await js(hide % "true")  # the window hidden (the desktop app hides it on close)
     assert await eventually(lambda: not brain.visible())
     await js(hide % "false")
     assert await eventually(brain.visible)
+    await js("document.getElementById('brainchat-close').click(); true")  # ×: the chat closed
+    assert await eventually(lambda: not brain.visible())
 
 
 @CHROME
@@ -442,6 +447,8 @@ async def test_a_tab_behind_another_in_the_window_counts_as_unseen(shell):
     js, stack = shell  # the window's tab menu (app.js), Mission Control's tab in front
     brain = stack["brain"]
     brain.countdown = Clock()
+    assert await page_until(js, connected("/mission"))
+    await js(f"{frame('/mission')}.document.getElementById('ask-ai').click(); true")  # its Brain's chat, open
     assert await eventually(brain.visible)  # Mission Control's tab, shown: the tab menu says so as its page loads
     handoff = brain.give(row(), "Check the prices", "you")
     assert handoff.state == "counting"

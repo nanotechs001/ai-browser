@@ -508,24 +508,26 @@ async def test_effort_sits_with_the_model_and_reaches_the_run(stack):
 
 
 @CHROME
-async def test_ask_ai_asks_the_brain_and_shows_its_answer(stack):
-    from test_talk import talk_script
+async def test_ask_ai_opens_the_brains_chat_and_shows_its_answer(stack):
+    from test_talk import ask_typed, talk_script
 
     talk_script(stack, {"say": "Two agents are at work.", "action": "none"})
     js = await open_mission(stack)
-    await js("document.getElementById('mode-ask').click(); true")
-    assert await js("document.getElementById('start-label').textContent") == "Ask"
-    hidden = ("['task-web', 'task-think', 'task-model', 'task-effort', 'task-folder', 'attach']"
-              ".every(id => document.getElementById(id).hidden)")
-    assert await js(hidden)
-    await js("document.getElementById('task').value = 'what are my agents doing?';"
-             "document.getElementById('start').click(); true")
+    await js("document.getElementById('task').value = 'a task I was writing'; true")
+    await js("document.getElementById('ask-ai').click(); true")
+    assert await until(js, "!document.getElementById('brainchat').hidden")
+    assert await js("document.getElementById('start-label').textContent") == "Start Mission"  # Build a Mission stays
+    shown = ("['task-web', 'task-think', 'task-model', 'task-effort', 'task-folder', 'attach']"
+             ".every(id => !document.getElementById(id).hidden)")
+    assert await js(shown)
+    await ask_typed(js, "what are my agents doing?")
     log = "[...document.querySelectorAll('#talk-log li')].map(line => line.textContent)"
     assert await until(js, f"{log}.includes('Brain: Two agents are at work.')", 15)
     assert await js(f"{log}.includes('You: what are my agents doing?')")
     assert stack["server"].agents.agents == {}  # Ask AI starts nothing by itself
-    assert await js("document.getElementById('task').value") == ""
-    assert await js("document.getElementById('talk-form').hidden") is True  # the composer is the talk's box
+    assert await js("document.getElementById('talk-text').value") == ""
+    assert await js("document.getElementById('task').value") == "a task I was writing"  # the composer's box: as it was
+    assert await js("document.getElementById('talk-form').hidden") is False  # the chat has a box of its own
 
 
 @CHROME
@@ -563,10 +565,10 @@ async def test_attach_refuses_too_many_or_too_big_files(stack):  # Review Focus 
 @CHROME
 async def test_the_keys_jump_to_the_box_and_start(stack):
     js = await open_mission(stack)
-    await js(f"{page_link('history')}.click(); document.getElementById('mode-ask').click(); true")
+    await js(f"{page_link('history')}.click(); document.getElementById('ask-ai').click(); true")  # the cursor in the chat
     await js(f"({KEY})('k', true, false)")  # ⌘K (Ctrl+K)
     assert await js("!document.getElementById('page-dashboard').hidden && document.activeElement.id === 'task'")
-    assert await js("document.getElementById('mode-build').getAttribute('aria-selected')") == "true"
+    assert await js("!document.getElementById('brainchat').hidden")  # Build a Mission's box: the chat stays as it was
     await js("document.getElementById('task').value = 'first line'; true")
     await js(f"({KEY})('Enter', false, true)")  # Shift+Enter: a new line, nothing starts
     await asyncio.sleep(0.5)
@@ -692,18 +694,18 @@ async def test_a_pasted_picture_is_attached_as_attach_does_and_goes_with_the_mis
 
 
 @CHROME
-async def test_ask_ai_takes_no_picture_and_says_where_pictures_go(stack):
+async def test_the_brains_chat_takes_no_picture_and_says_where_pictures_go(stack):
     js = await open_mission(stack)
-    for mode in ("ask",):
-        await js(f"document.getElementById('mode-{mode}').click(); true")
-        await js(f"({PASTE})('#task', {json.dumps(PICTURE)})")
-        assert await until(js, f"{NOTE} === {json.dumps(PICTURES_GO)}"), mode
-        assert await js("document.getElementById('composer').dataset.mode") == mode  # nothing switched by itself
-        assert await js(f"{CHIPS}.length") == 0
-        await js("document.getElementById('task-note').textContent = ''; true")
-    assert await js(f"({PASTE})('#task', {json.dumps(PICTURE)}, 'A1 B1')") is False  # cells from a spreadsheet come
-    await asyncio.sleep(0.5)                                                           # with a picture: they're text
-    assert await js(NOTE) == ""
+    talk_note = "document.getElementById('talk-notice').textContent"
+    await js("document.getElementById('ask-ai').click(); true")
+    await js(f"({PASTE})('#talk-text', {json.dumps(PICTURE)})")
+    assert await until(js, f"{talk_note} === {json.dumps(PICTURES_GO)}")
+    assert await js("!document.getElementById('brainchat').hidden")  # nothing switched by itself
+    assert await js(f"{CHIPS}.length") == 0
+    await js("document.getElementById('talk-notice').textContent = ''; true")
+    assert await js(f"({PASTE})('#talk-text', {json.dumps(PICTURE)}, 'A1 B1')") is False  # cells from a spreadsheet
+    await asyncio.sleep(0.5)                                                             # come with a picture: text
+    assert await js(talk_note) == ""
     assert list((stack["home"] / "app" / "uploads").glob("*.part")) == []  # nothing was sent to the app
 
 
@@ -833,10 +835,10 @@ async def test_an_agents_chat_waits_for_the_apps_answer_however_late_it_comes(st
 @CHROME
 async def test_spreadsheet_cells_paste_as_text_and_a_copied_file_still_attaches(stack):  # the review of look-3, F6
     js = await drawer_of_a_finished_agent(stack)
-    await js("document.getElementById('mode-ask').click(); true")
-    assert await js(f"({PASTE})('#task', [['report.pdf', 10, 'application/pdf']], 'report.pdf')") is False
-    assert await until(js, f"{NOTE} === {json.dumps(PICTURES_GO)}")  # a file in Ask AI: where files go
-    await js("document.getElementById('mode-build').click(); true")
+    await js("document.getElementById('ask-ai').click(); true")
+    assert await js(f"({PASTE})('#talk-text', [['report.pdf', 10, 'application/pdf']], 'report.pdf')") is False
+    assert await until(js, "document.getElementById('talk-notice').textContent"
+                           f" === {json.dumps(PICTURES_GO)}")  # a file in the Brain's chat: where files go
     for box, chips in (("#task", CHIPS), (f"{LINE} textarea", DRAWER_CHIPS)):
         # cells copied from a spreadsheet: their text, and a picture of them that the browser names image.png
         assert await js(f"({PASTE})('{box}', {json.dumps(PICTURE)}, 'A1\\tB1')") is False
@@ -1649,7 +1651,7 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
                    "the last reading is kept, with its time", "`~/.ai-browser/usage.json`",
                    '"Updates when an agent works"', "under `attachments/`",
                    '"name (2).ext"', "**Brave only**", "**⋯ Options**",
-                   "past 12 desks, the oldest finished agents leave the room", "**Ask AI**, in the composer",
+                   "past 12 desks, the oldest finished agents leave the room", "**Ask AI** opens the Brain's chat",
                    '"No missions in this workspace"', '"Not sent: attach it again"',
                    "applies to the agents you start next",  # the rulings' results (Task 18, the final review)
                    'After a reconnect, every attached file says "Not sent: attach it again", even one that showed ✓',

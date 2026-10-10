@@ -4,6 +4,7 @@
 // (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
 import { askError } from "./accountui.js";
 import { mountAgentsPage } from "./agentspage.js";
+import { mountBrainChat } from "./brainchat.js";
 import { mountHandoffSlot } from "./brainui.js";
 import { mountBraveBar } from "./bravebar.js";
 import { mountCalendar } from "./calendar.js";
@@ -15,6 +16,7 @@ import { connect } from "./link.js";
 import { mountIntegrations, mountKnowledge } from "./library.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
 import { mountHistory, mountList, mountMissions } from "./pages.js";
+import { setProfiles } from "./profiledot.js";
 import { createScene } from "./scene.js";
 import { mountSide } from "./side.js";
 import { stateOf, toolLabel } from "./step.js";
@@ -94,7 +96,15 @@ const voice = createVoice({
   onWord: () => scene.pulse(), // each spoken word pulses the globe
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
-const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
+let chatOpen = false; // the Brain's chat: only while it is open does Mission Control show hand-offs (link.js's shown)
+// under 900 px a drawer or an agent's settings opens over the chat (brainchat.css): its cards can't be seen then
+const NARROW = matchMedia("(max-width: 899px)");
+const OVER_CHAT = ["drawer", "agent-panel"];
+const covered = () => NARROW.matches && OVER_CHAT.some((id) => !$(id).hidden);
+const link = connect({ view: "mission", onMessage: handle, onState: setStatus, shown: () => chatOpen && !covered() });
+const overChat = new MutationObserver(() => link.seen()); // one opened or closed: the app hears it at once
+for (const id of OVER_CHAT) overChat.observe($(id), { attributes: true, attributeFilter: ["hidden"] });
+NARROW.addEventListener("change", () => link.seen());
 const send = (message) => link.send(message);
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
@@ -119,8 +129,17 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                              } });
 const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
 const list = mountList($("view-list"), { onOpen: select });
-const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI and Build a Mission
+const composer = mountComposer({ link, workspaceOf: () => workspace }); // Build a Mission, and Ask AI's button
 parts.push(composer);
+const chat = mountBrainChat({ // the Brain's chat (Ask AI): a floating panel over the office, never modal
+  link,
+  talk: () => talk, // New chat and History show another kept chat in it
+  onToggle: (open) => { // opened or closed: the app hears at once whether its cards can be seen (a countdown holds)
+    chatOpen = open;
+    link.seen();
+  },
+});
+parts.push(chat);
 const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible: inWorkspace,
                                                      decorate: (row, agent) => moveFor(row, { agent: agent.id },
                                                                                        agent.workspace) });
@@ -156,11 +175,10 @@ parts.push(spaces, {
 });
 parts.push(mountHandoffSlot($("handoff"), send)); // the Brain's hand-offs, by the globe (its inbox lists them all)
 parts.push(mountBraveBar($("brave-bar"), { send, openTab })); // Brave's connection, until it is connected
-// the hand-offs never cover the composer, nor Ask AI's history above it
-const reserved = new ResizeObserver(() => $("centre").style.setProperty("--composer",
-  `${$("composer").offsetHeight + $("talk").offsetHeight}px`));
+// the Brain's chat opens above the composer, so Start Mission stays in view (brainchat.css)
+const reserved = new ResizeObserver(() => document.documentElement.style.setProperty("--composer",
+  `${$("composer").offsetHeight}px`));
 reserved.observe($("composer"));
-reserved.observe($("talk"));
 parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
                                                 visibleTemplate: templateInWorkspace }));
 
@@ -205,8 +223,9 @@ talk = mountTalk({
   openAgent: (id, options) => openDrawer(id, options),
   openBrain: () => drawer.openBrain(),
   model: () => $("task-model").value, // the model last picked here (the app remembers it)
-  fill: (words) => composer.fill(words), // the mic outside Ask AI fills the box
-  keep: 200, // Ask AI's history: this run's talk with the Brain, scrolled on hover (composer.css)
+  fill: (words) => !chat.isOpen && composer.fill(words), // the mic while the Brain's chat is closed fills the box
+  keep: 600, // the Brain's chat: a kept chat's whole log (200 exchanges, and their cards)
+  reveal: () => chat.open(), // a line or a card in the talk: its chat opens to show it
 });
 
 function setText(node, text) {
@@ -365,7 +384,6 @@ function showPage(name) {
     else button.removeAttribute("aria-current");
   }
   $("composer").hidden = page !== "dashboard" && page !== "missions";
-  $("talk-log").scrollTop = $("talk-log").scrollHeight; // a hidden log loses its place: newest in view again
   if (page === "dashboard" && view === "flow") scene.refit();
   for (const part of parts) part.shown?.(page, view);
 }
@@ -388,8 +406,13 @@ function newMission() { // New Mission and Command-K (Ctrl+K): the Dashboard, an
 // ---- the line to the app -----------------------------------------------------------------------------------------
 
 function handle(message) {
+  if (message.type === "saved_agents") setProfiles(message); // first: the Agents page's cards read it (profiledot.js)
   for (const part of parts) part.onMessage?.(message);
   switch (message.type) {
+    case "saved_agents": // whether each profile is ready: every desk and the drawer show it again
+      for (const agent of agents.values()) scene.upsert(agent);
+      if (drawer.id) drawer.fill(agents.get(drawer.id));
+      break;
     case "brain_snapshot":
       brainItems.clear();
       for (const item of message.items || []) brainItems.set(item.id, item);
@@ -516,6 +539,10 @@ const KEYS = { ArrowLeft: () => scene.turn(15), ArrowRight: () => scene.turn(-15
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && drawer.isOpen) {
     drawer.close();
+    return;
+  }
+  if (event.key === "Escape" && chat.isOpen) { // then the Brain's chat (Esc inside it closes it first: brainchat.js)
+    chat.close();
     return;
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return;

@@ -370,9 +370,6 @@ async def test_build_a_missions_switch_starts_an_agent_that_auto_approves(stack)
     assert await mission(f"{label}.textContent.trim()") == "Auto-approve in its folder"
     assert await mission(f"{label}.closest('.pickers') === document.getElementById('task-folder').closest('.pickers')"
                          f" && {label}.hidden === false")  # beside Folder, in Build a Mission
-    for mode, hidden in (("ask", True), ("template", True), ("build", False)):
-        await mission(f"document.getElementById('mode-{mode}').click(); true")
-        assert await mission(f"{label}.hidden") is hidden, mode
     await mission(f"{AUTO_SWITCH}.click(); document.getElementById('task').value = 'fix the footer';"
                   "document.getElementById('start').click(); true")
     agents = stack["server"].agents

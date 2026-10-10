@@ -489,16 +489,17 @@ on a card. It shows where the task came from, "Giving **2 · Research competitor
 **Send now** and **Cancel** (with the seconds left while it counts down). Several cards at once all show.
 - From **your own words** (Ask AI, the floating chat), it sends after **15 seconds** unless you press **Cancel**, and
   only when you named the agent (or only one agent is open). Saying "no", "cancel it", "stop", "wait" or "never mind"
-  cancels it; saying anything else pauses it, and it then waits for your **Send**. It counts down only while an AI
-  Browser window that shows the card is on screen (Mission Control or the floating chat): a hidden window, or
-  another tab in front, makes it wait for your **Send**. Stop on that agent cancels it. Turning off **Hand tasks to
-  working agents by itself** makes every hand-off wait for your **Send**, and nothing is sent once AI Browser quits.
+  in the chat it came from cancels it; saying anything else there pauses it, and it then waits for your **Send**. It counts down only while a card
+  can be seen: the Brain's chat open in Mission Control, or the floating chat, on screen. The Brain's chat closed (×
+  or Esc), a hidden window, or another tab in front, makes it wait for your **Send**. Stop on that agent cancels it.
+  Turning off **Hand tasks to working agents by itself** makes every hand-off wait for your **Send**, and nothing is
+  sent once AI Browser quits.
 - From **an agent's result, an email, a Slack or Asana message, or a watched page part**, it never counts down: it
   waits for your **Send**, since the instruction may carry someone else's words.
 - A **new agent** is only ever a suggestion, with its exact task and **Start**.
-- The card shows in the Brain's inbox (the globe's drawer in Mission Control), under Mission Control's
-  view switch and in the floating chat, and AI Browser's own app notifies you, never with the instruction. The agent's
-  chat shows "From the Brain: …", and the Brain's inbox keeps this run's cards.
+- The card shows in the Brain's inbox (the globe's drawer in Mission Control), in the Brain's chat (which opens
+  itself for it) and in the floating chat, and AI Browser's own app notifies you, never with the instruction. The
+  agent's chat shows "From the Brain: …", and the Brain's inbox keeps this run's cards.
 
 How it works:
 - **Reading:** the readers run in an isolated world of each tab: the page's own scripts can't see or change them, and
@@ -652,19 +653,16 @@ as the rest of AI Browser. It is drawn in code on this computer: nothing is down
     the agent's folder under `attachments/`, and the message names them; their chips go only once the app has placed
     them, so a refused message keeps your words and files for another try;
   - **Recent Activity:** started, a step done, needs you, finished. **See all** opens History.
-- **The composer:** **Ask AI** (the Brain answers and proposes; nothing runs until you press Start or Send, or say
-  yes, except your words for a working agent you named, after a 15-second countdown you can cancel) and **Build a
-  Mission** (a new agent). Templates are on the Agents page. **Build a Mission** has two optional fields above
+- **The composer:** **Build a Mission** (a new agent), and beside it the **Ask AI** button, which opens **the Brain's
+  chat** (see below). Templates are on the Agents page. **Build a Mission** has two optional fields above
   the box, **Name** (at most 60 characters) and **What it works on** (one line, at most 160): the name shows on its
   desk and wherever the agent is listed, the description under its name in Current Task and its drawer and as a
-  tooltip elsewhere, and neither is sent to the agent (your task is its instruction). **Ask AI** keeps this run's talk
-  above the box, the newest at the bottom: a short strip, older lines fading out above it. Point at it (or tab into
-  it) and it grows, turns solid and scrolls, and the wheel scrolls your talk, not the office. Under the box:
+  tooltip elsewhere, and neither is sent to the agent (your task is its instruction). Under the box:
   - **Attach:** at most 10 files, 20 MB each. They are copied into the agent's folder under `attachments/`, never over
     a file that is there (a duplicate becomes "name (2).ext"), and the task names them. Pictures reach the agent through
     Claude Code's own Read. Paste a picture into the box (⌘V; Ctrl+V on Windows), or drop a file on it, and it is
     attached the same way. Pasted text stays text. Cells copied from a spreadsheet paste as text, without the picture
-    of them that comes along. **Ask AI** takes no files: a picture pasted there says "Pictures
+    of them that comes along. The Brain's chat takes no files: a picture pasted there says "Pictures
     go with Build a Mission or an agent's chat". The floating chat's **New task** takes pictures and files the same
     way. A task in the agent's own scratch folder starts without the attachments of earlier runs. If
     that folder has been replaced by a link, the task refuses to start and says which folder. After a reconnect, every
@@ -675,8 +673,8 @@ as the rest of AI Browser. It is drawn in code on this computer: nothing is down
     **No web**, your own tools (Integrations) still run, and a command can still reach a site. On a Mac it asks you
     first, with a card, every time; on Windows and Linux the command's own card asks too, except a command you chose
     **Always allow** for, or, on Windows, a script **Auto-approve in its folder** runs.
-  - **Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**; the mic (in Ask AI it talks
-    to the Brain; otherwise your words fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
+  - **Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**; and **Start Mission** (⌘↵;
+    Ctrl+Enter on Windows). While the Brain's chat is closed, holding **Space** puts your words in the box.
     **Auto-approve in its folder** (see Agent powers) is off again for each new task.
   - **Effort:** inside **Model ▾**, with the model: **Default**, **Low**, **Medium**, **High**, **Extra high** or
     **Max**, Claude Code's `--effort`. **Default** passes none, as before; more effort thinks longer and uses more of
@@ -709,7 +707,12 @@ in a one-off run's drawer starts one from that run. Each is a card, with its set
   AI Browser's own, under "The user's standing instruction for this agent:". A task's own words still come as the
   task.
 - **Brave profile:** its tabs open only in that profile of your Brave. Until AI Browser has learned the profile, the
-  run says so: open a window of it in Brave once.
+  run says so: open a window of it in Brave once. Its card and its runs' drawers show a dot and a word (its runs' desks,
+  the dot alone: point at it for the word): **Ready** (green), **Open it once** (amber: open a Brave window of that
+  profile, and AI Browser learns it in about 30 seconds) or **Brave not connected** (grey). Point at it (or tab to it)
+  to read what to do. A one-off run shows it in its drawer, for the profile Settings picks (none picked: the one Brave
+  used last, **Ready** once a Brave window is open). When Brave connects again, each profile is learned again. An
+  agent with **No web** shows none: it never uses Brave. Nothing opens Brave by itself.
 - **Web**, **Model**, **Effort**, **Account**, **Folder** and **Auto-approve in its folder** (see Agent powers): every
   run of it starts with them, scheduled ones too. The Brain and workflows never change them. A run that a message
   started (a workflow for an inbox item) starts with Auto-approve off, and says so: turn it on in its drawer if you
@@ -731,11 +734,31 @@ in a one-off run's drawer starts one from that run. Each is a card, with its set
 Each agent is a file, `~/.ai-browser/agents/<slug>.md` (front matter, then the instruction), written by the Agents
 page's Save; one you edit by hand is read too and checked as a Save is; a broken one is skipped.
 
+### The Brain's chat (Ask AI)
+
+**Ask AI**, beside **Build a Mission**, opens the Brain's chat: a panel over Mission Control (bottom-right, above the
+composer), where you type to the Brain or talk with its **mic button**. It is never in the way: the office, the desks
+and the drawers stay clickable around it, and it moves aside for an open drawer and for an agent's settings. Drag it
+by its title bar: it stays on screen, and keeps its place for this window size. **×** or **Esc** closes it (with
+**History ▾** open, the first **Esc** closes the list). Under 900 px wide it fills the width at the bottom; a drawer
+or an agent's settings then opens over it, and its cards wait for your **Send**. It opens by itself when the Brain
+needs you: a hand-off card, a suggestion, or an answer to your words.
+- **Hand-off cards** show at its top, and count down only while it is open: closing it holds the countdown, and the
+  card waits for your **Send**.
+- **New chat** starts an empty chat, and the Brain starts afresh. **History ▾** lists your last 50 chats, newest
+  first, with their titles (your first words) and dates. A click reopens one with its whole talk, and the Brain reads
+  its last 6 exchanges again. Its old cards show as text, with how they ended ("Sent to agent 2", "Cancelled", "Not
+  answered"), and never run again. A chat deleted meanwhile says "That chat is gone". **Delete** asks first.
+- Each chat is a file, `~/.ai-browser/brain/chats/<id>.json`, that only you can read: your words and the Brain's
+  answers, at most 200 exchanges. Only AI Browser writes them, and they go nowhere but AI Browser's own pages, except
+  that the last 6 exchanges of a chat you reopen go to Claude, as the Brain's context. The floating chat and the
+  inbox's talks are not kept.
+
 ## Talking to the Brain (push-to-talk, speech to text on this computer)
 
 In Mission Control, hold **Space** (while no text box or button has focus) and talk to the Brain, then let go. Or
-hold the **mic button** beside Start, or click it once to start and again to stop. **Esc** throws the turn away, and a
-turn stops by itself at 30 seconds. **Ask AI**, in the composer, does the same, typed.
+hold the **mic button** in the Brain's chat, or click it once to start and again to stop. **Esc** throws the turn
+away, and a turn stops by itself at 30 seconds. **Ask AI** opens the Brain's chat, where you can type the same.
 - **Your voice stays on this computer.** The microphone is open only while you talk: no wake word, nothing in the
   background. The sound goes to `ai-browser app` over 127.0.0.1, and Whisper (faster-whisper, `base.en`, on the CPU)
   turns it into text there. The sound is kept in memory for that turn only, never saved or logged, and no cloud speech

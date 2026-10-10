@@ -1,13 +1,15 @@
-/* Mission Control's composer (the new look, Decision 9): the modes, the box, the attached files, the pickers (folded
-   into ⋯ Options on a narrow window), the mic and the main button; above it, the Brain's answers (Ask AI). */
+/* Mission Control's composer (the new look, Decision 9): Ask AI (it opens the Brain's chat: brainchat.css), Build a
+   Mission, the box, the attached files, the pickers (folded into ⋯ Options on a narrow window) and the main button. */
 .composer { flex: none; position: relative; display: flex; flex-direction: column; gap: 8px; padding: 0 24px 18px; }
 .composer-box { position: relative; border-radius: 16px; background: var(--card); border: 1px solid var(--line);
                 padding: 10px; box-shadow: var(--shadow); }
 .modes { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 8px; }
-.modes [data-mode] { gap: 8px; border: 1px solid transparent; background: transparent; padding: 8px 14px;
-                     border-radius: 11px; color: var(--text-2); }
-.modes [data-mode][aria-selected="true"] { background: linear-gradient(180deg, #10287c, #0b1f66); border-color: #1b41a8;
-                                           color: var(--text); box-shadow: 0 0 14px var(--glow); }
+.modes :is(.ask-ai, .mode-label) { display: inline-flex; align-items: center; gap: 8px; border: 1px solid transparent;
+                                   background: transparent; padding: 8px 14px; border-radius: 11px;
+                                   color: var(--text-2); }
+.modes .ask-ai[aria-expanded="true"] { border-color: var(--line-strong); color: var(--text); } /* its chat is open */
+.modes .mode-label { background: linear-gradient(180deg, #10287c, #0b1f66); border-color: #1b41a8; color: var(--text);
+                     box-shadow: 0 0 14px var(--glow); } /* the composer's one job */
 .voice-switch { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 13px;
                 color: var(--text-2); cursor: pointer; }
 .auto-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2);
@@ -39,10 +41,6 @@
 #task-agent { width: 120px; margin: 0 0 0 4px; text-overflow: ellipsis; } /* never as wide as its longest name */
 .icon-button { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }
 .options { display: none; }
-.mic { width: 36px; height: 36px; padding: 0; justify-content: center; flex: none; }
-.mic svg { width: 18px; height: 18px; fill: currentColor; }
-.mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
-                            box-shadow: 0 0 0 3px rgba(79, 141, 253, 0.35); }
 .start { margin-left: auto; padding: 9px 16px; border-radius: 12px; font-weight: 600; flex: none; }
 .start kbd { border-color: rgba(255, 255, 255, 0.35); }
 .box .note { display: block; margin-top: 4px; }
@@ -52,40 +50,6 @@
 .folder-ask .folder-typed { flex: 1; min-width: 200px; }
 .folder-ask p { margin: 0; }
 .folder-ask .folder-path { font: 12px var(--mono); overflow-wrap: anywhere; }
-.talk { max-height: 38vh; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
-/* Ask AI's history: over the office, above the box. Idle it is a short strip, only as tall as its lines, so the office
-   stays within reach around it: the newest line is at the bottom, older ones fade out towards the top. On hover (or
-   keyboard focus inside) it grows upwards from the box, turns solid and scrolls, and the wheel scrolls it, never the
-   office. A card (Start, Send) keeps it solid. A mouse click on the log is no keyboard focus: it pins nothing. */
-.composer > .talk { position: absolute; left: 24px; right: 24px; bottom: 100%; z-index: 4; background: transparent;
-                    border-color: transparent; }
-.composer > .talk .talk-log { max-height: 12vh; overflow: hidden; overscroll-behavior: contain; scrollbar-gutter: stable;
-                              text-shadow: 0 0 8px var(--bg);
-                              -webkit-mask-image: linear-gradient(to top, #000 35%, transparent);
-                              mask-image: linear-gradient(to top, #000 35%, transparent); }
-.composer > .talk .talk-note { opacity: 0; }
-.composer > .talk:is(:hover, :has(:focus-visible)) { background: var(--panel); border-color: var(--line); }
-.composer > .talk:has(.talk-card:not(:empty)) { background: var(--panel); border-color: var(--line); }
-.composer > .talk:is(:hover, :has(:focus-visible)) .talk-log { max-height: 26vh; overflow-y: auto;
-                                                               -webkit-mask-image: none; mask-image: none; }
-.composer > .talk:is(:hover, :has(:focus-visible)) .talk-note { opacity: 1; }
-.talk-log:empty { display: none; }
-.talk-log:focus-visible { outline: 2px solid var(--accent); }
-.talk-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.talk-log li { white-space: pre-wrap; word-break: break-word; }
-.talk-log li.you { color: var(--muted); }
-.talk-status:empty, .talk-notice:empty, .talk-card:empty { display: none; }
-.talk-notice { color: var(--needs); font-size: 13px; }
-.talk-card { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-.talk-card p { margin: 0; }
-.talk-card code { font: 12px var(--mono); background: var(--soft); border-radius: 4px; padding: 0 4px; }
-.talk-card textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 8px;
-                      padding: 6px 8px; background: var(--bg); }
-.talk-card progress { width: 100%; }
-.talk-card blockquote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); white-space: pre-wrap; }
-.talk-card .talk-state, .talk-card .talk-hint { font-size: 13px; }
-.talk-card .row { margin-top: 0; }
-.talk-note { margin: 0; font-size: 12px; }
 .handing { margin: 4px 0 0; display: flex; align-items: center; gap: 6px; } /* Starts in your tab: … (the Tabs page) */
 .handing button { padding: 0 6px; }
 /* Build a Mission's Skills (loaded at start): a list over the box, with a search */

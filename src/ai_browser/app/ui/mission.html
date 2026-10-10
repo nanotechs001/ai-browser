@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="office.css">
 <link rel="stylesheet" href="mission.css">
 <link rel="stylesheet" href="composer.css">
+<link rel="stylesheet" href="brainchat.css">
 </head>
 <body>
 <div class="mc">
@@ -41,7 +42,6 @@
   </nav>
   <main id="centre" class="centre">
     <section id="brave-bar" class="brave-bar" hidden aria-label="Brave's connection" aria-live="polite"></section>
-    <section id="handoff" class="handoff-slot" hidden aria-live="polite" aria-label="The Brain's hand-offs"></section>
     <section id="page-dashboard" class="page dashboard" aria-label="Dashboard">
       <h2 class="visually-hidden">Mission Control</h2>
       <div id="views-switch" class="switch-views" role="tablist" aria-label="View">
@@ -62,23 +62,12 @@
     <section id="page-integrations" class="page" hidden aria-label="Integrations"></section>
     <section id="page-tabs" class="page" hidden aria-label="Tabs"></section>
     <section id="page-history" class="page" hidden aria-label="History"></section>
-    <section id="composer" class="composer" data-mode="build" aria-label="Give an agent a task">
-      <section id="talk" class="talk panel" hidden data-state="idle" aria-label="Ask AI: the Brain's answers">
-        <ol id="talk-log" class="talk-log" aria-live="polite" tabindex="0" aria-label="Your talk with the Brain"></ol>
-        <div id="talk-status" class="talk-status muted"></div>
-        <div id="talk-notice" class="talk-notice" role="status"></div>
-        <div id="talk-card" class="talk-card"></div>
-        <form id="talk-form" class="talk-form" hidden>
-          <input id="talk-text" type="text" maxlength="2000" autocomplete="off" aria-label="Ask the Brain">
-        </form>
-        <p class="talk-note muted">Your voice stays on this computer. Your words go to Claude, like typed text.</p>
-      </section>
+    <section id="composer" class="composer" aria-label="Give an agent a task">
       <div class="composer-box">
-        <div class="modes" role="tablist" aria-label="What to do">
-          <button id="mode-ask" type="button" role="tab" data-mode="ask" data-icon="sparkle"
-                  aria-selected="false">Ask AI</button>
-          <button id="mode-build" type="button" role="tab" data-mode="build" data-icon="missions"
-                  aria-selected="true">Build a Mission</button>
+        <div class="modes" role="group" aria-label="What to do">
+          <button id="ask-ai" class="ask-ai" type="button" data-icon="sparkle" aria-controls="brainchat"
+                  aria-expanded="false" title="The Brain's chat: it opens over the office">Ask AI</button>
+          <span id="mode-build" class="mode-label" data-icon="missions">Build a Mission</span>
           <select id="task-agent" aria-label="Agent"
                   title="A new agent, or one of your saved agents: then its own settings apply"><option
             value="">New agent</option></select>
@@ -138,9 +127,6 @@
                 type="checkbox"> Auto-approve in its folder</label>
               <select id="task-workspace" aria-label="Workspace"></select>
             </div>
-            <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
-                    title="Talk to the Brain: hold Space, or hold or click here"><svg viewBox="0 0 24 24"
-              aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg></button>
             <button id="start" class="primary start" type="button" data-icon="play"><span id="start-label">Start
               Mission</span><kbd id="start-key"></kbd></button>
           </div>
@@ -203,6 +189,34 @@
     <button id="drawer-close" class="ghost" type="button" aria-label="Close">✕</button></header>
   <div id="drawer-body"></div>
 </aside>
+<section id="brainchat" class="brainchat panel" hidden role="dialog" aria-modal="false"
+         aria-labelledby="brainchat-title">
+  <header id="brainchat-bar" class="brainchat-bar">
+    <strong id="brainchat-title">Ask AI</strong>
+    <button id="chat-new" class="ghost" type="button"
+            title="Start an empty chat: this one stays in History">New chat</button>
+    <details id="chat-history" class="chat-history"><summary>History ▾</summary>
+      <div id="chat-list" class="chat-list" aria-label="Your last 50 chats"></div></details>
+    <button id="brainchat-close" class="ghost" type="button" aria-label="Close the Brain's chat"
+            title="Close (Esc)">✕</button>
+  </header>
+  <section id="handoff" class="handoff-slot" hidden aria-live="polite" aria-label="The Brain's hand-offs"></section>
+  <section id="talk" class="talk" data-state="idle" aria-label="Ask AI: the Brain's answers">
+    <ol id="talk-log" class="talk-log" aria-live="polite" tabindex="0" aria-label="Your talk with the Brain"></ol>
+    <div id="talk-status" class="talk-status muted"></div>
+    <div id="talk-notice" class="talk-notice" role="status"></div>
+    <div id="talk-card" class="talk-card"></div>
+    <form id="talk-form" class="talk-form">
+      <input id="talk-text" type="text" maxlength="2000" autocomplete="off" aria-label="Ask the Brain"
+             placeholder="Ask anything about your agents, your messages or what to do next…">
+      <button id="mic" class="mic" type="button" aria-pressed="false" aria-label="Talk to the Brain"
+              title="Talk to the Brain: hold Space, or hold or click here"><svg viewBox="0 0 24 24"
+        aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg></button>
+      <button id="talk-send" class="primary" type="submit">Ask</button>
+    </form>
+    <p class="talk-note muted">Your voice stays on this computer. Your words go to Claude, like typed text.</p>
+  </section>
+</section>
 <script type="module" src="mission.js"></script>
 </body>
 </html>

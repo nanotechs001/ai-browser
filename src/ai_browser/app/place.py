@@ -30,6 +30,7 @@ class ProfilePlace:
         self._learned: dict[str, str] = {}  # profile folder -> its context, on that connection
         self._pair: tuple[str, str] | None = None  # (folder, context) both records name now
         self._since = 0.0
+        self.default_known = False  # Brave named the profile it used last, on this connection (Settings' choice, none picked)
 
     def profiles(self) -> list[dict]:
         """Brave's profiles as Settings lists them: folder, name and colour (browser detection's, never an email)."""
@@ -37,23 +38,28 @@ class ProfilePlace:
                 for profile in browsers.profiles(self.folder)]
 
     def look(self, connection, default_context: str | None) -> bool:
-        """One look (every PLACE_EVERY seconds while connected): True when what was learned changed."""
+        """One look (every PLACE_EVERY seconds while connected): True when what was learned changed, forgetting
+        included, or whether Brave names the profile it used last did. BraveLink looks with (None, None) when the
+        connection ends, so nothing learned outlives it."""
+        forgot = bool(default_context) != self.default_known
+        self.default_known = bool(default_context)
         if connection is not self._connection:  # a new connection: its contexts are new ids
+            forgot = forgot or bool(self._learned)
             self._connection, self._learned, self._pair = connection, {}, None
         if not default_context:
             self._pair = None
-            return False
+            return forgot
         found = browsers.profiles(self.folder)
         if len(found) == 1:
-            return self._learn(found[0].folder, default_context)
+            return self._learn(found[0].folder, default_context) or forgot
         last = next((profile.folder for profile in found if profile.last_used), None)
         pair = (last, default_context) if last is not None else None
         if pair != self._pair:
             self._pair, self._since = pair, self.clock()
-            return False
+            return forgot
         if pair is None or self.clock() - self._since < self.settle:
-            return False
-        return self._learn(*pair)
+            return forgot
+        return self._learn(*pair) or forgot
 
     def _learn(self, folder: str, context: str) -> bool:
         if self._learned.get(folder) == context:

@@ -170,6 +170,20 @@ def test_talks_keep_six_exchanges_and_one_proposal_for_a_while():
     assert talks.history("k1") == []  # forgotten after 15 minutes without a turn
 
 
+def test_a_forgotten_talk_keeps_no_words_no_card_and_no_question():  # a kept chat reopened or deleted (chat panel)
+    from ai_browser.brain.talk import Talks
+
+    talks = Talks()
+    talks.add("c1", "start one", "Want me to?")
+    card = talks.propose("c1", "start_agent", task="fix the footer")
+    talks.add("c2", "other", "words")
+    assert talks.forget("c1") == card.id and talks.forget("c1") is None and talks.forget("c9") is None
+    assert talks.history("c1") == [] and talks.proposal("c1") is None and talks.take("c1", card.id) is None
+    talks.ask_which("c1", "send it", ("a1", "a2"))
+    assert talks.forget("c1") is None and talks.asking("c1") is None  # the question goes too
+    assert talks.history("c2") == [("other", "words")]  # another talk keeps its own
+
+
 def test_resolve_agent_reads_numbers_colours_and_back_references():  # Review Focus 5: speech's capitals and stops
     from ai_browser.brain.talk import Pick, choices, label, resolve_agent, resolve_among, tab_hint
 
