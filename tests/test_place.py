@@ -132,6 +132,9 @@ async def test_settings_where_agents_browse_names_the_profiles_and_says_what_it_
                                       f"in it once.\"")
     brave.set_scope("chosen", 2)
     assert await page_until(settings, f"{state} === 'Agents browse in Work.'")
+    brave.place.listed = [{"folder": "Profile 1", "name": "Home", "color": None}]  # Work is gone from Brave's list
+    settings = await open_settings(stack)
+    assert await page_until(settings, f"{state} === 'Agents browse in the profile you picked (not found in Brave).'")
     brave.set_state("lost")  # Brave quit: said plainly, and nothing asks it anything
     assert await page_until(settings, f"{state} === \"Brave isn't connected: connect it at the top of Mission "
                                       "Control.\"")

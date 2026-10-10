@@ -58,7 +58,9 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .pages { list-style: none; margin: 0; padding: 0 0 12px; display: flex; flex-direction: column; gap: 2px;
          border-bottom: 1px solid var(--line); }
 .page-link { width: 100%; padding: 9px 14px; gap: 14px; border: 1px solid transparent; background: transparent;
-             color: var(--text-2); text-align: left; }
+             color: var(--text-2); text-align: left; position: relative; }
+.page-link[data-needs]::after { content: ""; position: absolute; top: 7px; right: 8px; width: 8px; height: 8px;
+                                border-radius: 50%; background: var(--needs); }  /* an agent needs you */
 .page-link:hover:not(:disabled) { background: rgba(255, 255, 255, 0.04); color: var(--text); }
 .page-link[aria-current="page"] { background: var(--selected); border-color: #2a4380; color: var(--text);
                                   box-shadow: inset 3px 0 0 var(--accent-bright); }
@@ -129,6 +131,7 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .group .count { font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
 .group .count::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
 .group.working .count::before { background: var(--work); }
+.group[data-needs] .count { color: var(--needs); }  /* Pending: some of it needs you (its title says how many) */
 .group.pending .count::before { width: 5px; height: 5px; background: transparent; border: 2px solid var(--wait); }
 .avatar { width: 44px; height: 44px; border-radius: 50%; overflow: hidden; flex: none; display: grid;
           place-items: center; background: radial-gradient(circle at 50% 35%, #2a3c78, #101a3a);
@@ -176,8 +179,11 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .drawer > header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .drawer > header strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #drawer-body { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-#drawer-body .status { font: 12px var(--mono); }
+#drawer-body .status { font-size: 12px; }
+#drawer-body .folder { font-family: var(--mono); }  /* a path: the one line in the code font */
 #drawer-body .buttons { margin-top: 0; }
+#drawer-body .more { margin-top: -6px; gap: 4px; }  /* Save as skill · Save as agent: small links under the buttons */
+#drawer-body .more button { font-size: 12px; padding: 2px 6px; color: var(--accent-2); }
 #drawer-body .moved { color: var(--ok); }
 #drawer-body .about { margin: 0; overflow-wrap: anywhere; }  /* What it works on, under the agent's name */
 #drawer-body .auto-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2);
@@ -270,6 +276,8 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
   border-radius: 8px; padding: 5px 8px; background: var(--field); color: var(--text); }
 .page textarea { width: 100%; resize: vertical; }
 .page h3 { font-size: 15px; margin: 18px 0 8px; }
+details.new-task > summary { cursor: pointer; font-size: 15px; font-weight: 600; margin: 12px 0 8px; }
+.agent-panel details.new-task > summary { font-size: 13px; margin: 4px 0; }
 .page .top-line { display: flex; gap: 8px; align-items: center; }
 .page .top-line .remove { margin-left: auto; font-size: 12px; }
 .page .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
@@ -306,6 +314,10 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .agent-tasks :is(.workflow, .workflow-form) { display: flex; flex-direction: column; gap: 6px; font-size: 13px;
   background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
 .agent-note:empty { display: none; }
+/* Save and Delete agent, and Save's note, stay at the panel's foot while its settings scroll */
+.agent-buttons { position: sticky; bottom: -12px; margin: 0 -12px -12px; padding: 8px 12px 12px;
+                 background: rgba(10, 20, 42, 0.97); border-top: 1px solid var(--line); }
+.agent-buttons .agent-note { flex-basis: 100%; margin: 0; }
 button.danger { border-color: var(--fail); color: var(--fail); }
 /* a question before a step that can't be undone (confirm.js): the browser's own modal dialog */
 dialog.confirm { max-width: 460px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--card);
@@ -392,6 +404,9 @@ dialog.confirm p { margin: 0 0 8px; color: var(--text-2); overflow-wrap: anywher
 .day .more { font-size: 11px; }
 
 /* ---- narrow windows, last so they win: the right column folds under the centre, then the menu shrinks to icons -- */
+@media (min-width: 1280px) {
+  #drawer { width: 318px; }  /* over the right column only: Start Mission and Voice stay in view */
+}
 @media (max-width: 1279px) {
   .mc { grid-template-columns: 248px minmax(0, 1fr); grid-template-areas: "menu centre" "menu side";
         grid-template-rows: max(640px, 100vh) auto; overflow-x: hidden; overflow-y: auto; }

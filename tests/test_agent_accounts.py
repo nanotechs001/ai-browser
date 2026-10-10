@@ -328,3 +328,18 @@ async def test_moving_back_and_forth_carries_the_conversation_both_ways(fake_cla
         assert carried.read_bytes() == b'{"another": "conversation"}\n'  # never overwritten
     finally:
         await manager.close_all()
+
+
+async def test_a_move_keeps_the_runs_effort(fake_claude, tmp_path):
+    manager, _, work, log = rig(fake_claude, tmp_path, SESSION_EVENTS)
+    try:
+        agent = await manager.create("check the shop", effort="high")
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn")
+        assert agent.public()["effort"] == "high"
+        assert await manager.move(agent.id, work.id) == ""
+        assert await settle(manager, lambda agents: state(agents, agent.id) == "your_turn"
+                            and agent.moved == "Moved to Work with its conversation")
+        last = argvs(log)[-1]
+        assert "--resume" in last and last[last.index("--effort") + 1] == "high"
+    finally:
+        await manager.close_all()

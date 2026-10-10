@@ -678,6 +678,9 @@ as the rest of AI Browser. It is drawn in code on this computer: nothing is down
   - **Model**, **Account**, **Folder**, **Auto-approve in its folder** and **Workspace**; the mic (in Ask AI it talks
     to the Brain; otherwise your words fill the box); and **Start Mission** (⌘↵; Ctrl+Enter on Windows).
     **Auto-approve in its folder** (see Agent powers) is off again for each new task.
+  - **Effort:** inside **Model ▾**, with the model: **Default**, **Low**, **Medium**, **High**, **Extra high** or
+    **Max**, Claude Code's `--effort`. **Default** passes none, as before; more effort thinks longer and uses more of
+    your plan. Its face and the run's drawer show it with the model ("Sonnet · Low effort").
   - **Agent ▾:** shown once you have a saved agent. **New agent** (the default), or one of your saved agents: the
     task runs with that agent's own settings, so the pickers above hide. While its run works, the task goes to that
     run as a message.
@@ -707,9 +710,10 @@ in a one-off run's drawer starts one from that run. Each is a card, with its set
   task.
 - **Brave profile:** its tabs open only in that profile of your Brave. Until AI Browser has learned the profile, the
   run says so: open a window of it in Brave once.
-- **Web**, **Model**, **Account**, **Folder** and **Auto-approve in its folder** (see Agent powers): every run of it
-  starts with them, scheduled ones too. The Brain and workflows never change them. A run that a message started (a
-  workflow for an inbox item) starts with Auto-approve off, and says so: turn it on in its drawer if you trust it.
+- **Web**, **Model**, **Effort**, **Account**, **Folder** and **Auto-approve in its folder** (see Agent powers): every
+  run of it starts with them, scheduled ones too. The Brain and workflows never change them. A run that a message
+  started (a workflow for an inbox item) starts with Auto-approve off, and says so: turn it on in its drawer if you
+  trust it.
 - **Can use:** the skills its skill tools list and load (none picked: all of them). A skill outside the list is
   refused with "This agent can't use that skill: change it in its settings". With some picked, **Auto-approve in its
   folder** runs only those skills' scripts without a card. Can use is not a wall: AI Browser's own skill tools

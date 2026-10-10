@@ -373,6 +373,8 @@ async def test_a_task_for_any_agent_is_saved_from_the_form_and_runs_once(stack):
     await js(f"{page_link('agents')}.click(); true")
     form = "document.querySelector('#page-agents .any-tasks .workflow-form')"
     assert await until(js, f"{form} !== null")
+    await js("document.querySelector('#page-agents .any-tasks details.new-task > summary').click(); true")  # unfolded
+    assert await js("document.querySelector('#page-agents .any-tasks details.new-task').open")
     await js(f"const form = {form};"
              "form.querySelector('[name=name]').value = 'Morning report';"
              "form.querySelector('[name=instructions]').value = 'Check the sites and tell me what changed';"

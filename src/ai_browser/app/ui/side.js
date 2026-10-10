@@ -63,6 +63,9 @@ export function mountSide({ send, openDrawer, openHistory }) {
     groups.forEach((group, index) => {
       const item = list.children[index];
       setText(item.parts.count, String(group.count));
+      if (group.needs) item.dataset.needs = "true"; // Pending's count in amber: some of it needs you
+      else delete item.dataset.needs;
+      item.title = group.needs ? `${group.needs} ${group.needs === 1 ? "needs" : "need"} you` : "";
       avatar(item.parts.face, group.face);
     });
   }
@@ -85,7 +88,8 @@ export function mountSide({ send, openDrawer, openHistory }) {
     const under = nameLine ? $("current-name") : $("current-step").parentElement;
     if (under.nextElementSibling !== about) under.after(about);
     setClip($("current-step"), step.title);
-    setClip($("current-line"), step.line);
+    // needing the user: the question is said once, in amber below (#current-needs), and this line says what to do
+    setClip($("current-line"), state === "needs_you" ? "Answer to let it go on" : step.line);
     setText($("current-timer"), timerOf(agent));
     const badge = $("current-badge");
     badge.hidden = !step.badge;

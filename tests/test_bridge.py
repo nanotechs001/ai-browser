@@ -370,3 +370,20 @@ def test_agents_start_ai_browsers_mcp_server_with_this_python_or_the_frozen_exe(
     monkeypatch.setattr(sys, "frozen", True, raising=False)  # AI Browser.exe, the Windows test build (packaging/)
     assert (server()["command"], server()["args"]) == (sys.executable, ["mcp"])
     assert server()["env"]["PYTHONUTF8"] == "1"
+
+
+async def test_effort_goes_on_the_command_line_and_stays_across_a_resume(fake_claude, tmp_path):
+    from ai_browser.app.bridge import ClaudeBridge
+
+    runner, log, script = fake_claude
+    script.write_text(json.dumps(EVENTS[:1] + [{"exit": 3}]), encoding="utf-8")
+    bridge = ClaudeBridge(tmp_path / "home", claude=runner, effort="low")
+    [event async for event in bridge.send("hi")]
+    script.write_text(json.dumps(EVENTS), encoding="utf-8")
+    [event async for event in bridge.send("go on")]
+    argvs = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.startswith("[")]
+    assert len(argvs) == 2 and "--resume" in argvs[1]  # Claude Code restarted, with its conversation
+    assert [argv[argv.index("--effort") + 1] for argv in argvs] == ["low", "low"]
+    await bridge.close()
+    for effort in ("default", "turbo", None):  # Default (or a value Claude Code doesn't know): no flag, as before
+        assert "--effort" not in ClaudeBridge(tmp_path / "home", claude=runner, effort=effort)._command()

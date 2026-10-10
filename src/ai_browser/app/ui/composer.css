@@ -98,6 +98,10 @@
                box-shadow: var(--shadow); }
 .skills-pick .check { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .skills-pick p { margin: 4px 0 0; font-size: 12px; }
+/* Model and Effort: one face (the model, and the effort unless Default), so Effort adds no row of pickers */
+.think-menu summary { box-sizing: border-box; max-width: 167px; overflow: hidden; text-overflow: ellipsis; } /* never wider than Model was */
+.think-pick { width: max-content; max-width: 80vw; gap: 8px; }
+.think-pick label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 @media (max-width: 899px) {
   .composer { padding: 0 12px 12px; }
   .options { display: inline-flex; }

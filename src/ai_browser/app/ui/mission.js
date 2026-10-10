@@ -110,6 +110,7 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                                showPage("agents");
                                agentsPage.showAgent("", {
                                  name: agent.name, description: agent.description || "", model: agent.model,
+                                 effort: agent.effort || "default",
                                  web: agent.web || "web",
                                  // a run on Default: the agent follows "the default account for new agents"
                                  account: agent.account?.id && agent.account.id !== "default" ? agent.account.id : null,
@@ -224,6 +225,7 @@ function applySettings(settings) { // the model picked last: the app keeps it
   if (!settings) return;
   const model = settings.model ?? defaultModel;
   if ([...$("task-model").options].some((option) => option.value === model)) $("task-model").value = model;
+  composer.thinkFace();
 }
 
 // ---- the agents ----------------------------------------------------------------------------------------------
@@ -238,6 +240,9 @@ function renderCounts() { // "1 active task · 3 completed", and who needs the u
   } catch {
     // not an installed app: the title says it
   }
+  const dashboard = document.querySelector('.page-link[data-page="dashboard"]'); // its amber dot: at every width
+  if (states.includes("needs_you")) dashboard.dataset.needs = "true";
+  else delete dashboard.dataset.needs;
   if (!states.length) {
     setText($("counts"), "No agents yet");
     return;
