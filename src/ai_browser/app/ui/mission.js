@@ -95,7 +95,8 @@ const voice = createVoice({
   onWord: () => scene.pulse(), // each spoken word pulses the globe
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
-const link = connect({ view: "mission", onMessage: handle, onState: setStatus });
+let chatOpen = false; // the Brain's chat: only while it is open does Mission Control show hand-offs (link.js's shown)
+const link = connect({ view: "mission", onMessage: handle, onState: setStatus, shown: () => chatOpen });
 const send = (message) => link.send(message);
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
@@ -122,7 +123,12 @@ const side = mountSide({ send, openDrawer, openHistory: () => showPage("history"
 const list = mountList($("view-list"), { onOpen: select });
 const composer = mountComposer({ link, workspaceOf: () => workspace }); // Build a Mission, and Ask AI's button
 parts.push(composer);
-const chat = mountBrainChat(); // the Brain's chat (Ask AI): a floating panel over the office, never modal
+const chat = mountBrainChat({ // the Brain's chat (Ask AI): a floating panel over the office, never modal
+  onToggle: (open) => { // opened or closed: the app hears at once whether its cards can be seen (a countdown holds)
+    chatOpen = open;
+    link.seen();
+  },
+});
 parts.push(chat);
 const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible: inWorkspace,
                                                      decorate: (row, agent) => moveFor(row, { agent: agent.id },

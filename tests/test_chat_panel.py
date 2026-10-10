@@ -159,3 +159,55 @@ async def test_a_card_in_the_talk_opens_the_chat(stack):
     js = await open_talk(stack, mic(), hearing="no_model", ask=False)  # the chat closed
     await tap(stack, js, SPACE, " ")  # Space: talking isn't set up yet, and its card says how
     assert await until(js, f"!{CHAT}.hidden && !!document.querySelector('#talk-card .download')")
+
+
+# ---- a countdown runs only while the chat is open (Task 4) ------------------------------------------------------------
+
+@CHROME
+async def test_a_countdown_runs_only_while_the_brains_chat_is_open(stack):
+    from test_app_server import wait_for
+    from test_delegation_pages import in_slot, sent_by_the_brain, working_agent
+
+    row = await working_agent(stack)
+    brain = stack["brain"]
+    js = await open_mission(stack)
+    await asyncio.sleep(0.5)
+    assert brain.visible() is False  # Mission Control with its chat closed shows no card
+    held = brain.give(row, "Compare the annual plans", "you")
+    assert held.state == "waiting"  # so nothing counts down: it waits for Send
+    assert await until(js, f"!{CHAT}.hidden && {in_slot(handoff_id=held.id)}?.dataset.state === 'waiting'")
+    await wait_for(brain.visible)  # the card opened the chat: now a card can be seen
+    counting = brain.give(row, "Check the logos too", "you")
+    assert counting.state == "counting"
+    assert await until(js, f"{in_slot(handoff_id=counting.id)}?.dataset.state === 'counting'")  # on the page first
+    await js("document.getElementById('brainchat-close').click(); true")  # × holds it
+    await wait_for(lambda: counting.state == "waiting")
+    await brain.countdown.tick()
+    assert sent_by_the_brain(stack) == []  # nothing was sent unseen
+
+
+@CHROME
+async def test_x_keeps_the_brains_chat_closed_while_its_held_card_changes(stack):
+    """The chat opens itself only for a card it hasn't shown yet: × holds a countdown, and the held card's change (and
+    every broadcast after it) never reopens it. Ask AI shows the card again, and a countdown runs again."""
+    from test_app_server import wait_for
+    from test_delegation_pages import in_slot, open_panel, sent_by_the_brain, working_agent
+
+    row = await working_agent(stack)
+    brain = stack["brain"]
+    js = await open_mission(stack)
+    await open_panel(stack, js)
+    counting = brain.give(row, "Compare the annual plans", "you")
+    assert counting.state == "counting"
+    assert await until(js, f"{in_slot(handoff_id=counting.id)}?.dataset.state === 'counting'")
+    await js("document.getElementById('brainchat-close').click(); true")  # ×: the countdown holds
+    await wait_for(lambda: counting.state == "waiting")
+    await asyncio.sleep(1.5)  # past the held card's broadcast and the snapshots after it
+    assert await js(f"{CHAT}.hidden") is True  # × kept it closed
+    assert brain.visible() is False
+    await brain.countdown.tick()
+    assert sent_by_the_brain(stack) == []
+    await js(f"{ASK}.click(); true")  # Ask AI: the held card shows again, and a countdown may run again
+    assert await until(js, f"!{CHAT}.hidden && {in_slot(handoff_id=counting.id)}?.dataset.state === 'waiting'")
+    await wait_for(brain.visible)
+    assert brain.give(row, "Check the logos too", "you").state == "counting"

@@ -172,6 +172,15 @@ def hits(node):
             " return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === node; })()")
 
 
+async def open_panel(stack, js):
+    """The Brain's chat open (Ask AI, unless a card opened it already): only then does Mission Control show hand-offs,
+    and only then may the user's words count down (the chat-panel spec, 3)."""
+    from test_app_server import wait_for
+
+    await js("document.getElementById('brainchat').hidden && document.getElementById('ask-ai').click(); true")
+    await wait_for(stack["brain"].visible)
+
+
 def colour(token):
     """The colour a theme token draws, as getComputedStyle says colours."""
     return (f"(() => {{ const probe = document.createElement('i'); probe.style.color = 'var({token})';"
@@ -206,6 +215,7 @@ def sent_by_the_brain(stack, agent="a1"):
 async def test_a_countdown_card_shows_in_the_brains_chat_and_cancel_stops_it(stack):
     row = await working_agent(stack, name=f"Prices {HOSTILE}")
     js = await open_mission(stack)
+    await open_panel(stack, js)
     handoff = stack["brain"].give(row, f"Compare the annual plans {HOSTILE}", "you")
     assert await until(js, f"{SLOT}?.dataset.state === 'counting'")
     assert await js(f"{SLOT}.querySelector('.handoff-head').textContent") == f"Giving 1 · Prices {HOSTILE}:"
@@ -272,6 +282,7 @@ async def test_a_countdown_card_shows_in_the_brains_chat_and_cancel_stops_it(sta
 async def test_long_words_and_several_countdowns_keep_cancel_and_the_composer_in_reach(stack):
     row = await working_agent(stack)
     js = await open_with(stack, size=(1440, 800))
+    await open_panel(stack, js)
     words = "Compare every plan. " * 100  # 2000 characters: the most a hand-off holds
     ids = [stack["brain"].give(row, f"{number} {words}", "you").id for number in range(3)]
     assert await until(js, f"{IN_SLOT}.length === 3")
@@ -290,6 +301,7 @@ async def test_long_words_and_several_countdowns_keep_cancel_and_the_composer_in
 async def test_your_held_words_stay_in_the_slot_beside_a_countdown(stack):
     row = await working_agent(stack)
     js = await open_mission(stack)
+    await open_panel(stack, js)
     first = stack["brain"].give(row, "Compare the annual plans", "you")
     stack["brain"].hold_handoff(first.id)  # the talk's next words held it: it waits for Send
     second = stack["brain"].give(row, "Use a shorter title", "you")
@@ -304,6 +316,7 @@ async def test_your_held_words_stay_in_the_slot_beside_a_countdown(stack):
 async def test_below_1280_px_a_countdown_stays_in_reach_however_far_mission_control_scrolls(stack):
     row = await working_agent(stack)
     js = await open_with(stack, size=(1100, 800))
+    await open_panel(stack, js)
     handoff = stack["brain"].give(row, "Compare the annual plans", "you")
     cancel = f"{in_slot(handoff_id=handoff.id)}?.querySelector('.handoff-cancel')"
     assert await until(js, hits(cancel))
@@ -323,6 +336,7 @@ async def test_below_1280_px_a_countdown_stays_in_reach_however_far_mission_cont
 async def test_several_long_countdowns_scroll_in_the_brains_chat_and_keep_its_box_in_sight(stack):
     row = await working_agent(stack)
     js = await open_with(stack, size=(1100, 800))
+    await open_panel(stack, js)
     words = "Compare every plan. " * 100
     for number in range(3):
         stack["brain"].give(row, f"{number} {words}", "you")
@@ -339,6 +353,7 @@ async def test_several_long_countdowns_scroll_in_the_brains_chat_and_keep_its_bo
 async def test_send_now_sends_the_words_shown_and_the_chat_says_from_the_brain(stack):
     row = await working_agent(stack)
     js = await open_mission(stack)
+    await open_panel(stack, js)
     stack["brain"].give(row, "Compare the annual plans", "you")
     assert await until(js, f"{SLOT}?.dataset.state === 'counting'")
     await js(f"{SLOT}.querySelector('.handoff-go').click(); true")
@@ -396,6 +411,7 @@ async def test_an_emails_handoff_waits_for_send_in_the_brains_inbox(page):
     assert await until(js, f"{card}?.dataset.state === 'sent'")
     assert sent_by_the_brain(stack) == ["From the Brain: Reply to Maria with the new prices"]
     stack["brain"].countdown = Clock()
+    await open_panel(stack, js)  # (the email's card opened it already)
     stack["brain"].give(row, "Compare the annual plans", "you")  # the slot shows a countdown, in reach
     assert await until(js, hits(f"{in_slot('counting')}?.querySelector('.handoff-cancel')"))
 

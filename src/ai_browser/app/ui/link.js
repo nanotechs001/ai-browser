@@ -9,7 +9,9 @@ function address() {
   return `ws://${location.host}/ws`; // the window: its cookie goes along
 }
 
-export function connect({ view, onMessage = () => {}, onState = () => {} }) {
+// shown(): whether the page shows the Brain's hand-off cards now (Mission Control: only while the Brain's chat is
+// open); seen() tells the app at once when that changed
+export function connect({ view, onMessage = () => {}, onState = () => {}, shown = () => true }) {
   let socket = null;
   let retries = 0;
   let refused = false;
@@ -20,7 +22,7 @@ export function connect({ view, onMessage = () => {}, onState = () => {} }) {
   const framed = window.parent !== window;
   let inFront = !framed;
   let told = null; // what the app last heard
-  const seen = () => !document.hidden && inFront;
+  const seen = () => !document.hidden && inFront && shown();
 
   function report() { // only a change, and only on an open line: a hello says it anew
     const now = seen();
@@ -86,6 +88,7 @@ export function connect({ view, onMessage = () => {}, onState = () => {} }) {
       socket.send(JSON.stringify(message));
       return true;
     },
+    seen: report, // the page's own change (Mission Control's chat opened or closed): told at once
     whenOpen() {
       if (socket && socket.readyState === WebSocket.OPEN) return Promise.resolve();
       return new Promise((resolve) => waiters.push(resolve));

@@ -12,6 +12,7 @@ const NARROW = matchMedia("(max-width: 899px)"); // full width at the bottom: it
 const EDGE = 8; // px it keeps from the window's edges
 const PLACES = "brainchat-places"; // localStorage: {"<width>x<height>": [left, top]}
 const OPEN = ["counting", "waiting"]; // a hand-off that needs the user
+const shownCards = new Set(); // the ids of the hand-offs and suggestions that opened it once
 
 function places() {
   try {
@@ -111,10 +112,12 @@ export function mountBrainChat({ onToggle = () => {} } = {}) {
     close,
     get isOpen() { return !root.hidden; },
     onMessage(message) { // the Brain needs the user: a hand-off or a suggestion opens it, never taking the focus
-      if (message.type === "brain_handoff" && OPEN.includes(message.handoff?.state)) open();
-      else if (message.type === "brain_snapshot" && (message.handoffs || []).some((one) => OPEN.includes(one?.state))) {
-        open();
-      }
+      const cards = message.type === "brain_handoff" ? [message.handoff]
+        : message.type === "brain_snapshot" ? message.handoffs || [] : [];
+      // only a card it hasn't shown yet: a known card's change (× held its countdown) never reopens it
+      const fresh = cards.filter((one) => OPEN.includes(one?.state) && !shownCards.has(one.id));
+      for (const one of fresh) shownCards.add(one.id);
+      if (fresh.length) open();
     },
   };
 }
