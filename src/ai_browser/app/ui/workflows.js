@@ -38,7 +38,9 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
   const list = el("div", "list workflows-list");
   const problems = el("div", "problems muted");
   const form = el("div", "workflow-form card");
-  root.replaceChildren(list, problems, el("h3", "", heading), form);
+  const fold = el("details", "new-task"); // folded until asked for: the tasks themselves come first
+  fold.append(el("summary", "", heading), form);
+  root.replaceChildren(list, problems, fold);
   let editing = null; // the slug being edited
   let pending = null; // the request waiting for its answer
   let last = {}; // the latest workflows snapshot
@@ -110,7 +112,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
       option.append(box, el("span", "", label));
       container.append(option);
     }
-    if (!values.length) container.append(el("span", "muted", "none"));
+    if (!values.length) container.append(el("span", "muted", "None switched on: see Integrations"));
   }
 
   function renderSkills() {
@@ -194,6 +196,7 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
     options({ site: workflow.site, tools: workflow.tools, skills: workflow.skills, runs_as: workflow.runs_as || "" });
     showFields();
     saved.textContent = `Editing ${workflow.path}`;
+    fold.open = true;
     name.focus();
   }
 
@@ -241,7 +244,17 @@ export function mountWorkflows(root, link, { skills = () => [], sites = () => []
       row.append(buttons);
       list.append(row);
     }
-    if (!shown.length) list.append(el("p", "empty", "No tasks yet: write one below."));
+    if (!shown.length) {
+      const write = el("button", "link", "write one below");
+      write.type = "button";
+      write.addEventListener("click", () => {
+        fold.open = true;
+        name.focus();
+      });
+      const empty = el("p", "empty", "No tasks yet: ");
+      empty.append(write, ".");
+      list.append(empty);
+    }
     problems.replaceChildren(...(snapshot.problems || []).map((problem) => el("div", "", `Can't read ${problem}`)));
   }
 

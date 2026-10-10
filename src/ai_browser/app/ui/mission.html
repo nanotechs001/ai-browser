@@ -83,10 +83,11 @@
                   title="A new agent, or one of your saved agents: then its own settings apply"><option
             value="">New agent</option></select>
           <div id="mission-words" class="mission-words">
-            <input id="task-name" type="text" maxlength="60" autocomplete="off" placeholder="Name this agent"
-                   aria-label="Name this agent">
+            <input id="task-name" type="text" maxlength="60" autocomplete="off" placeholder="Name"
+                   aria-label="Name this agent" title="Name this agent">
             <input id="task-about" type="text" maxlength="160" autocomplete="off"
-                   placeholder="What it works on, in one line" aria-label="What it works on">
+                   placeholder="What it works on" aria-label="What it works on"
+                   title="What it works on, in one line">
           </div>
           <label class="voice-switch" title="Updates spoken aloud, with a voice that runs on this computer only"><input
             id="voice" type="checkbox"> Voice</label>
@@ -103,11 +104,24 @@
             <button id="options" class="icon-button options" type="button" data-icon="more" aria-expanded="false"
                     aria-controls="pickers" aria-label="Options"></button>
             <div id="pickers" class="pickers">
-              <select id="task-model" aria-label="Model">
-                <option value="opus">Opus · most capable</option>
-                <option value="sonnet">Sonnet · balanced</option>
-                <option value="haiku">Haiku · fastest</option>
-              </select>
+              <details id="task-think" class="skills-menu think-menu"><summary>Sonnet ·
+                balanced</summary>
+                <div class="skills-pick think-pick">
+                  <label>Model <select id="task-model" aria-label="Model">
+                    <option value="opus">Opus · most capable</option>
+                    <option value="sonnet">Sonnet · balanced</option>
+                    <option value="haiku">Haiku · fastest</option>
+                  </select></label>
+                  <label>Effort <select id="task-effort" aria-label="Effort">
+                    <option value="default">Default</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="xhigh">Extra high</option>
+                    <option value="max">Max</option>
+                  </select></label>
+                  <p class="muted">More effort: Claude thinks longer, and uses more of your plan.</p>
+                </div></details>
               <select id="task-web" aria-label="Web" title="The agent's web tools">
                 <option value="web">Web + Brave</option>
                 <option value="brave">Brave only</option>

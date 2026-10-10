@@ -52,7 +52,8 @@ export function mountTools(root, link) {
       }
       servers.append(row);
     }
-    if (!listed.length) servers.append(el("p", "empty", "No MCP servers found in Claude Code's configuration."));
+    if (!listed.length) servers.append(el("p", "empty", "No tools yet. Add one in Claude Code (claude mcp add), "
+      + "then come back: it shows up here."));
     always.replaceChildren();
     for (const tool of allowed) {
       const line = el("div", "always-tool");

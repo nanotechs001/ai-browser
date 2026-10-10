@@ -3,7 +3,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--font); }
 h1 { font-size: 20px; font-weight: 600; margin: 0; }
-h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 18px 0 8px; }
+h2 { font-size: 15px; font-weight: 600; color: var(--text); margin: 18px 0 8px; }
 button, select, textarea, input { font: inherit; color: inherit; }
 button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
 button:hover:not(:disabled) { background: var(--soft); }

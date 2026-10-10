@@ -37,13 +37,14 @@ export function checklistOf(agent, events = []) {
 }
 
 // Mission Progress's groups: Completed (done), In Progress (working) and Pending (waiting in line or needing you),
-// each with its newest agent for the picture.
+// each with its newest agent for the picture, and how many of it need the user (the menu's "needs you").
 export function groupsOf(agents) {
   const newest = (list) => [...list].sort((one, two) => (Number(two.created) || 0) - (Number(one.created) || 0))[0];
   const of = (states) => agents.filter((agent) => states.includes(stateOf(agent)));
   return [["completed", "Completed", of(["your_turn"])], ["working", "In Progress", of(["working"])],
           ["pending", "Pending", of(["waiting", "needs_you"])]]
-    .map(([key, label, list]) => ({ key, label, count: list.length, face: newest(list) || null }));
+    .map(([key, label, list]) => ({ key, label, count: list.length, face: newest(list) || null,
+                                    needs: list.filter((agent) => stateOf(agent) === "needs_you").length }));
 }
 
 export function ago(seconds, now = Date.now() / 1000) { // "just now", "2m ago", "3h ago", "2d ago"

@@ -1,12 +1,12 @@
 // Mission Control's Agents page (the saved-agents spec, 1): the saved agents as cards (name, what it works on, its
 // Brave profile, its next scheduled task, whether a run of it works) with New agent, and under them Tasks for any
 // agent (the templates that run as a new agent, workflows.js). A card opens the agent's settings in a panel over the
-// page: Name, What it works on, Instruction, Browser profile, Web, Model, Account, Folder, Auto-approve in its folder,
-// Skills (Can use, Load at start) and its Tasks. Only Save writes an agent (saved_agent_save, app-only); the app's
-// refusal words show under it. Delete agent asks first, in the page (confirm.js). Every word is set as text.
+// page: Name, What it works on, Instruction, Browser profile, Web, Model, Effort, Account, Folder, Auto-approve in its
+// folder, Skills (Can use, Load at start) and its Tasks. Only Save writes an agent (saved_agent_save, app-only); the
+// app's refusal words show under it. Delete agent asks first, in the page (confirm.js). Every word is set as text.
 "use strict";
 
-import { agentLabel, el } from "./chat.js";
+import { EFFORTS, agentLabel, el } from "./chat.js";
 import { confirmAction } from "./confirm.js";
 import { mountFolderPicker } from "./folderpick.js";
 import { stateOf } from "./step.js";
@@ -17,7 +17,7 @@ const WEBS = [["web", "Web + Brave"], ["brave", "Brave only"], ["none", "No web"
 const MODELS = [["opus", "Opus · most capable"], ["sonnet", "Sonnet · balanced"], ["haiku", "Haiku · fastest"]];
 const GOING = ["working", "waiting", "needs_you"]; // a run still going: one run at a time per agent
 const EMPTY = { slug: "", name: "", description: "", instruction: "", profile: null, web: "web", model: "sonnet",
-                account: null, folder: null, auto: false, use: [], load: [] };
+                effort: "default", account: null, folder: null, auto: false, use: [], load: [] };
 
 function option(value, label) {
   const node = el("option", "", label);
@@ -94,6 +94,9 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
   const model = el("select");
   model.name = "agent-model";
   model.replaceChildren(...MODELS.map(([value, label]) => option(value, label)));
+  const effort = el("select");
+  effort.name = "agent-effort";
+  effort.replaceChildren(...EFFORTS.map(([value, label]) => option(value, label)));
   const account = el("select");
   account.name = "agent-account";
   const accountField = field("Account", account);
@@ -123,15 +126,16 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
   const remove = el("button", "danger delete-agent", "Delete agent");
   remove.type = "button";
   const buttons = el("div", "row agent-buttons");
-  buttons.append(save, remove);
+  buttons.append(save, remove, note); // kept in view at the panel's foot (mission.css)
   body.append(field("Name", name), field("What it works on", about),
               field("Instruction", instruction, "Its standing instruction: it goes into the agent's system prompt."),
-              field("Browser profile", profile), field("Web", web), field("Model", model), accountField,
+              field("Browser profile", profile), field("Web", web), field("Model", model),
+              field("Effort", effort, "More effort: it thinks longer, and uses more of your plan."), accountField,
               field("Folder", folderSelect), folderBox, autoLabel, el("h3", "", "Skills"), skillNote, skillFind,
-              skillList, el("h3", "", "Tasks"), tasksBox, buttons, note);
+              skillList, el("h3", "", "Tasks"), tasksBox, buttons);
 
-  function profileName(folder) {
-    if (!folder) return "Settings' choice";
+  function profileName(folder) { // the card's words; the picker's option stays "Settings' choice"
+    if (!folder) return "as in Settings";
     return profiles.find((row) => row.folder === folder)?.name || folder;
   }
 
@@ -219,6 +223,7 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
     fillProfiles(row.profile);
     web.value = row.web;
     model.value = row.model;
+    effort.value = row.effort || "default";
     fillAccounts(row.account);
     folders.set(row.folder);
     auto.checked = row.auto === true;
@@ -282,7 +287,8 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
     const sent = send({ type: "saved_agent_save", request: pending, ...(editing ? { slug: editing } : {}),
                         name: name.value, description: about.value, instruction: instruction.value,
                         profile: profile.value || null, web: web.value, model: model.value,
-                        account: account.value || null, folder: folders.value(), auto_approve: auto.checked,
+                        effort: effort.value, account: account.value || null, folder: folders.value(),
+                        auto_approve: auto.checked,
                         can_use: [...use], load_at_start: [...load] });
     note.textContent = sent ? "Saving…" : "Not connected: is `ai-browser app` running?";
   });
@@ -324,7 +330,8 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
       row?.classList.add("focus");
       setTimeout(() => row?.classList.remove("focus"), 2000);
     },
-    shown(page) {
+    shown(page) { // the panel belongs to this page: hidden on the others, as it was when the user comes back
+      panel.hidden = page !== "agents" || editing === null;
       if (page !== "agents") return;
       for (const kind of ["saved_agents", "workflows", "skills"]) send({ type: kind });
       send({ type: "tools", account: "default" }); // the servers a task may use

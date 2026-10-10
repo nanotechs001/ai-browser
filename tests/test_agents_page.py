@@ -78,6 +78,51 @@ async def test_the_agents_page_lists_saved_agents_as_cards(stack):
 
 
 @CHROME
+async def test_the_settings_panel_stays_on_the_agents_page_and_keeps_what_was_typed(stack):
+    saved = stack["server"].saved.save(AGENT)
+    js = await open_agents(stack)
+    assert await until(js, f"{card(saved.slug)} !== null")
+    await js(f"{card(saved.slug)}.click(); true")
+    assert await until(js, f"!{PANEL}.hidden")
+    assert await js(f"getComputedStyle({PANEL}.querySelector('.agent-buttons')).position") == "sticky"  # Save in view
+    await js(f"{in_panel('agent-name')}.value = 'Research two'; true")
+    for name in ("tabs", "missions", "history"):
+        await js(f"document.querySelector('.page-link[data-page=\"{name}\"]').click(); true")
+        assert await js(f"{PANEL}.hidden"), name  # another page: the panel never covers it
+    await js("document.querySelector('.page-link[data-page=\"agents\"]').click(); true")
+    assert await js(f"!{PANEL}.hidden && {in_panel('agent-name')}.value === 'Research two'")  # back: as it was
+    await js(f"{PANEL}.querySelector('header button').click();"
+             "document.querySelector('.page-link[data-page=\"tabs\"]').click();"
+             "document.querySelector('.page-link[data-page=\"agents\"]').click(); true")
+    assert await js(f"{PANEL}.hidden")  # closed stays closed
+
+
+@CHROME
+async def test_the_card_and_the_task_form_say_it_in_plain_words(stack):
+    saved = stack["server"].saved.save(AGENT)  # no Brave profile picked
+    js = await open_agents(stack)
+    assert await until(js, f"{card(saved.slug)} !== null")
+    assert await js(f"{card(saved.slug)}.querySelector('.profile').textContent") == "Brave: as in Settings"
+    form = "document.querySelector('#page-agents .any-tasks .workflow-form')"
+    assert await until(js, f"{form}.querySelector('.tools').textContent === 'None switched on: see Integrations'")
+    fold = "document.querySelector('#page-agents .any-tasks details.new-task')"
+    assert await js(f"{fold}.open") is False  # New task: folded until asked for
+    assert await js(f"{fold}.querySelector('summary').textContent") == "New task"
+    write = "document.querySelector('#page-agents .any-tasks .empty button.link')"
+    assert await until(js, f"{write}?.textContent === 'write one below'")
+    await js(f"{write}.click(); true")
+    assert await js(f"{fold}.open && document.activeElement === {form}.querySelector('[name=name]')")
+    await js(f"{fold}.open = false; true")
+    stack["workflows"].save({"name": "Footer", "instructions": "Fix it"})
+    await js("document.querySelector('.page-link[data-page=\"tabs\"]').click();"
+             "document.querySelector('.page-link[data-page=\"agents\"]').click(); true")  # the list again
+    edit = "document.querySelector('#page-agents .any-tasks .workflow[data-slug=\"footer\"] .edit')"
+    assert await until(js, f"{edit} !== null")
+    await js(f"{edit}.click(); true")
+    assert await js(f"{fold}.open && {form}.querySelector('[name=name]').value === 'Footer'")  # Edit opens it
+
+
+@CHROME
 async def test_new_agent_is_saved_with_every_setting_and_refused_words_show(stack, monkeypatch):
     server = stack["server"]
     user_skills(stack, monkeypatch, "prices", "tables", "secrets")
@@ -90,6 +135,7 @@ async def test_new_agent_is_saved_with_every_setting_and_refused_words_show(stac
              f"{in_panel('agent-about')}.value = 'Rivals\\' prices';"
              f"{in_panel('agent-instruction')}.value = 'Answer in French.\\nKeep a table.';"
              f"{in_panel('agent-web')}.value = 'brave'; {in_panel('agent-model')}.value = 'haiku';"
+             f"{in_panel('agent-effort')}.value = 'high';"
              f"{in_panel('agent-auto')}.checked = true;"
              "tick('personal:tables', 'can-use'); tick('personal:prices', 'load-at-start'); true")
     assert await js(f"{PANEL}.querySelector('.agent-skill[data-ref=\"personal:prices\"] .can-use').checked")  # implied
@@ -99,6 +145,7 @@ async def test_new_agent_is_saved_with_every_setting_and_refused_words_show(stac
     saved = server.saved.get("research")
     assert (saved.name, saved.description, saved.instruction, saved.web, saved.model, saved.auto) == (
         "Research", "Rivals' prices", "Answer in French.\nKeep a table.", "brave", "haiku", True)
+    assert saved.effort == "high"
     assert (saved.use, saved.load, saved.profile, saved.folder) == (["personal:prices", "personal:tables"],
                                                                     ["personal:prices"], None, None)
     assert await until(js, f"{PANEL}.querySelector('.agent-note').textContent === 'Saved.' && {card('research')}"
@@ -121,6 +168,8 @@ async def test_an_agents_tasks_run_as_it_and_runs_as_moves_one_there(stack):
     await js(f"{card(saved.slug)}.click(); true")
     form = f"{PANEL}.querySelector('.agent-tasks .workflow-form')"
     assert await until(js, f"{form} !== null && {form}.querySelector('[name=runs_as]') === null")  # it is its own
+    await js(f"{PANEL}.querySelector('.agent-tasks details.new-task > summary').click(); true")  # Add task: unfolded
+    assert await js(f"{PANEL}.querySelector('.agent-tasks details.new-task').open")
     await js(f"{form}.querySelector('[name=name]').value = 'Weekly prices';"
              f"{form}.querySelector('[name=instructions]').value = 'List this week\\'s prices';"
              f"{form}.querySelector('.save').click(); true")
@@ -173,20 +222,27 @@ async def test_build_a_mission_runs_a_saved_agent_with_its_own_settings(stack):
     pick = "document.getElementById('task-agent')"
     assert await until(js, f"[...{pick}.options].map(option => option.textContent).join('|') === 'New agent|Research'")
     await js(f"{pick}.value = 'research'; {pick}.dispatchEvent(new Event('change')); true")
-    own = "['mission-words', 'task-web', 'task-model', 'task-folder', 'task-auto-switch', 'task-skills']"
+    own = ("['mission-words', 'task-web', 'task-think', 'task-model', 'task-effort', 'task-folder', 'task-auto-switch',"
+           " 'task-skills']")
     assert await js(f"{own}.every(id => document.getElementById(id).hidden)")  # its settings, not the pickers'
+    note, label = "document.getElementById('task-note').textContent", "document.getElementById('start-label').textContent"
+    assert await js(note) == "Uses Research's own settings"  # said, where the pickers were
+    assert await js(label) == "Start Mission"  # no run of it yet: a new one starts
     await js("document.getElementById('task').value = 'List the prices'; document.getElementById('start').click(); true")
     await wait_for(lambda: server.agents.run_of("research") is not None)
     run = server.agents.run_of("research")
     assert (run.name, run.description, run.model, run.web, run.auto) == (
         "Research", AGENT["description"], "opus", "brave", True)
     assert await until(js, "!document.getElementById('start').disabled && document.getElementById('task').value === ''")
+    assert await until(js, f"{label} === 'Send to Research'")  # its run works: the task is a message to it
+    assert await js(note) == "Uses Research's own settings"
     await js("document.getElementById('task').value = 'And the yearly ones';"
              "document.getElementById('start').click(); true")
     await wait_for(lambda: run.queued == 1)  # its run works: the task is a message to it
     assert list(server.agents.agents) == [run.id]
     await js(f"{pick}.value = ''; {pick}.dispatchEvent(new Event('change')); true")
     assert await js(f"{own}.every(id => !document.getElementById(id).hidden)")  # New agent: the pickers again
+    assert await js(f"[{label}, {note}]") == ["Start Mission", ""]
 
 
 # ---- Delete agent and Close ask first, in the page (Task 17) ---------------------------------------------------------
@@ -290,7 +346,7 @@ async def test_close_asks_only_while_the_run_still_works(stack):
 async def test_save_as_agent_fills_a_new_agents_settings_from_the_run(stack):
     server = stack["server"]
     agent = await server.agents.create("List the prices", model="haiku", web="brave", name="Prices",
-                                       description="Rivals' plans")
+                                       description="Rivals' plans", effort="max")
     await wait_for(lambda: agent.state == "your_turn")
     agent.loaded_skills = ["personal:prices"]
     server.agents._changed(agent)
@@ -303,7 +359,8 @@ async def test_save_as_agent_fills_a_new_agents_settings_from_the_run(stack):
     assert await until(js, f"!document.getElementById('page-agents').hidden && !{PANEL}.hidden"
                            f" && {in_panel('agent-name')}.value === 'Prices'")
     assert await js(f"[{in_panel('agent-about')}.value, {in_panel('agent-model')}.value, {in_panel('agent-web')}.value,"
-                    f" {in_panel('agent-instruction')}.value]") == ["Rivals' plans", "haiku", "brave", ""]
+                    f" {in_panel('agent-instruction')}.value, {in_panel('agent-effort')}.value]") == [
+        "Rivals' plans", "haiku", "brave", "", "max"]
     assert await js(f"{PANEL}.querySelector('.agent-panel-title').textContent") == "New agent"  # nothing saved yet
     assert server.saved.all() == []
     await js(f"{PANEL}.querySelector('.save-agent').click(); true")
@@ -311,6 +368,7 @@ async def test_save_as_agent_fills_a_new_agents_settings_from_the_run(stack):
     saved = server.saved.get("prices")
     assert (saved.description, saved.model, saved.web, saved.load, saved.use, saved.instruction) == (
         "Rivals' plans", "haiku", "brave", ["personal:prices"], [], "")  # the skills it loaded, at start
+    assert saved.effort == "max"
     assert saved.account is None  # a run on Default: the agent follows the default account for new agents
     run, _ = await server.agents.run_as(saved, "Again")
     await js(f"{PANEL}.querySelector('header button').click(); true")
@@ -329,3 +387,32 @@ async def test_a_long_agent_name_does_not_widen_the_agent_picker_or_add_a_row(st
             ".map(el => el.offsetTop)).size")
     assert await js(rows) <= 3  # the three rows the Mission's room is sized for
     assert await js(f"{pick}.offsetWidth") <= 150
+
+
+# ---- Effort: beside Model on the Agents page, and in the drawer with the model ---------------------------------------
+
+@CHROME
+async def test_the_agents_page_shows_effort_after_model_and_the_drawer_names_it(stack):
+    server = stack["server"]
+    saved = server.saved.save({**AGENT, "effort": "xhigh"})
+    js = await open_agents(stack)
+    assert await until(js, f"{card(saved.slug)} !== null")
+    await js(f"{card(saved.slug)}.click(); true")
+    assert await until(js, f"!{PANEL}.hidden && {in_panel('agent-effort')}.value === 'xhigh'")
+    labels = await js(f"[...{PANEL}.querySelectorAll('.field > .muted')].map(node => node.textContent)")
+    assert labels[labels.index("Model") + 1] == "Effort"  # right after Model
+    options = await js(f"[...{in_panel('agent-effort')}.options].map(option => option.textContent)")
+    assert options == ["Default", "Low", "Medium", "High", "Extra high", "Max"]
+    run, _ = await server.agents.run_as(saved, "List the prices")
+    plain = await server.agents.create("Fix the footer")
+    await wait_for(lambda: run.state == "your_turn" and plain.state == "your_turn")
+    await js(f"{PANEL}.querySelector('header button').click(); true")
+    js = await open_mission(stack)
+    totals = "document.querySelector('#drawer-body .totals')?.textContent"
+    assert await until(js, f"document.querySelector('.station[data-id=\"{run.id}\"]') !== null")
+    await js(open_drawer(run.id))
+    assert await until(js, f"{totals}?.startsWith('Opus · Extra high effort · ')")
+    await js(open_drawer(plain.id))
+    assert await until(js, f"document.getElementById('drawer-title').textContent.endsWith('Fix the footer')"
+                           f" && /^\\d+ s/.test({totals} || '')")  # Default: its time first, as before
+    assert "effort" not in await js(totals)

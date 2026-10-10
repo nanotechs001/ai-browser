@@ -2,9 +2,9 @@
 // without the user's Start, Send or a plain yes) and Build a Mission (start an agent). Agent ▾ picks a new agent (Name
 // and What it works on) or a saved one: then its own settings apply, and while its run works the task goes to that
 // run (the saved-agents spec, 2). Templates are the Agents page's. Under the box: Attach (uploads.js),
-// Web ▾, Model ▾, Account ▾, Folder ▾ (agent powers' picker), Auto-approve in its folder (a switch, off again for each
-// new task), Skills (loaded at start; Knowledge's Use in new mission ticks one) and Workspace ▾, the mic, and the main
-// button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter
+// Web ▾, Model ▾ (Model and Effort, behind one face), Account ▾, Folder ▾ (agent powers' picker), Auto-approve in
+// its folder (a switch, off again for each new task), Skills (loaded at start; Knowledge's Use in new mission ticks
+// one) and Workspace ▾, the mic, and the main button. Enter or Command-Enter (Ctrl+Enter) presses it; Shift+Enter
 // makes a new line. A picture pasted into the box, or a file dropped on it (paste.js), is attached as Attach does in
 // Build a Mission; Ask AI takes none, and says where pictures go. Narrow windows fold the pickers into ⋯ Options.
 // Every word is set as text.
@@ -14,6 +14,7 @@ import { fillPicker, pickDefault } from "./accountui.js";
 import { autoTitle, el } from "./chat.js";
 import { mountFolderPicker } from "./folderpick.js";
 import { PICTURES_NOTE, takeFiles } from "./paste.js";
+import { stateOf } from "./step.js";
 import { mountUploads } from "./uploads.js";
 
 const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
@@ -23,6 +24,7 @@ const MODES = {
 };
 const WAIT = 10000; // ms a press waits for "created" before the button works again
 const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
+const GOING = ["working", "waiting", "needs_you"]; // a saved agent's run still going: Start sends to it
 
 export function mountComposer({ link, workspaceOf = () => null }) {
   const $ = (id) => document.getElementById(id);
@@ -37,14 +39,27 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   let handing = null; // one of the user's tabs the next Start begins in (the Tabs page's Hand over → New agent…)
   let skillRows = []; // the skills, as Knowledge lists them
   let savedAgents = []; // the saved agents, for Agent ▾
+  let runs = new Map(); // the runs, as mission.js keeps them: whether a saved agent's run works
   const picked = new Set(); // Skills: the refs the next run loads at start
   const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") }, send);
   const uploads = mountUploads({ list: $("attached"), send, note });
 
-  function note(text) {
+  function savedPicked() { // the saved agent Agent ▾ picked in Build a Mission, if any
+    return mode === "build" ? savedAgents.find((row) => row.slug === $("task-agent").value) || null : null;
+  }
+
+  function hint() { // the line under the box while a saved agent is picked: what applies instead of the pickers
+    const row = savedPicked();
+    return row ? `Uses ${row.name}'s own settings` : "";
+  }
+
+  function note(text) { // a passing word; then the line goes back to the hint
     $("task-note").textContent = text;
     clearTimeout(note.timer);
-    note.timer = setTimeout(() => { $("task-note").textContent = ""; }, 6000);
+    note.timer = setTimeout(() => {
+      note.timer = null;
+      $("task-note").textContent = hint();
+    }, 6000);
   }
 
   function setMode(next) {
@@ -53,11 +68,15 @@ export function mountComposer({ link, workspaceOf = () => null }) {
       tab.setAttribute("aria-selected", String(tab.dataset.mode === mode));
     }
     $("composer").dataset.mode = mode;
-    $("start-label").textContent = MODES[mode].label;
+    const row = savedPicked(); // its run works: the task is a message to it
+    const going = row && [...runs.values()].some((run) => run.saved === row.slug && GOING.includes(stateOf(run)));
+    $("start-label").textContent = going ? `Send to ${row.name}` : MODES[mode].label;
+    if (!note.timer) $("task-note").textContent = hint();
     $("task").placeholder = MODES[mode].placeholder;
     const build = mode === "build";
     const own = build && $("task-agent").value === ""; // a new agent: the pickers are its settings
-    for (const id of ["task-web", "task-model", "task-folder", "task-auto-switch", "task-skills", "mission-words"]) {
+    for (const id of ["task-web", "task-think", "task-model", "task-effort", "task-folder", "task-auto-switch",
+                      "task-skills", "mission-words"]) {
       $(id).hidden = !own;
     }
     $("attach").hidden = !build;
@@ -67,6 +86,15 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     $("task-account").hidden = !own || rows.length < 2;
     $("task-workspace").hidden = mode === "ask";
     $("attached").hidden = !build || uploads.count() === 0;
+  }
+
+  function thinkFace() { // Model ▾'s face: "Sonnet · balanced", or "Sonnet · Low effort" unless Default
+    const model = $("task-model").selectedOptions[0]?.textContent || "";
+    const effort = $("task-effort").selectedOptions[0];
+    const face = $("task-think").querySelector("summary");
+    face.textContent = $("task-effort").value === "default" ? model
+      : `${model.split(" · ")[0]} · ${effort.textContent} effort`;
+    face.title = `Model and effort: ${face.textContent}`; // the whole face, when a long one is cut short
   }
 
   function renderSkills() { // the picked ones first, then what the search finds (there may be hundreds)
@@ -163,6 +191,7 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     const name = $("task-name").value.trim(); // Name and What it works on: shown as text, never the agent's instruction
     const description = $("task-about").value.trim();
     begin({ type: "new_task", text, skills: [...picked], model: $("task-model").value, web: $("task-web").value,
+            effort: $("task-effort").value,
             ...account,
             ...(name ? { name } : {}), ...(description ? { description } : {}),
             ...(folder ? { folder } : {}), ...(files.length ? { attachments: files } : {}), ...auto, ...workspace(),
@@ -230,12 +259,16 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   $("handing-clear").addEventListener("click", () => setHanding(null));
   $("task-agent").addEventListener("change", () => setMode(mode));
   $("skills-find").addEventListener("input", renderSkills);
+  $("task-think").addEventListener("change", thinkFace);
   $("start-key").textContent = MAC ? "⌘ ↵" : "Ctrl ↵";
   $("task-auto-switch").title = autoTitle(false, false); // until the app says this computer runs commands
   setMode("build");
+  thinkFace();
 
   return {
     note,
+    thinkFace, // the model set from the app's settings
+
     focus() { // Command-K (Ctrl+K) and New Mission: Build a Mission, the cursor in the box
       setMode("build");
       $("task").focus();
@@ -258,6 +291,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     },
     workspaceChanged() { // the menu's filter changed: the picker follows, unless the user chose here
       fillWorkspaces();
+    },
+    agents(map) { // a run started, changed or closed: Start Mission, or Send to a saved agent's working run
+      runs = map;
+      setMode(mode);
     },
     onMessage(message) {
       folders.onMessage(message);

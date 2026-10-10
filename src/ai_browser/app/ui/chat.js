@@ -7,6 +7,9 @@
 // so (`auto_commands`): on a Mac, in Claude Code's sandbox (`auto_sandbox`); on Windows, without one (the user's
 // choice, 2026-10-08). Elsewhere only file edits do.
 export const AUTO_LABEL = "Auto-approve in its folder";
+// Claude Code's --effort: Default passes none (the app's EFFORTS, savedagents.py)
+export const EFFORTS = [["default", "Default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"],
+                        ["xhigh", "Extra high"], ["max", "Max"]];
 export const AUTO_EDITS_ONLY = "On this computer, commands still ask: only file edits run without a card";
 export const AUTO_NO_SANDBOX = "On Windows there's no sandbox: a script it runs can read your files and reach sites";
 const AUTO_JUDGED = "What still asks is judged from what a command names, not from what a script it runs does.";

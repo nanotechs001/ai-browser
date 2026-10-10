@@ -25,7 +25,7 @@ from ..config import load_config
 from ..skills import SkillFolders, skill_folders, usable_skills
 from ..syncdir import write_atomic
 from . import powers
-from .savedagents import clean_instruction
+from .savedagents import EFFORTS, clean_instruction
 
 DENIED = "The user said no"
 SWITCHED_OFF = "That tool's server isn't switched on in AI Browser (Mission Control → Integrations)"
@@ -128,7 +128,7 @@ class ClaudeBridge:
                  on_permission: Callable[[dict], Awaitable[str]] | None = None,
                  environment: dict[str, str] | None = None, work: str | Path | None = None,
                  rules: powers.Rules | None = None, trusted: bool = False, web: str = "web", auto: bool = False,
-                 instruction: str = ""):
+                 instruction: str = "", effort: str | None = None):
         self.home = Path(home)
         self.agent_id = agent_id
         self.tools = tools  # the user's MCP servers (phase 2): with it, tools outside the allowed ones are asked for
@@ -160,6 +160,7 @@ class ClaudeBridge:
         # review of 2026-10-08), while their arguments stay the folder's. (when read, what was read)
         self._skills_read: tuple[float, SkillFolders] | None = None
         self.model = model  # a change applies from the next message, in the same process (set_model)
+        self.effort = effort if effort in EFFORTS else "default"  # Claude Code's --effort; Default passes none
         self.claude = claude  # resolved when a process starts (claude_argv): a list too, such as the tests' fake
         self.env = dict(env or {})  # extra settings for the ai-browser MCP server
         self.environment = dict(environment) if environment is not None else None  # Claude Code's own: its account
@@ -560,6 +561,7 @@ class ClaudeBridge:
                    "--disallowedTools", ",".join(blocked), "--permission-prompt-tool", "stdio",
                    "--setting-sources", powers.setting_sources(self.trusted),
                    *(["--settings", str(settings)] if settings is not None else []),
+                   *(["--effort", self.effort] if self.effort != "default" else []),
                    "--append-system-prompt", self.system_prompt()]
         if self.session_id:
             command += ["--resume", self.session_id]
