@@ -454,8 +454,8 @@ def test_the_readme_explains_names_handoffs_sources_and_the_history():
     text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
     for needed in ("**Name** (at most 60 characters) and **What it works on** (one line, at most 160)",
                    "neither is sent to the agent (your task is its instruction)",
-                   "**Ask AI** keeps this run's talk above the box", "the wheel scrolls your talk, not the office",
-                   "a short strip", "turns solid and scrolls",
+                   "the **Ask AI** button, which opens **the Brain's chat**",
+                   "the office, the desks and the drawers stay clickable around it",
                    "**What the Brain listens to:**", "What you uncheck is never sent to the Brain",
                    "**Hand tasks to working agents by itself (15 s to cancel):**", "**Hand-offs:**",
                    "it sends after **15 seconds** unless you press **Cancel**",

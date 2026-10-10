@@ -1649,7 +1649,7 @@ def test_the_readme_describes_the_new_look():  # what the user reads first
                    "the last reading is kept, with its time", "`~/.ai-browser/usage.json`",
                    '"Updates when an agent works"', "under `attachments/`",
                    '"name (2).ext"', "**Brave only**", "**⋯ Options**",
-                   "past 12 desks, the oldest finished agents leave the room", "**Ask AI**, in the composer",
+                   "past 12 desks, the oldest finished agents leave the room", "**Ask AI** opens the Brain's chat",
                    '"No missions in this workspace"', '"Not sent: attach it again"',
                    "applies to the agents you start next",  # the rulings' results (Task 18, the final review)
                    'After a reconnect, every attached file says "Not sent: attach it again", even one that showed ✓',

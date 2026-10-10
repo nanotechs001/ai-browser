@@ -283,3 +283,21 @@ async def test_a_reopened_chat_never_re_arms_its_card_in_the_same_run(fake_claud
             assert failed["text"] == "Couldn't delete that chat."  # fixed words: never a path
     finally:
         await server.stop()
+
+
+# ---- the README (Task 7) --------------------------------------------------------------------------------------------
+
+def test_the_readme_explains_the_brains_chat_and_the_profile_dot():
+    from pathlib import Path
+
+    text = " ".join((Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8").split())
+    for needed in ("### The Brain's chat (Ask AI)", "the office, the desks and the drawers stay clickable around it",
+                   "**×** or **Esc** closes it", "It opens by itself when the Brain needs you",
+                   "count down only while it is open", "**History ▾** lists your last 50 chats",
+                   "the Brain reads its last 6 exchanges again", "never run again", "**Delete** asks first",
+                   "`~/.ai-browser/brain/chats/<id>.json`", "The floating chat and the inbox's talks are not kept",
+                   "**Ready** (green), **Open it once** (amber", "**Brave not connected** (grey)",
+                   "Nothing opens Brave by itself"):
+        assert needed in text, needed
+    for gone in ("a short strip", "turns solid and scrolls", "**Ask AI**, in the composer", "beside Start"):
+        assert gone not in text, gone
