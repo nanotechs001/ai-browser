@@ -202,9 +202,13 @@ export function mountBrainChat({ link, talk = () => null, onToggle = () => {} })
       // only a card it hasn't shown yet: a known card's change (× held its countdown) never reopens it
       const fresh = cards.filter((one) => OPEN.includes(one?.state) && !shownCards.has(one.id));
       for (const one of fresh) shownCards.add(one.id);
-      if (fresh.length) open();
+      if (fresh.length) {
+        $("chat-history").open = false; // History's list never covers the card
+        open();
+      }
       switch (message.type) {
         case "snapshot": // connected (again): a talk with nothing in it gets a chat of its own; one with words keeps it
+          shownCards.clear(); // the app may have restarted: its hand-off ids start again at h1
           if (!current || !$("talk-log").children.length) newChat(true); // never brain_chat_open: its card stays
           break;
         case "brain_chat":

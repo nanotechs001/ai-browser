@@ -520,3 +520,34 @@ async def test_under_900_px_a_drawer_over_the_chat_holds_its_countdown(stack):  
     assert sent_by_the_brain(stack) == []
     await js("document.getElementById('drawer-close').click(); true")
     await wait_for(brain.visible)  # the drawer closed: the chat's cards are seen again
+
+
+@CHROME
+async def test_after_the_app_restarts_a_card_with_a_reused_id_opens_the_chat(stack):  # final review: Minor 2
+    brain = stack["brain"]
+    js = await open_mission(stack)
+    first = brain.suggest("Research Globex's prices", "gmail")
+    assert first.id == "h1" and await until(js, f"!{CHAT}.hidden")
+    await js("document.getElementById('brainchat-close').click(); true")
+    assert await until(js, f"{CHAT}.hidden")
+    brain.handoffs.clear()  # the app restarts: its hand-off ids start again at h1
+    brain._handoff_seq = 0
+    for ws in list(stack["server"]._sockets):
+        await ws.close()
+    assert await until(js, "document.getElementById('status').dataset.state !== 'connected'", 5)
+    assert await until(js, "document.getElementById('status').dataset.state === 'connected'", 10)
+    await asyncio.sleep(0.5)  # past the snapshot that follows the hello
+    assert brain.suggest("Check the logos too", "gmail").id == "h1"
+    assert await until(js, f"!{CHAT}.hidden")  # a new card: the chat opens for it
+
+
+@CHROME
+async def test_a_fresh_card_closes_historys_list(stack):  # final review: Minor 1
+    js = await open_mission(stack)
+    assert await until(js, MADE)
+    await opened(js)
+    await js(f"{SUMMARY}.click(); true")
+    assert await until(js, f"{HISTORY}.open")
+    stack["brain"].suggest("Research Globex's prices", "gmail")
+    assert await until(js, "document.querySelector('#brainchat #handoff .handoff') !== null")
+    assert await until(js, f"!{HISTORY}.open")  # the list never covers the card
