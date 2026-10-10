@@ -15,6 +15,7 @@ import json
 import re
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..checks import KINDS as CHECK_KINDS
@@ -649,6 +650,8 @@ class Talks:
         self.proposal_ttl = proposal_ttl
         self._talks: dict[str, Talk] = {}
         self._made = 0
+        # the app's: each exchange, as remembered here, for Mission Control's kept chats (chats.py; the others ignore it)
+        self.on_add: Callable[[str, str, str], None] = lambda talk_id, said, answer: None
 
     def _get(self, talk_id: str) -> Talk:
         now = self.clock()
@@ -665,6 +668,15 @@ class Talks:
 
     def add(self, talk_id: str, said: str, answer: str) -> None:
         self._get(talk_id).exchanges.append((said, answer))
+        self.on_add(talk_id, said, answer)
+
+    def restore(self, talk_id: str, exchanges) -> None:
+        """A kept chat (chats.py), reopened or back after FORGET_AFTER: its last `keep` exchanges, unless this talk
+        still has its own in memory. Exchanges only: never a proposal, a question or a hand-off. No exchange is
+        heard (on_add)."""
+        talk = self._get(talk_id)
+        if not talk.exchanges:
+            talk.exchanges.extend((str(said), str(answer)) for said, answer in exchanges)
 
     def propose(self, talk_id: str, kind: str, **fields) -> Proposal:
         self._made += 1
