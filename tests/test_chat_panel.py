@@ -12,7 +12,7 @@ from ai_browser.chrome import chrome_binary
 from test_delegation_pages import hits, size
 from test_home import HOSTILE, stack, until  # noqa: F401  (fixtures)
 from test_mission import open_mission, open_with, station
-from test_talk import ESCAPE, click, front, tap
+from test_talk import ENTER, ESCAPE, SPACE, click, front, tap
 
 CHROME = pytest.mark.skipif(chrome_binary() is None, reason="Google Chrome is not installed")
 CHAT = "document.getElementById('brainchat')"
@@ -392,3 +392,79 @@ async def test_a_reconnect_or_a_click_on_the_chat_shown_never_reopens_it(stack):
     await asyncio.sleep(0.5)
     await js(f"{go}.click(); true")  # the app still holds its card: Start starts the agent
     assert await until(js, f"{station('a1')} !== null", 15)
+
+
+def kept(stack, *ids):
+    """Earlier runs' chats, one exchange each, titled by their id."""
+    folder = stack["home"] / "brain" / "chats"
+    folder.mkdir(parents=True, exist_ok=True)
+    for one in ids:
+        (folder / f"{one}.json").write_text(json.dumps({
+            "id": one, "title": f"Chat {one}", "created": "2026-10-09T09:00:00+00:00",
+            "updated": "2026-10-09T09:00:00+00:00",
+            "exchanges": [{"said": "hello", "answer": "Hi.", "time": "2026-10-09T09:00:00+00:00"}]}),
+            encoding="utf-8")
+    return folder
+
+
+HISTORY = "document.getElementById('chat-history')"
+SUMMARY = "document.querySelector('#chat-history summary')"
+FOCUSED = "document.activeElement"
+
+
+@CHROME
+async def test_history_keeps_the_keys_in_the_panel_and_esc_closes_the_list_first(stack):  # fix wave: 4 and 6
+    from test_app_server import wait_for
+
+    one, two = "c" + "1" * 16, "c" + "2" * 16
+    folder = kept(stack, one, two)
+    js = await open_mission(stack)
+    await front(stack, js)
+    assert await until(js, MADE)
+    await opened(js)
+    await click(stack, js, "#chat-history summary")
+    assert await until(js, f"{HISTORY}.open && document.querySelectorAll('#chat-list .chat-row').length === 2")
+    await tap(stack, js, ESCAPE)  # Esc with the list open: the list closes, the panel stays
+    assert await until(js, f"!{HISTORY}.open && {FOCUSED} === {SUMMARY}")
+    assert await js(f"{CHAT}.hidden") is False
+    await tap(stack, js, ESCAPE)  # a second Esc: the panel closes
+    assert await until(js, f"{CHAT}.hidden")
+    await opened(js)
+    await click(stack, js, "#chat-history summary")
+    assert await until(js, f"document.querySelector('#chat-list .chat-row[data-id=\"{one}\"]') !== null")
+    await click(stack, js, f"#chat-list .chat-row[data-id=\"{one}\"] .open")  # reopened: the cursor in its box
+    assert await until(js, f"{CHAT}.dataset.chat === {json.dumps(one)} && {FOCUSED}.id === 'talk-text'")
+    await click(stack, js, "#chat-history summary")
+    row = f"#chat-list .chat-row[data-id=\"{two}\"]"
+    assert await until(js, f"document.querySelector({json.dumps(row)}) !== null")
+    await click(stack, js, f"{row} .delete")
+    assert await until(js, "document.querySelector('dialog.confirm')?.open === true")
+    await click(stack, js, "dialog.confirm .go")
+    await wait_for(lambda: not (folder / f"{two}.json").exists())
+    assert await until(js, f"{FOCUSED} === {SUMMARY}")  # deleted: the keys stay on History, never on the page
+    assert await js(f"{CHAT}.dataset.chat") == one
+    await tap(stack, js, SPACE, " ")  # Space on History: never a talk with the Brain
+    await asyncio.sleep(0.5)
+    assert await js("document.getElementById('talk-status').textContent") == ""
+    assert await js(f"{LOG}.querySelectorAll('li').length") == 2  # the reopened chat's two lines, nothing more
+    await tap(stack, js, ENTER, "\r")  # Enter opens History: the keys are there
+    assert await until(js, f"{HISTORY}.open")
+
+
+@CHROME
+async def test_a_chat_gone_meanwhile_says_so(stack):  # fix wave: 5 (and 4: the keys back on History)
+    gone = "c" + "3" * 16
+    folder = kept(stack, gone)
+    js = await open_mission(stack)
+    await front(stack, js)
+    assert await until(js, MADE)
+    await opened(js)
+    shown = await js(f"{CHAT}.dataset.chat")
+    await click(stack, js, "#chat-history summary")
+    row = f"#chat-list .chat-row[data-id=\"{gone}\"] .open"
+    assert await until(js, f"document.querySelector({json.dumps(row)}) !== null")
+    (folder / f"{gone}.json").unlink()  # deleted meanwhile (another window)
+    await click(stack, js, row)
+    assert await until(js, "document.getElementById('talk-notice').textContent === 'That chat is gone'")
+    assert await until(js, f"{FOCUSED} === {SUMMARY}")
+    assert await js(f"{CHAT}.dataset.chat") == shown

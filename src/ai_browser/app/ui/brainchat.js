@@ -43,6 +43,7 @@ export function mountBrainChat({ link, talk = () => null, onToggle = () => {} })
   let current = null; // the kept chat shown: its id (the app made it)
   let waiting = null; // the New chat or the reopened chat whose brain_chat comes next
   let automatic = null; // the New chat a connection asked for: it takes over only a talk with nothing in it
+  let reopening = null; // History's reopen whose brain_chat (or error) comes next: the keys go on from there
   let asked = 0;
 
   function request(type, fields = {}) { // one request each, named chat-<n>
@@ -77,7 +78,10 @@ export function mountBrainChat({ link, talk = () => null, onToggle = () => {} })
       reopen.addEventListener("click", () => {
         $("chat-history").open = false;
         // the chat shown is never reopened: the app would drop its open card (Task 2's forget)
-        if (row.id !== current) request("brain_chat_open", { id: row.id });
+        if (row.id !== current) {
+          summary().focus(); // never on the page while the app answers: then the box, or History again
+          reopening = request("brain_chat_open", { id: row.id });
+        } else $("talk-text").focus();
       });
       const remove = el("button", "ghost delete", "Delete");
       remove.type = "button";
@@ -95,6 +99,7 @@ export function mountBrainChat({ link, talk = () => null, onToggle = () => {} })
       return;
     }
     request("brain_chat_delete", { id });
+    summary().focus(); // its row goes: the keys stay on History
     if (id === current) newChat(); // the chat shown went: an empty one takes its place
   }
 
@@ -103,6 +108,7 @@ export function mountBrainChat({ link, talk = () => null, onToggle = () => {} })
     if ($("chat-history").open) link.send({ type: "brain_chats" });
   });
 
+  const summary = () => $("chat-history").querySelector("summary");
   const size = () => `${innerWidth}x${innerHeight}`;
 
   function moveTo(left, top) { // on screen, EDGE px in
@@ -155,7 +161,10 @@ export function mountBrainChat({ link, talk = () => null, onToggle = () => {} })
     if (event.key !== "Escape" || event.defaultPrevented) return;
     event.preventDefault();
     event.stopPropagation();
-    close();
+    if ($("chat-history").open) { // History's list first, a second Esc the panel
+      $("chat-history").open = false;
+      summary().focus();
+    } else close();
   });
   takeFiles($("talk-text"), () => { // the Brain's box: text only, and it says where pictures go
     $("talk-notice").textContent = PICTURES_NOTE;
@@ -203,12 +212,16 @@ export function mountBrainChat({ link, talk = () => null, onToggle = () => {} })
           waiting = null;
           if (message.request === automatic && !talk()?.fresh) break; // words came first: they stay as they are
           show(message.chat);
+          if (message.request === reopening) $("talk-text").focus();
           break;
         case "brain_chats":
           renderList(Array.isArray(message.chats) ? message.chats : []);
           break;
         case "error":
-          if (String(message.request || "").startsWith("chat-")) link.send({ type: "brain_chats" }); // gone meanwhile
+          if (!String(message.request || "").startsWith("chat-")) break;
+          $("talk-notice").textContent = String(message.text || ""); // "That chat is gone": said, never silent
+          if (message.request === reopening) summary().focus();
+          link.send({ type: "brain_chats" }); // gone meanwhile
           break;
       }
     },
