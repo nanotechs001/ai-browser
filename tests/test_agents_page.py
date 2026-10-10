@@ -78,6 +78,51 @@ async def test_the_agents_page_lists_saved_agents_as_cards(stack):
 
 
 @CHROME
+async def test_the_settings_panel_stays_on_the_agents_page_and_keeps_what_was_typed(stack):
+    saved = stack["server"].saved.save(AGENT)
+    js = await open_agents(stack)
+    assert await until(js, f"{card(saved.slug)} !== null")
+    await js(f"{card(saved.slug)}.click(); true")
+    assert await until(js, f"!{PANEL}.hidden")
+    assert await js(f"getComputedStyle({PANEL}.querySelector('.agent-buttons')).position") == "sticky"  # Save in view
+    await js(f"{in_panel('agent-name')}.value = 'Research two'; true")
+    for name in ("tabs", "missions", "history"):
+        await js(f"document.querySelector('.page-link[data-page=\"{name}\"]').click(); true")
+        assert await js(f"{PANEL}.hidden"), name  # another page: the panel never covers it
+    await js("document.querySelector('.page-link[data-page=\"agents\"]').click(); true")
+    assert await js(f"!{PANEL}.hidden && {in_panel('agent-name')}.value === 'Research two'")  # back: as it was
+    await js(f"{PANEL}.querySelector('header button').click();"
+             "document.querySelector('.page-link[data-page=\"tabs\"]').click();"
+             "document.querySelector('.page-link[data-page=\"agents\"]').click(); true")
+    assert await js(f"{PANEL}.hidden")  # closed stays closed
+
+
+@CHROME
+async def test_the_card_and_the_task_form_say_it_in_plain_words(stack):
+    saved = stack["server"].saved.save(AGENT)  # no Brave profile picked
+    js = await open_agents(stack)
+    assert await until(js, f"{card(saved.slug)} !== null")
+    assert await js(f"{card(saved.slug)}.querySelector('.profile').textContent") == "Brave: as in Settings"
+    form = "document.querySelector('#page-agents .any-tasks .workflow-form')"
+    assert await until(js, f"{form}.querySelector('.tools').textContent === 'None switched on: see Integrations'")
+    fold = "document.querySelector('#page-agents .any-tasks details.new-task')"
+    assert await js(f"{fold}.open") is False  # New task: folded until asked for
+    assert await js(f"{fold}.querySelector('summary').textContent") == "New task"
+    write = "document.querySelector('#page-agents .any-tasks .empty button.link')"
+    assert await until(js, f"{write}?.textContent === 'write one below'")
+    await js(f"{write}.click(); true")
+    assert await js(f"{fold}.open && document.activeElement === {form}.querySelector('[name=name]')")
+    await js(f"{fold}.open = false; true")
+    stack["workflows"].save({"name": "Footer", "instructions": "Fix it"})
+    await js("document.querySelector('.page-link[data-page=\"tabs\"]').click();"
+             "document.querySelector('.page-link[data-page=\"agents\"]').click(); true")  # the list again
+    edit = "document.querySelector('#page-agents .any-tasks .workflow[data-slug=\"footer\"] .edit')"
+    assert await until(js, f"{edit} !== null")
+    await js(f"{edit}.click(); true")
+    assert await js(f"{fold}.open && {form}.querySelector('[name=name]').value === 'Footer'")  # Edit opens it
+
+
+@CHROME
 async def test_new_agent_is_saved_with_every_setting_and_refused_words_show(stack, monkeypatch):
     server = stack["server"]
     user_skills(stack, monkeypatch, "prices", "tables", "secrets")
@@ -123,6 +168,8 @@ async def test_an_agents_tasks_run_as_it_and_runs_as_moves_one_there(stack):
     await js(f"{card(saved.slug)}.click(); true")
     form = f"{PANEL}.querySelector('.agent-tasks .workflow-form')"
     assert await until(js, f"{form} !== null && {form}.querySelector('[name=runs_as]') === null")  # it is its own
+    await js(f"{PANEL}.querySelector('.agent-tasks details.new-task > summary').click(); true")  # Add task: unfolded
+    assert await js(f"{PANEL}.querySelector('.agent-tasks details.new-task').open")
     await js(f"{form}.querySelector('[name=name]').value = 'Weekly prices';"
              f"{form}.querySelector('[name=instructions]').value = 'List this week\\'s prices';"
              f"{form}.querySelector('.save').click(); true")
@@ -178,18 +225,24 @@ async def test_build_a_mission_runs_a_saved_agent_with_its_own_settings(stack):
     own = ("['mission-words', 'task-web', 'task-think', 'task-model', 'task-effort', 'task-folder', 'task-auto-switch',"
            " 'task-skills']")
     assert await js(f"{own}.every(id => document.getElementById(id).hidden)")  # its settings, not the pickers'
+    note, label = "document.getElementById('task-note').textContent", "document.getElementById('start-label').textContent"
+    assert await js(note) == "Uses Research's own settings"  # said, where the pickers were
+    assert await js(label) == "Start Mission"  # no run of it yet: a new one starts
     await js("document.getElementById('task').value = 'List the prices'; document.getElementById('start').click(); true")
     await wait_for(lambda: server.agents.run_of("research") is not None)
     run = server.agents.run_of("research")
     assert (run.name, run.description, run.model, run.web, run.auto) == (
         "Research", AGENT["description"], "opus", "brave", True)
     assert await until(js, "!document.getElementById('start').disabled && document.getElementById('task').value === ''")
+    assert await until(js, f"{label} === 'Send to Research'")  # its run works: the task is a message to it
+    assert await js(note) == "Uses Research's own settings"
     await js("document.getElementById('task').value = 'And the yearly ones';"
              "document.getElementById('start').click(); true")
     await wait_for(lambda: run.queued == 1)  # its run works: the task is a message to it
     assert list(server.agents.agents) == [run.id]
     await js(f"{pick}.value = ''; {pick}.dispatchEvent(new Event('change')); true")
     assert await js(f"{own}.every(id => !document.getElementById(id).hidden)")  # New agent: the pickers again
+    assert await js(f"[{label}, {note}]") == ["Start Mission", ""]
 
 
 # ---- Delete agent and Close ask first, in the page (Task 17) ---------------------------------------------------------

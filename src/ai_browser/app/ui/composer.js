@@ -14,6 +14,7 @@ import { fillPicker, pickDefault } from "./accountui.js";
 import { autoTitle, el } from "./chat.js";
 import { mountFolderPicker } from "./folderpick.js";
 import { PICTURES_NOTE, takeFiles } from "./paste.js";
+import { stateOf } from "./step.js";
 import { mountUploads } from "./uploads.js";
 
 const MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
@@ -23,6 +24,7 @@ const MODES = {
 };
 const WAIT = 10000; // ms a press waits for "created" before the button works again
 const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
+const GOING = ["working", "waiting", "needs_you"]; // a saved agent's run still going: Start sends to it
 
 export function mountComposer({ link, workspaceOf = () => null }) {
   const $ = (id) => document.getElementById(id);
@@ -37,14 +39,27 @@ export function mountComposer({ link, workspaceOf = () => null }) {
   let handing = null; // one of the user's tabs the next Start begins in (the Tabs page's Hand over → New agent…)
   let skillRows = []; // the skills, as Knowledge lists them
   let savedAgents = []; // the saved agents, for Agent ▾
+  let runs = new Map(); // the runs, as mission.js keeps them: whether a saved agent's run works
   const picked = new Set(); // Skills: the refs the next run loads at start
   const folders = mountFolderPicker({ select: $("task-folder"), box: $("folder-ask") }, send);
   const uploads = mountUploads({ list: $("attached"), send, note });
 
-  function note(text) {
+  function savedPicked() { // the saved agent Agent ▾ picked in Build a Mission, if any
+    return mode === "build" ? savedAgents.find((row) => row.slug === $("task-agent").value) || null : null;
+  }
+
+  function hint() { // the line under the box while a saved agent is picked: what applies instead of the pickers
+    const row = savedPicked();
+    return row ? `Uses ${row.name}'s own settings` : "";
+  }
+
+  function note(text) { // a passing word; then the line goes back to the hint
     $("task-note").textContent = text;
     clearTimeout(note.timer);
-    note.timer = setTimeout(() => { $("task-note").textContent = ""; }, 6000);
+    note.timer = setTimeout(() => {
+      note.timer = null;
+      $("task-note").textContent = hint();
+    }, 6000);
   }
 
   function setMode(next) {
@@ -53,7 +68,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
       tab.setAttribute("aria-selected", String(tab.dataset.mode === mode));
     }
     $("composer").dataset.mode = mode;
-    $("start-label").textContent = MODES[mode].label;
+    const row = savedPicked(); // its run works: the task is a message to it
+    const going = row && [...runs.values()].some((run) => run.saved === row.slug && GOING.includes(stateOf(run)));
+    $("start-label").textContent = going ? `Send to ${row.name}` : MODES[mode].label;
+    if (!note.timer) $("task-note").textContent = hint();
     $("task").placeholder = MODES[mode].placeholder;
     const build = mode === "build";
     const own = build && $("task-agent").value === ""; // a new agent: the pickers are its settings
@@ -273,6 +291,10 @@ export function mountComposer({ link, workspaceOf = () => null }) {
     },
     workspaceChanged() { // the menu's filter changed: the picker follows, unless the user chose here
       fillWorkspaces();
+    },
+    agents(map) { // a run started, changed or closed: Start Mission, or Send to a saved agent's working run
+      runs = map;
+      setMode(mode);
     },
     onMessage(message) {
       folders.onMessage(message);

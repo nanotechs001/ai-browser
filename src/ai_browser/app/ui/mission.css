@@ -270,6 +270,8 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
   border-radius: 8px; padding: 5px 8px; background: var(--field); color: var(--text); }
 .page textarea { width: 100%; resize: vertical; }
 .page h3 { font-size: 15px; margin: 18px 0 8px; }
+details.new-task > summary { cursor: pointer; font-size: 15px; font-weight: 600; margin: 12px 0 8px; }
+.agent-panel details.new-task > summary { font-size: 13px; margin: 4px 0; }
 .page .top-line { display: flex; gap: 8px; align-items: center; }
 .page .top-line .remove { margin-left: auto; font-size: 12px; }
 .page .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
@@ -306,6 +308,10 @@ kbd { font: 11px var(--mono); border: 1px solid rgba(255, 255, 255, 0.25); borde
 .agent-tasks :is(.workflow, .workflow-form) { display: flex; flex-direction: column; gap: 6px; font-size: 13px;
   background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
 .agent-note:empty { display: none; }
+/* Save and Delete agent, and Save's note, stay at the panel's foot while its settings scroll */
+.agent-buttons { position: sticky; bottom: -12px; margin: 0 -12px -12px; padding: 8px 12px 12px;
+                 background: rgba(10, 20, 42, 0.97); border-top: 1px solid var(--line); }
+.agent-buttons .agent-note { flex-basis: 100%; margin: 0; }
 button.danger { border-color: var(--fail); color: var(--fail); }
 /* a question before a step that can't be undone (confirm.js): the browser's own modal dialog */
 dialog.confirm { max-width: 460px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--card);
