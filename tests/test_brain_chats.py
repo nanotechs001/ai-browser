@@ -150,3 +150,86 @@ async def test_the_brain_says_how_each_card_ended(tmp_path):
     assert answer["say"].startswith("Started: ")
     assert ended == [(cancelled.id, CARD_CANCELLED), (started.id, answer["say"]), (one.id, CANCELLED),
                      (two.id, "Sent to agent 2")]
+
+
+# ---- over the socket: the panel's four messages, app-only (Task 2) ---------------------------------------------------
+
+def test_the_chat_messages_are_app_only_rows():
+    from ai_browser.app.server import MESSAGE_RULES, may_send
+
+    for kind in ("brain_chats", "brain_chat_open", "brain_chat_new", "brain_chat_delete"):
+        assert MESSAGE_RULES[kind].app and may_send("app", {"type": kind})
+        assert not may_send("watcher", {"type": kind}) and not may_send("none", {"type": kind})
+
+
+async def test_the_panels_chats_are_kept_reopened_after_a_restart_and_deleted(fake_claude, tmp_path):
+    from ai_browser.brain.talk import KEEP, START_SAY
+    from test_app_server import TALKING, hello, until, with_hearing
+    from test_oneshot import oneshots
+    from ui_socket import ui_socket
+
+    _, log, _ = fake_claude
+    script = {"default": EVENTS, TALKING: [
+        {"result": json.dumps({"say": "I can start an agent.", "action": "start_agent"})},
+        {"result": json.dumps({"say": "Noted.", "action": "none"})}]}
+    server, url, _ = await with_hearing(fake_claude, tmp_path, script)
+    try:
+        async with ui_socket(server, url) as ws:
+            await hello(ws)
+            await ws.send(json.dumps({"type": "brain_chat_new", "request": "n1"}))
+            made = (await until(ws, lambda m: m["type"] == "brain_chat"))[-1]
+            chat_id = made["chat"]["id"]
+            assert made == {"type": "brain_chat", "request": "n1",
+                            "chat": {"id": chat_id, "title": "", "exchanges": []}}
+            await ws.send(json.dumps({"type": "brain_chats"}))
+            assert (await until(ws, lambda m: m["type"] == "brain_chats"))[-1]["chats"] == []  # empty: never listed
+            for number in range(KEEP + 2):
+                await ws.send(json.dumps({"type": "brain_ask", "talk": chat_id, "request": f"t{number}",
+                                          "text": f"question {number}"}))
+                answer = (await until(ws, lambda m: m["type"] == "brain_answer"
+                                      and m["request"] == f"t{number}"))[-1]
+                if number == 0:  # a card: Cancel on it
+                    assert answer["say"] == START_SAY
+                    card = answer["proposal"]["id"]
+                    await ws.send(json.dumps({"type": "brain_dismiss", "talk": chat_id, "proposal": card}))
+            await ws.send(json.dumps({"type": "brain_ask", "talk": "k1", "request": "f1", "text": "a floating one"}))
+            await until(ws, lambda m: m["type"] == "brain_answer" and m["request"] == "f1")  # a talk the app didn't make
+            await ws.send(json.dumps({"type": "brain_chats"}))
+            [row] = (await until(ws, lambda m: m["type"] == "brain_chats"))[-1]["chats"]
+            assert (row["id"], row["title"], row["count"]) == (chat_id, "question 0", KEEP + 2)
+    finally:
+        await server.stop()
+    path = tmp_path / "home" / "brain" / "chats" / f"{chat_id}.json"
+    assert file_mode(path) in (None, 0o600) and [one.name for one in path.parent.iterdir()] == [path.name]
+    first = json.loads(path.read_text(encoding="utf-8"))["exchanges"][0]
+    assert first["card"] == {"id": card, "kind": "start_agent", "outcome": "Cancelled"}  # kept as text
+    server, url, _ = await with_hearing(fake_claude, tmp_path, script)  # the app again, on the same home
+    try:
+        async with ui_socket(server, url) as ws:
+            await hello(ws)
+            await ws.send(json.dumps({"type": "brain_chat_open", "id": chat_id, "request": "o1"}))
+            reopened = (await until(ws, lambda m: m["type"] == "brain_chat"))[-1]
+            assert reopened["request"] == "o1"
+            assert [one["said"] for one in reopened["chat"]["exchanges"]] == [f"question {n}" for n in range(KEEP + 2)]
+            asked = len(oneshots(log))
+            await ws.send(json.dumps({"type": "brain_ask", "talk": chat_id, "request": "t9", "text": "and now?"}))
+            await until(ws, lambda m: m["type"] == "brain_answer" and m["request"] == "t9")
+            prompt = [call["oneshot"] for call in oneshots(log)[asked:] if TALKING in call["oneshot"]][-1]
+            assert "- The user: question 1\n" not in prompt  # the Brain gets its last KEEP exchanges only
+            assert "- The user: question 2\n" in prompt and f"- The user: question {KEEP + 1}\n" in prompt
+            await ws.send(json.dumps({"type": "brain_ask", "talk": chat_id, "request": "t10", "text": "yes",
+                                      "proposal": card}))  # Review Focus 5: a yes to the old card runs nothing
+            said = (await until(ws, lambda m: m["type"] == "brain_answer" and m["request"] == "t10"))[-1]
+            assert "proposal" not in said and "created" not in said and server.agents.agents == {}
+            for bad in ("../../x", "k1", "c" + "0" * 16, 7):
+                await ws.send(json.dumps({"type": "brain_chat_open", "id": bad, "request": "o2"}))
+                gone = (await until(ws, lambda m: m["type"] == "error" and m.get("request") == "o2"))[-1]
+                assert gone["text"] == "That chat is gone"
+            await ws.send(json.dumps({"type": "brain_chat_delete", "id": chat_id, "request": "d1"}))
+            assert (await until(ws, lambda m: m["type"] == "brain_chats"))[-1]["chats"] == []
+            assert not path.exists()
+            await ws.send(json.dumps({"type": "brain_ask", "talk": chat_id, "request": "t11", "text": "still there?"}))
+            await until(ws, lambda m: m["type"] == "brain_answer" and m["request"] == "t11")
+            assert not path.exists()  # Review Focus 2: an answer for the deleted chat writes nothing back
+    finally:
+        await server.stop()

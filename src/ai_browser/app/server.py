@@ -35,10 +35,12 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from .. import browsers, debugstart, platforms
 from ..accounts import Accounts
 from ..brain import sites
+from ..brain.chats import Chats
 from ..brain.inbox import InboxReader
 from ..brain.service import BrainService, source_of
 from ..brain.skillwriter import SkillError, SkillWriter
 from ..brain.store import built_in
+from ..brain.talk import KEEP as TALK_KEEP
 from ..brain.talk import PAGE_TEXT_LIMIT
 from ..brain.tools import ToolsConfig
 from ..brain.workflows import WorkflowRunner, WorkflowStore
@@ -86,6 +88,8 @@ SKILL_MESSAGES = {"skill_draft", "skill_save"}
 HEARING_MESSAGES = {"hearing", "hearing_download", "hearing_cancel", "listen_start", "listen_chunk", "listen_end",
                     "listen_cancel"}  # push-to-talk
 TALK_MESSAGES = {"brain_ask", "brain_confirm", "brain_dismiss"}  # the talk with the Brain
+CHAT_MESSAGES = {"brain_chats", "brain_chat_open", "brain_chat_new", "brain_chat_delete"}  # the panel's kept chats
+CHAT_GONE = "That chat is gone"
 _TALK_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 CHECK_MESSAGES = {"check_continue", "check_skip", "check_show"}  # a bot check's buttons (who may: MESSAGE_RULES)
 BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back", "browser_disconnect"}  # only AI Browser's own pages
@@ -171,6 +175,9 @@ MESSAGE_RULES: dict[str, Rule] = {
     "hearing": APP_ONLY, "hearing_download": APP_ONLY, "hearing_cancel": APP_ONLY, "listen_start": APP_ONLY,
     "listen_chunk": APP_ONLY, "listen_end": APP_ONLY, "listen_cancel": APP_ONLY,
     "brain_ask": APP_ONLY, "brain_confirm": APP_ONLY, "brain_dismiss": APP_ONLY,
+    # the Brain's chat panel (2026-10-10): its kept chats, listed, opened, made and deleted on the user's clicks in our
+    # own page. Only the app writes them: never the Brain, a template or a page's text
+    "brain_chats": APP_ONLY, "brain_chat_open": APP_ONLY, "brain_chat_new": APP_ONLY, "brain_chat_delete": APP_ONLY,
     "tell_confirm": APP_ONLY, "tell_dismiss": APP_ONLY,  # brain-delegation: a card runs only from our own pages
     # the Brain's hand-offs (2026-10-08): Send now, Send, Start and Cancel on a card, the user's click on our pages
     "handoff_send": APP_ONLY, "handoff_cancel": APP_ONLY,
@@ -354,6 +361,7 @@ class AppServer:
         self.settings = settings if settings is not None else Settings(self.home)  # <home>/settings.json
         self.workspaces = Workspaces(self.home)  # <home>/workspaces.json: the new look's groups
         self.saved = SavedAgents(self.home)  # <home>/agents: the saved agents (the Agents page)
+        self.chats = Chats(self.home)  # <home>/brain/chats: the Brain's chat panel's kept chats
         self.uploads = attachments.Uploads(self.home / "app" / "uploads")  # files on their way from a page
         self.port_file = Path(port_file) if port_file is not None else None  # run_app: <home>/app/port
         self.window_info: dict = {"using": None, "name": "", "note": "", "choices": []}  # run_app sets it once
@@ -399,6 +407,8 @@ class AppServer:
             brain.broadcast = self._send_all
             brain.outbox = self._brain_out
             brain.closed_note = self._brain_closed
+            brain.talks.on_add = self.chats.add  # Mission Control's talk: a kept chat keeps each exchange (ids it made)
+            brain.card_ended = self.chats.settle  # and how each of its cards ended
         self.default_model = default_model if default_model in MODELS else "sonnet"  # ai-browser app --model
         self.host = host
         self.ports = ports
@@ -1428,6 +1438,8 @@ class AppServer:
             self._hearing_command(ws, queue, kind, message)
         elif kind in TALK_MESSAGES:
             self._talk_command(queue, kind, message, chat=self._views.get(ws) == "chat")
+        elif kind in CHAT_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
+            self._chat_command(queue, kind, message)
         elif kind in ACCOUNT_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
             await self._account_command(queue, kind, message)
         elif kind in POWERS_MESSAGES:  # AI Browser's own pages only (MESSAGE_RULES)
@@ -1628,6 +1640,33 @@ class AppServer:
         text, error = await self.hearing.finish(ws, turn)
         queue.put_nowait({"type": "heard", "turn": turn[:40], **({"error": error} if error else {"text": text})})
 
+    def _chat_command(self, queue: asyncio.Queue, kind: str, message: dict) -> None:
+        """The Brain's chat panel: New chat (an id the app makes), History's list, a chat reopened, and Delete after
+        the user's yes. Only these clicks on our own page reach the kept chats; an id with no file (unknown,
+        malformed, or a chat never used) is answered with words and changes nothing."""
+        request = message.get("request") if isinstance(message.get("request"), (str, int)) else None
+        if kind == "brain_chats":
+            queue.put_nowait({"type": "brain_chats", "chats": self.chats.list()})
+            return
+        if kind == "brain_chat_new":
+            queue.put_nowait({"type": "brain_chat", "request": request,
+                              "chat": {"id": self.chats.new(), "title": "", "exchanges": []}})
+            return
+        chat = self.chats.get(message.get("id"))
+        if chat is None:
+            queue.put_nowait({"type": "error", "text": CHAT_GONE, "request": request})
+            return
+        if kind == "brain_chat_open":
+            queue.put_nowait({"type": "brain_chat", "request": request, "chat": chat})
+            return
+        try:
+            self.chats.delete(chat["id"])
+        except OSError as exc:  # a read-only home: nothing changed
+            queue.put_nowait({"type": "error", "text": f"Couldn't delete that chat: {exc.strerror or exc}",
+                              "request": request})
+            return
+        self._send_all({"type": "brain_chats", "chats": self.chats.list()})
+
     def _talk_command(self, queue: asyncio.Queue, kind: str, message: dict, chat: bool = False) -> None:
         talk = message.get("talk")
         if not isinstance(talk, str) or not _TALK_ID.match(talk):
@@ -1648,6 +1687,8 @@ class AppServer:
             page = message.get("page") if isinstance(message.get("page"), str) and message.get("page") else None
             site = message.get("site") if isinstance(message.get("site"), str) else ""  # the site the user marked
             if text and page is None:  # as before: no page is in it
+                if self.chats.kept(talk):  # a kept chat: the Brain remembers its last few exchanges, as kept
+                    self.brain.talks.restore(talk, self.chats.last(talk, TALK_KEEP))
                 self._job(self._answer(queue, talk, request,
                                        self.brain.respond(talk, text, proposal=proposal, task=task, model=model)))
             elif text:  # the floating chat's "Ask about it": the tab is read only if Claude is asked
@@ -1659,14 +1700,17 @@ class AppServer:
         elif kind == "brain_dismiss" and proposal is not None:
             self.brain.dismiss(talk, proposal)
 
-    @staticmethod
-    async def _answer(queue: asyncio.Queue, talk: str, request, answering) -> None:
+    async def _answer(self, queue: asyncio.Queue, talk: str, request, answering) -> None:
         """The Brain's answer, to the asking page only; an agent it started is `created` there first. If it breaks, the
-        page is still answered (in plain words, never the error's own), so it never waits forever."""
+        page is still answered (in plain words, never the error's own), so it never waits forever. A kept chat keeps
+        the card the answer showed, as text (chats.py)."""
         try:
             answer = await answering
         except Exception:  # a newer question's cancel is not an Exception: that answer is never given
             answer = {"say": "", "error": "The Brain couldn't answer"}
+        card = answer.get("proposal") or answer.get("handoff")
+        if isinstance(card, dict) and self.chats.kept(talk):  # never re-armed: its kind, and later how it ended
+            self.chats.card(talk, card)
         if answer.get("agent"):
             queue.put_nowait({"type": "created", "id": answer["agent"], "request": request})
         queue.put_nowait({"type": "brain_answer", "talk": talk, "request": request,
