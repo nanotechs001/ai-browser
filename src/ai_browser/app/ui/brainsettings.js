@@ -63,6 +63,8 @@ export function mountBrainSettings(parts, send) {
       return option;
     }));
     if (choices.some((tab) => tab.target === before)) parts.pickTab.value = before;
+    parts.sites.hidden = !on; // off: no empty site headings and no empty picker; the note says why
+    parts.pickTab.closest(".brain-pick").hidden = !on && !picking;
     parts.pickTab.disabled = !on || picking || !choices.length;
     parts.pickStart.disabled = !on || picking || !choices.length;
     if (!on && !picking) parts.pickNote.textContent = "Turn on Read my Gmail, Slack and Asana tabs first.";

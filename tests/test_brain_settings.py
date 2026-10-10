@@ -144,6 +144,13 @@ async def test_settings_brain_has_the_switch_and_the_brains_inbox_says_when_read
     assert await settings("document.getElementById('read-tabs').checked") is False  # off until the user turns it on
     assert await page_until(settings, "document.getElementById('reading-state').textContent.startsWith('Off')")
     assert await settings("document.getElementById('pick-start').disabled") is True
+    off = "[document.getElementById('brain-sites').hidden, document.querySelector('.brain-pick').hidden]"
+    assert await settings(off) == [True, True]  # nothing empty to look at while it is off; the note says why
+    assert (await settings("document.getElementById('pick-note').textContent")).startswith("Turn on Read my Gmail")
+    assert await settings("document.querySelector('main.settings').lastElementChild.id") == "app-section"  # setup last
+    title = "getComputedStyle(document.getElementById('brain-title'))"
+    assert await settings(f"[{title}.fontSize, {title}.color === getComputedStyle(document.body).color]") == [
+        "15px", True]  # each card's title reads as one
     assert await page_until(js, "document.querySelector('#drawer-body .brain-reading')?.textContent === "
                                 "'Reading your tabs is off'")
     assert await js("document.querySelector('#drawer-body .brain-turn-on').hidden") is False
@@ -157,3 +164,4 @@ async def test_settings_brain_has_the_switch_and_the_brains_inbox_says_when_read
     assert await page_until(js, "document.querySelector('#drawer-body .brain-turn-on').hidden === true")
     names = "[...document.querySelectorAll('#brain-sites .brain-site strong')].map((n) => n.textContent)"
     assert await page_until(settings, f"{names}.join() === 'Gmail,Slack,Asana'")
+    assert await settings(off) == [False, False]

@@ -18,8 +18,8 @@ export function mountPlaceSettings(parts, send) {
   let scope = null; // the tab list's {profile: "chosen" | "not_open" | "last_used" | "none", elsewhere}
   let brave = ""; // Brave's state: connected, off, ready, asking, refused, lost
 
-  function name(folder) {
-    return profiles.find((profile) => profile.folder === folder)?.name || "That profile";
+  function name(folder, missing = "That profile") { // missing: the words when Brave no longer lists it
+    return profiles.find((profile) => profile.folder === folder)?.name || missing;
   }
 
   function renderChoices() {
@@ -54,7 +54,7 @@ export function mountPlaceSettings(parts, send) {
     } else if (!scope) {
       parts.state.textContent = "";
     } else if (scope.profile === "chosen") {
-      parts.state.textContent = `Agents browse in ${name(chosen)}.`;
+      parts.state.textContent = `Agents browse in ${name(chosen, "the profile you picked (not found in Brave)")}.`;
     } else if (scope.profile === "not_open") {
       parts.state.textContent = `${name(chosen)} isn't open in Brave yet: open a window of it, and click in it once.`;
     } else if (scope.profile === "last_used") {
