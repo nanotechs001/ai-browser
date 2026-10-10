@@ -710,8 +710,9 @@ in a one-off run's drawer starts one from that run. Each is a card, with its set
   run says so: open a window of it in Brave once. Its card and its runs' drawers show a dot and a word (its runs' desks,
   the dot alone: point at it for the word): **Ready** (green), **Open it once** (amber: open a Brave window of that
   profile, and AI Browser learns it in about 30 seconds) or **Brave not connected** (grey). Point at it (or tab to it)
-  to read what to do. A one-off run shows it in its drawer, for the profile Settings picks. Nothing opens Brave by
-  itself.
+  to read what to do. A one-off run shows it in its drawer, for the profile Settings picks (none picked: the one Brave
+  used last, **Ready** once a Brave window is open). When Brave connects again, each profile is learned again. Nothing
+  opens Brave by itself.
 - **Web**, **Model**, **Effort**, **Account**, **Folder** and **Auto-approve in its folder** (see Agent powers): every
   run of it starts with them, scheduled ones too. The Brain and workflows never change them. A run that a message
   started (a workflow for an inbox item) starts with Auto-approve off, and says so: turn it on in its drawer if you
@@ -738,14 +739,14 @@ page's Save; one you edit by hand is read too and checked as a Save is; a broken
 **Ask AI**, beside **Build a Mission**, opens the Brain's chat: a panel over Mission Control (bottom-right, above the
 composer), where you type to the Brain or talk with its **mic button**. It is never in the way: the office, the desks
 and the drawers stay clickable around it. Drag it by its title bar: it stays on screen, and keeps its place for this
-window size. **×** or **Esc** closes it. Under 900 px wide it fills the width at the bottom. It opens by itself when
+window size. **×** or **Esc** closes it (with **History ▾** open, the first **Esc** closes the list). Under 900 px wide it fills the width at the bottom. It opens by itself when
 the Brain needs you: a hand-off card, a suggestion, or an answer to your words.
 - **Hand-off cards** show at its top, and count down only while it is open: closing it holds the countdown, and the
   card waits for your **Send**.
 - **New chat** starts an empty chat, and the Brain starts afresh. **History ▾** lists your last 50 chats, newest
   first, with their titles (your first words) and dates. A click reopens one with its whole talk, and the Brain reads
   its last 6 exchanges again. Its old cards show as text, with how they ended ("Sent to agent 2", "Cancelled", "Not
-  answered"), and never run again. **Delete** asks first.
+  answered"), and never run again. A chat deleted meanwhile says "That chat is gone". **Delete** asks first.
 - Each chat is a file, `~/.ai-browser/brain/chats/<id>.json`, that only you can read: your words and the Brain's
   answers, at most 200 exchanges. Only AI Browser writes them, and they go nowhere but AI Browser's own pages. The
   floating chat and the inbox's talks are not kept.

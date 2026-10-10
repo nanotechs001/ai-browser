@@ -297,7 +297,9 @@ def test_the_readme_explains_the_brains_chat_and_the_profile_dot():
                    "the Brain reads its last 6 exchanges again", "never run again", "**Delete** asks first",
                    "`~/.ai-browser/brain/chats/<id>.json`", "The floating chat and the inbox's talks are not kept",
                    "**Ready** (green), **Open it once** (amber", "**Brave not connected** (grey)",
-                   "Nothing opens Brave by itself"):
+                   "Nothing opens Brave by itself", "with **History ▾** open, the first **Esc** closes the list",
+                   "A chat deleted meanwhile says \"That chat is gone\"", "**Ready** once a Brave window is open",
+                   "When Brave connects again, each profile is learned again"):
         assert needed in text, needed
     for gone in ("a short strip", "turns solid and scrolls", "**Ask AI**, in the composer", "beside Start"):
         assert gone not in text, gone
