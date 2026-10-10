@@ -54,16 +54,19 @@
 .mic svg { width: 18px; height: 18px; fill: currentColor; }
 .mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
                             box-shadow: 0 0 0 3px rgba(79, 141, 253, 0.35); }
-/* never over the right column nor an open drawer (#drawer, mission.css): from 1280 px it sits left of the right column;
-   below, left of the drawer while one is open; under 900 px the drawer opens over it */
+/* never over the right column, an open drawer (#drawer) nor an agent's settings (#agent-panel, 440 px; mission.css):
+   from 1280 px it sits left of the right column, and left of the settings while they are open; below, left of either
+   while one is open; under 900 px either opens over it */
 @media (min-width: 1280px) {
   .brainchat { right: calc(330px + 16px); }
+  body:has(#agent-panel:not([hidden])) .brainchat:not(.placed) { right: calc(440px + 28px); }
 }
 @media (min-width: 900px) and (max-width: 1279px) {
-  body:has(#drawer:not([hidden])) .brainchat:not(.placed) { right: calc(min(440px, 100vw - 24px) + 28px); }
+  body:has(:is(#drawer, #agent-panel):not([hidden])) .brainchat:not(.placed) {
+    right: calc(min(440px, 100vw - 24px) + 28px); }
 }
 @media (max-width: 899px) {
-  #drawer { z-index: 14; }
+  :is(#drawer, #agent-panel) { z-index: 14; }
   .brainchat { left: 0; right: 0; bottom: 0; width: auto; max-width: none; height: 70vh;
                border-radius: var(--radius) var(--radius) 0 0; }
   .brainchat-bar { cursor: default; }

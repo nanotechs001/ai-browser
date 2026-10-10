@@ -468,3 +468,29 @@ async def test_a_chat_gone_meanwhile_says_so(stack):  # fix wave: 5 (and 4: the 
     assert await until(js, "document.getElementById('talk-notice').textContent === 'That chat is gone'")
     assert await until(js, f"{FOCUSED} === {SUMMARY}")
     assert await js(f"{CHAT}.dataset.chat") == shown
+
+
+# ---- final fix wave: the Agents page's settings, a drawer over a counting card, History over a fresh card ------------
+
+def panel_hit(node):
+    """True when a click in the middle of `node` lands inside the Agents page's settings panel."""
+    return (f"(() => {{ const r = {node}.getBoundingClientRect();"
+            " return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('#agent-panel')"
+            " === document.getElementById('agent-panel'); })()")
+
+
+@CHROME
+@pytest.mark.parametrize("width, height", [(1440, 900), (1280, 760), (1100, 800), (800, 700)])
+async def test_the_brains_chat_never_covers_an_agents_settings(stack, width, height):  # final review: Important 1
+    saved = stack["server"].saved.save({"name": "Research", "web": "brave", "model": "opus"})
+    js = await open_with(stack, size=(width, height))
+    await front(stack, js)
+    await js("document.querySelector('.page-link[data-page=\"agents\"]').click(); true")
+    card = f"document.querySelector('#page-agents .agent-card[data-slug={json.dumps(saved.slug)}]')"
+    assert await until(js, f"{card} !== null")
+    await js(f"{card}.click(); true")
+    panel = "document.getElementById('agent-panel')"
+    assert await until(js, f"!{panel}.hidden && {panel}.querySelector('.save-agent') !== null")
+    await opened(js)
+    assert await js(panel_hit(f"{panel}.querySelector('.save-agent')"))  # its Save: the panel, never the chat
+    assert await js(panel_hit(panel))  # and its middle
