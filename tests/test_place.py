@@ -40,7 +40,8 @@ def test_a_profile_is_learned_only_when_both_records_agree_long_enough(tmp_path)
     place = ProfilePlace(tmp_path, settle=12, clock=clock)
     place.chosen = "Default"  # Work
     local_state(tmp_path, last_used="Profile 1")
-    assert place.look(connection, "P") is False and place.context("P") == (None, "not_open")
+    assert place.look(connection, "P") is True and place.context("P") == (None, "not_open")  # Brave names a profile
+    assert place.look(connection, "P") is False
     clock.now = 13
     assert place.look(connection, "P") is True  # Home is P: learned, but Work is still not open
     assert place.context("P") == (None, "not_open")
@@ -67,9 +68,33 @@ def test_one_profile_needs_no_wait_and_a_new_connection_forgets(tmp_path):
     place.chosen = "Default"
     first = object()
     assert place.look(first, "C1") is True and place.context("C1") == ("C1", "chosen")  # no wait
-    assert place.look(object(), None) is False and place.context("C1") == (None, "not_open")  # forgotten
+    assert place.look(object(), None) is True and place.context("C1") == (None, "not_open")  # forgotten, and told
     place.chosen = None
     assert place.context("C9") == ("C9", "last_used") and place.context(None) == (None, "none")
+
+
+def test_a_new_connection_that_forgets_a_learned_profile_says_so(tmp_path):  # the indicator must not stay "Ready"
+    from ai_browser.app.place import ProfilePlace
+
+    local_state(tmp_path, last_used="Default")
+    place = ProfilePlace(tmp_path, settle=0, clock=Clock())
+    first = object()
+    place.look(first, "W")
+    assert place.look(first, "W") is True and place.ready("Default") is True
+    assert place.look(object(), "W2") is True  # forgotten: the pages must hear it
+    assert place.ready("Default") is False
+
+
+def test_whether_brave_named_the_profile_it_used_last_is_told(tmp_path):  # "Settings' choice" with none picked
+    from ai_browser.app.place import ProfilePlace
+
+    local_state(tmp_path, last_used="Default")
+    place, connection = ProfilePlace(tmp_path, settle=99, clock=Clock()), object()
+    assert place.default_known is False
+    assert place.look(connection, "W") is True and place.default_known is True  # pages hear it: "Ready"
+    assert place.look(connection, "W") is False
+    assert place.look(connection, None) is True and place.default_known is False  # no window: "Open it once"
+    assert place.look(None, None) is False
 
 
 async def test_settings_lists_the_profiles_and_takes_only_one_of_them(fake_claude, tmp_path):

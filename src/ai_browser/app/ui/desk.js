@@ -8,6 +8,7 @@
 import { agentLabel, agentTip } from "./chat.js";
 import { createWorker } from "./chibi.js";
 import { BADGE_ICONS, icon } from "./icons.js";
+import { profileDot } from "./profiledot.js";
 import { STATES, stepOf, timerOf } from "./step.js";
 
 export const COLORS = { grey: "#8a8f98", blue: "#4c8df6", red: "#ef6a5f", yellow: "#f6c344", green: "#3fb26b",
@@ -141,6 +142,14 @@ export function createDesk(id, onSelect = () => {}) {
     if (node.style.getPropertyValue("--c") !== color) node.style.setProperty("--c", color);
     const name = agentLabel(agent);
     setTitled(parts.nameplate, name, agentTip(agent, name)); // the whole name, then what it works on
+    // a saved agent's run that browses: its profile (No web never uses Brave)
+    const plate = agent.saved && agent.web !== "none" ? profileDot(agent.profile, { word: false }) : null;
+    if (parts.plateDot && !parts.plateDot.isConnected) parts.plateDot = null; // the name was written over it
+    if (plate?.title !== parts.plateDot?.title || plate?.dataset.state !== parts.plateDot?.dataset.state) {
+      parts.plateDot?.remove();
+      parts.plateDot = plate;
+      if (plate) parts.nameplate.prepend(plate);
+    }
     setTitled(parts.title, step.title);
     setTitled(parts.ticker, step.line);
     setText(parts.badgeText, step.badge);
@@ -153,7 +162,7 @@ export function createDesk(id, onSelect = () => {}) {
     }
     fillSubs(agent.subagents);
     tick(agent);
-    const label = `${name}: ${STATES[step.state] || step.state}`;
+    const label = `${name}: ${STATES[step.state] || step.state}${plate ? ` · Brave profile: ${plate.title}` : ""}`;
     if (node.getAttribute("aria-label") !== label) node.setAttribute("aria-label", label);
   }
 

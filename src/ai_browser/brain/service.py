@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable, Sequence
 
 from ..settings import SOURCES
+from .chats import CARD_CANCELLED
 from .handoffs import (CANCELLED, COUNTDOWN, FROM_BRAIN, HELD, INSTRUCTION_LIMIT, KEPT, NOT_SENT, NOT_STARTED,
                        NOT_WORKING, OPEN, SENT_TO, STOPPED, WORKING, Handoff, clean, counts_down, row_state)
 from .handoffs import SOURCES as HANDOFF_SOURCES
@@ -267,6 +268,9 @@ class BrainService:
         self.visible: Callable[[], bool] = lambda: False
         self.countdown = asyncio.sleep  # how a countdown waits (tests give it their own clock)
         self.clock = time.monotonic
+        # the app's: how a card of Mission Control's talk ended (a proposal confirmed or cancelled, a hand-off done), for
+        # the kept chats (chats.py): (card id, the words it ended with)
+        self.card_ended: Callable[[str, str], None] = lambda card, outcome: None
 
     # ---- lifecycle ----------------------------------------------------------------------------------------
 
@@ -1152,6 +1156,7 @@ class BrainService:
             return {"say": EXPIRED}
         answer = await self._run_card(talk, card, task, model)
         self.talks.add(talk, said or PRESSED.get(card.kind, ""), answer.get("say", ""))
+        self.card_ended(card.id, answer.get("say", ""))
         return answer
 
     async def _run_card(self, talk: str, card, task: str | None, model: str | None) -> dict:
@@ -1177,7 +1182,8 @@ class BrainService:
 
     def dismiss(self, talk: str, proposal: str) -> None:
         """Cancel on the card, or a plain no."""
-        self.talks.take(talk, proposal)
+        if self.talks.take(talk, proposal) is not None:
+            self.card_ended(proposal, CARD_CANCELLED)
 
     # ---- hand-offs: a task for a working agent, or a NEW agent suggested (handoffs.py) ----------------------------
 
@@ -1225,6 +1231,8 @@ class BrainService:
 
     def _show_handoff(self, handoff: Handoff, notify: bool = False) -> None:
         self.broadcast({"type": "brain_handoff", "handoff": handoff.public(self.clock())})
+        if handoff.state not in OPEN and handoff.state != "sending":  # it ended: a kept chat keeps how, as text
+            self.card_ended(handoff.id, handoff.note)
         if notify:  # AI Browser's own app says it too, in fixed words (desktop/notes.py)
             self.outbox({"type": "handoff", "kind": handoff.kind, "counting": handoff.state == "counting"})
         item = self.store.get(handoff.item) if handoff.item and handoff.state not in OPEN else None

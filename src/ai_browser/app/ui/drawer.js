@@ -17,6 +17,7 @@ import { COLORS } from "./desk.js";
 import { icon } from "./icons.js";
 import { openLive, openTab } from "./nav.js";
 import { permissionCard } from "./permission.js";
+import { profileDot } from "./profiledot.js";
 import { renderPlan, renderSubagents } from "./plan.js";
 import { STATES, stateOf } from "./step.js";
 import { mountYourTabs } from "./tablist.js";
@@ -149,6 +150,14 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
     setText(parts.status, agent.status || agent.last_action || "");
     parts.status.hidden = !parts.status.textContent;
     setText(parts.folder, agent.folder ? `Folder: ${agent.folder}` : "No folder: its own scratch folder");
+    parts.profile.hidden = agent.web === "none"; // No web: it never browses, so no profile to tell of
+    const where = profileDot(agent.profile); // where it browses: Ready, Open it once, or Brave not connected
+    where.tabIndex = 0; // its hint shows on keyboard focus too
+    const was = parts.profile.lastElementChild;
+    if (parts.profile.hidden) parts.profile.replaceChildren();
+    else if (was?.dataset.state !== where.dataset.state || was?.textContent !== where.textContent) {
+      parts.profile.replaceChildren(el("span", "muted", "Brave profile:"), where);
+    }
     parts.autoInput.checked = agent.auto === true; // the app's word: what the bridge does now
     setText(parts.autoWords, `Auto-approving inside ${agent.folder || "its own scratch folder"}`);
     parts.autoWords.hidden = agent.auto !== true;
@@ -200,6 +209,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
                     moved: el("div", "status muted moved"),
                     askSlot: el("div", "ask-slot"), ask: null, askKey: "",
                     folder: el("div", "status muted folder"), plan: el("section", "plan"),
+                    profile: el("div", "status profile-line"),
                     subs: el("section", "subagents"), auto: el("label", "auto-toggle"), autoInput: el("input"),
                     autoWords: el("div", "status auto-words"), totals: el("div", "status muted totals"),
                     autoNote: el("div", "muted auto-note", AUTO_EDITS_ONLY) };
@@ -238,7 +248,8 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
     }
     drawer.yourTabs = mountYourTabs(parts.yourTabs, { send, agentId: () => id });
     parts.yourTabs.open = showTabs; // folded, unless the user asked to hand a tab over
-    $("drawer-body").replaceChildren(parts.about, parts.status, parts.moved, parts.folder, parts.auto, parts.autoWords,
+    $("drawer-body").replaceChildren(parts.about, parts.status, parts.moved, parts.folder, parts.profile, parts.auto,
+                                     parts.autoWords,
                                      parts.autoNote, parts.buttons, parts.more, parts.totals, parts.permission,
                                      parts.askSlot, parts.plan, parts.subs, parts.yourTabs, parts.messages,
                                      drawer.line.element);

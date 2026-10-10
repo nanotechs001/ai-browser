@@ -389,6 +389,78 @@ async def test_a_long_agent_name_does_not_widen_the_agent_picker_or_add_a_row(st
     assert await js(f"{pick}.offsetWidth") <= 150
 
 
+# ---- the profile indicator: cards, desks and drawers (the chat-panel spec, 7) ----------------------------------------
+
+@CHROME
+async def test_each_agent_shows_whether_its_brave_profile_is_ready(stack):
+    server, brave = stack["server"], stack["brave"]
+    brave.place.listed = [{"folder": "Profile 1", "name": f"Work {HOSTILE}", "color": None}]
+    saved = server.saved.save({**AGENT, "profile": "Profile 1"})
+    stack["script"].write_text(json.dumps([{"sleep": 30}]), encoding="utf-8")  # its runs stay at work
+    await server.agents.run_as(saved, "List the prices")
+    run = server.agents.run_of(saved.slug)
+    plain = await server.agents.create("Fix the footer")  # a one-off run: the indicator in its drawer only
+    js = await open_agents(stack)
+    dot = f"{card(saved.slug)}?.querySelector('.profile-dot')"
+    desk = f"document.querySelector('.station[data-id=\"{run.id}\"] .nameplate .profile-dot')"
+    in_drawer = "document.querySelector('#drawer-body .profile-dot')"
+    assert await until(js, f"{dot}?.dataset.state === 'open'")
+    assert await js(f"{dot}.querySelector('.word').textContent") == "Open it once"
+    hint = f"Open a Brave window of the Work {HOSTILE} profile once: AI Browser learns it in about 30 seconds"
+    assert await js(f"{dot}.querySelector('.hint').textContent") == hint
+    assert await js("document.querySelectorAll('img[src=x]').length === 0 && document.title !== 'pwned'")
+    x, y = await js(f"(() => {{ const r = {dot}.querySelector('.dot').getBoundingClientRect();"
+                    " return [r.left + r.width / 2, r.top + r.height / 2]; })()")
+    await stack["cdp"].send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, session_id=js.session)
+    assert await until(js, f"getComputedStyle({dot}.querySelector('.hint')).display === 'block'")  # what to do
+    await js("document.querySelector('.page-link[data-page=\"dashboard\"]').click(); true")
+    assert await until(js, f"{desk}?.dataset.state === 'open'")
+    assert (await js(f"{desk}.title")).startswith("Open it once: ")
+    label = f"document.querySelector('.station[data-id=\"{run.id}\"]').getAttribute('aria-label')"
+    assert "Brave profile: Open it once" in await js(label)
+    assert await js(f"document.querySelector('.station[data-id=\"{plain.id}\"] .profile-dot') === null")  # one-off
+    await js(open_drawer(plain.id))
+    assert await until(js, f"{in_drawer}?.dataset.state === 'ready'")  # Settings' choice: the profile Brave used last
+    brave.place.default_known = False  # no Brave window open: no profile used last to browse in
+    brave.on_place()
+    assert await until(js, f"{in_drawer}?.dataset.state === 'open'")
+    assert await js(f"{in_drawer}.querySelector('.word').textContent") == "Open it once"
+    brave.place.default_known = True
+    brave.on_place()
+    assert await until(js, f"{in_drawer}?.dataset.state === 'ready'")
+    await js(open_drawer(run.id))
+    assert await until(js, f"{in_drawer}?.dataset.state === 'open'")
+    brave.place.learned.add("Profile 1")
+    brave.on_place()  # AI Browser learned it: every page hears it at once
+    for node in (dot, desk, in_drawer):
+        assert await until(js, f"{node}?.dataset.state === 'ready'"), node
+    assert await js(f"{dot}.querySelector('.word').textContent") == "Ready"
+    brave.set_state("lost")  # Brave went
+    for node in (dot, desk, in_drawer):
+        assert await until(js, f"{node}?.dataset.state === 'off'"), node
+    assert await js(f"{in_drawer}.querySelector('.word').textContent") == "Brave not connected"
+
+
+
+@CHROME
+async def test_an_agent_with_no_web_shows_no_profile_dot(stack):  # final review: Important 3
+    server = stack["server"]
+    saved = server.saved.save({**AGENT, "web": "none", "profile": "Profile 1"})
+    stack["script"].write_text(json.dumps([{"sleep": 30}]), encoding="utf-8")
+    await server.agents.run_as(saved, "List the prices")
+    run = server.agents.run_of(saved.slug)
+    plain = await server.agents.create("Fix the footer", web="none")  # a one-off run with No web
+    js = await open_agents(stack)
+    assert await until(js, f"{card(saved.slug)} !== null")
+    assert await js(f"{card(saved.slug)}.querySelector('.profile-dot') === null")  # it never uses Brave
+    await js("document.querySelector('.page-link[data-page=\"dashboard\"]').click(); true")
+    assert await until(js, f"document.querySelector('.station[data-id=\"{run.id}\"]') !== null")
+    assert await js(f"document.querySelector('.station[data-id=\"{run.id}\"] .profile-dot') === null")
+    for one, title in ((run, "Research"), (plain, "Fix the footer")):
+        await js(open_drawer(one.id))
+        assert await until(js, f"document.getElementById('drawer-title').textContent.endsWith({json.dumps(title)})")
+        assert await js("document.querySelector('#drawer-body .profile-dot') === null"), title
+
 # ---- Effort: beside Model on the Agents page, and in the drawer with the model ---------------------------------------
 
 @CHROME

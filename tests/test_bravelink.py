@@ -255,6 +255,26 @@ async def test_what_was_learned_ends_with_the_connection(tmp_path):
         await port.stop()
 
 
+async def test_a_profile_learned_is_told_to_the_app(tmp_path):  # the chat-panel spec, 7: the agents' indicator
+    from ai_browser.app.bravelink import BraveLink
+
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    local_state(folder, last_used="Default")
+    port = FakePort(folder, pages=PROFILES, default="W")
+    await port.start()
+    link = BraveLink(folder, every=0.1, settle=0.3)
+    learned = []
+    link.on_place = lambda: learned.append(link.place.ready("Default"))
+    link.set_place("Default")
+    await link.start()
+    try:
+        await link.connect()
+        assert await until(lambda: True in learned)  # Work's context learned: the app hears it at once
+    finally:
+        await link.close()
+        await port.stop()
+
+
 async def test_with_none_chosen_the_profile_used_last_is_listed(tmp_path):
     folder = tmp_path / "BraveSoftware" / "Brave-Browser"
     port = FakePort(folder, pages=PROFILES, default="P")

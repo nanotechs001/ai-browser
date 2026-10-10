@@ -35,6 +35,7 @@ SENDS = {
     "handoff_send", "handoff_cancel",  # the Brain's hand-offs: Send now, Send, Start and Cancel on a card
     "visibility",  # a page shown or hidden (link.js): a hand-off counts down only while a page can show it
     "saved_agents", "saved_agent_save", "saved_agent_delete",  # saved agents: the Agents page, the user's clicks only
+    "brain_chats", "brain_chat_open", "brain_chat_new", "brain_chat_delete",  # the Brain's chat panel: its kept chats
 }
 RETIRED = {"items", "replied", "thread", "filled", "reader_status", "watcher_caps", "tab_grouped", "pause",
            "ai_keyword"}  # the watcher's own: gone with it

@@ -289,14 +289,14 @@ async def ask_typed(js, words):
 
 
 async def open_talk(stack, *sources, hearing="ready", ask=True):
-    """Mission Control with `sources` run before its scripts, in front, once it knows whether talking is ready, and in
-    Ask AI: the talk with the Brain is Ask AI's (in the composer's other modes the mic fills the box), unless not
-    ask."""
+    """Mission Control with `sources` run before its scripts, in front, once it knows whether talking is ready, and
+    with the Brain's chat open and nothing focused (Space talks to the Brain; while the chat is closed the mic fills
+    Build a Mission's box), unless not ask."""
     js = await open_with(stack, "".join(sources))
     await front(stack, js)
     assert await until(js, f"{PANEL}.dataset.hearing === {json.dumps(hearing)}")
     if ask:
-        await js("document.getElementById('mode-ask').click(); true")
+        await js("document.getElementById('ask-ai').click(); document.activeElement.blur(); true")
     return js
 
 
@@ -307,7 +307,7 @@ async def test_a_spoken_question_gets_a_spoken_answer(stack):
     answer = "Fix the footer is checking the links in the footer."
     talk_script(stack, {"say": answer, "action": "none"})
     js = await open_talk(stack, mic(), LOCAL_VOICE)
-    assert await js(f"{PANEL}.hidden") is True  # the talk panel stays hidden until the first turn
+    assert await js(LOG) == []  # nothing in the talk until the first turn
     await js(BUBBLES)
     await voice_on(js)
     await talk(stack, js, 0.3)  # about 1.5 s of sound in all
@@ -392,6 +392,7 @@ async def test_esc_throws_the_turn_away_and_does_nothing_else(stack):
     await asyncio.sleep(1)
     assert stack["engine"].heard == [] and talk_calls(stack) == []  # nothing transcribed, nothing asked
     assert await js("document.getElementById('drawer').hidden") is False  # and the drawer stays open
+    assert await js("document.getElementById('brainchat').hidden") is False  # and so does the Brain's chat
     assert await js("window.micOpen") == 1 and await js("window.micClosed") == 1
     assert await js(f"{PANEL}.dataset.state") == "idle"
 
@@ -1042,7 +1043,7 @@ async def test_the_browser_is_named_from_its_brands(stack):
 
 
 @CHROME
-async def test_the_mic_fills_the_box_outside_ask_ai(stack):  # the new look: "voice, as today, filling the box"
+async def test_the_mic_fills_the_box_while_the_brains_chat_is_closed(stack):  # "voice, as today, filling the box"
     talk_script(stack, {"say": "OK.", "action": "none"})
     stack["engine"].answers = ["check the shop"]
     js = await open_talk(stack, mic(), ask=False)
@@ -1051,7 +1052,8 @@ async def test_the_mic_fills_the_box_outside_ask_ai(stack):  # the new look: "vo
     await asyncio.sleep(0.5)
     assert talk_calls(stack) == []  # nothing went to the Brain
     assert stack["server"].agents.agents == {}  # and nothing started: the words wait in the box for the user's Start
-    await js("document.getElementById('mode-ask').click(); document.getElementById('task').value = ''; true")
+    await js("document.getElementById('ask-ai').click(); document.activeElement.blur();"
+             " document.getElementById('task').value = ''; true")
     stack["engine"].answers = ["what is going on"]
     await talk(stack, js)
-    assert await eventually(lambda: len(talk_calls(stack)) == 1)  # in Ask AI the Brain hears it, as before
+    assert await eventually(lambda: len(talk_calls(stack)) == 1)  # with the chat open the Brain hears it, as before
