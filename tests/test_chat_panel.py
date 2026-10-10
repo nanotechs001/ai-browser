@@ -494,3 +494,29 @@ async def test_the_brains_chat_never_covers_an_agents_settings(stack, width, hei
     await opened(js)
     assert await js(panel_hit(f"{panel}.querySelector('.save-agent')"))  # its Save: the panel, never the chat
     assert await js(panel_hit(panel))  # and its middle
+
+
+@CHROME
+async def test_under_900_px_a_drawer_over_the_chat_holds_its_countdown(stack):  # final review: Important 2
+    from test_app_server import wait_for
+    from test_delegation_pages import in_slot, sent_by_the_brain, working_agent
+    from test_mission import open_drawer
+
+    row = await working_agent(stack)
+    brain = stack["brain"]
+    js = await open_with(stack, size=(800, 700))
+    await front(stack, js)
+    assert await until(js, f"{station('a1')} !== null")
+    await opened(js)
+    await wait_for(brain.visible)
+    counting = brain.give(row, "Compare the annual plans", "you")
+    assert counting.state == "counting"
+    assert await until(js, f"{in_slot(handoff_id=counting.id)}?.dataset.state === 'counting'")
+    await js(open_drawer("a1"))  # the drawer opens over the chat: the card can't be read
+    assert await until(js, "!document.getElementById('drawer').hidden")
+    await wait_for(lambda: counting.state == "waiting")  # so it holds, and waits for Send
+    assert brain.visible() is False
+    await brain.countdown.tick()
+    assert sent_by_the_brain(stack) == []
+    await js("document.getElementById('drawer-close').click(); true")
+    await wait_for(brain.visible)  # the drawer closed: the chat's cards are seen again

@@ -97,7 +97,14 @@ const voice = createVoice({
 });
 for (const type of ["pointerdown", "keydown"]) addEventListener(type, () => voice.unblock(), { capture: true });
 let chatOpen = false; // the Brain's chat: only while it is open does Mission Control show hand-offs (link.js's shown)
-const link = connect({ view: "mission", onMessage: handle, onState: setStatus, shown: () => chatOpen });
+// under 900 px a drawer or an agent's settings opens over the chat (brainchat.css): its cards can't be seen then
+const NARROW = matchMedia("(max-width: 899px)");
+const OVER_CHAT = ["drawer", "agent-panel"];
+const covered = () => NARROW.matches && OVER_CHAT.some((id) => !$(id).hidden);
+const link = connect({ view: "mission", onMessage: handle, onState: setStatus, shown: () => chatOpen && !covered() });
+const overChat = new MutationObserver(() => link.seen()); // one opened or closed: the app hears it at once
+for (const id of OVER_CHAT) overChat.observe($(id), { attributes: true, attributeFilter: ["hidden"] });
+NARROW.addEventListener("change", () => link.seen());
 const send = (message) => link.send(message);
 guardLinks(link);
 guardCloseKey(); // Command-W (Ctrl+W) never closes the window from here
