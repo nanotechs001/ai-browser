@@ -124,6 +124,8 @@ const list = mountList($("view-list"), { onOpen: select });
 const composer = mountComposer({ link, workspaceOf: () => workspace }); // Build a Mission, and Ask AI's button
 parts.push(composer);
 const chat = mountBrainChat({ // the Brain's chat (Ask AI): a floating panel over the office, never modal
+  link,
+  talk: () => talk, // New chat and History show another kept chat in it
   onToggle: (open) => { // opened or closed: the app hears at once whether its cards can be seen (a countdown holds)
     chatOpen = open;
     link.seen();
@@ -214,7 +216,7 @@ talk = mountTalk({
   openBrain: () => drawer.openBrain(),
   model: () => $("task-model").value, // the model last picked here (the app remembers it)
   fill: (words) => !chat.isOpen && composer.fill(words), // the mic while the Brain's chat is closed fills the box
-  keep: 200, // the Brain's chat: this run's talk with the Brain
+  keep: 600, // the Brain's chat: a kept chat's whole log (200 exchanges, and their cards)
   reveal: () => chat.open(), // a line or a card in the talk: its chat opens to show it
 });
 

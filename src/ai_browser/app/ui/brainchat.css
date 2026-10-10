@@ -12,7 +12,22 @@
                  user-select: none; touch-action: none; border-bottom: 1px solid var(--line); }
 .brainchat-bar strong { flex: 1; min-width: 0; }
 .brainchat-bar button { padding: 2px 8px; font-size: 13px; }
+.chat-history { position: relative; }
+.chat-history summary { list-style: none; cursor: pointer; font-size: 13px; padding: 2px 8px;
+                        border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.chat-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 1; width: 300px; max-height: 320px;
+             overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 6px; cursor: default;
+             border-radius: 10px; background: var(--card); border: 1px solid var(--line-strong);
+             box-shadow: var(--shadow); }
+.chat-row { display: flex; align-items: center; gap: 4px; }
+.chat-row .open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+                  border: 0; background: transparent; padding: 4px 6px; text-align: left; }
+.chat-row[aria-current="true"] .open { background: var(--selected); }
+.chat-row .title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-row .when { font-size: 11px; }
+.chat-list .empty { margin: 4px 6px; font-size: 13px; }
 .brainchat > .handoff-slot { flex: none; max-height: 45%; padding: 8px 10px 0; }
+.talk-log li.past { color: var(--muted); font-style: italic; } /* a kept chat's card: how it ended, never live */
 .brainchat > .talk { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; }
 .talk-log { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; margin: 0;
             padding: 0; display: flex; flex-direction: column; gap: 4px; }

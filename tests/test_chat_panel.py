@@ -284,3 +284,111 @@ async def test_x_keeps_the_brains_chat_closed_while_its_held_card_changes(stack)
     assert await until(js, f"!{CHAT}.hidden && {in_slot(handoff_id=counting.id)}?.dataset.state === 'waiting'")
     await wait_for(brain.visible)
     assert brain.give(row, "Check the logos too", "you").state == "counting"
+
+
+# ---- New chat, History ▾ and Delete (Task 5) --------------------------------------------------------------------------
+
+MADE = f"/^c[0-9a-f]{{16}}$/.test({CHAT}.dataset.chat || '')"  # the app made the chat's id
+
+
+@CHROME
+async def test_new_chat_starts_empty_and_history_lists_the_chats_newest_first(stack):
+    from test_talk import ask_typed, talk_calls, talk_script
+
+    talk_script(stack, {"say": "Noted.", "action": "none"})
+    js = await open_mission(stack)
+    assert await until(js, MADE)
+    await opened(js)
+    await ask_typed(js, "first question")
+    assert await until(js, f"{LOG}.querySelectorAll('li.brain').length === 1", 15)
+    first = await js(f"{CHAT}.dataset.chat")
+    await js("document.getElementById('chat-new').click(); true")
+    assert await until(js, f"{CHAT}.dataset.chat !== {json.dumps(first)} && {LOG}.children.length === 0")
+    await ask_typed(js, f"second {HOSTILE}")
+    assert await until(js, f"{LOG}.querySelectorAll('li.brain').length === 1", 15)
+    assert "first question" not in talk_calls(stack)[-1]  # a new chat: the Brain starts afresh
+    await js("document.querySelector('#chat-history summary').click(); true")
+    titles = "[...document.querySelectorAll('#chat-list .chat-row .title')].map(node => node.textContent)"
+    assert await until(js, f"{titles}.length === 2")
+    assert await js(titles) == [f"second {HOSTILE}", "first question"]  # newest first, as text
+    current = "document.querySelector('#chat-list .chat-row[aria-current=\"true\"] .title').textContent"
+    assert await js(current) == f"second {HOSTILE}"
+    assert await js("document.querySelector('#chat-list .chat-row .when').textContent") != ""  # and its date
+    assert await js("document.querySelectorAll('img[src=x]').length === 0 && document.title !== 'pwned'")
+
+
+@CHROME
+async def test_history_reopens_a_chat_with_its_cards_as_text_and_deletes_it_after_asking(stack):
+    from test_app_server import wait_for
+    from test_talk import ask_typed, talk_script
+
+    talk_script(stack, {"say": "I can start an agent.", "action": "start_agent"}, {"say": "Noted.", "action": "none"})
+    folder = stack["home"] / "brain" / "chats"
+    folder.mkdir(parents=True, exist_ok=True)
+    old = "c" + "a" * 16  # an earlier run's chat: its hand-off was sent, its suggestion never answered
+    (folder / f"{old}.json").write_text(json.dumps({
+        "id": old, "title": "Compare the plans", "created": "2026-10-09T09:00:00+00:00",
+        "updated": "2026-10-09T09:05:00+00:00", "exchanges": [
+            {"said": "tell agent 2 to compare the plans", "answer": "Giving your words to 2 · Research.",
+             "time": "2026-10-09T09:00:00+00:00", "card": {"id": "h1", "kind": "give", "outcome": "Sent to agent 2"}},
+            {"said": "and a new one for the logos", "answer": "I can start an agent.",
+             "time": "2026-10-09T09:05:00+00:00", "card": {"id": "p1", "kind": "start_agent", "outcome": None}}]}),
+        encoding="utf-8")
+    js = await open_mission(stack)
+    assert await until(js, MADE)
+    await opened(js)
+    await ask_typed(js, "check the shop")  # this chat's card: live, with Start
+    assert await until(js, "!!document.querySelector('#talk-card .talk-go')", 15)
+    await js("document.querySelector('#chat-history summary').click(); true")
+    row = f"document.querySelector('#chat-list .chat-row[data-id=\"{old}\"]')"
+    assert await until(js, f"{row} !== null")
+    await js(f"{row}.querySelector('.open').click(); true")
+    assert await until(js, f"{CHAT}.dataset.chat === {json.dumps(old)}")
+    assert await js(LINES) == ["You: tell agent 2 to compare the plans", "Brain: Giving your words to 2 · Research.",
+                               "Your words for an agent: Sent to agent 2", "You: and a new one for the logos",
+                               "Brain: I can start an agent.", "Start a new agent: Not answered"]
+    assert await js("document.querySelector('#talk-card .talk-go') === null")  # never re-armed: no Start, no Send
+    assert await js("document.getElementById('chat-history').open") is False
+    await js("document.querySelector('#chat-history summary').click(); true")
+    assert await until(js, f"{row} !== null")
+    dialog = "document.querySelector('dialog.confirm')"
+    await js(f"{row}.querySelector('.delete').click(); true")  # Delete asks first
+    assert await until(js, f"{dialog}?.open === true")
+    assert await js(f"{dialog}.querySelector('h2').textContent") == 'Delete "Compare the plans"?'
+    await js(f"{dialog}.querySelector('.keep').click(); true")  # Keep keeps it
+    assert await until(js, f"{dialog} === null")
+    assert (folder / f"{old}.json").exists()
+    await js(f"{row}.querySelector('.delete').click(); true")
+    assert await until(js, f"{dialog}?.open === true")
+    await js(f"{dialog}.querySelector('.go').click(); true")
+    await wait_for(lambda: not (folder / f"{old}.json").exists())
+    assert await until(js, f"{row} === null")  # gone from History
+    assert await until(js, f"{MADE} && {CHAT}.dataset.chat !== {json.dumps(old)} && {LOG}.children.length === 0")
+
+
+@CHROME
+async def test_a_reconnect_or_a_click_on_the_chat_shown_never_reopens_it(stack):  # Task 2's carry: its card stays
+    from test_talk import ask_typed, talk_script
+
+    talk_script(stack, {"say": "Shall I start an agent on that?", "action": "start_agent"})
+    js = await open_mission(stack)
+    assert await until(js, MADE)
+    await opened(js)
+    await ask_typed(js, "check the shop")
+    go = "document.querySelector('#talk-card .talk-go')"
+    assert await until(js, f"!!{go}", 15)
+    shown = await js(f"{CHAT}.dataset.chat")
+    for ws in list(stack["server"]._sockets):  # the app's end of the line closes, and the page connects again
+        await ws.close()
+    assert await until(js, "document.getElementById('status').dataset.state !== 'connected'", 5)
+    assert await until(js, "document.getElementById('status').dataset.state === 'connected'", 10)
+    await asyncio.sleep(1)  # past the snapshot that follows the hello
+    assert await js(f"{CHAT}.dataset.chat") == shown and await js(f"!!{go}")  # the same chat, its card still live
+    await js("document.querySelector('#chat-history summary').click(); true")
+    row = f"document.querySelector('#chat-list .chat-row[data-id=\"{shown}\"] .open')"
+    assert await until(js, f"{row} !== null")
+    await js(f"{row}.click(); true")  # History's row for the chat shown: nothing to reopen
+    assert await until(js, "document.getElementById('chat-history').open === false")
+    await asyncio.sleep(0.5)
+    await js(f"{go}.click(); true")  # the app still holds its card: Start starts the agent
+    assert await until(js, f"{station('a1')} !== null", 15)

@@ -6,6 +6,8 @@
 // Under 900 px it fills the width at the bottom and isn't dragged. Every word is set as text.
 "use strict";
 
+import { el } from "./chat.js";
+import { confirmAction } from "./confirm.js";
 import { PICTURES_NOTE, takeFiles } from "./paste.js";
 
 const NARROW = matchMedia("(max-width: 899px)"); // full width at the bottom: it isn't dragged
@@ -23,13 +25,83 @@ function places() {
   }
 }
 
-// onToggle(open): it opened or closed (Mission Control tells the app whether its cards can be seen)
-export function mountBrainChat({ onToggle = () => {} } = {}) {
+function when(iso) { // "Oct 10, 14:05", in the user's own way of writing it
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? ""
+    : date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// link: the line to the app; talk(): talk.js's talk, which shows the kept chat; onToggle(open): it opened or closed
+// (Mission Control tells the app whether its cards can be seen). New chat and History ▾ (the spec, 5): the app makes
+// a chat's id and keeps its file; a reopened chat shows its whole log, its cards as text.
+export function mountBrainChat({ link, talk = () => null, onToggle = () => {} }) {
   const $ = (id) => document.getElementById(id);
   const root = $("brainchat");
   const bar = $("brainchat-bar");
   const opener = $("ask-ai");
   let drag = null;
+  let current = null; // the kept chat shown: its id (the app made it)
+  let waiting = null; // the New chat or the reopened chat whose brain_chat comes next
+  let automatic = null; // the New chat a connection asked for: it takes over only a talk with nothing in it
+  let asked = 0;
+
+  function request(type, fields = {}) { // one request each, named chat-<n>
+    asked += 1;
+    const id = `chat-${asked}`;
+    if (type !== "brain_chat_delete") waiting = id;
+    link.send({ type, request: id, ...fields });
+    return id;
+  }
+
+  function newChat(auto = false) { // an empty chat, with an id the app made (only those are kept)
+    const id = request("brain_chat_new");
+    automatic = auto ? id : null;
+  }
+
+  function show(chat) { // the chat the app sent: its id, and its whole log in the talk
+    current = chat.id;
+    root.dataset.chat = current;
+    talk()?.setTalk(current, Array.isArray(chat.exchanges) ? chat.exchanges : []);
+  }
+
+  function renderList(rows) { // newest first, title and date; a click reopens one, Delete asks first
+    $("chat-list").replaceChildren(...rows.map((row) => {
+      const item = el("div", "chat-row");
+      item.dataset.id = String(row.id || "");
+      if (row.id === current) item.setAttribute("aria-current", "true");
+      const title = String(row.title || "Untitled chat");
+      const reopen = el("button", "open");
+      reopen.type = "button";
+      reopen.title = title;
+      reopen.append(el("span", "title", title), el("span", "when muted", when(row.updated)));
+      reopen.addEventListener("click", () => {
+        $("chat-history").open = false;
+        // the chat shown is never reopened: the app would drop its open card (Task 2's forget)
+        if (row.id !== current) request("brain_chat_open", { id: row.id });
+      });
+      const remove = el("button", "ghost delete", "Delete");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Delete ${title}`);
+      remove.addEventListener("click", () => forget(row.id, title));
+      item.append(reopen, remove);
+      return item;
+    }));
+    if (!rows.length) $("chat-list").append(el("p", "empty muted", "No chats yet"));
+  }
+
+  async function forget(id, title) { // Delete: asked first, Keep by default (confirm.js)
+    if (!await confirmAction({ title: `Delete "${title}"?`, yes: "Delete",
+                               lines: ["Your words and the Brain's answers in it are deleted from this computer."] })) {
+      return;
+    }
+    request("brain_chat_delete", { id });
+    if (id === current) newChat(); // the chat shown went: an empty one takes its place
+  }
+
+  $("chat-new").addEventListener("click", () => newChat());
+  $("chat-history").addEventListener("toggle", () => {
+    if ($("chat-history").open) link.send({ type: "brain_chats" });
+  });
 
   const size = () => `${innerWidth}x${innerHeight}`;
 
@@ -122,6 +194,23 @@ export function mountBrainChat({ onToggle = () => {} } = {}) {
       const fresh = cards.filter((one) => OPEN.includes(one?.state) && !shownCards.has(one.id));
       for (const one of fresh) shownCards.add(one.id);
       if (fresh.length) open();
+      switch (message.type) {
+        case "snapshot": // connected (again): a talk with nothing in it gets a chat of its own; one with words keeps it
+          if (!current || !$("talk-log").children.length) newChat(true); // never brain_chat_open: its card stays
+          break;
+        case "brain_chat":
+          if (message.request !== waiting || typeof message.chat?.id !== "string") break;
+          waiting = null;
+          if (message.request === automatic && !talk()?.fresh) break; // words came first: they stay as they are
+          show(message.chat);
+          break;
+        case "brain_chats":
+          renderList(Array.isArray(message.chats) ? message.chats : []);
+          break;
+        case "error":
+          if (String(message.request || "").startsWith("chat-")) link.send({ type: "brain_chats" }); // gone meanwhile
+          break;
+      }
     },
   };
 }

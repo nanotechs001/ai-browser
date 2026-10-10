@@ -16,6 +16,8 @@ const NOT_CONNECTED = "Not connected: is `ai-browser app` running?";
 const CONTROLS = "button, input, textarea, select, a, label, summary, [contenteditable]";
 const MODELS = [["sonnet", "Sonnet · balanced"], ["opus", "Opus · best"], ["haiku", "Haiku · fastest"]];
 const GO = { start_agent: "Start", message_agent: "Send" }; // anything else is a draft card's "Draft it"
+const PAST = { start_agent: "Start a new agent", message_agent: "Send to an agent", draft_reply: "Draft a reply",
+               give: "Your words for an agent", start: "Start a new agent" }; // a kept chat's cards, as text
 const SEND_STATE = { // what happens to the words, from the agent's state when the card was made
   working: "It's working: it reads your words when it finishes what it's doing now.",
   waiting: "It's waiting in line: it reads your words when its turn comes.",
@@ -73,7 +75,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
   const card = panel.querySelector(".talk-card");
   const form = panel.querySelector(".talk-form");
   const input = form.querySelector("input");
-  const talkId = newId("k"); // one talk per page load: the Brain remembers its last few exchanges
+  let talkId = newId("k"); // one talk per page load, or the kept chat Mission Control's chat shows (setTalk)
   let hearing = null; // the app's latest hearing_status
   let state = "idle";
   let turn = null; // the turn being recorded
@@ -611,6 +613,26 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     }
   }
 
+  function setTalk(id, exchanges = []) { // Mission Control's New chat and History: another kept chat, its whole log
+    talkId = String(id);
+    asking = null; // an answer for the chat before is never shown here
+    confirming = null;
+    closeProposal();
+    closeCard();
+    log.replaceChildren();
+    status.textContent = "";
+    notice.textContent = "";
+    if (!turn && !finishing) setState("idle");
+    for (const one of exchanges) { // its cards as text: how each ended, never a live button
+      if (one?.said) line("You", String(one.said));
+      if (one?.answer) line("Brain", String(one.answer));
+      if (one?.card) {
+        log.append(el("li", "past", `${PAST[one.card.kind] || "A card"}: ${one.card.outcome || "Not answered"}`));
+      }
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
   function onMessage(message) {
     if (message.type === "hearing_status") statusChanged(message);
     else if (message.type === "heard") heard(message);
@@ -719,5 +741,9 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
   });
 
   panel.dataset.state = state;
-  return { onMessage, connection, get state() { return state; } };
+  return {
+    onMessage, connection, setTalk,
+    get state() { return state; },
+    get fresh() { return !asking && !confirming && !log.children.length; }, // nothing said yet, nothing waiting
+  };
 }
