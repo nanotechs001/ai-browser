@@ -21,6 +21,7 @@ LOG = "document.getElementById('talk-log')"
 LINES = "[...document.querySelectorAll('#talk-log li')].map(line => line.textContent)"
 BOX = ("(selector) => { const r = document.querySelector(selector).getBoundingClientRect();"
        " return [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)]; }")
+SIDE = 330  # the right column's width from 1280 px (mission.css)
 TITLE = ("(() => { const r = document.getElementById('brainchat-title').getBoundingClientRect();"
          " return [r.left + 10, r.top + r.height / 2]; })()")
 
@@ -57,7 +58,8 @@ async def test_ask_ai_opens_the_brains_chat_and_x_or_esc_closes_it(stack):
     assert await js(f"{ASK}.getAttribute('aria-expanded')") == "true"
     assert await js(f"[{CHAT}.offsetWidth, {CHAT}.offsetHeight]") == [380, 520]
     _, _, right, bottom = await js(f"({BOX})('#brainchat')")
-    assert right == 1440 - 16 and bottom <= (await js(f"({BOX})('#composer')"))[1]  # bottom-right, over the composer
+    assert right == 1440 - SIDE - 16  # bottom-right, left of the right column (fix round 1)
+    assert bottom <= (await js(f"({BOX})('#composer')"))[1]  # over the composer
     assert await js(hits("document.getElementById('start-label')"))  # Start Mission stays in view
     await js("document.getElementById('brainchat-close').click(); true")  # ×
     assert await until(js, f"{CHAT}.hidden && document.activeElement === {ASK}")  # the focus back on Ask AI
@@ -108,7 +110,7 @@ async def test_the_brains_chat_drags_by_its_bar_stays_on_screen_and_keeps_its_pl
     assert (await again(f"({BOX})('#brainchat')"))[:2] == [8, 8]
     other = await open_with(stack, size=(1280, 800))  # another size: the default place
     await opened(other)
-    assert (await other(f"({BOX})('#brainchat')"))[2] == 1280 - 16
+    assert (await other(f"({BOX})('#brainchat')"))[2] == 1280 - SIDE - 16
 
 
 @CHROME
@@ -133,6 +135,77 @@ async def test_under_900_px_the_brains_chat_fills_the_width_at_the_bottom(stack)
     assert await js(f"(() => {{ const r = {CHAT}.getBoundingClientRect();"
                     " return [r.left, r.right, r.bottom, Math.round(r.height)]; })()") == [0, 800, 700, 490]
     assert await js(hits("document.getElementById('talk-text')"))
+
+
+DRAWER_HIT = ("(() => { const r = document.getElementById('drawer-body').getBoundingClientRect();"
+              " return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('#drawer')"
+              " === document.getElementById('drawer'); })()")
+
+
+@CHROME
+@pytest.mark.parametrize("width, height", [(1440, 900), (1280, 760), (1100, 800), (800, 700)])
+async def test_the_brains_chat_never_covers_the_right_column_or_an_open_drawer(stack, width, height):  # fix round 1
+    stack["script"].write_text(json.dumps([{"sleep": 30}]), encoding="utf-8")  # it stays at work
+    await stack["server"].agents.create("Fix the footer")
+    js = await open_with(stack, size=(width, height))
+    await front(stack, js)
+    assert await until(js, f"{station('a1')} !== null")
+    await js(f"{station('a1', '.nameplate')}.click(); true")
+    await opened(js)
+    if width >= 1280:  # the right column beside the office: Current Task's Chat and the Activity stay in reach
+        assert await js(hits("document.getElementById('current-chat')"))
+        await click(stack, js, "#current-chat")  # a real click on it, the chat open
+    else:  # the right column folds under the office: the drawer opens from it all the same
+        await js("document.getElementById('current-chat').click(); true")
+    assert await until(js, "!document.getElementById('drawer').hidden")
+    assert await js(f"!{CHAT}.hidden")
+    assert await until(js, DRAWER_HIT)  # the open drawer's middle: the drawer, never the chat
+    await click(stack, js, "#drawer-close")  # a real click closes it
+    assert await until(js, "document.getElementById('drawer').hidden")
+
+
+@CHROME
+async def test_the_brains_chat_reopens_with_its_newest_line_in_view(stack):  # fix round 1
+    from test_talk import ask_typed, talk_script
+
+    talk_script(stack, {"say": "Noted", "action": "none"})
+    js = await open_with(stack, size=(1440, 900))
+    await opened(js)
+    for number in range(12):  # more lines than the chat shows at once
+        await ask_typed(js, f"question {number}")
+        assert await until(js, f"{LOG}.querySelectorAll('li.brain').length === {number + 1}", 15)
+    newest = (f"{LOG}.scrollTop > 0"
+              f" && Math.abs({LOG}.scrollTop + {LOG}.clientHeight - {LOG}.scrollHeight) <= 1")
+    assert await until(js, newest)
+    await js(f"{LOG}.scrollTop = 0; true")  # the user read back to the first line
+    await js("document.getElementById('brainchat-close').click(); true")
+    assert await until(js, f"{CHAT}.hidden")
+    await js(f"{ASK}.click(); true")
+    assert await until(js, f"!{CHAT}.hidden")
+    assert await js(newest)  # reopened: the newest line, not the oldest
+
+
+@CHROME
+async def test_a_voice_notice_opens_the_brains_chat(stack):  # fix round 1
+    from test_talk import SPACE, mic, open_talk
+
+    js = await open_talk(stack, mic(), ask=False)  # the chat closed
+    await tap(stack, js, SPACE, " ")  # too short: "Hold Space while you talk"
+    assert await until(js, f"!{CHAT}.hidden"
+                           " && document.getElementById('talk-notice').textContent === 'Hold Space while you talk'")
+
+
+@CHROME
+async def test_a_click_on_the_bar_without_a_move_keeps_no_place(stack):  # fix round 1
+    js = await open_with(stack, size=(1440, 900))
+    await front(stack, js)
+    await opened(js)
+    before = await js(f"({BOX})('#brainchat')")
+    x, y = await js(TITLE)
+    await drag(stack, js, (x, y), (x, y), steps=0)  # pressed and let go where it was
+    await asyncio.sleep(0.3)
+    assert await js("localStorage.getItem('brainchat-places')") is None  # nothing saved: it keeps the default place
+    assert await js(f"({BOX})('#brainchat')") == before and await js(f"!{CHAT}.classList.contains('placed')")
 
 
 @CHROME

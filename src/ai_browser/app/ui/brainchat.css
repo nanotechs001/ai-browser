@@ -1,8 +1,8 @@
 /* The Brain's chat (brainchat.js; the chat-panel spec): a floating panel over Mission Control, never modal. By default
-   bottom-right, above the composer (--composer: its height, set by mission.js) so Start Mission stays in view; dragged
-   by its bar to a place of the user's (.placed: left and top from the script, kept on screen). It holds the Brain's
-   hand-off cards (brainui.js), then the talk (talk.js). Under 900 px it fills the width at the bottom, 70 % of the
-   window's height. */
+   bottom-right (left of the right column), above the composer (--composer: its height, set by mission.js) so Start
+   Mission stays in view; dragged by its bar to a place of the user's (.placed: left and top from the script, kept on
+   screen). It holds the Brain's hand-off cards (brainui.js), then the talk (talk.js). Under 900 px it fills the width
+   at the bottom, 70 % of the window's height. */
 .brainchat { position: fixed; z-index: 13; right: 16px; bottom: calc(var(--composer, 0px) + 12px); width: 380px;
              height: min(520px, calc(100vh - var(--composer, 0px) - 24px)); max-width: calc(100vw - 16px);
              display: flex; flex-direction: column; overflow: hidden; background: var(--card);
@@ -39,7 +39,16 @@
 .mic svg { width: 18px; height: 18px; fill: currentColor; }
 .mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
                             box-shadow: 0 0 0 3px rgba(79, 141, 253, 0.35); }
+/* never over the right column nor an open drawer (#drawer, mission.css): from 1280 px it sits left of the right column;
+   below, left of the drawer while one is open; under 900 px the drawer opens over it */
+@media (min-width: 1280px) {
+  .brainchat { right: calc(330px + 16px); }
+}
+@media (min-width: 900px) and (max-width: 1279px) {
+  body:has(#drawer:not([hidden])) .brainchat:not(.placed) { right: calc(min(440px, 100vw - 24px) + 28px); }
+}
 @media (max-width: 899px) {
+  #drawer { z-index: 14; }
   .brainchat { left: 0; right: 0; bottom: 0; width: auto; max-width: none; height: 70vh;
                border-radius: var(--radius) var(--radius) 0 0; }
   .brainchat-bar { cursor: default; }

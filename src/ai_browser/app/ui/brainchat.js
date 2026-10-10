@@ -62,6 +62,7 @@ export function mountBrainChat({ onToggle = () => {} } = {}) {
     opener.setAttribute("aria-expanded", "true");
     if (!was) {
       place();
+      $("talk-log").scrollTop = $("talk-log").scrollHeight; // the newest line in view again
       onToggle(true);
     }
     if (focus) $("talk-text").focus();
@@ -95,13 +96,16 @@ export function mountBrainChat({ onToggle = () => {} } = {}) {
     event.preventDefault(); // no text selection while it moves
   });
   bar.addEventListener("pointermove", (event) => {
-    if (drag?.id === event.pointerId) moveTo(event.clientX - drag.dx, event.clientY - drag.dy);
+    if (drag?.id !== event.pointerId) return;
+    drag.moved = true;
+    moveTo(event.clientX - drag.dx, event.clientY - drag.dy);
   });
   for (const type of ["pointerup", "pointercancel"]) {
     bar.addEventListener(type, (event) => {
       if (drag?.id !== event.pointerId) return;
+      const { moved } = drag;
       drag = null;
-      remember();
+      if (moved) remember(); // a click without a move keeps no place
     });
   }
   addEventListener("resize", place); // another window size: its place for that size, or the default, on screen

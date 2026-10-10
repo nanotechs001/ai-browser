@@ -63,7 +63,7 @@ function base64(buffer) {
 // answers in text only).
 // fill(words): the page may take heard words into its own box instead (Mission Control's composer, while the Brain's
 // chat is closed): true when it did, and the Brain isn't asked. keep: how many lines the log keeps, the newest at the
-// bottom. reveal(): a line or a card is shown (Mission Control opens the Brain's chat for it).
+// bottom. reveal(): a line, a card or a notice is shown (Mission Control opens the Brain's chat for it).
 export function mountTalk({ panel, micButton, link, voice, onState = () => {}, openAgent = () => {},
                             openBrain = () => {}, model = () => "sonnet", aboutPage = () => null,
                             hintVoice = true, fill = () => false, keep = LOG_LINES, reveal = () => {} }) {
@@ -100,8 +100,11 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     status.textContent = text;
   }
 
-  function tell(text) { // a word for the user, kept until the next press
-    if (text) show();
+  function tell(text, open = true) { // a word for the user, kept until the next press; open: the page shows it
+    if (text) {
+      show();
+      if (open) reveal();
+    }
     notice.textContent = text;
   }
 
@@ -466,7 +469,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
     finishing = current;
     setState("transcribing");
     progress(`Turning your words into text…${hearing?.loaded ? "" : " (the first time takes a few seconds longer)"}`);
-    tell(note);
+    tell(note, false); // the words may still go to the page's box (fill): it opens nothing
     await current.mic.stop(); // the tracks stop now; the last samples follow
     current.done = true;
     voice.resume();
