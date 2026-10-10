@@ -1979,7 +1979,8 @@ class AppServer:
         return {"type": "saved_agents", "agents": [saved.public() for saved in self.saved.all()],
                 "profiles": [{**row, "ready": place.ready(row["folder"])} for row in self._profiles()],
                 "chosen": self.settings.get()["agents_profile"],
-                "connected": self.brave is not None and self.brave.state == "connected"}
+                "connected": self.brave is not None and self.brave.state == "connected",
+                "default_ready": place is not None and place.default_known}  # the profile Brave used last
 
     def _saved_check(self, fields: dict) -> None:
         """What only the app can judge, before the file is written: a profile Brave lists, an account Settings lists,

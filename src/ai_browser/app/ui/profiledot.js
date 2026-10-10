@@ -1,19 +1,21 @@
 // Each agent's profile indicator (the chat-panel spec, 7): whether the Brave profile it browses in is ready. A dot and
 // a word: Ready (its context is learned: its tabs can open there), Open it once (open a Brave window of that profile:
 // AI Browser learns it in about 30 seconds) or Brave not connected. The hint says what to do, on hover and on focus.
-// An agent on "Settings' choice" follows the profile Settings picks; with none picked, the one Brave used last. It
-// follows the saved_agents message, which the app sends again when Brave connects or goes, when a profile is learned
-// and when Settings' choice changes. Nothing opens Brave by itself. Every word is set as text.
+// An agent on "Settings' choice" follows the profile Settings picks; with none picked, the one Brave used last (Ready
+// once Brave names it). It follows the saved_agents message, which the app sends again when Brave connects or goes,
+// when a profile is learned or forgotten and when Settings' choice changes. Nothing opens Brave by itself. Every word
+// is set as text.
 "use strict";
 
 import { el } from "./chat.js";
 
-let known = { profiles: [], chosen: null, connected: false };
+let known = { profiles: [], chosen: null, connected: false, defaultReady: false };
 
-export function setProfiles(message) { // saved_agents: {profiles: [{folder, name, ready}], chosen, connected}
+// saved_agents: {profiles: [{folder, name, ready}], chosen, connected, default_ready}
+export function setProfiles(message) {
   known = { profiles: Array.isArray(message?.profiles) ? message.profiles : [],
             chosen: typeof message?.chosen === "string" && message.chosen ? message.chosen : null,
-            connected: message?.connected === true };
+            connected: message?.connected === true, defaultReady: message?.default_ready === true };
 }
 
 // folder: the agent's own profile, or null (Settings' choice)
@@ -23,7 +25,11 @@ export function profileState(folder) {
              hint: "Connect Brave at the top of Mission Control: then it shows whether this profile is ready" };
   }
   const chosen = typeof folder === "string" && folder ? folder : known.chosen;
-  if (!chosen) return { state: "ready", word: "Ready", hint: "It browses in the profile Brave used last" };
+  if (!chosen) {
+    if (known.defaultReady) return { state: "ready", word: "Ready", hint: "It browses in the profile Brave used last" };
+    return { state: "open", word: "Open it once",
+             hint: "Open a Brave window once: it browses in the profile Brave used last" };
+  }
   const row = known.profiles.find((one) => one?.folder === chosen);
   const name = String(row?.name || chosen);
   if (row?.ready === true) return { state: "ready", word: "Ready", hint: `It browses in Brave's ${name} profile` };

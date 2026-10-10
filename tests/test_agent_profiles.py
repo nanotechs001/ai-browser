@@ -194,6 +194,10 @@ async def test_every_page_hears_whether_each_profile_is_ready(fake_claude, tmp_p
             shown = (await told(ws, lambda m: m["type"] == "saved_agents"))[-1]
             assert (shown["connected"], shown["chosen"], [row["ready"] for row in shown["profiles"]]) == (
                 True, None, [False])
+            assert shown["default_ready"] is True  # "Settings' choice" with none picked: the profile Brave used last
+            brave.place.default_known = False
+            brave.on_place()
+            assert (await told(ws, lambda m: m["type"] == "saved_agents"))[-1]["default_ready"] is False
             brave.place.learned.add("Profile 1")
             brave.on_place()  # BraveLink learned it (its place loop): every page hears it at once
             assert [row["ready"] for row in (await told(ws, lambda m: m["type"] == "saved_agents"))[-1]["profiles"]] \
@@ -204,3 +208,42 @@ async def test_every_page_hears_whether_each_profile_is_ready(fake_claude, tmp_p
             assert (await told(ws, lambda m: m["type"] == "saved_agents"))[-1]["connected"] is False
     finally:
         await server.stop()
+
+
+async def test_a_reconnected_brave_never_shows_a_profile_learned_before_as_ready(fake_claude, tmp_path):
+    """Learned, lost, reconnected: Brave's contexts are new ids, so the pages hear "not ready" until it is learned
+    again (a run would fail NOT_OPEN meanwhile). A real BraveLink on a fake port."""
+    from ai_browser.app.bravelink import BraveLink
+    from test_app_server import until as told
+    from ui_socket import ui_socket
+
+    folder = tmp_path / "BraveSoftware" / "Brave-Browser"
+    local_state(folder, last_used="Default")
+    port = FakePort(folder, pages=PROFILES, default="W")
+    await port.start()
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    link = BraveLink(folder, every=0.1, settle=0.3)
+    server.attach_brave(link)
+    await link.start()
+
+    def ready(message):
+        return message["type"] == "saved_agents" and message["connected"] and next(
+            row["ready"] for row in message["profiles"] if row["folder"] == "Default")
+
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+            await link.connect()
+            await told(ws, ready)  # Work learned
+            await port.stop()  # Brave quits
+            await told(ws, lambda m: m["type"] == "saved_agents" and not m["connected"])
+            port = FakePort(folder, pages=PROFILES, default="W")
+            await port.start()
+            await link.connect()
+            again = (await told(ws, lambda m: m["type"] == "saved_agents" and m["connected"]))[-1]
+            assert ready(again) is False  # "Open it once" until learned again
+            await told(ws, ready)  # then learned again
+    finally:
+        await server.stop()
+        await link.close()
+        await port.stop()

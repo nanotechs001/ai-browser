@@ -136,6 +136,7 @@ class BraveLink:
 
     def _drop_watch(self) -> None:
         watch, self._watch, self._starting = self._watch, None, None
+        self.place.look(None, None)  # the connection ended: its contexts are gone, never "Ready" on the next one
         if self._placing is not None:
             self._placing.cancel()
             self._placing = None

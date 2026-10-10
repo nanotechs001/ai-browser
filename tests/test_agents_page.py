@@ -421,6 +421,13 @@ async def test_each_agent_shows_whether_its_brave_profile_is_ready(stack):
     assert await js(f"document.querySelector('.station[data-id=\"{plain.id}\"] .profile-dot') === null")  # one-off
     await js(open_drawer(plain.id))
     assert await until(js, f"{in_drawer}?.dataset.state === 'ready'")  # Settings' choice: the profile Brave used last
+    brave.place.default_known = False  # no Brave window open: no profile used last to browse in
+    brave.on_place()
+    assert await until(js, f"{in_drawer}?.dataset.state === 'open'")
+    assert await js(f"{in_drawer}.querySelector('.word').textContent") == "Open it once"
+    brave.place.default_known = True
+    brave.on_place()
+    assert await until(js, f"{in_drawer}?.dataset.state === 'ready'")
     await js(open_drawer(run.id))
     assert await until(js, f"{in_drawer}?.dataset.state === 'open'")
     brave.place.learned.add("Profile 1")

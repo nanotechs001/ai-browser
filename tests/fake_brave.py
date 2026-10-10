@@ -330,6 +330,7 @@ class FakePlace:
         self.listed: list[dict] = []
         self.chosen = None
         self.learned: set[str] = set()  # the profiles whose context is known on this connection
+        self.default_known = True  # Brave named the profile it used last on this connection
 
     def profiles(self):
         return [dict(profile) for profile in self.listed]
