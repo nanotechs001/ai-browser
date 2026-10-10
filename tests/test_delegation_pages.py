@@ -25,8 +25,8 @@ async def test_templates_leave_the_composer_and_the_calendar_opens_the_agents_pa
     research = server.workspaces.create("Research")
     server.workspaces.assign_template("morning-report", research["id"])
     js = await open_mission(stack)
-    assert await js("[...document.querySelectorAll('.modes [data-mode]')].map(tab => tab.textContent.trim())") == [
-        "Ask AI", "Build a Mission"]  # no Use a Template
+    assert await js("[...document.querySelectorAll('.modes > :is(button, span)')].map(node => node.textContent.trim())"
+                    ".slice(0, 2)") == ["Ask AI", "Build a Mission"]  # no Use a Template
     assert await js("document.getElementById('task-template') === null && document.getElementById('page-templates')"
                     " === null && document.querySelector('.page-link[data-page=\"templates\"]') === null")
     pick = "document.querySelector('#workspaces .workspace-pick')"
@@ -39,88 +39,64 @@ async def test_templates_leave_the_composer_and_the_calendar_opens_the_agents_pa
                            "'#page-agents .workflow[data-slug=\"morning-report\"]') !== null")
 
 
-# ---- Ask AI's history (spec 3) ---------------------------------------------------------------------------------------
+# ---- the talk, in the Brain's chat (spec 3; the chat-panel spec moved it out of the composer) -----------------------
 
 LOG = "document.getElementById('talk-log')"
 PANEL = "document.getElementById('talk')"
+CHAT = "document.getElementById('brainchat')"
 CENTRE = (f"(() => {{ const r = {LOG}.getBoundingClientRect();"
           " return [r.left + r.width / 2, r.top + r.height / 2]; })()")
 ZOOM = "document.querySelector('.room').style.transform"
-RECT = f"(() => {{ const r = {PANEL}.getBoundingClientRect(); return [r.left + r.width / 2, r.top, r.height]; }})()"
 
 
 @CHROME
-async def test_ask_ai_keeps_this_runs_talk_fading_upwards_and_solid_on_hover(stack):
-    from test_talk import talk_script
+async def test_the_brains_chat_keeps_this_runs_talk_and_the_wheel_scrolls_it(stack):
+    from test_talk import ask_typed, talk_script
 
     talk_script(stack, {"say": f"Noted {HOSTILE}", "action": "none"})
     js = await open_with(stack, size=(1440, 900))
-    await js("document.getElementById('mode-ask').click(); true")
-    for number in range(8):  # 16 lines: more than the 6 the talk kept before
-        await js(f"document.getElementById('task').value = 'question {number}';"
-                 " document.getElementById('start').click(); true")
+    await js("document.getElementById('ask-ai').click(); true")
+    for number in range(12):  # 24 lines: more than the 6 the talk kept before, and more than the chat shows at once
+        await ask_typed(js, f"question {number}")
         assert await until(js, f"{LOG}.querySelectorAll('li.brain').length === {number + 1}", 15)
-    assert await js(f"{LOG}.children.length") == 16
+    assert await js(f"{LOG}.children.length") == 24
     assert await js(f"{LOG}.firstElementChild.textContent") == "You: question 0"
     assert await js(f"{LOG}.querySelector('img') === null && document.title !== 'pwned'")  # text only
-    style = f"getComputedStyle({LOG})"
-    assert "linear-gradient" in await js(f"{style}.maskImage || {style}.webkitMaskImage")  # it fades upwards
-    assert await js(f"{style}.overflowY") == "hidden"
-    assert await js(f"getComputedStyle({PANEL}).backgroundColor") == "rgba(0, 0, 0, 0)"  # the office shows through
     assert await js(f"{LOG}.scrollHeight > {LOG}.clientHeight"
                     f" && Math.abs({LOG}.scrollTop + {LOG}.clientHeight - {LOG}.scrollHeight) <= 1")  # newest in view
     cdp, session = stack["cdp"], js.session
-    left, top, height = await js(RECT)
-    assert height < await js("innerHeight * 0.2")  # the idle strip is short: it doesn't cover the office
-    above = f"document.elementFromPoint({left}, {top - 10})"
-    assert await js(f"{above}.closest('.viewport') !== null && {above}.closest('#talk') === null")
-    zoom = await js(ZOOM)
-    await cdp.send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": left, "y": top - 10, "deltaX": 0,
-                                                "deltaY": -400}, session_id=session)
-    assert await until(js, f"{ZOOM} !== {json.dumps(zoom)}")  # the wheel just above the strip zooms the office
-    assert await js(f"{style}.overflowY") == "hidden" and await js(f"{LOG}.scrollTop > 0")  # and not the history
     x, y = await js(CENTRE)
-    await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, session_id=session)
-    assert await until(js, f"{style}.overflowY === 'auto'")  # hovered: solid, and it scrolls
-    assert await js(RECT + "[2]") > height and await js(RECT + "[1]") < top  # it grew upwards, under the pointer
-    assert await js(f"({style}.maskImage || {style}.webkitMaskImage) === 'none'")
-    assert await js(f"getComputedStyle({PANEL}).backgroundColor") != "rgba(0, 0, 0, 0)"
     zoom, bottom = await js(ZOOM), await js(f"{LOG}.scrollTop")
     await cdp.send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": -400},
                    session_id=session)
-    assert await until(js, f"{LOG}.scrollTop < {bottom}")  # over the strip the wheel scrolls the history
+    assert await until(js, f"{LOG}.scrollTop < {bottom}")  # over the chat the wheel scrolls the talk
     assert await js(ZOOM) == zoom  # and the office stays as it was
-    await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": 5, "y": 5}, session_id=session)
-    assert await until(js, f"{style}.overflowY === 'hidden'")  # faded again
-    page = "document.querySelector('.page-link[data-page=\"%s\"]').click(); true"
-    await js(page % "history")  # the composer goes, and comes back with the newest line in view
+    left = await js(f"{CHAT}.getBoundingClientRect().left")
+    await cdp.send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": left - 200, "y": y, "deltaX": 0,
+                                                "deltaY": -400}, session_id=session)
+    assert await until(js, f"{ZOOM} !== {json.dumps(zoom)}")  # beside it, the wheel zooms the office
+    await js("document.querySelector('.page-link[data-page=\"history\"]').click(); true")
     assert await until(js, "document.getElementById('composer').hidden")
-    await js(page % "dashboard")
-    assert await until(js, f"Math.abs({LOG}.scrollTop + {LOG}.clientHeight - {LOG}.scrollHeight) <= 1")
+    assert await js(f"!{CHAT}.hidden && {LOG}.children.length === 24")  # over every page, the talk as it was
 
 
 @CHROME
-async def test_an_empty_history_takes_no_space_and_a_click_on_it_leaves_space_to_talking(stack):
-    from test_talk import SPACE, eventually, mic, mouse, open_talk, talk, talk_script, tap
+async def test_an_empty_talk_takes_no_space_and_a_click_on_it_leaves_space_to_talking(stack):
+    from test_talk import SPACE, ask_typed, eventually, mic, mouse, open_talk, talk, talk_script, tap
 
     talk_script(stack, {"say": "Noted", "action": "none"})
     js = await open_talk(stack, mic())
-    await tap(stack, js, SPACE, " ")  # too short: "Hold Space while you talk", and the panel shows with no lines
+    await tap(stack, js, SPACE, " ")  # too short: "Hold Space while you talk", and the talk shows no lines
     assert await until(js, "document.getElementById('talk-notice').textContent === 'Hold Space while you talk'")
     assert await js(f"{PANEL}.hidden") is False and await js(f"getComputedStyle({LOG}).display") == "none"
-    await js("document.getElementById('task').value = 'hello'; document.getElementById('start').click(); true")
+    await ask_typed(js, "hello")
     assert await until(js, f"{LOG}.querySelectorAll('li.brain').length === 1", 15)
     assert await js(f"getComputedStyle({LOG}).display") != "none"
-    await mouse(stack, js, "#talk-log", "mousePressed")  # a real click on the history
+    await mouse(stack, js, "#talk-log", "mousePressed")  # a real click on the talk
     await mouse(stack, js, "#talk-log", "mouseReleased")
     assert await js(f"document.activeElement === {LOG}")
     await talk(stack, js)  # the log has the focus, and Space still talks
     assert await eventually(lambda: len(stack["engine"].heard) == 1)
-    await stack["cdp"].send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": 5, "y": 5},
-                            session_id=js.session)
-    assert await until(js, f"getComputedStyle({PANEL}).backgroundColor === 'rgba(0, 0, 0, 0)'")  # a click pins nothing
-    await js(f"{LOG}.blur(); {LOG}.focus(); true")  # but the keyboard's focus keeps it solid
-    assert await until(js, f"getComputedStyle({PANEL}).backgroundColor !== 'rgba(0, 0, 0, 0)'")
 
 
 @CHROME
@@ -227,7 +203,7 @@ def sent_by_the_brain(stack, agent="a1"):
 
 
 @CHROME
-async def test_a_countdown_card_shows_by_the_globe_and_cancel_stops_it(stack):
+async def test_a_countdown_card_shows_in_the_brains_chat_and_cancel_stops_it(stack):
     row = await working_agent(stack, name=f"Prices {HOSTILE}")
     js = await open_mission(stack)
     handoff = stack["brain"].give(row, f"Compare the annual plans {HOSTILE}", "you")
@@ -339,29 +315,24 @@ async def test_below_1280_px_a_countdown_stays_in_reach_however_far_mission_cont
     js.cdp = stack["cdp"]
     await size(js, 1440, 800)
     await js(f"{mc}.scrollTop = 0; true")
-    assert await until(js, hits(cancel))  # wide again: under the view switch, in the middle of the centre, as before
-    box = "document.getElementById('handoff').getBoundingClientRect()"
-    assert await js(f"[{box}.top, {box}.left + {box}.width / 2, {box}.width]") == [72, (248 + 1440 - 330) / 2, 440]
+    assert await until(js, hits(cancel))  # wide again: in the Brain's chat, on screen, as before
+    assert await js(f"document.getElementById('handoff').closest('#brainchat') === {CHAT}")
 
 
 @CHROME
-async def test_several_long_countdowns_never_cover_ask_ais_history(stack):
-    from test_talk import talk_script
-
+async def test_several_long_countdowns_scroll_in_the_brains_chat_and_keep_its_box_in_sight(stack):
     row = await working_agent(stack)
-    talk_script(stack, {"say": "Noted", "action": "none"})
     js = await open_with(stack, size=(1100, 800))
-    await js("document.getElementById('mode-ask').click(); document.getElementById('task').value = 'hello';"
-             " document.getElementById('start').click(); true")
-    assert await until(js, f"{LOG}.querySelectorAll('li.brain').length === 1", 15)
     words = "Compare every plan. " * 100
     for number in range(3):
         stack["brain"].give(row, f"{number} {words}", "you")
     assert await until(js, f"{IN_SLOT}.length === 3")
+    assert await until(js, f"!{CHAT}.hidden")  # the cards opened it
     slot = "document.getElementById('handoff')"
-    assert await until(js, f"{slot}.getBoundingClientRect().bottom <= {PANEL}.getBoundingClientRect().top")
     assert await js(f"{slot}.scrollHeight > {slot}.clientHeight")  # the rest scrolls, in the slot
-    assert await js(hits("document.getElementById('task')"))
+    assert await js(hits(f"{in_slot('counting')}.querySelector('.handoff-cancel')"))
+    assert await js(hits("document.getElementById('talk-text')"))  # the ask box stays in sight
+    assert await js(hits("document.getElementById('task')"))  # and so does the composer
 
 
 @CHROME

@@ -4,6 +4,7 @@
 // (link.js), sending only messages that are app-only rows of MESSAGE_RULES.
 import { askError } from "./accountui.js";
 import { mountAgentsPage } from "./agentspage.js";
+import { mountBrainChat } from "./brainchat.js";
 import { mountHandoffSlot } from "./brainui.js";
 import { mountBraveBar } from "./bravebar.js";
 import { mountCalendar } from "./calendar.js";
@@ -119,8 +120,10 @@ const drawer = mountDrawer({ link, agentOf: (id) => agents.get(id), accounts: ()
                              } });
 const side = mountSide({ send, openDrawer, openHistory: () => showPage("history") });
 const list = mountList($("view-list"), { onOpen: select });
-const composer = mountComposer({ link, workspaceOf: () => workspace }); // Ask AI and Build a Mission
+const composer = mountComposer({ link, workspaceOf: () => workspace }); // Build a Mission, and Ask AI's button
 parts.push(composer);
+const chat = mountBrainChat(); // the Brain's chat (Ask AI): a floating panel over the office, never modal
+parts.push(chat);
 const missions = mountMissions($("page-missions"), { onOpen: openDrawer, visible: inWorkspace,
                                                      decorate: (row, agent) => moveFor(row, { agent: agent.id },
                                                                                        agent.workspace) });
@@ -156,11 +159,10 @@ parts.push(spaces, {
 });
 parts.push(mountHandoffSlot($("handoff"), send)); // the Brain's hand-offs, by the globe (its inbox lists them all)
 parts.push(mountBraveBar($("brave-bar"), { send, openTab })); // Brave's connection, until it is connected
-// the hand-offs never cover the composer, nor Ask AI's history above it
-const reserved = new ResizeObserver(() => $("centre").style.setProperty("--composer",
-  `${$("composer").offsetHeight + $("talk").offsetHeight}px`));
+// the Brain's chat opens above the composer, so Start Mission stays in view (brainchat.css)
+const reserved = new ResizeObserver(() => document.documentElement.style.setProperty("--composer",
+  `${$("composer").offsetHeight}px`));
 reserved.observe($("composer"));
-reserved.observe($("talk"));
 parts.push(mountCalendar($("view-calendar"), { onAgent: openDrawer, onTemplate: openTemplate, visible: inWorkspace,
                                                 visibleTemplate: templateInWorkspace }));
 
@@ -205,8 +207,9 @@ talk = mountTalk({
   openAgent: (id, options) => openDrawer(id, options),
   openBrain: () => drawer.openBrain(),
   model: () => $("task-model").value, // the model last picked here (the app remembers it)
-  fill: (words) => composer.fill(words), // the mic outside Ask AI fills the box
-  keep: 200, // Ask AI's history: this run's talk with the Brain, scrolled on hover (composer.css)
+  fill: (words) => !chat.isOpen && composer.fill(words), // the mic while the Brain's chat is closed fills the box
+  keep: 200, // the Brain's chat: this run's talk with the Brain
+  reveal: () => chat.open(), // a line or a card in the talk: its chat opens to show it
 });
 
 function setText(node, text) {
@@ -365,7 +368,6 @@ function showPage(name) {
     else button.removeAttribute("aria-current");
   }
   $("composer").hidden = page !== "dashboard" && page !== "missions";
-  $("talk-log").scrollTop = $("talk-log").scrollHeight; // a hidden log loses its place: newest in view again
   if (page === "dashboard" && view === "flow") scene.refit();
   for (const part of parts) part.shown?.(page, view);
 }
@@ -516,6 +518,10 @@ const KEYS = { ArrowLeft: () => scene.turn(15), ArrowRight: () => scene.turn(-15
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && drawer.isOpen) {
     drawer.close();
+    return;
+  }
+  if (event.key === "Escape" && chat.isOpen) { // then the Brain's chat (Esc inside it closes it first: brainchat.js)
+    chat.close();
     return;
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return;

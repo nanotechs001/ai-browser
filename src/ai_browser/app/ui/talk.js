@@ -61,11 +61,12 @@ function base64(buffer) {
 // aboutPage(): the floating chat's "Ask about it": {target, site}, the tab a question reads then and the site the user
 // marked on it, or null. hintVoice: say once that Voice reads answers aloud (Mission Control has the switch; the chat
 // answers in text only).
-// fill(words): the page may take heard words into its own box instead (Mission Control's composer outside Ask AI):
-// true when it did, and the Brain isn't asked. keep: how many lines the log keeps, the newest at the bottom.
+// fill(words): the page may take heard words into its own box instead (Mission Control's composer, while the Brain's
+// chat is closed): true when it did, and the Brain isn't asked. keep: how many lines the log keeps, the newest at the
+// bottom. reveal(): a line or a card is shown (Mission Control opens the Brain's chat for it).
 export function mountTalk({ panel, micButton, link, voice, onState = () => {}, openAgent = () => {},
                             openBrain = () => {}, model = () => "sonnet", aboutPage = () => null,
-                            hintVoice = true, fill = () => false, keep = LOG_LINES }) {
+                            hintVoice = true, fill = () => false, keep = LOG_LINES, reveal = () => {} }) {
   const log = panel.querySelector(".talk-log");
   const status = panel.querySelector(".talk-status");
   const notice = panel.querySelector(".talk-notice");
@@ -106,6 +107,7 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
 
   function line(who, text) {
     show();
+    reveal();
     const node = el("li", who === "You" ? "you" : "brain", `${who}: ${text}`);
     log.append(node);
     while (log.children.length > keep) log.firstElementChild.remove();
@@ -128,7 +130,10 @@ export function mountTalk({ panel, micButton, link, voice, onState = () => {}, o
 
   function setCard(...nodes) {
     card.replaceChildren(...nodes);
-    if (nodes.length) show();
+    if (nodes.length) {
+      show();
+      reveal();
+    }
   }
 
   function closeCard() {

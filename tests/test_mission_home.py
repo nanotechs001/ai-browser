@@ -238,8 +238,8 @@ async def test_build_a_mission_loads_the_skills_picked_at_start(stack, monkeypat
              "document.getElementById('start').click(); true")
     await wait_for(lambda: asked == [["personal:prices"]])
     assert await until(js, f"!{box}.checked && document.getElementById('skills-count').textContent === ''")
-    await js("document.getElementById('mode-ask').click(); true")
-    assert await js("document.getElementById('task-skills').hidden") is True  # Build a Mission's only
+    await js("document.getElementById('ask-ai').click(); true")  # the Brain's chat opens beside the composer
+    assert await js("document.getElementById('task-skills').hidden") is False  # Build a Mission keeps its Skills
 
 
 @CHROME

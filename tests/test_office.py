@@ -634,8 +634,9 @@ async def test_agent_pick_sits_in_the_modes_row_and_the_composer_keeps_its_heigh
         assert shown and in_modes, size  # beside Name, never folded into ⋯ Options
         if size[0] == 1024:
             assert mine == height  # the pickers don't wrap to another row
-    await js("document.getElementById('mode-ask').click()")
-    assert await until(js, "document.getElementById('task-agent').offsetParent === null")  # Ask AI: hidden
+    await js("document.getElementById('ask-ai').click()")
+    assert await until(js, "!document.getElementById('brainchat').hidden")
+    assert (await js(COMPOSER))[:2] == [mine, True]  # the chat opens beside it: Agent ▾ and the height stay
 
 
 @CHROME

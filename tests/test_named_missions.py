@@ -172,8 +172,8 @@ async def test_build_a_mission_names_the_agent_everywhere(stack):
              "document.getElementById('current-chat').click(); true")
     assert await shows(js, "document.querySelector('#drawer-body .about')?.textContent === " + json.dumps(ABOUT))
     assert await js("document.title") != "pwned" and await js("document.querySelectorAll('img[src=x]').length") == 0
-    await js("document.getElementById('mode-ask').click(); true")
-    assert await js("document.getElementById('mission-words').hidden")  # Ask AI: no fields
+    await js("document.getElementById('ask-ai').click(); true")
+    assert await js("!document.getElementById('mission-words').hidden")  # the chat leaves Name and What it works on
 
 
 @CHROME
