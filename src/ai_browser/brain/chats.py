@@ -82,16 +82,16 @@ class Chats:
 
     def kept(self, chat_id) -> bool:
         """Whether this talk id is a kept chat: one the app made this run, or one with a file."""
-        if not isinstance(chat_id, str) or not CHAT_ID.match(chat_id):
+        if not isinstance(chat_id, str) or not CHAT_ID.fullmatch(chat_id):
             return False
         return chat_id in self._made or self._path(chat_id).is_file()
 
     def get(self, chat_id) -> dict | None:
-        if not isinstance(chat_id, str) or not CHAT_ID.match(chat_id):
+        if not isinstance(chat_id, str) or not CHAT_ID.fullmatch(chat_id):
             return None
         try:
             data = json.loads(self._path(chat_id).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             return None
         return _clean(data, chat_id)
 
@@ -157,7 +157,7 @@ class Chats:
 
     def delete(self, chat_id) -> bool:
         """History's Delete, after the user's yes: its file goes. False when there was none."""
-        if not isinstance(chat_id, str) or not CHAT_ID.match(chat_id):
+        if not isinstance(chat_id, str) or not CHAT_ID.fullmatch(chat_id):
             return False
         self._made.discard(chat_id)
         self._cards = {card: chat for card, chat in self._cards.items() if chat != chat_id}

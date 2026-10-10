@@ -70,7 +70,7 @@ def test_only_ids_the_app_made_are_kept_and_a_damaged_file_is_skipped(tmp_path):
     home = tmp_path / "home"
     chats = Chats(home)
     folder = home / "brain" / "chats"
-    for stranger in ("k1", "../x", "c" + "0" * 16, "C" + "a" * 16, "c" + "a" * 17, None, 7):
+    for stranger in ("k1", "../x", "c" + "0" * 16, "C" + "a" * 16, "c" + "a" * 17, "c" + "a" * 16 + "\n", None, 7):
         assert chats.kept(stranger) is False and chats.get(stranger) is None and chats.delete(stranger) is False
         chats.add(stranger, "hello", "Noted.")  # a talk the app didn't make: never written
     assert not folder.exists() or list(folder.iterdir()) == []
@@ -79,6 +79,9 @@ def test_only_ids_the_app_made_are_kept_and_a_damaged_file_is_skipped(tmp_path):
     other = "c" + "2" * 16
     (folder / f"{other}.json").write_text(json.dumps({"id": other, "title": ["a"], "exchanges": [
         "a line", {"said": 7, "answer": "kept", "card": {"id": "p1", "kind": 3}}]}), encoding="utf-8")
+    deep = "c" + "3" * 16
+    (folder / f"{deep}.json").write_text("[" * 100_000, encoding="utf-8")  # nested past the parser's depth
+    assert chats.get(deep) is None
     assert [row["id"] for row in chats.list()] == [other]  # the broken one is skipped
     assert chats.get(other)["exchanges"] == [{"said": "", "answer": "kept", "time": ""}]  # only what it should hold
     assert chats.get(other)["title"] == ""
