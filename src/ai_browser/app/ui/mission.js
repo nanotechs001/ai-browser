@@ -240,6 +240,9 @@ function renderCounts() { // "1 active task · 3 completed", and who needs the u
   } catch {
     // not an installed app: the title says it
   }
+  const dashboard = document.querySelector('.page-link[data-page="dashboard"]'); // its amber dot: at every width
+  if (states.includes("needs_you")) dashboard.dataset.needs = "true";
+  else delete dashboard.dataset.needs;
   if (!states.length) {
     setText($("counts"), "No agents yet");
     return;

@@ -194,7 +194,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
     drawer.brain = null;
     drawer.id = id;
     const parts = { about: el("p", "about muted"), state: el("span", "chip"), status: el("div", "status muted"),
-                    buttons: el("div", "row buttons"),
+                    buttons: el("div", "row buttons"), more: el("div", "row more"),
                     permission: el("div", "permission-slot"), yourTabs: el("details", "your-tabs"),
                     messages: el("div", "messages"), card: null, account: el("span", "chip account"),
                     moved: el("div", "status muted moved"),
@@ -230,8 +230,8 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
       if (current) saveAgent(current);
     });
     parts.saveAgent.title = "Set up an agent like this one, to run again: its settings open for you to Save";
-    parts.buttons.append(parts.state, parts.account, parts.watch, parts.stop, parts.close, parts.skill,
-                         parts.saveAgent);
+    parts.buttons.append(parts.state, parts.account, parts.watch, parts.stop, parts.close);
+    parts.more.append(parts.skill, parts.saveAgent); // a second row of small links: the first never wraps for them
     if (drawer.line?.id !== id) { // another agent: the last one's box goes; the same one keeps its words and files
       dropLine();
       drawer.line = chatLine(id);
@@ -239,7 +239,7 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
     drawer.yourTabs = mountYourTabs(parts.yourTabs, { send, agentId: () => id });
     parts.yourTabs.open = showTabs; // folded, unless the user asked to hand a tab over
     $("drawer-body").replaceChildren(parts.about, parts.status, parts.moved, parts.folder, parts.auto, parts.autoWords,
-                                     parts.autoNote, parts.buttons, parts.totals, parts.permission,
+                                     parts.autoNote, parts.buttons, parts.more, parts.totals, parts.permission,
                                      parts.askSlot, parts.plan, parts.subs, parts.yourTabs, parts.messages,
                                      drawer.line.element);
     drawer.parts = parts;

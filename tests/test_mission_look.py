@@ -258,6 +258,32 @@ async def test_a_click_picks_a_desk_and_a_waiting_card_opens_its_drawer(stack, t
     assert await until(js, "document.querySelector('#drawer:not([hidden]) .permission') !== null")
     assert await js("document.getElementById('current-answer').hidden") is False
     assert await js("document.getElementById('current-needs').textContent") == "wants clickup: create task"
+    assert await js("document.getElementById('current-line').textContent") == "Answer to let it go on"  # said once
+    pending = "document.querySelector('#groups .group.pending')"
+    assert await js(f"[{pending}.dataset.needs, {pending}.title]") == ["true", "1 needs you"]  # one name, one state
+    assert await js(f"getComputedStyle({pending}.querySelector('.count')).color") == "rgb(255, 181, 71)"
+    dashboard = page_link("dashboard")
+    assert await js(f"{dashboard}.dataset.needs") == "true"  # the menu's dot, at every width
+    assert await js(f"getComputedStyle({dashboard}, '::after').backgroundColor") == "rgb(255, 181, 71)"
+
+
+@CHROME
+async def test_the_drawer_keeps_start_in_view_and_its_buttons_in_two_rows(stack):
+    stack["script"].write_text(json.dumps(WORKING), encoding="utf-8")
+    await stack["server"].agents.create("keep working")
+    for size in (WIDE, (1280, 800)):
+        js = await open_with(stack, size=size)
+        assert await until(js, f"{station('a1')} !== null"), size
+        await js(f"{station('a1')}.click(); document.getElementById('current-chat').click(); true")
+        assert await until(js, "!document.getElementById('drawer').hidden"), size
+        drawer, start = [await js(f"{BOX}(document.getElementById({json.dumps(name)}))") for name in ("drawer", "start")]
+        assert drawer[0] >= start[2], size  # it sits over the right column: Start Mission stays in view
+    first = "[...document.querySelectorAll('#drawer-body .buttons > :not([hidden])')].map(node => node.className)"
+    assert await js(first) == ["chip working", "watch", "stop", "close ghost"]
+    second = "[...document.querySelectorAll('#drawer-body .more > button')].map(node => node.textContent)"
+    assert await js(second) == ["Save as skill", "Save as agent"]
+    assert "mono" not in await js("getComputedStyle(document.querySelector('#drawer-body .totals')).fontFamily")
+    assert "mono" in (await js("getComputedStyle(document.querySelector('#drawer-body .folder')).fontFamily")).lower()
 
 
 @CHROME
@@ -436,6 +462,9 @@ async def test_build_a_mission_starts_an_agent_with_its_pickers(stack):
     assert await until(js, "[...document.getElementById('task-workspace').options].some(option =>"
                            f" option.value === {json.dumps(research['id'])})")
     assert await js("document.getElementById('start-label').textContent") == "Start Mission"
+    words = "['task-name', 'task-about'].map(id => [document.getElementById(id).placeholder," \
+            " document.getElementById(id).getAttribute('aria-label')])"
+    assert await js(words) == [["Name", "Name this agent"], ["What it works on", "What it works on"]]  # never cut
     await js("document.getElementById('task').value = 'check the shop';"
              "document.getElementById('task-model').value = 'haiku';"
              "document.getElementById('task-web').value = 'none';"
@@ -975,6 +1004,9 @@ async def test_integrations_have_their_own_page(stack):
     js = await open_mission(stack)
     await js(f"{page_link('integrations')}.click(); true")
     assert await until(js, "document.querySelector('#page-integrations .tool-servers') !== null")
+    empty = "document.querySelector('#page-integrations .tool-servers .empty')?.textContent"
+    assert await until(js, f"{empty} === 'No tools yet. Add one in Claude Code (claude mcp add), then come back:"
+                           " it shows up here.'")  # what to do next, not where it looked
 
 
 @CHROME
