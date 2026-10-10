@@ -465,7 +465,8 @@ def test_the_readme_explains_names_handoffs_sources_and_the_history():
                    "the card counts down 15 seconds and then sends, unless you press **Cancel**",
                    # the build's rulings (2026-10-08): who counts down, what cancels and pauses, where it runs
                    "only when you named the agent (or only one agent is open)",
-                   'cancels it; saying anything else pauses it, and it then waits for your **Send**',
+                   'in the chat it came from cancels it; saying anything else there pauses it, and it then waits'
+                   ' for your **Send**',
                    "a hidden window, or another tab in front, makes it wait for your **Send**",
                    "Several cards at once all show", "**Send now** and **Cancel**"):
         assert needed in text, needed

@@ -299,7 +299,12 @@ def test_the_readme_explains_the_brains_chat_and_the_profile_dot():
                    "**Ready** (green), **Open it once** (amber", "**Brave not connected** (grey)",
                    "Nothing opens Brave by itself", "with **History ▾** open, the first **Esc** closes the list",
                    "A chat deleted meanwhile says \"That chat is gone\"", "**Ready** once a Brave window is open",
-                   "When Brave connects again, each profile is learned again"):
+                   "When Brave connects again, each profile is learned again",
+                   # the final review's fixes
+                   "it moves aside for an open drawer and for an agent's settings",
+                   "then opens over it, and its cards wait for your **Send**", "An agent with **No web** shows none",
+                   "the last 6 exchanges of a chat you reopen go to Claude, as the Brain's context"):
         assert needed in text, needed
-    for gone in ("a short strip", "turns solid and scrolls", "**Ask AI**, in the composer", "beside Start"):
+    for gone in ("a short strip", "turns solid and scrolls", "**Ask AI**, in the composer", "beside Start",
+                 "they go nowhere but AI Browser's own pages."):
         assert gone not in text, gone
