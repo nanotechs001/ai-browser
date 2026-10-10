@@ -16,6 +16,7 @@ import { connect } from "./link.js";
 import { mountIntegrations, mountKnowledge } from "./library.js";
 import { guardCloseKey, guardLinks, openTab } from "./nav.js";
 import { mountHistory, mountList, mountMissions } from "./pages.js";
+import { setProfiles } from "./profiledot.js";
 import { createScene } from "./scene.js";
 import { mountSide } from "./side.js";
 import { stateOf, toolLabel } from "./step.js";
@@ -398,8 +399,13 @@ function newMission() { // New Mission and Command-K (Ctrl+K): the Dashboard, an
 // ---- the line to the app -----------------------------------------------------------------------------------------
 
 function handle(message) {
+  if (message.type === "saved_agents") setProfiles(message); // first: the Agents page's cards read it (profiledot.js)
   for (const part of parts) part.onMessage?.(message);
   switch (message.type) {
+    case "saved_agents": // whether each profile is ready: every desk and the drawer show it again
+      for (const agent of agents.values()) scene.upsert(agent);
+      if (drawer.id) drawer.fill(agents.get(drawer.id));
+      break;
     case "brain_snapshot":
       brainItems.clear();
       for (const item of message.items || []) brainItems.set(item.id, item);

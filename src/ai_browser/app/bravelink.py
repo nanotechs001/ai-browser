@@ -68,6 +68,7 @@ class BraveLink:
         self._last = None  # (connection, rows, scope) last sent to the on_change callbacks
         self.brain_reading: Callable[[], bool] = lambda: False  # the server's: Settings → Brain's switch
         self.brain_site: Callable[[str], str | None] = lambda url: None  # the server's: which site an address is
+        self.on_place: Callable[[], None] = lambda: None  # the server's: a profile was learned (the agents' indicator)
         self.relay.on_state(self._state_changed)  # first: the tab list follows the connection
 
     # ---- the connection (the relay's) ------------------------------------------------------------------------
@@ -125,6 +126,7 @@ class BraveLink:
         while self._watch is watch and not watch.closed:
             if self.place.look(watch, watch.default_context):
                 self._changed()
+                self.on_place()  # each agent's "Ready" (the chat-panel spec, 7): every page hears it at once
             await asyncio.sleep(PLACE_EVERY)
 
     def set_place(self, folder: str | None) -> None:

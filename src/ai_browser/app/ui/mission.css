@@ -292,6 +292,21 @@ details.new-task > summary { cursor: pointer; font-size: 15px; font-weight: 600;
 .agent-card .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-card .about { overflow-wrap: anywhere; }
 .agent-card .about:empty { display: none; }
+/* Each agent's profile indicator (profiledot.js): green Ready, amber Open it once, grey Brave not connected; its hint
+   on hover, and on keyboard focus of the card or the drawer's line */
+.profile-dot { position: relative; display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+               color: var(--text-2); }
+.profile-dot .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--wait); }
+.profile-dot[data-state="ready"] .dot { background: var(--ok); }
+.profile-dot[data-state="open"] .dot { background: var(--needs); }
+.profile-dot .hint { display: none; position: absolute; left: 0; top: calc(100% + 4px); z-index: 5; width: max-content;
+                     max-width: 260px; padding: 6px 8px; border-radius: 8px; background: var(--card);
+                     border: 1px solid var(--line-strong); box-shadow: var(--shadow); color: var(--text);
+                     font-weight: 400; text-align: left; white-space: normal; }
+.profile-dot:is(:hover, :focus-visible) .hint, :focus-visible > .profile-dot .hint { display: block; }
+.nameplate .profile-dot { display: inline-block; margin-right: 4px; vertical-align: 1px; }
+.nameplate .profile-dot .dot { display: block; }
+.profile-line { display: flex; align-items: center; gap: 6px; }
 .page .workflow.focus { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .agent-panel { z-index: 12; }
 .agent-panel-body { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }

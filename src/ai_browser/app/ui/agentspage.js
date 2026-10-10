@@ -11,6 +11,7 @@ import { confirmAction } from "./confirm.js";
 import { mountFolderPicker } from "./folderpick.js";
 import { stateOf } from "./step.js";
 import { pageHead } from "./pages.js";
+import { profileDot } from "./profiledot.js";
 import { mountWorkflows } from "./workflows.js";
 
 const WEBS = [["web", "Web + Brave"], ["brave", "Brave only"], ["none", "No web"]];
@@ -268,7 +269,8 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
       }
       card.append(top, el("span", "about muted", row.description || ""),
                   el("span", "profile muted", `Brave: ${profileName(row.profile)}`),
-                  el("span", "next muted", nextRun(row.slug)));
+                  el("span", "next muted", nextRun(row.slug)),
+                  profileDot(row.profile)); // Ready, Open it once, or Brave not connected
       card.addEventListener("click", () => showAgent(row.slug));
       return card;
     }));

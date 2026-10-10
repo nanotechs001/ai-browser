@@ -176,3 +176,31 @@ async def test_the_not_learned_note_names_at_most_60_characters_of_the_profile(f
                          "Browser learns it in about 30 seconds."]
     finally:
         await server.stop()
+
+
+async def test_every_page_hears_whether_each_profile_is_ready(fake_claude, tmp_path):  # the chat-panel spec, 7
+    from test_app_server import until as told
+    from ui_socket import ui_socket
+
+    server, url = await started(fake_claude, tmp_path, EVENTS)
+    brave = FakeBrave([])
+    brave.place.listed = [{"folder": "Profile 1", "name": "Work", "color": None}]
+    server.attach_brave(brave)
+    try:
+        async with ui_socket(server, url) as ws:
+            await ws.send(json.dumps({"type": "hello", "view": "mission"}))
+            await told(ws, lambda m: m["type"] == "snapshot")
+            await ws.send(json.dumps({"type": "saved_agents"}))
+            shown = (await told(ws, lambda m: m["type"] == "saved_agents"))[-1]
+            assert (shown["connected"], shown["chosen"], [row["ready"] for row in shown["profiles"]]) == (
+                True, None, [False])
+            brave.place.learned.add("Profile 1")
+            brave.on_place()  # BraveLink learned it (its place loop): every page hears it at once
+            assert [row["ready"] for row in (await told(ws, lambda m: m["type"] == "saved_agents"))[-1]["profiles"]] \
+                == [True]
+            await ws.send(json.dumps({"type": "settings_set", "key": "agents_profile", "value": "Profile 1"}))
+            assert (await told(ws, lambda m: m["type"] == "saved_agents"))[-1]["chosen"] == "Profile 1"
+            brave.set_state("lost")  # Brave went
+            assert (await told(ws, lambda m: m["type"] == "saved_agents"))[-1]["connected"] is False
+    finally:
+        await server.stop()

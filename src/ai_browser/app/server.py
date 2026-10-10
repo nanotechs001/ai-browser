@@ -536,6 +536,7 @@ class AppServer:
             return
         if key == "agents_profile" and self.brave is not None:  # Settings → Where agents browse
             self.brave.set_place(self.settings.get()["agents_profile"])
+            self._send_all(self._saved_snapshot())  # the indicator of the agents that follow Settings' choice
         if key == "read_tabs" and self.inbox is not None:  # Settings → Brain: reading starts or stops at once
             self.inbox.set_on(self.settings.get()["read_tabs"])
         if key == "brain_sources" and self.brain is not None:  # Settings → Brain's checkboxes: at once
@@ -1100,6 +1101,7 @@ class AppServer:
         relay.on_grant(lambda identity, target: self._own(target, self._owner_of(identity)))
         relay.on_change(self._clients_changed)
         brave.on_state(lambda state: self._browser_changed())
+        brave.on_place = lambda: self._send_all(self._saved_snapshot())  # a profile learned: each agent's "Ready"
         brave.set_place(self.settings.get()["agents_profile"])  # Settings → Where agents browse
         brave.brain_reading = lambda: self.settings.get()["read_tabs"]  # BraveLink's gate asks: Settings → Brain
         brave.brain_site = self._brain_site
@@ -1225,6 +1227,7 @@ class AppServer:
         if self.inbox is not None:  # Brave connected or went: reading goes on, or waits for it
             self.brain.set_reading(self.inbox.state())
         self._send_all({"type": "browser", **self._browser_info()})
+        self._send_all(self._saved_snapshot())  # and each agent's indicator: Brave connected, or not
 
     def _handable(self, target: str | None) -> dict | None:
         """A tab of the user's Brave that may be handed to an agent: listed there, and nobody else's."""
@@ -1970,10 +1973,13 @@ class AppServer:
 
     def _saved_snapshot(self) -> dict:
         """The saved agents, and Brave's profiles for their settings: each "ready" once AI Browser has learned it on
-        this connection (else the page says "open it once")."""
+        this connection (else the page says "open it once"); Settings' choice and whether Brave is connected, for
+        each agent's indicator (the Agents page's cards, the desks and the drawer)."""
         place = self.brave.place if self.brave is not None else None
         return {"type": "saved_agents", "agents": [saved.public() for saved in self.saved.all()],
-                "profiles": [{**row, "ready": place.ready(row["folder"])} for row in self._profiles()]}
+                "profiles": [{**row, "ready": place.ready(row["folder"])} for row in self._profiles()],
+                "chosen": self.settings.get()["agents_profile"],
+                "connected": self.brave is not None and self.brave.state == "connected"}
 
     def _saved_check(self, fields: dict) -> None:
         """What only the app can judge, before the file is written: a profile Brave lists, an account Settings lists,
