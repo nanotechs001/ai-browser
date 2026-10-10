@@ -441,6 +441,26 @@ async def test_each_agent_shows_whether_its_brave_profile_is_ready(stack):
     assert await js(f"{in_drawer}.querySelector('.word').textContent") == "Brave not connected"
 
 
+
+@CHROME
+async def test_an_agent_with_no_web_shows_no_profile_dot(stack):  # final review: Important 3
+    server = stack["server"]
+    saved = server.saved.save({**AGENT, "web": "none", "profile": "Profile 1"})
+    stack["script"].write_text(json.dumps([{"sleep": 30}]), encoding="utf-8")
+    await server.agents.run_as(saved, "List the prices")
+    run = server.agents.run_of(saved.slug)
+    plain = await server.agents.create("Fix the footer", web="none")  # a one-off run with No web
+    js = await open_agents(stack)
+    assert await until(js, f"{card(saved.slug)} !== null")
+    assert await js(f"{card(saved.slug)}.querySelector('.profile-dot') === null")  # it never uses Brave
+    await js("document.querySelector('.page-link[data-page=\"dashboard\"]').click(); true")
+    assert await until(js, f"document.querySelector('.station[data-id=\"{run.id}\"]') !== null")
+    assert await js(f"document.querySelector('.station[data-id=\"{run.id}\"] .profile-dot') === null")
+    for one, title in ((run, "Research"), (plain, "Fix the footer")):
+        await js(open_drawer(one.id))
+        assert await until(js, f"document.getElementById('drawer-title').textContent.endsWith({json.dumps(title)})")
+        assert await js("document.querySelector('#drawer-body .profile-dot') === null"), title
+
 # ---- Effort: beside Model on the Agents page, and in the drawer with the model ---------------------------------------
 
 @CHROME

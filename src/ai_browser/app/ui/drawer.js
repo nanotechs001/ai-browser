@@ -150,10 +150,12 @@ export function mountDrawer({ link, agentOf, accounts, browserOf, saveSkill = ()
     setText(parts.status, agent.status || agent.last_action || "");
     parts.status.hidden = !parts.status.textContent;
     setText(parts.folder, agent.folder ? `Folder: ${agent.folder}` : "No folder: its own scratch folder");
+    parts.profile.hidden = agent.web === "none"; // No web: it never browses, so no profile to tell of
     const where = profileDot(agent.profile); // where it browses: Ready, Open it once, or Brave not connected
     where.tabIndex = 0; // its hint shows on keyboard focus too
     const was = parts.profile.lastElementChild;
-    if (was?.dataset.state !== where.dataset.state || was?.textContent !== where.textContent) {
+    if (parts.profile.hidden) parts.profile.replaceChildren();
+    else if (was?.dataset.state !== where.dataset.state || was?.textContent !== where.textContent) {
       parts.profile.replaceChildren(el("span", "muted", "Brave profile:"), where);
     }
     parts.autoInput.checked = agent.auto === true; // the app's word: what the bridge does now

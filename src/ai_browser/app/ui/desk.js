@@ -142,7 +142,8 @@ export function createDesk(id, onSelect = () => {}) {
     if (node.style.getPropertyValue("--c") !== color) node.style.setProperty("--c", color);
     const name = agentLabel(agent);
     setTitled(parts.nameplate, name, agentTip(agent, name)); // the whole name, then what it works on
-    const plate = agent.saved ? profileDot(agent.profile, { word: false }) : null; // a saved agent's run: its profile
+    // a saved agent's run that browses: its profile (No web never uses Brave)
+    const plate = agent.saved && agent.web !== "none" ? profileDot(agent.profile, { word: false }) : null;
     if (parts.plateDot && !parts.plateDot.isConnected) parts.plateDot = null; // the name was written over it
     if (plate?.title !== parts.plateDot?.title || plate?.dataset.state !== parts.plateDot?.dataset.state) {
       parts.plateDot?.remove();

@@ -269,8 +269,8 @@ export function mountAgentsPage(root, panel, { link, agents = () => new Map(), a
       }
       card.append(top, el("span", "about muted", row.description || ""),
                   el("span", "profile muted", `Brave: ${profileName(row.profile)}`),
-                  el("span", "next muted", nextRun(row.slug)),
-                  profileDot(row.profile)); // Ready, Open it once, or Brave not connected
+                  el("span", "next muted", nextRun(row.slug)));
+      if (row.web !== "none") card.append(profileDot(row.profile)); // Ready, Open it once, or Brave not connected
       card.addEventListener("click", () => showAgent(row.slug));
       return card;
     }));
