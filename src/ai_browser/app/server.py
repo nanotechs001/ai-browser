@@ -90,6 +90,7 @@ HEARING_MESSAGES = {"hearing", "hearing_download", "hearing_cancel", "listen_sta
 TALK_MESSAGES = {"brain_ask", "brain_confirm", "brain_dismiss"}  # the talk with the Brain
 CHAT_MESSAGES = {"brain_chats", "brain_chat_open", "brain_chat_new", "brain_chat_delete"}  # the panel's kept chats
 CHAT_GONE = "That chat is gone"
+CARD_NOT_ANSWERED = "Not answered"  # a reopened chat's card that was still open: never re-armed
 _TALK_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 CHECK_MESSAGES = {"check_continue", "check_skip", "check_show"}  # a bot check's buttons (who may: MESSAGE_RULES)
 BRAVE_MESSAGES = {"brave_connect", "hand_tab", "take_back", "browser_disconnect"}  # only AI Browser's own pages
@@ -1656,14 +1657,16 @@ class AppServer:
         if chat is None:
             queue.put_nowait({"type": "error", "text": CHAT_GONE, "request": request})
             return
+        dropped = self.brain.talks.forget(chat["id"]) if self.brain is not None else None  # never re-armed
+        if dropped is not None:
+            self.chats.settle(dropped, CARD_NOT_ANSWERED)
         if kind == "brain_chat_open":
             queue.put_nowait({"type": "brain_chat", "request": request, "chat": chat})
             return
         try:
             self.chats.delete(chat["id"])
-        except OSError as exc:  # a read-only home: nothing changed
-            queue.put_nowait({"type": "error", "text": f"Couldn't delete that chat: {exc.strerror or exc}",
-                              "request": request})
+        except OSError:  # a read-only home: nothing changed (fixed words: never a path)
+            queue.put_nowait({"type": "error", "text": "Couldn't delete that chat.", "request": request})
             return
         self._send_all({"type": "brain_chats", "chats": self.chats.list()})
 

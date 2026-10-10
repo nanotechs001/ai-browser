@@ -678,6 +678,12 @@ class Talks:
         if not talk.exchanges:
             talk.exchanges.extend((str(said), str(answer)) for said, answer in exchanges)
 
+    def forget(self, talk_id: str) -> str | None:
+        """A kept chat reopened or deleted (chats.py): its talk goes from memory, words, card, question and hand-off
+        link, so nothing in it can be said yes to again. The id of the card it had open, if any."""
+        talk = self._talks.pop(talk_id, None)
+        return talk.proposal.id if talk is not None and talk.proposal is not None else None
+
     def propose(self, talk_id: str, kind: str, **fields) -> Proposal:
         self._made += 1
         proposal = Proposal(id=f"p{self._made}", kind=kind, created=self.clock(), **fields)

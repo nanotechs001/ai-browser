@@ -231,8 +231,55 @@ async def test_the_panels_chats_are_kept_reopened_after_a_restart_and_deleted(fa
             await ws.send(json.dumps({"type": "brain_chat_delete", "id": chat_id, "request": "d1"}))
             assert (await until(ws, lambda m: m["type"] == "brain_chats"))[-1]["chats"] == []
             assert not path.exists()
+            asked = len(oneshots(log))
             await ws.send(json.dumps({"type": "brain_ask", "talk": chat_id, "request": "t11", "text": "still there?"}))
             await until(ws, lambda m: m["type"] == "brain_answer" and m["request"] == "t11")
             assert not path.exists()  # Review Focus 2: an answer for the deleted chat writes nothing back
+            prompt = [call["oneshot"] for call in oneshots(log)[asked:] if TALKING in call["oneshot"]][-1]
+            assert "- The user: question" not in prompt and "- The user: and now?" not in prompt  # its words never reach the Brain again
+    finally:
+        await server.stop()
+
+
+async def test_a_reopened_chat_never_re_arms_its_card_in_the_same_run(fake_claude, tmp_path):  # fix round 1
+    from ai_browser.brain.talk import START_SAY
+    from test_app_server import TALKING, hello, until, with_hearing
+    from ui_socket import ui_socket
+
+    script = {"default": EVENTS, TALKING: [
+        {"result": json.dumps({"say": "I can start an agent.", "action": "start_agent"})},
+        {"result": json.dumps({"say": "Noted.", "action": "none"})}]}
+    server, url, _ = await with_hearing(fake_claude, tmp_path, script)
+    try:
+        async with ui_socket(server, url) as ws:
+            await hello(ws)
+            ids = []
+            for name in ("a", "b"):
+                await ws.send(json.dumps({"type": "brain_chat_new", "request": f"n{name}"}))
+                ids.append((await until(ws, lambda m: m["type"] == "brain_chat"))[-1]["chat"]["id"])
+                await ws.send(json.dumps({"type": "brain_ask", "talk": ids[-1], "request": f"q{name}",
+                                          "text": "start one"}))
+                answer = (await until(ws, lambda m: m["type"] == "brain_answer" and m["request"] == f"q{name}"))[-1]
+                if name == "a":
+                    assert answer["say"] == START_SAY
+                    card = answer["proposal"]["id"]
+            for chat_id, request in ((ids[1], "ob"), (ids[0], "oa")):  # another chat, then the first one again
+                await ws.send(json.dumps({"type": "brain_chat_open", "id": chat_id, "request": request}))
+                await until(ws, lambda m: m["type"] == "brain_chat" and m["request"] == request)
+            await ws.send(json.dumps({"type": "brain_ask", "talk": ids[0], "request": "y1", "text": "yes",
+                                      "proposal": card}))
+            said = (await until(ws, lambda m: m["type"] == "brain_answer" and m["request"] == "y1"))[-1]
+            assert "proposal" not in said and "created" not in said and server.agents.agents == {}
+            first = json.loads((tmp_path / "home" / "brain" / "chats" / f"{ids[0]}.json")
+                               .read_text(encoding="utf-8"))["exchanges"][0]
+            assert first["card"] == {"id": card, "kind": "start_agent", "outcome": "Not answered"}
+
+            def refuse(chat_id):
+                raise PermissionError(13, "Permission denied", "/private/home/brain/chats/x.json")
+
+            server.chats.delete = refuse
+            await ws.send(json.dumps({"type": "brain_chat_delete", "id": ids[0], "request": "d1"}))
+            failed = (await until(ws, lambda m: m["type"] == "error" and m.get("request") == "d1"))[-1]
+            assert failed["text"] == "Couldn't delete that chat."  # fixed words: never a path
     finally:
         await server.stop()
